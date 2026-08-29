@@ -238,6 +238,27 @@ export class SqliteStore implements PersistenceBackend<number> {
     }
   }
 
+  /** Delete one Session row and its cascade-owned events in one transaction. */
+  async deleteStored(id: SessionId): Promise<SessionHeader | undefined> {
+    await this.open()
+    this.db.exec(sql('begin-immediate'))
+    try {
+      validateSchemaForMutation(this.databaseConstructor, this.db, this.databasePath)
+      const row = this.rowFor(id)
+      if (row === undefined) {
+        this.db.exec(sql('commit'))
+        return undefined
+      }
+      const removed = this.db.prepare(sql('delete-session')).run(id)
+      /* v8 ignore next -- the row was read inside this same immediate transaction. */
+      if (Number(removed.changes) !== 1) throw new Error(`session ${id} metadata row is missing`)
+      this.db.exec(sql('commit'))
+      return rowToMeta(row)
+    } catch (error: unknown) {
+      this.rollback(error, 'delete')
+    }
+  }
+
   async list(signal?: AbortSignal): Promise<SessionHeader[]> {
     await this.observe(signal)
     const rows = this.sessionRows()

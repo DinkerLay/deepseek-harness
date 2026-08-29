@@ -6,6 +6,10 @@
 
 该 seam 是一个[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：一个抽象服务（[dsh-session-persistence](../../packages/session/session-persistence)，`ctx.sessionPersistence`）在现有 `SessionEvent` 上定义 locate/create/append、可复用的 Session 准备流程、逻辑 load/inspect、物理后缀读取，以及轻量的 list/snapshot 观察——**没有平行的持久化事件类型**——以及三个实现同一约定的可互换提供方。见 [session-persistence Agent Note](../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.zh.md)。
 
+## 永久删除
+
+`SessionPersistence.supportsDeletion` 会显式公布可选的串行化 primitive。`delete(id)` 会移除 materialized artifact 或 lazy identity，返回其 header，并发布 `session-persistence/deleted`；absent retry 返回 `undefined`。可选的 Host-only [`dsh-session-deletion`](../../packages/session/session-deletion) service 会 reserve 一条递归 lineage，在 disposal 前 claim 每个 registry-owned idle Agent，并按 child-first 调用该 primitive。Product authorization、archive policy 与非 Session filesystem cleanup 仍属于其 Consumer（[决策](../../.agents/notes/implemented/architecture/2026-08-20-dsh-session-deletion-plugin.zh.md)）。
+
 ## flush 检查点
 
 `session/event` 是一个*同步*通知；持久化插件会将事件复制到逐会话控制器，而不阻塞生产方。第一个待处理事件会开启固定批处理窗口，后续事件会加入但不会重置截止时间。窗口到期后会启动一个持久化批次；该次写入期间接纳的事件会获得自己的截止时间，并形成后续批次。`session/flush` 会取消等待并排空至完全停稳，因此循环仍将其用作在领取下一个普通轮次之前的顺序与错误观察检查点。后台写入被拒绝时会保留对应事件并暂停自动重试；新事件会开启新的固定窗口，而显式 flush 会立即重试，并通过 `agent/error` 和 logger 报告失败，绝不会把失败记录成已关闭轮次之后的会话事件。dispose（资源释放）会执行同样的最终排空。配置的最大值只限制有意的批处理等待，不限制事件循环调度或后端完成持久化的延迟（[决策](../../.agents/notes/implemented/architecture/2026-08-08-bounded-session-persistence-write-batching.zh.md)）。
@@ -243,6 +247,36 @@ interface SessionPersistenceSnapshot {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxsessiondeletion--sessiondeletion"></a>
+
+### `ctx.sessionDeletion` — `SessionDeletion`
+
+Host-only permanent Session deletion provider. Product code validates placement and archive authority before invoking this service.
+
+```ts cordis-catalog
+/**
+ * Resolve the current recursive deletion plan without reserving or mutating
+ * any Session.
+ * @param rootSessionId - subtree root to inspect.
+ * @returns immutable ids in bottom-up deletion order.
+ */
+async preview(rootSessionId: SessionId): Promise<SessionDeletionPreview>
+
+/**
+ * Permanently remove one Session subtree. All live members are claimed idle
+ * before any Agent is disposed; durable records then delete bottom-up.
+ * Retrying after partial storage success converges because missing children
+ * are skipped and the root remains last.
+ * @param rootSessionId - subtree root to delete.
+ * @returns immutable plan and ids removed by this attempt.
+ */
+async deleteTree(rootSessionId: SessionId): Promise<SessionDeletionResult>
+```
+
+Types: [SessionId](core.zh.md)
+
+Source: [`packages/session/session-deletion/src/index.ts`](../../packages/session/session-deletion/src/index.ts)
+
 <a id="ctxsessionpersistence--sessionpersistence-abstract-seam"></a>
 
 ### `ctx.sessionPersistence` — `SessionPersistence` (abstract seam)
@@ -294,6 +328,16 @@ abstract create(meta: SessionHeader): Promise<void>
  * @param events - the contiguous batch to persist, in seq order.
  */
 abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+/**
+ * Permanently remove one known Session identity. Implementations serialize
+ * the operation with same-id append, preparation, and retirement work. A
+ * lazy creation intent returns its header even when no artifact materialized;
+ * the default rejects so third-party backends cannot silently claim support.
+ * @param _id - persisted or lazy Session identity to remove.
+ * @returns the removed header, or `undefined` if already absent.
+ */
+delete(_id: SessionId): Promise<SessionHeader | undefined>
 
 /**
  * Prepare the exact unpublished Session used by resume. Implementations may
@@ -367,6 +411,14 @@ abstract readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise
 abstract list(signal?: AbortSignal): Promise<SessionHeader[]>
 
 /**
+ * List materialized and in-process lazy/prepared headers for recursive
+ * deletion discovery. Backends without coordinator state fall back to the
+ * materialized listing.
+ * @returns one header per known Session identity.
+ */
+listDeletionHeaders(): Promise<SessionHeader[]>
+
+/**
  * List materialized sessions with cheap per-log change tokens.
  *
  * Repeated observations of an unchanged log return the same revision. A
@@ -380,6 +432,29 @@ abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot
 ```
 
 Types: [SessionEvent](session.zh.md) · [SessionId](core.zh.md)
+
+Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistence-events"></a>
+
+### `session-persistence/*` events
+
+<a id="session-persistencedeleted--parallel"></a>
+
+#### `session-persistence/deleted` — parallel
+
+Post-commit notification that one durable Session artifact was permanently removed. Consumers clean derived indexes and accounting from this event; listener failure cannot reverse the storage commit.
+
+```ts cordis-catalog
+/**
+ * Post-commit notification that one durable Session artifact was
+ * permanently removed. Consumers clean derived indexes and accounting from
+ * this event; listener failure cannot reverse the storage commit.
+ * @param header - detached metadata of the deleted Session.
+ * @mode parallel
+ */
+'session-persistence/deleted'(header: SessionHeader): Promise<void> | void
+```
 
 Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
 <!-- END GENERATED cordis-surface -->

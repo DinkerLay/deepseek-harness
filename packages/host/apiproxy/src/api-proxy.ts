@@ -2818,6 +2818,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
       },
+
     },
 
     host: {
@@ -3440,8 +3441,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // stream opens against the current set; workspace.list re-baselines
         // reconnecting clients, so only later changes need frames.
         let archivedSessionIds = ctx.workspaceRegistry.archivedSessionIds
+        const removedSessionIds = new Set<SessionId>()
         const disposers = [
           ctx.on('session/created', (session: Session) => {
+            removedSessionIds.delete(session.id)
             queue.push(frame({
               type: 'host/session-added',
               sessionId: session.id,
@@ -3453,7 +3456,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             }))
           }),
           ctx.on('session/disposed', (session: Session) => {
+            if (removedSessionIds.has(session.id)) return
+            removedSessionIds.add(session.id)
             queue.push(frame({ type: 'host/session-removed', sessionId: session.id }))
+          }),
+          ctx.on('session-persistence/deleted', (header) => {
+            if (removedSessionIds.has(header.id)) return
+            removedSessionIds.add(header.id)
+            queue.push(frame({ type: 'host/session-removed', sessionId: header.id }))
           }),
           ctx.on('agent/status', ({ agent, status }: { agent: Agent; status: AgentStatus }) => {
             queue.push(frame({ type: 'host/session-status', sessionId: agent.id, running: status === 'running' }))

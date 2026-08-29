@@ -261,6 +261,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
       },
       {
+        signature: 'reserveIdleDisposal(sessionId: SessionId): AgentIdleDisposalAttempt',
+        description: 'Atomically reserve a registry-owned Agent for idle disposal without exposing its teardown handle. Agents registered directly or created by a configuration helper have no retained handle and return `unowned`.',
+        parameters: [{ name: 'sessionId', description: 'live Agent identity to claim.' }],
+        returns: 'claimed reservation, busy state, or missing ownership.',
+      },
+      {
         signature: 'register(agent: Agent): () => void',
         description: 'Register a live agent. Throws if an agent with the same id is already registered. Emits `agent/created` on registration and `agent/disposed` when the calling fiber is disposed — both with the agent\'s scope carrier (`scopeTarget(agent, agent)`): the subject is the agent in hand, so the emits are scope-filtered regardless of which context invoked `register` (calling through `agent.ctx` scopes EFFECTS; dispatch scoping always requires passing the carrier). Returns the disposer.',
         parameters: [{ name: 'agent', description: 'the already-constructed agent to record in the store.' }],
@@ -1177,6 +1183,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'sessionDeletion',
+    summary: 'Host-only permanent Session deletion provider.',
+    description: 'Host-only permanent Session deletion provider. Product code validates placement and archive authority before invoking this service.',
+    methods: [
+      {
+        signature: 'async preview(rootSessionId: SessionId): Promise<SessionDeletionPreview>',
+        description: 'Resolve the current recursive deletion plan without reserving or mutating any Session.',
+        parameters: [{ name: 'rootSessionId', description: 'subtree root to inspect.' }],
+        returns: 'immutable ids in bottom-up deletion order.',
+      },
+      {
+        signature: 'async deleteTree(rootSessionId: SessionId): Promise<SessionDeletionResult>',
+        description: 'Permanently remove one Session subtree. All live members are claimed idle before any Agent is disposed; durable records then delete bottom-up. Retrying after partial storage success converges because missing children are skipped and the root remains last.',
+        parameters: [{ name: 'rootSessionId', description: 'subtree root to delete.' }],
+        returns: 'immutable plan and ids removed by this attempt.',
+      },
+    ],
+  },
+  {
     key: 'sessionPersistence',
     summary: 'Durable append-only session storage.',
     description: 'Durable append-only session storage. Implementations preserve contiguous, losslessly JSON-serializable events; append resolves only after durability, and load balances a complete interrupted tail without rewriting committed events.',
@@ -1190,6 +1215,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'abstract readonly supportsRawArtifacts: boolean',
         description: 'Whether this backend exposes one verbatim raw artifact per session. A backend that declares `true` must override readRaw.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly supportsDeletion: boolean = false',
+        description: 'Whether this provider implements serialized permanent deletion.',
         parameters: [],
       },
       {
@@ -1208,6 +1238,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>',
         description: 'Durably persist a batch of events. Honors the append-only and contiguous- seq contracts: the first event\'s `seq` MUST equal the stored next-seq (after `load` has durably closed any interrupted turn). Rejects non-JSON- serializable `event.data` with an error naming the offending event type.',
         parameters: [{ name: 'id', description: 'the session the batch belongs to.' }, { name: 'events', description: 'the contiguous batch to persist, in seq order.' }],
+      },
+      {
+        signature: 'delete(_id: SessionId): Promise<SessionHeader | undefined>',
+        description: 'Permanently remove one known Session identity. Implementations serialize the operation with same-id append, preparation, and retirement work. A lazy creation intent returns its header even when no artifact materialized; the default rejects so third-party backends cannot silently claim support.',
+        parameters: [{ name: '_id', description: 'persisted or lazy Session identity to remove.' }],
+        returns: 'the removed header, or `undefined` if already absent.',
       },
       {
         signature: 'async prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation>',
@@ -1240,6 +1276,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one header per materialized session.',
       },
       {
+        signature: 'listDeletionHeaders(): Promise<SessionHeader[]>',
+        description: 'List materialized and in-process lazy/prepared headers for recursive deletion discovery. Backends without coordinator state fall back to the materialized listing.',
+        parameters: [],
+        returns: 'one header per known Session identity.',
+      },
+      {
         signature: 'abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]>',
         description: 'List materialized sessions with cheap per-log change tokens.\n\nRepeated observations of an unchanged log return the same revision. A successful mutating load repair changes the next listed revision. Revisions also distinguish independently backed stores so backend-local counters cannot compare equal across different persistence sources.',
         parameters: [{ name: 'signal', description: 'optional cancellation for backend snapshot-listing work.' }],
@@ -1259,13 +1301,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the cut (`asOfSeq` = lowest served-row watermark), or `undefined` when no usable row exists for this lifecycle.',
       },
       {
-        signature: 'async write(session: Session): Promise<void>',
+        signature: 'write(session: Session): Promise<void>',
         description: 'Durably checkpoint one live session NOW (both mandatory points call this; tests and carriers may too). The registry cut is snapshotted at this boundary (states are live references), then the whole record is replaced. NOT fail-soft — callers on the fail-soft paths contain it.',
         parameters: [{ name: 'session', description: 'the live session to checkpoint.' }],
         returns: 'resolution after durability and event emission.',
       },
       {
-        signature: 'async coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot>',
+        signature: 'coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot>',
         description: 'Cold-read one persisted session\'s projections with zero full-log load: cached rows + a persistence `readFrom` tail from the registry\'s restore floor, refolded by the registry and written back (fail-soft) so the next cold read starts closer. A cache row invalidated by a shrunk log (crash-repair truncation) triggers one full re-read from seq 0 — the ladder\'s slow rung, still no crash. Rejects when the session has no persisted log (`not found` from the persistence seam).',
         parameters: [{ name: 'id', description: 'the persisted session to read.' }, { name: 'signal', description: 'optional cancellation for the persistence reads.' }],
         returns: 'the snapshot cut at the stored log end.',
@@ -1503,6 +1545,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'All live sessions, in creation order.',
         parameters: [],
         returns: 'a fresh array; mutating it does not affect the store.',
+      },
+      {
+        signature: 'isDeletionReserved(id: SessionId): boolean',
+        description: 'Whether an active Host deletion reservation currently owns one exact id. Activity entry points use this before prompting or resuming an existing live Agent; Session publication performs the stronger lineage check.',
+        parameters: [{ name: 'id', description: 'Session identity to inspect.' }],
+        returns: 'whether deletion currently fences the id.',
+      },
+      {
+        signature: 'reserveForDeletion( rootSessionId: SessionId, initialSessionIds: readonly SessionId[] = [rootSessionId], ): SessionDeletionReservation',
+        description: 'Reserve a root and its known subtree against Session publication. The deletion provider may extend the set while repeated persistence snapshots converge. Overlapping reservations reject synchronously.',
+        parameters: [{ name: 'rootSessionId', description: 'subtree root.' }, { name: 'initialSessionIds', description: 'root and already discovered descendants.' }],
+        returns: 'the single-shot reservation capability.',
       },
       {
         signature: 'fork(source: SessionForkSource, boundary?: number, childSessionId?: SessionId): Session',
@@ -2622,6 +2676,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; their messages already obey the immutable creation contract.' }],
   },
   {
+    name: 'session-persistence/deleted',
+    mode: 'parallel',
+    signature: '\'session-persistence/deleted\'(header: SessionHeader): Promise<void> | void',
+    summary: 'Post-commit notification that one durable Session artifact was permanently removed.',
+    description: 'Post-commit notification that one durable Session artifact was permanently removed. Consumers clean derived indexes and accounting from this event; listener failure cannot reverse the storage commit.',
+    parameters: [{ name: 'header', description: 'detached metadata of the deleted Session.' }],
+  },
+  {
     name: 'session-telemetry/record',
     mode: 'waterfall',
     signature: '\'session-telemetry/record\'(record: SessionTelemetryRecord, next: () => SessionTelemetryRecord): SessionTelemetryRecord',
@@ -2859,7 +2921,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentHandle',
-    declaration: 'export interface AgentHandle {\n    agent: Agent;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface AgentHandle {\n    agent: Agent;\n    dispose(): Promise<void>;\n    reserveIdleDisposal?(): AgentIdleDisposalReservation | undefined;\n}',
+  },
+  {
+    name: 'AgentIdleDisposalAttempt',
+    declaration: 'export type AgentIdleDisposalAttempt = {\n    readonly kind: \'claimed\';\n    readonly reservation: AgentIdleDisposalReservation;\n} | {\n    readonly kind: \'busy\';\n} | {\n    readonly kind: \'unowned\';\n};',
+  },
+  {
+    name: 'AgentIdleDisposalReservation',
+    declaration: 'export interface AgentIdleDisposalReservation {\n    dispose(): Promise<void>;\n    release(): void;\n}',
   },
   {
     name: 'AgentOptions',
@@ -4076,6 +4146,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionAvailability',
     declaration: 'export type SessionAvailability = \'live\' | \'persisted\';',
+  },
+  {
+    name: 'SessionDeletionPreview',
+    declaration: 'export interface SessionDeletionPreview {\n    readonly rootSessionId: SessionId;\n    readonly sessionIds: readonly SessionId[];\n}',
+  },
+  {
+    name: 'SessionDeletionReservation',
+    declaration: 'export interface SessionDeletionReservation {\n    extend(sessionIds: readonly SessionId[]): void;\n    complete(sessionIds?: readonly SessionId[]): void;\n    release(): void;\n}',
+  },
+  {
+    name: 'SessionDeletionResult',
+    declaration: 'export interface SessionDeletionResult extends SessionDeletionPreview {\n    readonly deletedSessionIds: readonly SessionId[];\n}',
   },
   {
     name: 'SessionEvent',

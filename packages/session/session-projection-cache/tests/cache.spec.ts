@@ -150,6 +150,20 @@ describe('SessionProjectionCache write policy', () => {
     expect(storedRows(pool, session.id)?.['cache-test/marks']?.val).toEqual({ marks: ['live'] })
   })
 
+  it('removes only the checkpoint bound to a committed deleted lifecycle', async () => {
+    const { ctx, pool } = await harness()
+    const session = ctx.sessions.create(SessionId('deleted-cache-row'), { meta: { createdAt: 10 } })
+    mark(session, ['cached'])
+    endTurn(session)
+    await settle()
+    expect(storedRecord(pool, session.id)).toBeDefined()
+
+    await ctx.parallel('session-persistence/deleted', { ...session.header, createdAt: 9 })
+    expect(storedRecord(pool, session.id)).toBeDefined()
+    await ctx.parallel('session-persistence/deleted', session.header)
+    expect(storedRecord(pool, session.id)).toBeUndefined()
+  })
+
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
     const { ctx, pool } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
     const session = ctx.sessions.create(SessionId('count'))

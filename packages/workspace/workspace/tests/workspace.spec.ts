@@ -895,6 +895,21 @@ describe('registry-global session archive', () => {
     expect(result.registry.archivedSessionIds).toEqual(['gone', 'kept'])
   })
 
+  it('derives archive and Workspace-account cleanup from committed Session deletion', async () => {
+    const dir = await makeDir('deleted-session-home')
+    const deleted = header('deleted-session', dir, 200)
+    const kept = header('kept-session', dir, 100)
+    const result = await harness({ sessions: [deleted, kept] })
+    const workspace = result.registry.list()[0]!
+    await result.registry.archiveSession(deleted.id)
+
+    await result.ctx.parallel('session-persistence/deleted', deleted)
+
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(workspace.sessionIds).toEqual([kept.id])
+    expect(storedRecord(result.pool, workspace.id).sessionIds).toEqual([kept.id])
+  })
+
   it('accepts unaccounted and live sessions but rejects unknown ids without writing', async () => {
     const dir = await makeDir('archive-strays')
     const live = await makeDir('archive-live')

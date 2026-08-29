@@ -75,6 +75,8 @@ export class SessionProjectionCache extends Service {
 
   private table?: KvTable<SessionId, CheckpointRecord>
   private readonly dirty = new Map<Session, DirtyState>()
+  private readonly operations = new Map<SessionId, Set<Promise<unknown>>>()
+  private readonly deleting = new Map<SessionId, CheckpointIdentity>()
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'sessionProjectionCache')
@@ -83,8 +85,12 @@ export class SessionProjectionCache extends Service {
   /** Open the domain and install the write-behind listeners. */
   protected async [Service.init](): Promise<void> {
     const domain = await this.ctx.storageDomain.open(projectionCacheDomainSpec)
-    this.ctx.effect(() => () => domain.close(), 'sessionProjectionCache.domainClose')
+    this.ctx.effect(() => async () => {
+      await this.drainOperations()
+      await domain.close()
+    }, 'sessionProjectionCache.domainClose')
     this.table = domain.table('sessions')
+    this.ctx.on('session-persistence/deleted', header => this.removeDeletedRecord(header))
     this.installWritePath()
   }
 
@@ -137,7 +143,16 @@ export class SessionProjectionCache extends Service {
    * @param session - the live session to checkpoint.
    * @returns resolution after durability and event emission.
    */
-  async write(session: Session): Promise<void> {
+  write(session: Session): Promise<void> {
+    return this.track(session.id, () => this.writeCore(session))
+  }
+
+  /** Checkpoint one live Session inside the per-id operation tracker. */
+  private async writeCore(session: Session): Promise<void> {
+    if (this.isDeleting(session.header)) {
+      this.markClean(session)
+      return
+    }
     const rows = this.ctx.sessionProjections.checkpoint(session)
     this.markClean(session)
     // Durability barrier: the checkpoint cut was taken above, so flushing
@@ -148,6 +163,7 @@ export class SessionProjectionCache extends Service {
     // already gone; persistence's own retirement drain covers that path and
     // any residual overreach is caught by the cold read's anchored floor.
     if (this.ctx.sessions.get(session.id) === session) await this.ctx.sessions.flush(session)
+    if (this.isDeleting(session.header)) return
     await this.put(session.id, identityOf(session.header), rows)
   }
 
@@ -163,7 +179,13 @@ export class SessionProjectionCache extends Service {
    * @param signal - optional cancellation for the persistence reads.
    * @returns the snapshot cut at the stored log end.
    */
-  async coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot> {
+  coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot> {
+    return this.track(id, () => this.coldSnapshotCore(id, signal))
+  }
+
+  /** Run one cold-read ladder inside the per-id operation tracker. */
+  private async coldSnapshotCore(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot> {
+    if (this.deleting.has(id)) throw new Error(`session "${id}" is being permanently deleted`)
     const record = this.requireTable().get(id)
     const cached = record?.rows ?? {}
     const floor = this.ctx.sessionProjections.restoreFloor(cached)
@@ -263,11 +285,64 @@ export class SessionProjectionCache extends Service {
 
   /** Replace one session's stored record with its log identity and a detached snapshot of `rows`. */
   private async put(id: SessionId, identity: CheckpointIdentity, rows: ProjectionCheckpoint): Promise<void> {
+    const deleting = this.deleting.get(id)
+    if (deleting !== undefined && identityMatches(identity, deleting)) return
     const detached = snapshotJsonValue(rows)
     if (detached === undefined) {
       throw new TypeError('projection checkpoint is not losslessly JSON-serializable (a unit state violates the plain-JSON contract)')
     }
     await this.requireTable().put(id, { identity, rows: detached as CheckpointRecord['rows'] })
+  }
+
+  /** Remove a committed Session lifecycle after every earlier cache operation settles. */
+  private async removeDeletedRecord(header: SessionHeader): Promise<void> {
+    const identity = identityOf(header)
+    this.deleting.set(header.id, identity)
+    try {
+      await this.drainOperations(header.id)
+      const table = this.requireTable()
+      const record = table.get(header.id)
+      if (record !== undefined && identityMatches(record.identity, identity)) await table.delete(header.id)
+      await this.drainOperations(header.id)
+    } finally {
+      if (this.deleting.get(header.id) === identity) this.deleting.delete(header.id)
+    }
+  }
+
+  /** Track one operation so committed deletion can wait for every earlier write or cold read. */
+  private track<T>(id: SessionId, operation: () => Promise<T>): Promise<T> {
+    const pending = Promise.resolve().then(operation)
+    const operations = this.operations.get(id) ?? new Set<Promise<unknown>>()
+    this.operations.set(id, operations)
+    operations.add(pending)
+    void pending.then(
+      () => { this.finishOperation(id, operations, pending) },
+      () => { this.finishOperation(id, operations, pending) },
+    )
+    return pending
+  }
+
+  /** Remove one settled operation without disturbing a later same-id set. */
+  private finishOperation(id: SessionId, operations: Set<Promise<unknown>>, pending: Promise<unknown>): void {
+    operations.delete(pending)
+    if (operations.size === 0 && this.operations.get(id) === operations) this.operations.delete(id)
+  }
+
+  /** Await current operations until no new operation joined the requested scope. */
+  private async drainOperations(id?: SessionId): Promise<void> {
+    for (;;) {
+      const pending = id === undefined
+        ? [...this.operations.values()].flatMap(operations => [...operations])
+        : [...this.operations.get(id) ?? []]
+      if (pending.length === 0) return
+      await Promise.allSettled(pending)
+    }
+  }
+
+  /** Whether deletion currently owns this exact persisted lifecycle. */
+  private isDeleting(header: SessionHeader): boolean {
+    const identity = this.deleting.get(header.id)
+    return identity !== undefined && identityMatches(identity, identityOf(header))
   }
 
   /** Fail-soft {@link put}: cache writes must never fail their caller's read or event path. */

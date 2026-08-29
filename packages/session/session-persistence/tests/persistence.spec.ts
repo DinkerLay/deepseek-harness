@@ -69,6 +69,7 @@ interface CoordinatorInternals {
  */
 class MemoryPersistence extends SessionPersistence implements PersistenceBackend<never> {
   override readonly supportsRawArtifacts = false
+  override readonly supportsDeletion = true
 
   static inject = ['sessions']
 
@@ -101,6 +102,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     return this.coordinator.append(id, events)
   }
 
+  override delete(id: SessionId): Promise<SessionHeader | undefined> {
+    return this.coordinator.delete(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): ReturnType<PersistenceCoordinator['prepare']> {
     return this.coordinator.prepare(id, signal)
   }
@@ -116,6 +121,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
 
   readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     return this.coordinator.readFrom(id, fromSeq, signal)
+  }
+
+  override listDeletionHeaders(): Promise<SessionHeader[]> {
+    return this.coordinator.listDeletionHeaders()
   }
 
   // --- PersistenceBackend hooks (the Map storage primitives) ---
@@ -159,6 +168,13 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     /* v8 ignore next -- commitRepair only runs for a materialized (stored) session */
     if (!entry) return
     if (closers.length > 0) entry.events.push(...structuredClone(closers) as SessionEvent[])
+  }
+
+  async deleteStored(id: SessionId): Promise<SessionHeader | undefined> {
+    const entry = this.store.get(id)
+    if (entry === undefined) return undefined
+    this.store.delete(id)
+    return structuredClone(entry.meta)
   }
 
   async list(signal?: AbortSignal): Promise<SessionHeader[]> {

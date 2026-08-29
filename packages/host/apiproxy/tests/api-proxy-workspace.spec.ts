@@ -568,4 +568,25 @@ describe('Host Workspace increments', () => {
     })
     abort.abort()
   })
+
+  it('streams one removal frame for a committed cold persistence deletion', async () => {
+    const { api, ctx, root } = await harness()
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const sessionId = SessionId('cold-deleted-session')
+    const removed = nextHostFrame(stream)
+
+    await ctx.parallel('session-persistence/deleted', {
+      version: 0,
+      id: sessionId,
+      createdAt: 1,
+      cwd: root,
+    })
+
+    expect(await removed).toMatchObject({
+      payload: { type: 'host/session-removed', sessionId },
+    })
+    abort.abort()
+  })
 })

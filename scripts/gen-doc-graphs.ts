@@ -172,6 +172,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Backends persist the same SessionEvent vocabulary; apps choose a backend at composition time.',
   },
   {
+    key: 'sessionDeletion',
+    pkg: 'session-deletion',
+    title: 'Host recursive Session deletion',
+    mode: 'core',
+    note: 'Reserves Session lineage, claims registry-owned idle Agents, and removes durable records bottom-up through the selected persistence backend.',
+  },
+  {
     key: 'settings',
     pkg: 'settings',
     title: 'User-settings seam',

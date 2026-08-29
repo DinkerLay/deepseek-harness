@@ -9,7 +9,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { readdirSync } from 'node:fs'
-import { open, mkdir, readFile, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import { open, mkdir, readFile, readdir, realpath, link, rm, rmdir, stat, truncate, unlink } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
@@ -120,6 +120,7 @@ function isENOENT(error: unknown): boolean {
  */
 export class JsonlSessionPersistence extends SessionPersistence implements PersistenceBackend<JsonlTornMarker> {
   override readonly supportsRawArtifacts = true
+  override readonly supportsDeletion = true
 
   static inject = ['sessions']
 
@@ -181,6 +182,10 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     return this.coordinator.append(id, events)
   }
 
+  override delete(id: SessionId): Promise<SessionHeader | undefined> {
+    return this.coordinator.delete(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
     return this.coordinator.prepare(id, signal)
   }
@@ -197,6 +202,10 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
   // parses the stored prefix (both encodings) and skips forward to fromSeq.
   readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     return this.coordinator.readFrom(id, fromSeq, signal)
+  }
+
+  override listDeletionHeaders(): Promise<SessionHeader[]> {
+    return this.coordinator.listDeletionHeaders()
   }
 
   // One method serves both public `list` and the backend hook; delegating it to
@@ -441,6 +450,29 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     if (tornMarker !== undefined) await this.repair(meta, tornMarker.truncateTo)
     const repairedEvents = [...(tornMarker?.recoveredEvents ?? []), ...closers]
     if (repairedEvents.length > 0) await this.appendLines(meta, repairedEvents)
+  }
+
+  /** Permanently unlink one exact Session log and remove only its empty backend directory. */
+  async deleteStored(id: SessionId): Promise<SessionHeader | undefined> {
+    const stored = await this.loadStored(id)
+    if (stored === undefined) return undefined
+    const path = await this.findLog(id)
+    if (path === undefined) return undefined
+    await unlink(path)
+    const directory = dirname(path)
+    if (process.platform !== 'win32') await this.syncDirPosix(directory)
+    let removedDirectory = false
+    try {
+      await rmdir(directory)
+      removedDirectory = true
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOTEMPTY' && code !== 'EEXIST' && code !== 'ENOENT') throw error
+    }
+    if (removedDirectory && process.platform !== 'win32') {
+      await this.syncDirPosix(dirname(directory))
+    }
+    return structuredClone(stored.meta)
   }
 
   /** List valid unique stored sessions' metadata (header line only — no full-log parse). */

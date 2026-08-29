@@ -57,6 +57,8 @@ A per-Session promise queue encloses inspection, durability validation, sidecar 
 
 Plugin disposal closes mutation admission, drains every operation already accepted into the per-Session queues, and only then closes the storage domain. A mutation submitted after disposal begins rejects as a lifecycle failure instead of entering a closing domain.
 
+A committed `session-persistence/deleted` event joins the same per-Session mutation queue and removes the sidecar only when its stored header identity matches the deleted lifecycle. Session detach does not delete feedback.
+
 ## Model Experience
 
 ### Local message-feedback state
@@ -77,7 +79,6 @@ Independent. Listing or mutating message feedback does not touch a model request
 
 - **Client aggregate and UI are absent** — the Host Remote contract ships, but the Client Remote aggregate contribution and any UI consumer are separately owned and deferred.
 - **Compare-and-set is single-process** — the per-Session queue serializes one service instance only; multiple Host processes writing one storage root can still lose updates because storage-domain exposes no cross-process conditional write.
-- **No durable Session deletion cascade** — Session persistence has no deletion API, and `session/disposed`/`host/session-removed` mean detach rather than durable deletion. The service therefore retains empty rows and may leave orphan rows after out-of-band log removal instead of deleting valid feedback on detach.
 - **Detach/catalog retirement window** — a request in the narrow interval after live detach but before the persistence catalog materializes the header can receive `session-not-found`; callers retry after retirement materialization.
 - **Header identity is not a content fingerprint** — `{createdAt, cwd}` detects reuse only when those fields differ; a cloned log retaining the same header identity is indistinguishable.
 - **Trusted caller boundary** — `list`/`put`/`delete` carry no authenticated actor or audit identity. A deployment must expose the Host gateway only through its trusted or separately authenticated boundary until authorization and attribution are added.

@@ -16,6 +16,8 @@ Serialized `data` smaller than 4 KiB stays as SQLite `TEXT`. At or above that th
 
 Each append holds `BEGIN IMMEDIATE`, validates the bounded physical tail, packs only the new durable batch, inserts those records, and increments the session revision once. Normal appends never delete or replace an earlier event row. The default 200 ms write-behind window therefore compresses high-frequency streams while the physical write volume stays proportional to newly durable batches rather than repeatedly rewriting a growing packed value. A storage-level logical-tail check rejects a stale writer before mutation.
 
+Permanent `delete(id)` waits same-id retirement and preparation work, then holds `BEGIN IMMEDIATE`, revalidates schema ownership, and deletes the selected Session row. Foreign-key cascade removes its event rows in the same transaction; an absent row is an idempotent no-op.
+
 Full reads scan physical rows in first-logical-sequence order. A reverse pass finds the last valid `turn/end` without retaining decoded copies of every physical row; the forward pass decodes and validates one physical row at a time into the returned logical event array. `readFrom(id, fromSeq)` examines packed predecessors only within the maximum row span and anchors the suffix at the earliest one that may contain `fromSeq`; this includes an event range that starts inside a packed row, detects overlapping physical corruption, and does not parse unrelated earlier scalar rows. A malformed packed row is all-or-nothing: committed corruption rejects, while a torn final row is deleted from its physical base during mutating recovery. Repair re-reads the tail under the write lock and rejects a stale marker before deleting anything. Packed `data` that exceeds the schema byte limit rejects before JSON parsing.
 
 ## Schema compatibility
@@ -60,4 +62,4 @@ Physical packing does not mutate request prefixes. Provider cache reuse depends 
 - **`DatabaseSync` blocks the event loop** — physical row reduction does not make SQLite operations asynchronous.
 - **Busy waits block the event loop** — SQLite waits inside synchronous `DatabaseSync` calls; only a busy journal-mode transition yields between attempts, and the open-relative cutoff prevents another attempt rather than interrupting an active call.
 - **External SQL readers must understand physical tags** — supported consumers read through this provider rather than treating every `events.type` as a logical event type.
-- **No deletion or background historical compaction** — normal appends are insert-only.
+- **No background historical compaction** — explicit Session deletion is supported, while normal appends remain insert-only.

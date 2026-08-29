@@ -732,6 +732,25 @@ get(id: SessionId): Session | undefined
 list(): Session[]
 
 /**
+ * Whether an active Host deletion reservation currently owns one exact id.
+ * Activity entry points use this before prompting or resuming an existing
+ * live Agent; Session publication performs the stronger lineage check.
+ * @param id - Session identity to inspect.
+ * @returns whether deletion currently fences the id.
+ */
+isDeletionReserved(id: SessionId): boolean
+
+/**
+ * Reserve a root and its known subtree against Session publication. The
+ * deletion provider may extend the set while repeated persistence snapshots
+ * converge. Overlapping reservations reject synchronously.
+ * @param rootSessionId - subtree root.
+ * @param initialSessionIds - root and already discovered descendants.
+ * @returns the single-shot reservation capability.
+ */
+reserveForDeletion( rootSessionId: SessionId, initialSessionIds: readonly SessionId[] = [rootSessionId], ): SessionDeletionReservation
+
+/**
  * Create a live child session from a stable prefix of a live source.
  * `boundary` is an inclusive source event seq; omitted means the source's
  * current last event. The selected slice may end with a between-turn event

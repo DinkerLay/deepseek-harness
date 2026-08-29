@@ -51,6 +51,7 @@ export interface Config {
  */
 export class SqliteSessionPersistence extends SessionPersistence {
   override readonly supportsRawArtifacts = false
+  override readonly supportsDeletion = true
   override readonly name = 'session-persistence-sqlite'
 
   static inject = ['sessions']
@@ -102,6 +103,10 @@ export class SqliteSessionPersistence extends SessionPersistence {
     return this.coordinator.append(id, events)
   }
 
+  override delete(id: SessionId): Promise<SessionHeader | undefined> {
+    return this.coordinator.delete(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
     return this.coordinator.prepare(id, signal)
   }
@@ -124,6 +129,10 @@ export class SqliteSessionPersistence extends SessionPersistence {
 
   list(signal?: AbortSignal): Promise<SessionHeader[]> {
     return this.store.list(signal)
+  }
+
+  override listDeletionHeaders(): Promise<SessionHeader[]> {
+    return this.coordinator.listDeletionHeaders()
   }
 
   listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]> {

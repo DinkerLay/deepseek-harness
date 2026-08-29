@@ -8,7 +8,7 @@ English | [中文](2026-08-10-message-feedback-sidecar.zh.md)
 
 The existing `/feedback` command records an immutable Session-level `feedback/record` event. That event can release a pending telemetry prefix under `FEEDBACK_ONLY`, so it is the wrong authority for an editable positive/negative rating and optional note attached to one assistant message. Message feedback needs independent update and delete semantics without entering the canonical Session log, changing a projection, reaching model context, or implicitly consenting to telemetry.
 
-A sidecar keyed only by `SessionId` can outlive the log lifecycle it describes when an id is recreated with a different header identity. A Session-wide revision also makes unrelated message edits conflict, while plain storage-domain read/put has no cross-process compare-and-swap. Session disposal is only live-store detach, not durable deletion, and the current Session persistence seam exposes no deletion operation that could own a truthful cascade.
+A sidecar keyed only by `SessionId` can outlive the log lifecycle it describes when an id is recreated with a different header identity. A Session-wide revision also makes unrelated message edits conflict, while plain storage-domain read/put has no cross-process compare-and-swap. Session disposal is only live-store detach, so cleanup must follow the persistence-owned deletion commit rather than that live edge.
 
 ## Decision
 
@@ -26,7 +26,7 @@ A per-Session mutation queue encloses lifecycle inspection, sidecar read, confli
 
 `maxNoteBytes` is a required deployment choice and bounds the UTF-8 byte length of an optional note; the Web Host bundle sets it explicitly to `8192`. The package publishes the Host `messageFeedback.list`, `messageFeedback.put`, and `messageFeedback.delete` contract directly through `TypertRemoteService` and `@Remote`. Client Remote aggregate mounting and UI remain separately owned and deferred; their later adapter stays a thin consumer of this Host contract.
 
-The service performs no fake deletion cascade. `session/disposed` and `host/session-removed` describe detach from live ownership, not durable Session deletion, and Session persistence currently has no deletion API. Sidecar rows can therefore remain after out-of-band log removal; a different `{createdAt, cwd}` prevents such an orphan from becoming feedback for a later Session that reuses the id.
+The service performs no fake deletion cascade. `session/disposed` and `host/session-removed` describe detach from live ownership and never remove feedback. A committed `session-persistence/deleted` joins the same per-Session mutation queue and removes the sidecar only when its stored `{createdAt, cwd}` identity matches the deleted lifecycle.
 
 ## Alternatives considered
 
@@ -40,4 +40,4 @@ The service performs no fake deletion cascade. `session/disposed` and `host/sess
 
 ## Consequences
 
-Message feedback is locally durable and independently editable without changing model-visible history or telemetry behavior. Concurrent callers in one Host receive per-message conflict detection and retry-safe outcomes, while deployments with multiple writers to the same storage root remain unsupported. A differing header identity treats a stale row as absent but does not reclaim it; a cloned log that retains the same `{createdAt, cwd}` is indistinguishable by this contract. The Host Remote contract is available now; client assembly and UI can remain thin consumers rather than taking ownership of persistence or concurrency semantics.
+Message feedback is locally durable and independently editable without changing model-visible history or telemetry behavior. Concurrent callers in one Host receive per-message conflict detection and retry-safe outcomes, while deployments with multiple writers to the same storage root remain unsupported. Durable deletion reclaims the matching lifecycle row; ordinary reads still treat a differing stale identity as absent without reclaiming it, and a cloned log retaining the same `{createdAt, cwd}` remains indistinguishable. The Host Remote contract is available now; client assembly and UI can remain thin consumers rather than taking ownership of persistence or concurrency semantics.

@@ -17,6 +17,7 @@ Creates and holds event-sourced `Session` instances. Persistence is intentionall
 - `ctx.sessions.fork(source, boundary?, childSessionId?): Session` — Resolve a live session object or id, select a seed through the inclusive `boundary` event seq (default: current last event), require that prefix to end outside an open turn, and create a live child session with lineage metadata.
 - `ctx.sessions.get(id: SessionId): Session | undefined`
 - `ctx.sessions.list(): Session[]`
+- `ctx.sessions.reserveForDeletion(rootId, knownIds?)` is a Host lifecycle fence used by recursive deletion. It blocks publication of reserved ids and descendants, rejects overlapping reservations, and invalidates Session objects prepared before a committed deletion while permitting fresh id reuse afterward.
 
 #### Advanced: ordered-teardown lifecycle primitives
 
@@ -140,5 +141,6 @@ Logging causes no invalidation, and exact reconstruction preserves request-prefi
 
 - **Session branching/tree** (pi-style entry tree) — deferred unless needed beyond boundary-based `fork()`.
 - **`fork()` cuts only at stable boundaries of live sessions** — the selected prefix must end outside an open turn and the source must be in the store; forking a persisted-but-unloaded session is excluded from the [fork API](../../../.agents/notes/implemented/feature/2026-06-30-session-store-fork-api.md).
+- **Deletion epochs live for the SessionStore lifetime** — one small generation entry remains per deleted id so an arbitrarily old prepared Session object can never publish after deletion. Long-lived Hosts that delete many unique ids retain those entries until restart.
 - **`SESSION_FORMAT_VERSION` stays pinned at `0`** — pre-release, no broad compatibility implied: `Session` accepts only current seed shapes, and a backend refuses any other version naming the direction (newer: "written by a newer harness — upgrade"; older: no upgrade path ships yet). Unknown event types refuse the same way unless marked `ignorable` in the envelope; the versioning mechanism is the [session-log-version-mechanism note](../../../.agents/notes/implemented/architecture/2026-08-10-session-log-version-mechanism.md). Narrow storage import upgrades belong to the persistence boundary ([policy](../../../AGENTS.md), [pre-identity message recovery](../../../.agents/notes/implemented/bug-fix/2026-07-28-load-pre-identity-session-messages.md)).
 - **`TurnEndReasonMap` omits the ACP-named `refusal` / `max_turn_requests` variants** — producer-gated: they land when an adapter or the loop first emits them.

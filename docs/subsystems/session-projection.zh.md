@@ -137,7 +137,7 @@ cachedSnapshot(meta: SessionHeader): ProjectionSnapshot | undefined
  * @param session - the live session to checkpoint.
  * @returns resolution after durability and event emission.
  */
-async write(session: Session): Promise<void>
+write(session: Session): Promise<void>
 
 /**
  * Cold-read one persisted session's projections with zero full-log load:
@@ -151,7 +151,7 @@ async write(session: Session): Promise<void>
  * @param signal - optional cancellation for the persistence reads.
  * @returns the snapshot cut at the stored log end.
  */
-async coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot>
+coldSnapshot(id: SessionId, signal?: AbortSignal): Promise<ProjectionSnapshot>
 ```
 
 Types: [Session](session.zh.md) · [SessionHeader](persistence.zh.md) · [SessionId](core.zh.md)
