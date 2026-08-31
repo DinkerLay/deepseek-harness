@@ -10,6 +10,10 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 
 DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
 
+## 维护 fork
+
+此分支作为 SuperCode 使用的 DSH Runtime fork 维护。它**没有新增 DSH bundle**；新增 package、修改的生产模块、准确的官方基线、Runtime 覆盖集合与更新规则记录在 [fork 差异](FORK.md)和 [`fork-manifest.json`](fork-manifest.json)中。
+
 <a id="run"></a>
 
 ## 运行

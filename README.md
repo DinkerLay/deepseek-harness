@@ -10,6 +10,10 @@ It uses an architecture where **everything is a plugin**, and is powered by [Cor
 
 DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
 
+## Maintained fork
+
+This branch is maintained as the DSH Runtime fork used by SuperCode. It adds **no DSH bundle**; the added packages, modified production modules, exact official base, Runtime override set, and update rules are recorded in [the fork delta](FORK.md) and [`fork-manifest.json`](fork-manifest.json).
+
 ## Run
 
 ### Run from `npm`

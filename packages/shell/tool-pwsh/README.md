@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 The model-facing `pwsh` tool registered over the `ctx.shell` executor seam. Intended for Windows compositions where a PowerShell executor (e.g. `@deepseek-ai/dsh-pwsh-local`) backs `ctx.shell`; the tool contract is PowerShell-dialect: native `C:\...` paths and `$env:NAME` variables. Behavior mirrors `dsh-tool-bash` call-for-call — foreground and `run_in_background` execution through the generic job runtime, the managed `DSH_*` environment through the shared `shell-env` registry, the sandbox denial rendering with the same-turn `sandbox_permissions` escalation surface, and the bash marker/truncation rendering story (a clean exit produces no marker).
 
-Requires a loaded executor implementation and the `shell-env` plugin; the tool stays pending until both exist (`inject: ['tools', 'bash', 'systemPrompt', 'bashEnv']`).
+Requires a loaded executor implementation and the `shell-env` plugin; the tool stays pending until both exist (`inject: ['tools', 'shell', 'systemPrompt', 'shellEnv']`). The optional [`shell-exec-env`](../shell-exec-env/README.md) registry is discovered dynamically and does not delay the tool when absent.
 
 The package root exposes only the Cordis plugin contract (`name`, `inject`, `Config`, `apply`); result rendering (`src/render.ts`) and background-job adaptation (`src/background.ts`) mirror the bash tool's structure and stay reachable through the package's `./src/*` export.
 
@@ -29,6 +29,8 @@ The plugin also contributes the `tool:pwsh` prompt section (order 105): non-zero
 ### Managed shell environment
 
 Every foreground and background model pwsh call receives a freshly collected trusted `DSH_*` environment through the shared [`dsh-shell-env`](../shell-env/) registry: `DSH_HOME` (the absolute Harness home), `DSH_SHELL=1`, the agent's `DSH_SESSION_ID`, and `DSH_SESSION_JSONL` when the active persistence backend locates one. Plugins contributing `DSH_*` facts to `ctx.shellEnv` apply to pwsh calls exactly as they do to bash calls. The snapshot passes through the dedicated `ShellExecRequest.dshEnv` channel; `process.env` is never modified. The description teaches the generic `$env:DSH_*` convention rather than naming persistence-specific variables.
+
+When `ctx.shellExecEnv` is present, the tool also awaits a fresh trusted capability snapshot after approval and before process creation. Those non-`DSH_*` values pass through `ShellExecRequest.env`; resolver failure prevents the process from starting. They are not listed in the prompt or Tool schema, and model-supplied extra arguments cannot add or replace them.
 
 Result text contains stdout, an optional `[stderr]` section, then applicable truncation, sandbox-denial (with the same-turn escalation hint when the composition advertises escalation), timeout, signal, and exit markers. A clean exit (0, no signal) produces no marker; an empty body renders as `(no output)`. Truncation links a safe complete spill file or reports it unavailable. Timeout is reported independently of final exit status; nonzero exit remains a model-interpreted result rather than `isError`. Windows reports forced termination as exit 1 without a signal, so `[killed by signal: …]` is POSIX-only there. Only infrastructure failures — spawn errors and aborts (`tool call aborted`) — produce `isError`.
 

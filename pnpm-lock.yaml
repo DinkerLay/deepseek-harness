@@ -6904,6 +6904,18 @@ importers:
         specifier: workspace:^
         version: link:../../core/tools
 
+  packages/shell/shell-exec-env:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-invariants':
+        specifier: workspace:^
+        version: link:../../runtime-diagnostics/invariants
+      '@deepseek-ai/dsh-tools':
+        specifier: workspace:^
+        version: link:../../core/tools
+
   packages/shell/tool-bash:
     dependencies:
       '@deepseek-ai/schemastery':
@@ -6955,6 +6967,9 @@ importers:
       '@deepseek-ai/dsh-shell-env':
         specifier: workspace:^
         version: link:../shell-env
+      '@deepseek-ai/dsh-shell-exec-env':
+        specifier: workspace:^
+        version: link:../shell-exec-env
       '@deepseek-ai/dsh-subprocess-local':
         specifier: workspace:^
         version: link:../../subprocess/subprocess-local
@@ -7065,6 +7080,9 @@ importers:
       '@deepseek-ai/dsh-shell-env':
         specifier: workspace:^
         version: link:../shell-env
+      '@deepseek-ai/dsh-shell-exec-env':
+        specifier: workspace:^
+        version: link:../shell-exec-env
       '@deepseek-ai/dsh-subprocess-local':
         specifier: workspace:^
         version: link:../../subprocess/subprocess-local
