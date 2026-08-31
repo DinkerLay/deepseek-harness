@@ -15,11 +15,23 @@ The fork adds two generic DSH packages:
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.md) | Host-only recursive deletion of a Session lineage across live state, persistence, projections, query indexes, workspaces, and sidecars. |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.md) | Optional registry for trusted, non-model environment values resolved immediately before Bash or Pwsh execution. |
 
-The manifest records every modified package, its changed production source files, and the complete `runtimePatchPackages` set that a downstream Runtime must override together. Generated docs, tests, translation records, and repository scripts are not Runtime packages and therefore are not repeated in that list.
+The Session-deletion capability modifies these official packages: `dsh-agent`, `dsh-agent-loop`, `dsh-session`, `dsh-session-persistence`, the JSONL and SQLite persistence providers, `dsh-session-projection-cache`, `dsh-session-query-sqlite`, `dsh-workspace`, `dsh-message-feedback`, `dsh-host-apiproxy`, and `dsh-tool-cordis`. Together they reserve live Agents, discover a complete Session lineage, delete durable records, and remove derived state without simulating deletion in Product code.
+
+The trusted shell-execution capability modifies `dsh-tool-bash` and `dsh-tool-pwsh`. Both Consumers optionally collect the new registry immediately before foreground or background process creation; Product-specific authentication remains outside this fork.
+
+[`fork-manifest.json`](fork-manifest.json) is the exact inventory of every modified package, changed production source file, and `runtimePatchPackages` entry that a downstream Runtime must override together. Generated docs, tests, translation records, and repository scripts are not Runtime packages and therefore are not repeated in that list.
 
 ## Ownership boundary
 
 This fork contains reusable DSH capabilities and missing extension points only. It does not contain SuperCode UI, AIME authentication, Product policy, Product bundles, or `@ainvest-team/*` code. An external Product plugin may consume the published APIs, but DSH must not import that plugin.
+
+Use the standalone maintenance checkout for DSH changes:
+
+```sh
+git clone --branch codex/supercode-runtime https://github.com/DinkerLay/deepseek-harness.git
+cd deepseek-harness
+git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
+```
 
 The checked-out SuperCode Submodule is read-only. Develop changes in this standalone fork, run the DSH checks here, publish the fork commit, and then move SuperCode's Submodule commit, `upstream.json` fork binding, Runtime package overrides, and architecture documents together.
 

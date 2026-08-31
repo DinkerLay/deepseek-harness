@@ -14,6 +14,8 @@ DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**
 
 此分支作为 SuperCode 使用的 DSH Runtime fork 维护。它**没有新增 DSH bundle**；新增 package、修改的生产模块、准确的官方基线、Runtime 覆盖集合与更新规则记录在 [fork 差异](FORK.md)和 [`fork-manifest.json`](fork-manifest.json)中。
 
+开发与审查使用 [`codex/supercode-runtime`](https://github.com/DinkerLay/deepseek-harness/tree/codex/supercode-runtime) 维护分支；更新流程由 [fork 指南](FORK.md)负责。
+
 <a id="run"></a>
 
 ## 运行
@@ -32,10 +34,10 @@ npx @deepseek-ai/dsh web
 
 ### 从源码运行
 
-如需从仓库源码运行：
+如需从全新 checkout 运行该维护 fork：
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
+git clone --branch codex/supercode-runtime https://github.com/DinkerLay/deepseek-harness.git
 cd deepseek-harness
 pnpm install
 pnpm run build

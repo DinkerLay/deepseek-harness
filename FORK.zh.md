@@ -15,11 +15,23 @@
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.zh.md) | 仅供 Host 使用，在 live 状态、持久化、projection、查询索引、workspace 和 sidecar 中递归删除 Session 谱系。 |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.zh.md) | 可选注册表，在 Bash 或 Pwsh 执行前解析可信且不向模型公开的环境值。 |
 
-manifest 记录每个修改过的 package、其变更的生产源码文件，以及下游 Runtime 必须一同覆盖的完整 `runtimePatchPackages` 集合。生成文档、测试、翻译记录和仓库脚本不是 Runtime package，因此不在该列表中重复记录。
+Session 删除能力修改以下官方 package：`dsh-agent`、`dsh-agent-loop`、`dsh-session`、`dsh-session-persistence`、JSONL 与 SQLite persistence provider、`dsh-session-projection-cache`、`dsh-session-query-sqlite`、`dsh-workspace`、`dsh-message-feedback`、`dsh-host-apiproxy` 和 `dsh-tool-cordis`。这些改动共同完成 live Agent 预留、完整 Session 谱系发现、持久记录删除和派生状态清理，不在 Product 代码中模拟删除。
+
+可信 shell 执行能力修改 `dsh-tool-bash` 与 `dsh-tool-pwsh`。两个 Consumer 都会在创建前台或后台进程之前可选地收集新 registry；Product 专用鉴权仍位于此 fork 之外。
+
+[`fork-manifest.json`](fork-manifest.json) 是所有修改 package、变更生产源码文件和 `runtimePatchPackages` 条目的精确清单，下游 Runtime 必须整体覆盖这些 package。生成文档、测试、翻译记录和仓库脚本不是 Runtime package，因此不在该列表中重复记录。
 
 ## 所有权边界
 
 此 fork 只包含可复用的 DSH 能力与缺失的扩展点，不包含 SuperCode UI、AIME 鉴权、Product 策略、Product bundle 或 `@ainvest-team/*` 代码。外部 Product 插件可以消费已发布 API，但 DSH 不得导入该插件。
+
+DSH 改动应在独立维护 checkout 中完成：
+
+```sh
+git clone --branch codex/supercode-runtime https://github.com/DinkerLay/deepseek-harness.git
+cd deepseek-harness
+git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
+```
 
 SuperCode 中检出的 Submodule 是只读的。应在这个独立 fork 中开发改动并运行 DSH 检查，发布 fork 提交后，再同时移动 SuperCode 的 Submodule 提交、`upstream.json` fork 绑定、Runtime package 覆盖与架构文档。
 

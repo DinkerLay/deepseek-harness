@@ -14,6 +14,8 @@ DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. *
 
 This branch is maintained as the DSH Runtime fork used by SuperCode. It adds **no DSH bundle**; the added packages, modified production modules, exact official base, Runtime override set, and update rules are recorded in [the fork delta](FORK.md) and [`fork-manifest.json`](fork-manifest.json).
 
+Development and review use the [`codex/supercode-runtime`](https://github.com/DinkerLay/deepseek-harness/tree/codex/supercode-runtime) maintenance branch; [the fork guide](FORK.md) owns its update workflow.
+
 ## Run
 
 ### Run from `npm`
@@ -28,10 +30,10 @@ The command starts the Web UI at `http://127.0.0.1:3080` by default and opens it
 
 ### Run from source
 
-To run from a repository checkout:
+To run this maintained fork from a fresh checkout:
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
+git clone --branch codex/supercode-runtime https://github.com/DinkerLay/deepseek-harness.git
 cd deepseek-harness
 pnpm install
 pnpm run build
