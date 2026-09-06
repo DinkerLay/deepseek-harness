@@ -71,6 +71,8 @@ Workspace 列表与 Session 列表是相互独立的重连基线。`workspace.cr
 [所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
 
 
+显式 Fork 目标只绑定到该目录已登记的 Workspace。未登记的目标不继承源 Workspace；部署方的逻辑 Project 分组可以独立于执行 cwd。
+
 ## 模型体验
 
 无。该包定义客户端与宿主间的 wire 约定和载体，其中没有任何内容会进入模型请求。

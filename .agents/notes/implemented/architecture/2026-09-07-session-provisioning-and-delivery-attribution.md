@@ -20,6 +20,8 @@ Fork title providers receive only post-seed human input. The first-prompt cadenc
 
 Naming cadence overrides preserve the original topic and recent input within a fixed byte budget. Shortened inputs carry `inputTruncated` in both the auxiliary request and accepted title. User-stopped parents retain late child reports quietly; the stop frontier accounts for input arriving during cancellation convergence.
 
+Explicit fork destinations resolve Workspace attachment from the destination directory. Source ancestry is retained independently, because assigning the original Workspace to a different immutable cwd violates its ownership contract.
+
 ## Alternatives considered
 
 **Change cwd after Session creation.** Immutable cwd is part of execution and persistence identity; provisioning chooses it before publication.

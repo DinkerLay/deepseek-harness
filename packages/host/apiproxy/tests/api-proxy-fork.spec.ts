@@ -28,7 +28,8 @@ async function composed(workspaces: readonly Workspace[] = []): Promise<Context>
   await ctx.plugin(SystemPrompt, { persona: '' })
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
-  ctx.provide('workspaceRegistry', { list: () => workspaces } as never)
+  ctx.provide('workspaceRegistry', { list: () => workspaces,
+    resolveByPath: async (path: string) => workspaces.find(workspace => workspace.path === path) } as never)
   ctx.agents.setFactory({
     createAgent: async (ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> => {
       const session = ctx.sessions.create(options.sessionId, {
@@ -99,6 +100,26 @@ describe('sessions.fork', () => {
     expect((await gateway.sessions.fork(request(payload))).result).toEqual(first.result)
     expect((await gateway.sessions.fork(request({ ...payload, seedLength: 3 }))).result.ok).toBe(false)
     expect(source.header.cwd).toBe('/proj')
+    await ctx.fiber.dispose()
+  })
+
+  it('attaches an explicit fork directory only to its matching Workspace', async () => {
+    const originalAttach = vi.fn(), destinationAttach = vi.fn()
+    const original = { id: 'original', path: '/proj', sessionIds: [sid('project-source')], attachSession: originalAttach } as unknown as Workspace
+    const destination = { id: 'destination', path: '/isolated', sessionIds: [], attachSession: destinationAttach } as unknown as Workspace
+    const ctx = await composed([original, destination])
+    const source = liveAgent(ctx, 'project-source', 1)
+    const gateway = api(ctx)
+    const independent = await gateway.sessions.fork(request({ sessionId: source.id,
+      destination: { sessionId: sid('unregistered'), cwd: '/unregistered' } }))
+    expect(independent.result.ok).toBe(true)
+    expect(originalAttach).not.toHaveBeenCalled()
+    expect(destinationAttach).not.toHaveBeenCalled()
+    const registered = await gateway.sessions.fork(request({ sessionId: source.id,
+      destination: { sessionId: sid('registered'), cwd: '/isolated' } }))
+    expect(registered.result.ok).toBe(true)
+    expect(originalAttach).not.toHaveBeenCalled()
+    expect(destinationAttach).toHaveBeenCalledWith('registered')
     await ctx.fiber.dispose()
   })
 

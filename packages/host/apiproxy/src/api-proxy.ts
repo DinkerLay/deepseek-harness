@@ -2315,7 +2315,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         let workspace: Workspace | undefined
         try {
-          workspace = await forkWorkspace(source)
+          workspace = destination === undefined
+            ? await forkWorkspace(source)
+            : await ctx.get('workspaceRegistry')?.resolveByPath(destination.cwd)
         } catch (error: unknown) {
           return err(request, {
             code: 'internal',
@@ -2365,9 +2367,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: {},
           })
         }
-        // An ordinary source keeps its direct Workspace. A subagent source is
-        // not listed there, so its ordinary fork joins the nearest owning
-        // ancestor instead. The child is already published if attach fails.
+        // An explicit destination attaches only to a Workspace owning that cwd.
+        // Inherited placement retains the source or nearest ancestor Workspace.
+        // The child is already published if attachment fails.
         if (workspace !== undefined) {
           try {
             await workspace.attachSession(childId)

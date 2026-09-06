@@ -71,6 +71,8 @@ The `settings.*`, `credentials.*`, and `llm.*` domains are the configuration-pag
 [Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
 
 
+An explicit fork destination attaches only to the Workspace registered for that directory. An unregistered destination does not inherit the source Workspace; deployment-owned logical Project grouping can remain separate from execution cwd.
+
 ## Model Experience
 
 None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.
