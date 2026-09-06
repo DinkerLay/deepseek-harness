@@ -651,6 +651,14 @@ setFactory(factory: AgentFactory): () => void
 async create(options: CreateAgentOptions): Promise<AgentHandle>
 
 /**
+ * Register a trusted provisioning policy before Session creation. Disposal prevents
+ * new calls and awaits admitted calls; middleware owns its resource rollback.
+ * @param interceptor - creation policy, including any destination and setup changes.
+ * @returns effect disposer that drains this policy's pending creations.
+ */
+registerCreateInterceptor(interceptor: AgentCreateInterceptor): () => Promise<void>
+
+/**
  * Load a persisted session and resume an agent on it through the registered
  * factory. Rejects if no factory is registered; the factory rejects if
  * session persistence is not configured or persistence/setup fails.
@@ -1094,3 +1102,7 @@ One session committed a different agent preset to its durable log. Consumers inv
 
 Source: [`packages/preset/agent-presets/src/types.ts`](../../packages/preset/agent-presets/src/types.ts)
 <!-- END GENERATED cordis-surface -->
+
+## Agent creation middleware
+
+`AgentCreateInterceptor` 接收 `CreateAgentOptions` 和只能调用一次、返回 `AgentHandle` 的 `next` 回调。它在发布前选择执行元数据并负责分配回滚；释放其 effect 会等待已进入的调用完成。

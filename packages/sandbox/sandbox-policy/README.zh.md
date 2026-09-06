@@ -28,6 +28,13 @@
 
 运行时切换是在对应会话日志中追加的一条 `sandbox/mode` 事件。`effective = explicit grant ?? fold(events) ?? deployment default`，因此覆盖会通过回放跨重启保留，两个会话也绝不会看到彼此状态。工作区标识无需另一条事件：创建时记录的不可变 `SessionHeader.cwd` 是该会话每次调用使用的根。该事件仍只进入日志；在下一次请求前，归属方会将当前事实贡献给完整运行时上下文快照。
 
+## Execution coordination
+
+`registerConstraint` 在 Session 与显式模式解析之后安装由 effect 管理的部署限制。受信任的限制不得扩大访问范围；执行消费方使用限制后的策略。
+
+[所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
+
+
 ## 模型体验
 
 ### 当前文件沙箱策略

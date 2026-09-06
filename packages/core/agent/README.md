@@ -80,6 +80,13 @@ The handle every plugin programs against:
 - Event listeners: all `agent/*` events are declared here — no dependency on the loop package needed.
 - Subagent delegation is not an `Agent` method; providers create or drive ordinary handles through the factory API, so delegation transports stay outside the core agent interface.
 
+## Execution coordination
+
+`registerCreateInterceptor` installs effect-owned creation middleware before Session publication. It may select cwd and compose setup, invokes next at most once, and owns resource rollback. Session identity, history, preset and delegation metadata remain unchanged. Disposal drains admitted calls.
+
+[Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
+
+
 ## Model Experience
 
 ### User, steering, and injected messages

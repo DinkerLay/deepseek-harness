@@ -15,7 +15,9 @@ Only text blocks from human `user/message` events are eligible. The first eligib
 
 Automatic work never delays the main agent response. A provider starts only after a marked loop-built request's exact route matches the current logged `request/header`, including when the unchanged header needs no new snapshot. Its late completion appends a standalone log-only event directly through `Session` without opening a turn. Persistence observes that event eagerly and drains on ordinary lifecycle checkpoints; title publication itself does not force a flush. Automatic failures warn and retain the latest title. New all-message revisions, provider disposal, session disposal, and explicit refresh abort older work, and a stale completion cannot append. Concurrent explicit refreshes reserve their revision before provider work, while overlapping automatic and explicit fallback requests share one session-local in-flight append. The service and bundled model provider each append their own literal event type, so no generic title-write marker, cast, or settlement queue is needed. Service teardown cancels queued work and drains calls that ignore cancellation before unloading completes.
 
-Forks inherit title events in their seed unchanged. The first-prompt cadence does not automatically retitle a child; the all-messages cadence may append a new revision after the child receives a later human prompt.
+Forks inherit provisional title text and generate their own title from post-seed input. Inherited user pins apply only to the source Session. Explicit refresh releases a user pin through `session/title-policy`; `session/title-generation` records generating, ready and failed attempts without admitting task input.
+
+`registerAutomaticMode` selects cadence for a deployment-owned Session role while preserving explicit user pins and exact logged routing. The `titleGeneration` projection exposes generating, ready and failed states. Interrupted naming is recoverable without admitting task input.
 
 ## Configuration
 

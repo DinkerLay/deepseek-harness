@@ -1,0 +1,4 @@
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./subagent-report.cordis.yml

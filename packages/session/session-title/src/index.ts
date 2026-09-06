@@ -59,6 +59,8 @@ export type SessionTitleSource =
 
 /** Payload of the log-only `session/title` event. */
 export interface SessionTitleEventData {
+  /** Source messages were used as bounded excerpts rather than in full. */
+  readonly inputTruncated?: true
   /** Normalized non-empty title text. */
   readonly title: string
   /** Exact human `user/message` seqs used to derive this title; empty for an explicit user rename. */
@@ -98,6 +100,11 @@ declare module '@deepseek-ai/dsh-session/types' {
      * surface or derived history.
      */
     'session/title': SessionTitleEventData
+    /** Log-only status of the latest automatic naming attempt. */
+    /** Explicit naming policy; independent of the last usable title text. */
+    'session/title-policy': { automatic: boolean }
+    /** Outcome of the latest automatic naming call; failure retains the latest usable title. */
+    'session/title-generation': { state: 'generating' | 'ready' | 'failed'; error?: string }
   }
 }
 
@@ -124,6 +131,8 @@ export type SessionTitleAutomaticMode = 'first-prompt' | 'all-prompts'
 
 /** Immutable input supplied to one title-provider call. */
 export interface SessionTitleProviderRequest {
+  /** Effective cadence for this Session role; omission uses the provider default. */
+  readonly automatic?: SessionTitleAutomaticMode
   /** Live session being titled. */
   readonly session: Session
   /** All eligible human messages through this generation revision. */
@@ -136,6 +145,8 @@ export interface SessionTitleProviderRequest {
 
 /** Provider output before service-owned normalization and log acceptance. */
 export interface SessionTitleProviderResult {
+  /** Whether the provider shortened any referenced source message. */
+  readonly inputTruncated?: boolean
   /** Proposed title text. */
   readonly title: string
   /** Exact seqs from `request.messages` used by this result. */
@@ -183,6 +194,19 @@ export function collectSessionTitleMessages(
   return messages
 }
 
+/** An explicit automatic policy releases a user pin without discarding its usable text. */
+function titlePinned(session: Session): boolean {
+  const events = session.events.slice(session.header.seedLength ?? 0)
+  const title = foldSessionTitle(events)
+  const policy = events.findLast(event => event.type === 'session/title-policy')
+  return title?.source.kind === 'user' && !(policy !== undefined && policy.seq > title.eventSeq && policy.data.automatic)
+}
+
+/** Fork naming uses only input accepted after the immutable seed. */
+function ownTitleMessages(session: Session, throughSeq?: number): SessionTitleUserMessage[] {
+  return collectSessionTitleMessages(session.events.slice(session.header.seedLength ?? 0), throughSeq)
+}
+
 /**
  * Fold the latest logged title without consulting mutable metadata.
  * @param events - live or persisted session log.
@@ -193,6 +217,7 @@ export function foldSessionTitle(events: readonly SessionEvent[]): SessionTitleS
   if (event === undefined) return undefined
   return deepFreeze({
     title: event.data.title,
+    ...event.data.inputTruncated === true ? { inputTruncated: true as const } : {},
     messageSeqs: [...event.data.messageSeqs],
     source: copySessionTitleSource(event.data.source),
     eventSeq: event.seq,
@@ -272,6 +297,20 @@ export class SessionTitleService extends Service {
   private readonly work = new Map<Session, SessionTitleWorkState>()
   private readonly lifetime = new AbortController()
   private readonly inFlight = new Set<Promise<unknown>>()
+  private readonly automaticModes = new Set<(session: Session) => SessionTitleAutomaticMode | undefined>()
+
+  /**
+   * Select automatic cadence for a deployment-owned Session role; explicit user pins still win.
+   * @param policy - optional override for the supplied Session, evaluated at input admission.
+   * @returns effect disposer removing this policy.
+   */
+  registerAutomaticMode(policy: (session: Session) => SessionTitleAutomaticMode | undefined): () => Promise<void> {
+    return this.ctx.effect(() => {
+      this.automaticModes.add(policy)
+      return () => { this.automaticModes.delete(policy) }
+    }, 'sessionTitle.registerAutomaticMode()')
+  }
+
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'sessionTitle')
@@ -315,6 +354,14 @@ export class SessionTitleService extends Service {
         wire: { viewSchema: titleSchema, view: state => state },
         stateVersion: 1,
       })
+      const generationSchema = zod.object({ state: zod.enum(['generating', 'ready', 'failed']), error: zod.string().optional() }).nullable()
+      projectionCtx.sessionProjections.register({
+        key: 'titleGeneration', stateSchema: generationSchema, init: () => null,
+        apply: (state, event) => event.type === 'session/title-generation' ? event.data
+          : event.type === 'session/title' && event.data.source.kind === 'user' ? { state: 'ready' as const } : state,
+        wire: { viewSchema: generationSchema, view: state => state }, stateVersion: 1,
+      })
+
     })
 
     ctx.on('session/event', (session, event) => {
@@ -333,6 +380,16 @@ export class SessionTitleService extends Service {
       this.onMainRequest(options)
       return next()
     }, { global: true, prepend: true })
+    ctx.on('session/created', (session) => {
+      const latest = session.events.slice(session.header.seedLength ?? 0).findLast(event => event.type === 'session/title-generation')
+      if (latest?.data.state !== 'generating') return
+      this.defer(() => {
+        if (this.ctx.sessions.get(session.id) !== session || this.work.get(session)?.active !== undefined
+          || session.events.findLast(event => event.type === 'session/title-generation')?.seq !== latest.seq
+          || (this.get(session)?.eventSeq ?? -1) > latest.seq) return
+        session.append('session/title-generation', { state: 'failed', error: 'Title generation was interrupted; retry naming.' })
+      })
+    })
     ctx.on('session/disposed', (session) => {
       const state = this.work.get(session)
       if (state === undefined) return
@@ -396,8 +453,9 @@ export class SessionTitleService extends Service {
     if (this.ctx.sessions.get(session.id) !== session) {
       throw new Error(`session "${session.id}" is not live in this store`)
     }
+    if (this.get(session)?.source.kind === 'user') session.append('session/title-policy', { automatic: true })
     const registration = this.registration
-    const messages = collectSessionTitleMessages(session.events)
+    const messages = ownTitleMessages(session)
     const latest = messages.at(-1)
     if (registration === undefined || registration.closing || latest === undefined) {
       // Explicit refresh is the unpin even without a provider: a standing
@@ -464,12 +522,14 @@ export class SessionTitleService extends Service {
     if (!this.serviceActive()) return
     if (event.data.source.kind !== 'user' || collectSessionTitleMessages([event]).length === 0) return
     // A user rename pins the title: no automatic revision may override it.
-    if (this.get(session)?.source.kind === 'user') return
+    if (titlePinned(session)) return
     const registration = this.registration
     if (registration !== undefined && !registration.closing) {
-      const messages = collectSessionTitleMessages(session.events, event.seq)
-      const shouldSchedule = registration.provider.automatic === 'all-prompts'
-        || (session.header.parentSession === undefined && messages.length === 1 && this.get(session) === undefined)
+      const messages = ownTitleMessages(session, event.seq)
+      const automatic = [...this.automaticModes].map(policy => policy(session)).findLast(mode => mode !== undefined)
+        ?? registration.provider.automatic
+      const shouldSchedule = automatic === 'all-prompts'
+        || (messages.length === 1 && foldSessionTitle(session.events.slice(session.header.seedLength ?? 0)) === undefined)
       if (shouldSchedule) {
         const state = this.stateFor(session)
         const revision = this.supersede(state, 'newer user message superseded title generation')
@@ -558,9 +618,12 @@ export class SessionTitleService extends Service {
       this.assertCurrent(session, work)
       await this.ensureFallback(session)
       this.assertCurrent(session, work)
-      const messages = collectSessionTitleMessages(session.events, work.throughSeq)
+      session.append('session/title-generation', { state: 'generating' })
+      const messages = ownTitleMessages(session, work.throughSeq)
       const result = await work.registration.provider.generate({
         session,
+        automatic: [...this.automaticModes].map(policy => policy(session)).findLast(mode => mode !== undefined)
+          ?? work.registration.provider.automatic,
         messages,
         ...route === undefined ? {} : { route },
         signal: work.signal,
@@ -569,6 +632,7 @@ export class SessionTitleService extends Service {
       const accepted = this.validateResult(result, messages)
       session.append('session/title', {
         title: accepted.title,
+        ...accepted.inputTruncated === true ? { inputTruncated: true as const } : {},
         messageSeqs: [...accepted.messageSeqs],
         source: {
           kind: 'provider',
@@ -576,7 +640,14 @@ export class SessionTitleService extends Service {
           ...accepted.model === undefined ? {} : { model: accepted.model },
         },
       })
+      session.append('session/title-generation', { state: 'ready' })
       return this.get(session)
+    } catch (error: unknown) {
+      if (this.work.get(session)?.active === work && this.work.get(session)?.revision === work.revision
+        && !work.controller.signal.aborted && this.ctx.sessions.get(session.id) === session && this.serviceActive()) {
+        session.append('session/title-generation', { state: 'failed', error: String(error).slice(0, 240) })
+      }
+      throw error
     } finally {
       const state = this.work.get(session)
       if (state?.active === work) delete state.active
@@ -625,8 +696,10 @@ export class SessionTitleService extends Service {
       }
       model = { provider: record.provider, model: record.model }
     }
+    if (candidate.inputTruncated !== undefined && typeof candidate.inputTruncated !== 'boolean') throw new Error('title inputTruncated must be boolean')
     return {
       title,
+      ...candidate.inputTruncated === true ? { inputTruncated: true } : {},
       messageSeqs,
       ...(model === undefined ? {} : { model }),
     }
@@ -681,7 +754,7 @@ export class SessionTitleService extends Service {
   }
 
   /** Queue detached service work and retain it through service disposal. */
-  private defer(task: () => Promise<void>): void {
+  private defer(task: () => void | Promise<void>): void {
     const run = Promise.resolve().then(async () => {
       if (!this.serviceActive()) return
       await task()
@@ -755,9 +828,9 @@ export class SessionTitleService extends Service {
   /** Create the first deterministic fallback if the session still lacks a title. */
   private async ensureFallback(session: Session): Promise<SessionTitleSnapshot | undefined> {
     this.assertServiceActive()
-    const current = this.get(session)
+    const current = foldSessionTitle(session.events.slice(session.header.seedLength ?? 0))
     if (current !== undefined) return current
-    const [first] = collectSessionTitleMessages(session.events)
+    const [first] = ownTitleMessages(session)
     if (first === undefined) return undefined
     const title = fallbackSessionTitle(
       first.text,
@@ -772,7 +845,7 @@ export class SessionTitleService extends Service {
       if (this.ctx.sessions.get(session.id) !== session) {
         throw new Error(`session "${session.id}" is not live in this store`)
       }
-      const accepted = this.get(session)
+      const accepted = foldSessionTitle(session.events.slice(session.header.seedLength ?? 0))
       if (accepted !== undefined) return accepted
       session.append('session/title', {
         title,

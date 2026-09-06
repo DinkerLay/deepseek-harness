@@ -82,6 +82,13 @@ inbox 的实时通知刻意采用逐消息的最小载荷：`agent/inbox/inserte
 - 事件监听器：全部 `agent/*` 事件都在此处声明，不需要依赖循环包。
 - subagent 委派不是 `Agent` 方法；提供方通过工厂 API 创建或驱动普通 handle，因此委派传输留在核心 agent 接口之外。
 
+## Execution coordination
+
+`registerCreateInterceptor` 在 Session 发布前安装由 effect 管理的创建中间件。它可选择 cwd 和组合 setup，最多调用一次 next，并负责资源回滚。Session 身份、历史、preset 和派发元数据保持不变。释放会等待已进入的调用完成。
+
+[所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
+
+
 ## 模型体验
 
 ### 用户、steering 与注入消息

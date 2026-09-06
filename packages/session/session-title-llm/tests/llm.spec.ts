@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, CallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
+import SessionTitleService, { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
   generateSessionTitleWithLlm,
+  registerSessionTitleLlmProvider,
   resolveSessionTitleLlmConfig,
   SESSION_TITLE_TIMEOUT_CODE,
 } from '@deepseek-ai/dsh-session-title-llm'
@@ -362,4 +363,26 @@ describe('generateSessionTitleWithLlm', () => {
       vi.useRealTimers()
     }
   })
+})
+
+
+it('uses bounded original and recent context when a Session overrides first-prompt cadence', async () => {
+  const { ctx, adapter } = await withScript(SCRIPT)
+  await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
+  const selected = request(ctx)
+  const latest = selected.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: 'Latest topic ' + '资料'.repeat(500) }],
+  }), { surfaceOp: 'append' })
+  ctx.sessionTitle.registerAutomaticMode(() => 'all-prompts')
+  registerSessionTitleLlmProvider(ctx, { ...CONFIG, provider: 'current-route', model: 'current-model', maxInputBytes: 256 },
+    'role-title', 'first-prompt', messages => messages.slice(0, 1))
+  const result = await ctx.sessionTitle.refresh(selected.session)
+  expect(result?.messageSeqs).toEqual([selected.messages[0]?.seq, latest.seq])
+  expect(result?.inputTruncated).toBe(true)
+  const content = adapter.requests[0]?.messages[0]?.content
+  const text = content?.filter(block => block.type === 'text').map(block => block.text).join('') ?? ''
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(256)
+  expect(text).toContain('first prompt')
+  expect(text).toContain('Latest topic')
+  await ctx.fiber.dispose()
 })

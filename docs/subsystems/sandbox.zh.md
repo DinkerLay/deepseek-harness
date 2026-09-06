@@ -196,6 +196,13 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
 
 ```ts cordis-catalog
 /**
+ * Register a deployment constraint over every enforcing consumer's policy.
+ * @param constraint - policy restriction; it must not broaden the supplied access.
+ * @returns the effect disposer removing this exact restriction.
+ */
+registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void>
+
+/**
  * Resolve the complete policy for one capability call. An approved explicit
  * mode outranks the session's last `sandbox/mode` event, which outranks the
  * deployment default. A session cwd is its workspace-write boundary; the
@@ -218,3 +225,7 @@ Types: [Session](session.zh.md)
 
 Source: [`packages/sandbox/sandbox-policy/src/index.ts`](../../packages/sandbox/sandbox-policy/src/index.ts)
 <!-- END GENERATED cordis-surface -->
+
+## Deployment policy constraints
+
+`SandboxPolicyConstraint` 接收 `SandboxPolicyRequest` 及已解析的 `SandboxExecutionPolicy`，并返回受限策略。它在显式模式覆盖后运行，不得扩大访问范围。

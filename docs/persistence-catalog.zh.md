@@ -656,6 +656,17 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/session/session-title/src/index.ts:100`](../packages/session/session-title/src/index.ts)
 
+<a id="sessiontitle-generation--log-only"></a>
+
+#### `session/title-generation` — log-only
+
+```ts persistence-catalog
+/** Outcome of the latest automatic naming call; failure retains the latest usable title. */
+'session/title-generation': { state: 'generating' | 'ready' | 'failed'; error?: string }
+```
+
+来源：[`packages/session/session-title/src/index.ts:105`](../packages/session/session-title/src/index.ts)
+
 <a id="sessiontitle-llm-request--log-only"></a>
 
 #### `session/title-llm-request` — log-only
@@ -668,6 +679,17 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 类型：[SessionTitleLlmRequestEventData](subsystems/session-title.zh.md)
 
 来源：[`packages/session/session-title-llm/src/index.ts:43`](../packages/session/session-title-llm/src/index.ts)
+
+<a id="sessiontitle-policy--log-only"></a>
+
+#### `session/title-policy` — log-only
+
+```ts persistence-catalog
+/** Explicit naming policy; independent of the last usable title text. */
+'session/title-policy': { automatic: boolean }
+```
+
+来源：[`packages/session/session-title/src/index.ts:103`](../packages/session/session-title/src/index.ts)
 
 ### `step/*`
 

@@ -2260,8 +2260,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
       },
 
+      forkCapabilities: { version: 1, destination: true, exactSeed: true },
+
       async fork(request) {
-        const { sessionId, atSeq } = request.payload
+        const { sessionId, atSeq, seedLength, destination } = request.payload
+        if (seedLength !== undefined && (atSeq !== undefined || !Number.isSafeInteger(seedLength) || seedLength < 0)) {
+          return err(request, { code: 'fork-unavailable', message: 'Exact seedLength and atSeq are mutually exclusive.', details: { sessionId } })
+        }
         let source: SessionReadState
         try {
           source = await readSessionState(sessionId)
@@ -2287,7 +2292,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           ?? (atSeq === undefined || atSeq > lastSeq
             ? events.findLast(e => e.type === 'turn/end')
             : undefined)
-        if (boundary === undefined) {
+        if (seedLength === undefined && boundary === undefined) {
           return err(request, {
             code: 'fork-unavailable',
             message: atSeq !== undefined && atSeq <= lastSeq
@@ -2300,8 +2305,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // injections) up to the next turn/start: they are standalone events, so
         // the seed stays balanced, and the child inherits a title generated
         // right after the boundary turn.
-        let cut = boundary.seq + 1
-        while (cut < events.length && events[cut]?.type !== 'turn/start') cut++
+        let cut = seedLength ?? (boundary === undefined ? 0 : boundary.seq + 1)
+        if (seedLength === undefined) while (cut < events.length && events[cut]?.type !== 'turn/start') cut++
+        if (cut > events.length || (cut > 0 && events[cut - 1]?.seq !== cut - 1)) {
+          return err(request, { code: 'fork-unavailable', message: 'Exact fork prefix is unavailable.', details: { sessionId } })
+        }
+        if (events.slice(0, cut).findLast(event => event.type === 'turn/start' || event.type === 'turn/end')?.type === 'turn/start') {
+          return err(request, { code: 'fork-unavailable', message: 'Exact fork prefix contains an unfinished Turn.', details: { sessionId } })
+        }
         let workspace: Workspace | undefined
         try {
           workspace = await forkWorkspace(source)
@@ -2312,19 +2323,32 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: {},
           })
         }
-        const childId = `session-${randomUUID()}` as SessionId
+        const childId = destination?.sessionId ?? `session-${randomUUID()}` as SessionId
+        const cwd = destination?.cwd ?? source.header.cwd
         // The child inherits the parent's composition for the same reason a
         // resumed session keeps its own: the seeded history was produced under
         // those tools, and composing anything else would strand the tool calls
         // it already carries. Now that no model-facing row sits in the host
         // plane, composing nothing would leave the child with no tools at all.
         const forkComposition = await composeAgent(resolveSessionPreset(source))
+        let existing: SessionReadState | undefined
+        if (destination !== undefined && (ctx.sessions.get(childId) !== undefined || ctx.get('sessionPersistence') !== undefined)) {
+          try { existing = await readSessionState(childId) } catch (error: unknown) {
+            if (!(error instanceof SessionNotFound)) throw error
+          }
+          if (existing !== undefined && (existing.header.parentSession !== source.id
+            || existing.header.seedLength !== cut || existing.header.cwd !== cwd
+            || existing.header.agentPreset !== forkComposition.agentPreset
+            || JSON.stringify(existing.events.slice(0, cut)) !== JSON.stringify(events.slice(0, cut)))) {
+            return err(request, { code: 'fork-unavailable', message: 'Reserved fork identity already has different history or placement.', details: { sessionId } })
+          }
+        }
         try {
-          await ctx.agents.create({
+          if (existing === undefined) await ctx.agents.create({
             sessionId: childId,
             seed: events.slice(0, cut),
             meta: {
-              ...source.header.cwd === undefined ? {} : { cwd: source.header.cwd },
+              ...cwd === undefined ? {} : { cwd },
               parentSession: source.id,
               seedLength: cut,
               ...forkComposition.agentPreset === undefined

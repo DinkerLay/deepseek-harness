@@ -23,6 +23,8 @@ import type {
 
 /** Exact model-visible request recorded before one auxiliary title dispatch. */
 export interface SessionTitleLlmRequestEventData {
+  /** At least one cited message is represented by a shortened excerpt. */
+  readonly inputTruncated?: true
   /** Registered title-provider identity responsible for the request. */
   readonly titleProvider: SessionTitleProviderId
   /** Exact human `user/message` seqs represented in `messages`. */
@@ -163,9 +165,28 @@ export function registerSessionTitleLlmProvider(
     id: titleProvider,
     automatic,
     async generate(request) {
-      return generateSessionTitleWithLlm(ctx, resolved, request, selectMessages(request.messages), titleProvider)
+      const messages = request.automatic === 'all-prompts' && automatic === 'first-prompt'
+        ? fitTitleContext(request.messages, resolved.maxInputBytes) : selectMessages(request.messages)
+      return generateSessionTitleWithLlm(ctx, resolved, request, messages, titleProvider)
     },
   })
+}
+
+/** Keep the original topic and latest instructions within the exact framed-input budget. */
+function fitTitleContext(messages: readonly SessionTitleUserMessage[], maxBytes: number): readonly SessionTitleUserMessage[] {
+  let selected = [...messages]
+  while (selected.length > 2 && Buffer.byteLength(frameMessages(selected), 'utf8') > maxBytes) selected.splice(1, 1)
+  if (Buffer.byteLength(frameMessages(selected), 'utf8') <= maxBytes) return selected
+  const texts = selected.map(message => Array.from(message.text))
+  let low = 0, high = Math.max(0, ...texts.map(text => text.length))
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    const candidate = selected.map((message, index) => ({ ...message, text: (texts[index] ?? []).slice(0, middle).join('') }))
+    if (Buffer.byteLength(frameMessages(candidate), 'utf8') <= maxBytes) low = middle
+    else high = middle - 1
+  }
+  selected = selected.map((message, index) => ({ ...message, text: (texts[index] ?? []).slice(0, low).join('') }))
+  return selected
 }
 
 /** Resolve the explicit pair or the exact route captured from `request/header`. */
@@ -237,6 +258,8 @@ export async function generateSessionTitleWithLlm(
   if (selectedMessages.length === 0) {
     throw new Error('session-title-llm: at least one source message is required')
   }
+  const inputTruncated = selectedMessages.some(message =>
+    request.messages.find(source => source.seq === message.seq)?.text !== message.text)
   const framedInput = frameMessages(selectedMessages)
   const inputBytes = Buffer.byteLength(framedInput, 'utf8')
   if (inputBytes > config.maxInputBytes) {
@@ -261,6 +284,7 @@ export async function generateSessionTitleWithLlm(
   })
   request.session.append('session/title-llm-request', {
     titleProvider,
+    ...inputTruncated ? { inputTruncated: true as const } : {},
     messageSeqs: selectedMessages.map(message => message.seq),
     route,
     system,
@@ -288,6 +312,7 @@ export async function generateSessionTitleWithLlm(
   if (title.length === 0) throw new Error('session-title-llm: title model produced no text')
   return {
     title,
+    ...inputTruncated ? { inputTruncated: true } : {},
     messageSeqs: selectedMessages.map(message => message.seq),
     model: route,
   }

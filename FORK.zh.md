@@ -44,3 +44,7 @@ SuperCode 中检出的 Submodule 是只读的。应在这个独立 fork 中开�
 5. SuperCode 接受新提交前，要求其 `upstream.json.runtimePatchPackages` 与本 manifest 匹配。
 
 Git 仍是完整文件差异的权威来源。manifest 在 package 与 Runtime 组装层面对差异分类，使下游升级无需依赖提交消息还原历史。
+
+## Session execution coordination
+
+Fork 还提供精确 fork 目标、由 effect 管理的 Agent 创建准备、sandbox policy 限制、逐条子任务输入归属和分支自动命名。Git 所有权与 ChatFlow 策略仍由 Product 插件负责。

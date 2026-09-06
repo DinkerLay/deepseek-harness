@@ -64,6 +64,13 @@ The `settings.*`, `credentials.*`, and `llm.*` domains are the configuration-pag
 
 `AbstractApiClient` holds every protocol invariant — rpcId minting, envelope wrap/unwrap, zod parsing, SSE frame decoding, unary timeout, microtask-batched envelope observation (`subscribeEnvelopes`) — while platform subclasses supply only the `doFetch` transport aspect. `InProcessApiClient` over `toFetchHandler(api)` remains the isomorphic point for callers and carrier tests that need the full wire serialization/validation path without a network. Product `dsh --profile headless` is a direct core entry point and does not mount this package.
 
+## Execution coordination
+
+`sessions.fork` additionally accepts `seedLength` for an exact balanced prefix, and `destination: { sessionId, cwd }` for a reserved execution identity. `atSeq` and `seedLength` are mutually exclusive. Repeated destinations reconcile matching history, preset and cwd; conflicting identities fail. The Host advertises `sessions.forkCapabilities.version = 1`.
+
+[Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
+
+
 ## Model Experience
 
 None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.

@@ -255,6 +255,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
       },
       {
+        signature: 'registerCreateInterceptor(interceptor: AgentCreateInterceptor): () => Promise<void>',
+        description: 'Register a trusted provisioning policy before Session creation. Disposal prevents new calls and awaits admitted calls; middleware owns its resource rollback.',
+        parameters: [{ name: 'interceptor', description: 'creation policy, including any destination and setup changes.' }],
+        returns: 'effect disposer that drains this policy\'s pending creations.',
+      },
+      {
         signature: 'async resume(options: ResumeAgentOptions): Promise<AgentHandle>',
         description: 'Load a persisted session and resume an agent on it through the registered factory. Rejects if no factory is registered; the factory rejects if session persistence is not configured or persistence/setup fails.',
         parameters: [{ name: 'options', description: 'persisted identity, configuration, and optional setup.' }],
@@ -1159,6 +1165,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mode, fallback workspace root, and current request-time policy section. Tool layers call resolve for each execution so a session\'s mode log and immutable cwd travel together to every enforcing capability.',
     methods: [
       {
+        signature: 'registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void>',
+        description: 'Register a deployment constraint over every enforcing consumer\'s policy.',
+        parameters: [{ name: 'constraint', description: 'policy restriction; it must not broaden the supplied access.' }],
+        returns: 'the effect disposer removing this exact restriction.',
+      },
+      {
         signature: 'readonly defaultMode: SandboxMode',
         description: 'The deployment default mode — the fallback beneath a session override.',
         parameters: [],
@@ -1599,6 +1611,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     summary: 'Log-backed title fold plus asynchronous fallback generation.',
     description: 'Log-backed title fold plus asynchronous fallback generation.',
     methods: [
+      {
+        signature: 'registerAutomaticMode(policy: (session: Session) => SessionTitleAutomaticMode | undefined): () => Promise<void>',
+        description: 'Select automatic cadence for a deployment-owned Session role; explicit user pins still win.',
+        parameters: [{ name: 'policy', description: 'optional override for the supplied Session, evaluated at input admission.' }],
+        returns: 'effect disposer removing this policy.',
+      },
       {
         signature: 'get(session: Session): SessionTitleSnapshot | undefined',
         description: 'Read the latest folded title from one live or replayed session.',
@@ -2935,6 +2953,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AgentCancelCause = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'parent\';\n} | {\n    readonly kind: \'hook\';\n    readonly reason: string;\n} | {\n    readonly kind: \'disposed\';\n};',
   },
   {
+    name: 'AgentCreateInterceptor',
+    declaration: 'export type AgentCreateInterceptor = (options: CreateAgentOptions, next: (options: CreateAgentOptions) => Promise<AgentHandle>) => Promise<AgentHandle>;',
+  },
+  {
     name: 'AgentFactory',
     declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
   },
@@ -4103,6 +4125,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SandboxPolicy extends SandboxExecutionPolicy {\n    mode: ConfinedSandboxMode;\n}',
   },
   {
+    name: 'SandboxPolicyConstraint',
+    declaration: 'export type SandboxPolicyConstraint = (request: SandboxPolicyRequest, policy: SandboxExecutionPolicy) => SandboxExecutionPolicy;',
+  },
+  {
     name: 'SandboxPolicyRequest',
     declaration: 'export interface SandboxPolicyRequest {\n    session?: Session;\n    mode?: SandboxMode;\n}',
   },
@@ -4372,7 +4398,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleEventData',
-    declaration: 'export interface SessionTitleEventData {\n    readonly title: string;\n    readonly messageSeqs: number[];\n    readonly source: SessionTitleSource;\n}',
+    declaration: 'export interface SessionTitleEventData {\n    readonly inputTruncated?: true;\n    readonly title: string;\n    readonly messageSeqs: number[];\n    readonly source: SessionTitleSource;\n}',
   },
   {
     name: 'SessionTitleModelProvenance',
@@ -4396,11 +4422,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleProviderRequest',
-    declaration: 'export interface SessionTitleProviderRequest {\n    readonly session: Session;\n    readonly messages: readonly SessionTitleUserMessage[];\n    readonly route?: SessionTitleModelProvenance;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SessionTitleProviderRequest {\n    readonly automatic?: SessionTitleAutomaticMode;\n    readonly session: Session;\n    readonly messages: readonly SessionTitleUserMessage[];\n    readonly route?: SessionTitleModelProvenance;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SessionTitleProviderResult',
-    declaration: 'export interface SessionTitleProviderResult {\n    readonly title: string;\n    readonly messageSeqs: readonly number[];\n    readonly model?: SessionTitleModelProvenance;\n}',
+    declaration: 'export interface SessionTitleProviderResult {\n    readonly inputTruncated?: boolean;\n    readonly title: string;\n    readonly messageSeqs: readonly number[];\n    readonly model?: SessionTitleModelProvenance;\n}',
   },
   {
     name: 'SessionTitleSnapshot',

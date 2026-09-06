@@ -107,6 +107,13 @@ The model-facing tool collects synchronously by default: it awaits the child res
 
 Continuable Activations await a best-effort final session flush without treating listener participation as durability confirmation. One-shot runs retain best-effort session checkpointing, so a completed one-shot child is discoverable after disposal only when its session actually reached persistence; the service does not invent a catalog entry from Task history when that checkpoint is absent.
 
+## Execution coordination
+
+Each continuable input carries `source.delegation.parentSessionId` and, when one is open, `parentTurn`. Correlate its message ID with inbox consumption to locate the child Turn; activation run IDs remain residency telemetry. User-stopped parents retain reports and settlement quietly until fresh user or coordinator input arrives.
+
+[Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
+
+
 ## Model Experience
 
 ### Settlement notice

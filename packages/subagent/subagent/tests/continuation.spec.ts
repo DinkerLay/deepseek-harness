@@ -498,8 +498,19 @@ describe('SubagentRuntime.followup residency routing', () => {
     expect(child?.status).toBe('running')
 
     // Both messages queue behind the open turn, in call order.
+    parent.session.append('turn/start', { turn: 10 })
     const firstMessage = await followup(ctx, parent, started.childId, message('first follow-up'))
+    parent.session.append('turn/end', { turn: 10, reason: { kind: 'completed' } })
+    parent.session.append('turn/start', { turn: 11 })
     const secondMessage = await followup(ctx, parent, started.childId, message('second follow-up'))
+    parent.session.append('turn/end', { turn: 11, reason: { kind: 'completed' } })
+    const inputs = child!.session.events.flatMap(event => event.type === 'agent/inbox/spliced' ? event.data.inserted : [])
+    expect(inputs.find(input => input.id === firstMessage)?.source).toMatchObject({
+      delegation: { parentSessionId: parent.id, parentTurn: 10 },
+    })
+    expect(inputs.find(input => input.id === secondMessage)?.source).toMatchObject({
+      delegation: { parentSessionId: parent.id, parentTurn: 11 },
+    })
     expect(firstMessage).not.toBe(secondMessage)
     // Still the same Activation: no second child Agent was created.
     expect(ctx.agents.get(started.childId)).toBe(child)
@@ -2686,4 +2697,20 @@ describe('SubagentRuntime.interrupt', () => {
     hold.resolve(undefined)
     await drained
   })
+})
+
+
+it('retains a late child result quietly after the user stops its parent', async () => {
+  const release = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('child result'), gate: release.promise }])
+  const { ctx, parent } = await setupWith(adapter)
+  const child = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  parent.session.append('turn/start', { turn: 1 })
+  parent.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
+  release.resolve(undefined)
+  await waitNoActivation(ctx, child.childId)
+  expect(parent.status).toBe('idle')
+  expect(parent.inbox.nextStep.some(message => message.source.kind === 'subagent-settled')).toBe(true)
+  expect(adapter.requests).toHaveLength(1)
 })

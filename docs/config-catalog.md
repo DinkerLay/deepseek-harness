@@ -1925,7 +1925,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/session/session-title/src/index.ts:79`](../packages/session/session-title/src/index.ts)
+Source: [`packages/session/session-title/src/index.ts:81`](../packages/session/session-title/src/index.ts)
 
 <a id="deepseek-aidsh-session-title-all-prompts-llm"></a>
 

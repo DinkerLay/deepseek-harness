@@ -15,6 +15,7 @@ export {}
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     title: string | null
+    titleGeneration: { state: 'generating' | 'ready' | 'failed'; error?: string | undefined } | null
   }
   interface SessionProjectionMap {
     /**
@@ -23,5 +24,6 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
      * plain string: the shape the client list rows consume.
      */
     title: string | null
+    titleGeneration: { state: 'generating' | 'ready' | 'failed'; error?: string | undefined } | null
   }
 }

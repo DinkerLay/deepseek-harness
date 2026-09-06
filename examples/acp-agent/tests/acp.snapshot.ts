@@ -517,6 +517,9 @@ const SCENARIOS: Scenario[] = [
   // `report` through the shipped next-step policy. A maintenance fence holds
   // the parent until the runtime's unconditional settlement notice follows;
   // the resumed parent then claims both messages in causal order.
+  { name: 'subagent-stopped-parent', hasModelTurn: true, recorded: false,
+    configPath: fileURLToPath(new URL('../subagent-stopped-parent.cordis.yml', import.meta.url)),
+    pinsChildToolSchemas: [1], pinsChildSystemPrompts: [1] },
   {
     name: 'subagent-report',
     hasModelTurn: true,

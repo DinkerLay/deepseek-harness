@@ -87,6 +87,30 @@ const api = (ctx: Context) => createApiProxy(ctx, {
 })
 
 describe('sessions.fork', () => {
+  it('forks before the first Turn into a reserved directory and reconciles the same identity', async () => {
+    const ctx = await composed()
+    const source = liveAgent(ctx, 'session-source', 2)
+    const gateway = api(ctx)
+    const payload = { sessionId: source.id, seedLength: 0, destination: { sessionId: sid('retry'), cwd: '/isolated/retry' } }
+    expect(gateway.sessions.forkCapabilities?.exactSeed).toBe(true)
+    const first = await gateway.sessions.fork(request(payload))
+    expect(first.result).toEqual({ ok: true, value: { sessionId: 'retry' } })
+    expect(ctx.sessions.get(sid('retry'))?.header).toMatchObject({ cwd: '/isolated/retry', parentSession: source.id, seedLength: 0 })
+    expect((await gateway.sessions.fork(request(payload))).result).toEqual(first.result)
+    expect((await gateway.sessions.fork(request({ ...payload, seedLength: 3 }))).result.ok).toBe(false)
+    expect(source.header.cwd).toBe('/proj')
+    await ctx.fiber.dispose()
+  })
+
+  it('rejects an exact prefix through an unfinished Turn without publishing the reserved identity', async () => {
+    const ctx = await composed()
+    const source = liveAgent(ctx, 'session-source', 1)
+    const response = await api(ctx).sessions.fork(request({ sessionId: source.id, seedLength: 2,
+      destination: { sessionId: sid('unbalanced'), cwd: '/isolated/unbalanced' } }))
+    expect(response.result.ok).toBe(false)
+    expect(ctx.sessions.get(sid('unbalanced'))).toBeUndefined()
+    await ctx.fiber.dispose()
+  })
   it('cuts at the anchored completed turn and records lineage and cwd', async () => {
     const ctx = await composed()
     const source = liveAgent(ctx, 'session-source', 2)

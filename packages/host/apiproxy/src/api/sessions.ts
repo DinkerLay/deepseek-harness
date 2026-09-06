@@ -234,6 +234,8 @@ export interface SessionSearchItem {
 
 /** Session-domain unary methods (the map keys session.* of RpcMethodMap). */
 export interface SessionsApi {
+  /** Host capability for exact, recoverable forks into a caller-owned execution directory. */
+  readonly forkCapabilities?: { readonly version: 1; readonly destination: true; readonly exactSeed: true }
   /** Lists persisted sessions (updatedAt descending). v1 returns everything; cursor is a reserved seat, unimplemented. */
   list(request: RpcRequest<{ cursor?: string }>): Promise<RpcResponse<{ items: SessionSummary[] }>>
 
@@ -338,7 +340,12 @@ export interface SessionsApi {
    * directly, or the nearest workspace-owning ancestor when the source is a
    * subagent.
    */
-  fork(request: RpcRequest<{ sessionId: SessionId; atSeq?: number }>):
+  fork(request: RpcRequest<{
+    sessionId: SessionId
+    atSeq?: number
+    seedLength?: number
+    destination?: { sessionId: SessionId; cwd: string }
+  }>):
   Promise<RpcResponse<{ sessionId: SessionId }>>
 
   /**

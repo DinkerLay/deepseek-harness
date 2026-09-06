@@ -44,3 +44,7 @@ The checked-out SuperCode Submodule is read-only. Develop changes in this standa
 5. In SuperCode, require its `upstream.json.runtimePatchPackages` to match this manifest before accepting the new commit.
 
 The authoritative exhaustive file diff remains Git. The manifest classifies that diff at package and Runtime-assembly level so downstream updates do not rely on commit-message archaeology.
+
+## Session execution coordination
+
+The fork also exposes exact fork destinations, effect-owned Agent provisioning, sandbox policy constraints, per-message child attribution and branch-local automatic naming. Git ownership and ChatFlow policy remain in Product plugins.

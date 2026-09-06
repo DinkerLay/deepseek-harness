@@ -132,6 +132,10 @@ export interface CreateAgentOptions {
   readonly setup?: AgentSetup
 }
 
+/** Trusted creation middleware; invoke next once with the final immutable Session metadata. */
+export type AgentCreateInterceptor = (options: CreateAgentOptions,
+  next: (options: CreateAgentOptions) => Promise<AgentHandle>) => Promise<AgentHandle>
+
 /**
  * Options for resuming an agent on a persisted session
  * ({@link AgentRegistry.resume}).
@@ -436,8 +440,56 @@ export class AgentRegistry extends Service {
     // capability and need no Cordis tracker magic.
     const { target } = this.requireFactory()
     const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return this.rememberHandle(await Reflect.apply(target.createAgent, receiver, [ownerCtx, options]))
+    const registrations = [...this.createInterceptors]
+    const create = async (index: number, candidate: CreateAgentOptions): Promise<AgentHandle> => {
+      const registration = registrations[index]
+      if (registration === undefined) {
+        // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply supplies the traced factory receiver.
+        return await Reflect.apply(target.createAgent, receiver, [ownerCtx, candidate])
+      }
+      if (registration.closing) throw new Error('agent creation policy was removed during provisioning')
+      let invoked = false
+      const pending = Promise.resolve().then(() => registration.interceptor(candidate, (nextOptions) => {
+        if (invoked) throw new Error('agent creation middleware may call next only once')
+        if (nextOptions.sessionId !== candidate.sessionId || nextOptions.seed !== candidate.seed
+          || nextOptions.meta?.parentSession !== candidate.meta?.parentSession
+          || nextOptions.meta?.seedLength !== candidate.meta?.seedLength
+          || nextOptions.meta?.agentPreset !== candidate.meta?.agentPreset
+          || nextOptions.meta?.origin !== candidate.meta?.origin
+          || nextOptions.meta?.delegationDepth !== candidate.meta?.delegationDepth) {
+          throw new Error('agent creation policy must preserve identity, history, preset and delegation metadata')
+        }
+        invoked = true
+        return create(index + 1, nextOptions)
+      }))
+      registration.active.add(pending)
+      try { return await pending } finally { registration.active.delete(pending) }
+    }
+    return this.rememberHandle(await create(0, options))
+  }
+
+  private readonly createInterceptors = new Set<{
+    interceptor: AgentCreateInterceptor
+    closing: boolean
+    active: Set<Promise<AgentHandle>>
+  }>()
+
+  /**
+   * Register a trusted provisioning policy before Session creation. Disposal prevents
+   * new calls and awaits admitted calls; middleware owns its resource rollback.
+   * @param interceptor - creation policy, including any destination and setup changes.
+   * @returns effect disposer that drains this policy's pending creations.
+   */
+  registerCreateInterceptor(interceptor: AgentCreateInterceptor): () => Promise<void> {
+    return this.ctx.effect(() => {
+      const registration = { interceptor, closing: false, active: new Set<Promise<AgentHandle>>() }
+      this.createInterceptors.add(registration)
+      return async () => {
+        registration.closing = true
+        this.createInterceptors.delete(registration)
+        while (registration.active.size > 0) await Promise.allSettled([...registration.active])
+      }
+    }, 'agents.registerCreateInterceptor()')
   }
 
   /**

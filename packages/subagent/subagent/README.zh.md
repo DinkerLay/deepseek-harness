@@ -109,6 +109,13 @@ subagent seam 允许一个 agent（智能体）通过具名提供方把工作委
 
 可继续 Activation 会等待 best-effort 的最终会话 flush，但不会把 listener 参与视为持久性确认。一次性运行保留尽力执行的会话检查点，因此已完成的一次性 child 只有在其会话确实进入持久化存储时，才可在 dispose 后继续被发现；如果该检查点缺失，服务不会根据 Task 历史虚构目录条目。
 
+## Execution coordination
+
+每条可继续对话的子任务输入携带 `source.delegation.parentSessionId`，并在父 Turn 开放时携带 `parentTurn`。通过消息 ID 与 inbox 消费记录定位子 Turn；activation run ID 仍表示驻留运行。 用户停止父会话后，报告与结算会静默保留，直到新的用户或 coordinator 输入到达。
+
+[所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
+
+
 ## 模型体验
 
 <a id="settlement-notice"></a>

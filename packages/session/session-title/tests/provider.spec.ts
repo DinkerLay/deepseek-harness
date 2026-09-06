@@ -48,7 +48,7 @@ function appendRoute(session: ReturnType<Context['sessions']['create']>, reason:
 }
 
 describe('SessionTitleService Provider lifecycle', () => {
-  it('inherits title events across forks, skips first-prompt retitling, and lets all-messages update later', async () => {
+  it('inherits a provisional title and names a fork from its own first input', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionTitleService, CONFIG)
@@ -56,7 +56,7 @@ describe('SessionTitleService Provider lifecycle', () => {
     parent.append('turn/start', {
       turn: 1,
     })
-    const inheritedMessage = appendHumanPrompt(parent, 'Inherited title prompt')
+    appendHumanPrompt(parent, 'Inherited title prompt')
     await settle()
     parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
@@ -66,7 +66,7 @@ describe('SessionTitleService Provider lifecycle', () => {
       .toEqual(parent.events.find(event => event.type === 'session/title'))
 
     const firstGenerate = vi.fn(async (request: SessionTitleProviderRequest) => ({
-      title: 'Should not run',
+      title: 'Child topic',
       messageSeqs: [request.messages[0]!.seq],
     }))
     const disposeFirst = ctx.sessionTitle.register({
@@ -82,7 +82,8 @@ describe('SessionTitleService Provider lifecycle', () => {
     appendRoute(child)
     await settle()
     child.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
-    expect(firstGenerate).not.toHaveBeenCalled()
+    expect(firstGenerate).toHaveBeenCalledOnce()
+    expect(firstGenerate.mock.calls[0]?.[0].messages.map(message => message.text)).toEqual(['Child follow-up prompt'])
     await disposeFirst()
 
     const allGenerate = vi.fn(async (request: SessionTitleProviderRequest) => ({
@@ -106,7 +107,7 @@ describe('SessionTitleService Provider lifecycle', () => {
     expect(allGenerate).toHaveBeenCalledOnce()
     expect(ctx.sessionTitle.get(child)).toMatchObject({
       title: 'Fork all prompts',
-      messageSeqs: [inheritedMessage.seq, childMessage.seq, latestMessage.seq],
+      messageSeqs: [childMessage.seq, latestMessage.seq],
       source: { kind: 'provider', provider: SessionTitleProviderId('fork-all') },
     })
     expect(ctx.sessionTitle.get(parent)?.title).toBe('Inherited title prompt')

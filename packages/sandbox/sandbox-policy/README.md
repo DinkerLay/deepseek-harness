@@ -28,6 +28,13 @@ The optional `./invariant` companion rejects a forged durable `sandbox/mode` eve
 
 A runtime switch is one log-only `sandbox/mode` event on the session it applies to. `effective = explicit grant ?? fold(events) ?? deployment default`, so an override survives restart by replay and two sessions never see each other's state. Workspace identity does not need another event: the immutable `SessionHeader.cwd` recorded at creation is the root for every call in that session. The event stays log-only; before the next request, the owner contributes the current fact to the full runtime-context snapshot.
 
+## Execution coordination
+
+`registerConstraint` installs an effect-owned deployment restriction after session and explicit mode resolution. Trusted constraints must not broaden access; enforcing consumers receive the resulting policy.
+
+[Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
+
+
 ## Model Experience
 
 ### Current file sandbox policy

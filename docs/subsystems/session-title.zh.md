@@ -43,6 +43,8 @@ type SessionTitleSource =
 ```ts type-equiv
 /** Payload of the log-only `session/title` event. */
 interface SessionTitleEventData {
+  /** Source messages were used as bounded excerpts rather than in full. */
+  readonly inputTruncated?: true
   /** Normalized non-empty title text. */
   readonly title: string
   /** Exact human `user/message` seqs used to derive this title; empty for an explicit user rename. */
@@ -69,6 +71,8 @@ interface SessionTitleSnapshot extends SessionTitleEventData {
 ```ts type-equiv
 /** Exact model-visible request recorded before one auxiliary title dispatch. */
 interface SessionTitleLlmRequestEventData {
+  /** At least one cited message is represented by a shortened excerpt. */
+  readonly inputTruncated?: true
   /** Registered title-provider identity responsible for the request. */
   readonly titleProvider: SessionTitleProviderId
   /** Exact human `user/message` seqs represented in `messages`. */
@@ -106,6 +110,8 @@ type SessionTitleAutomaticMode = 'first-prompt' | 'all-prompts'
 ```ts type-equiv
 /** Immutable input supplied to one title-provider call. */
 interface SessionTitleProviderRequest {
+  /** Effective cadence for this Session role; omission uses the provider default. */
+  readonly automatic?: SessionTitleAutomaticMode
   /** Live session being titled. */
   readonly session: Session
   /** All eligible human messages through this generation revision. */
@@ -120,6 +126,8 @@ interface SessionTitleProviderRequest {
 ```ts type-equiv
 /** Provider output before service-owned normalization and log acceptance. */
 interface SessionTitleProviderResult {
+  /** Whether the provider shortened any referenced source message. */
+  readonly inputTruncated?: boolean
   /** Proposed title text. */
   readonly title: string
   /** Exact seqs from `request.messages` used by this result. */
@@ -160,6 +168,13 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 Log-backed title fold plus asynchronous fallback generation.
 
 ```ts cordis-catalog
+/**
+ * Select automatic cadence for a deployment-owned Session role; explicit user pins still win.
+ * @param policy - optional override for the supplied Session, evaluated at input admission.
+ * @returns effect disposer removing this policy.
+ */
+registerAutomaticMode(policy: (session: Session) => SessionTitleAutomaticMode | undefined): () => Promise<void>
+
 /**
  * Read the latest folded title from one live or replayed session.
  * @param session - session whose log is the title source of truth.

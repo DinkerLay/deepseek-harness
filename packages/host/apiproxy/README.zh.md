@@ -64,6 +64,13 @@ Workspace 列表与 Session 列表是相互独立的重连基线。`workspace.cr
 
 `AbstractApiClient` 持有全部协议不变量：签发 rpcId、包装／解包信封、Zod 解析、SSE 帧解码、一元请求超时，以及按微任务批处理的信封观测（`subscribeEnvelopes`）；平台子类只提供 `doFetch` 传输环节。`InProcessApiClient` 以 `toFetchHandler(api)` 为基础，仍是同构接点：它运行完整的协议序列化与校验路径而不经过网络，供需要该路径的调用方和载体测试使用。产品的 `dsh --profile headless` 是直连 core 的入口，不挂载本包。
 
+## Execution coordination
+
+`sessions.fork` 还接受用于精确闭合前缀的 `seedLength`，以及预留执行身份的 `destination: { sessionId, cwd }`。`atSeq` 与 `seedLength` 互斥。重复目标会核对历史、preset 和 cwd，身份冲突则失败。Host 通过 `sessions.forkCapabilities.version = 1` 声明能力。
+
+[所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
+
+
 ## 模型体验
 
 无。该包定义客户端与宿主间的 wire 约定和载体，其中没有任何内容会进入模型请求。

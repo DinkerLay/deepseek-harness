@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "op": "initialize"
+    },
+    {
+      "op": "newSession"
+    },
+    {
+      "op": "promptAndCancel",
+      "text": "Follow these steps exactly, then stop. 1. Call the subagent tool once with run_in_background set to true, description 'Report a finding', and prompt 'Call the report tool once with output exactly CHILD_REPORT_OK, then stop.'. 2. Reply with the single word STARTED. Do not use the bash tool.",
+      "waitForFile": {
+        "path": "parent-ready"
+      }
+    },
+    {
+      "op": "waitForFile",
+      "path": "child-settled"
+    }
+  ]
+}

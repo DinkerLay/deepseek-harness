@@ -1,0 +1,10 @@
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./subagent-report.cordis.snapshot.yml
+    patches:
+      - id: report-fence
+        disabled: true
+      - insert:
+          - id: stopped-parent-fence
+            name: './tests/fixtures/subagent-stopped-parent-fence.ts'
