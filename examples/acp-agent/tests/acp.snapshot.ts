@@ -203,6 +203,8 @@ const SCENARIOS: Scenario[] = [
     overridden: true,
     configPath: SESSION_TITLE_CONFIG,
   },
+  { name: 'session-title-same-route', hasModelTurn: true, recorded: false, overridden: true,
+    configPath: fileURLToPath(new URL('../session-title-same-route.cordis.yml', import.meta.url)) },
   { name: 'tool-call-turn', hasModelTurn: true, recorded: true },
   // Authored from the real PACKED_CHUNKS_SOURCE recording under the ordinary
   // app composition. The contract below pins decoded equality and all three

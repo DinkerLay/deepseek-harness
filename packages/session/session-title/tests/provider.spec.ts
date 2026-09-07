@@ -293,9 +293,14 @@ describe('SessionTitleService Provider lifecycle', () => {
     session.append('turn/start', {
       turn: 2,
     })
+    session.append('step/start', { turn: 2, step: 1 })
     const second = appendHumanPrompt(session, 'Second prompt on the same route')
     await settle()
-    session.append('step/start', { turn: 2, step: 1 })
+    void ctx.llm.stream(markAgentLoopRequest(deepFreeze({
+      provider: 'main-route', model: 'chat-model', messages: [], sessionId: session.id,
+    })))
+    await settle()
+    expect(requests).toHaveLength(1)
     void ctx.llm.stream(markAgentLoopRequest(deepFreeze({
       provider: 'main-route',
       model: 'chat-model',

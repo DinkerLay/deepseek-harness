@@ -35,3 +35,5 @@ Fork 标题提供方只接收种子之后的人类输入。首消息策略据此
 Product 可以分配隔离的执行资源，DSH 继续拥有组合、身份与历史权威。这些通用接口不包含 Git 或 Product 策略。创建调用方必须保留恢复意图，不能把 worktree 当成 sandbox。Sandbox 限制只覆盖执行解析后策略的消费方，不涵盖不受限制的外部操作方。
 
 [父会话停止的 ACP 组合](../../../../examples/acp-agent/subagent-stopped-parent.cordis.yml) 回放子任务报告之前的取消，并验证父会话不会再请求模型。标题与继续执行的应用快照沿用公共 API 的日志和消息归属。
+
+[同路由标题组合](../../../../examples/acp-agent/session-title-same-route.cordis.yml) 固定两个 Turn 共用同一请求头时的自动更新行为。标题服务核验带标记的主请求包含待处理用户消息，不假设 user/message 先于 step/start 写入。

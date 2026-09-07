@@ -35,3 +35,5 @@ Explicit fork destinations resolve Workspace attachment from the destination dir
 Products can allocate isolated execution resources while DSH retains composition, identity and history authority. The generic hooks carry no Git or Product policy. Provisioning consumers must retain recovery intents and must not describe a worktree as a sandbox. A sandbox constraint applies only to consumers which enforce the resolved policy; unrestricted external actors remain outside it.
 
 The [stopped-parent ACP composition](../../../../examples/acp-agent/subagent-stopped-parent.cordis.yml) replays cancellation before child reporting and pins the absence of another parent model request. The title and continuation application snapshots preserve the same log and message ownership used by the public APIs.
+
+The [same-route title composition](../../../../examples/acp-agent/session-title-same-route.cordis.yml) pins automatic updates across two Turns sharing one request header. The title service checks that the marked main request contains the pending human message; it does not assume that user/message precedes step/start.

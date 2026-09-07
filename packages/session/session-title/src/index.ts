@@ -568,8 +568,9 @@ export class SessionTitleService extends Service {
     if (session === undefined || state === undefined || pending === undefined) return
     const boundary = session.events.findLast(event => event.type === 'step/start' || event.type === 'step/end')
     const route = session.requestHeader()?.config
+    const input = session.events.find(event => event.type === 'user/message' && event.seq === pending.throughSeq)
     if (boundary?.type !== 'step/start'
-      || boundary.seq <= pending.throughSeq
+      || input?.type !== 'user/message' || !options.messages.some(message => message.id === input.data.id)
       || route?.provider !== options.provider
       || route.model !== options.model) return
     this.startPending(session, state, pending, { provider: options.provider, model: options.model })
