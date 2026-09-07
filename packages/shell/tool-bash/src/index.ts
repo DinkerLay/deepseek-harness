@@ -196,9 +196,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (defaultMode !== undefined && sandboxPolicy === undefined) {
     throw new Error('tool-bash: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
-  /** Resolve the complete standing policy for this call when a confining executor is mounted. */
-  const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
-    sandboxPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
+  /** Resolve the standing or granted mode with every registered execution limit. */
+  const resolveSandboxPolicy = (exec: ToolExecution, mode?: SandboxMode): SandboxExecutionPolicy | undefined =>
+    sandboxPolicy?.resolve({ ...exec.agent === undefined ? {} : { session: exec.agent.session },
+      ...mode === undefined ? {} : { mode } })
 
   /**
    * Resolve a sandbox-escalation request through `ctx.approval` BEFORE
@@ -219,6 +220,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   ): Promise<SandboxMode> => {
     if (escalationModes.length === 0) {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
+    }
+    if (ESCALATION_TARGETS.includes(mode as SandboxMode) && resolveSandboxPolicy(exec, mode as SandboxMode)?.mode !== mode) {
+      throw new Error('The requested sandbox mode exceeds this Session\'s configured access limit.')
     }
     const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
     return approveEscalation(
@@ -337,7 +341,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         : undefined
       const policy = approvedMode === undefined
         ? standingPolicy
-        : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        : resolveSandboxPolicy(exec, approvedMode)
       const workdir = resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
       if (args.run_in_background === true) {
         if (!backgroundEnabled) {

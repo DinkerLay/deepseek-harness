@@ -613,6 +613,31 @@ describe('sandbox escalation through ctx.approval', () => {
     expect(text(await call(ctx, 'pwsh', escalate, malformed))).toContain('not strictly wider')
   })
 
+  it('blocks escalation above a Session limit before approval or execution', async () => {
+    const { ctx, bash } = await setupSandboxed(true)
+    const prompted = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    ctx.on('approval/request', prompted)
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+    const result = await call(ctx, 'pwsh', escalate, sandboxAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('configured access limit')
+    expect(prompted).not.toHaveBeenCalled()
+    expect(bash.modes).toEqual([])
+  })
+
+  it.each([false, true])('resolves granted execution against limits installed during approval (background: %s)', async (background) => {
+    const { ctx, bash } = await setupSandboxed(true)
+    ctx.on('approval/request', () => {
+      ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+      return Promise.resolve<ApprovalOutcome>('allowed-once')
+    })
+    const agent = sandboxAgent(undefined, ctx)
+    ctx.agents.register(agent)
+    const result = await call(ctx, 'pwsh', { ...escalate, run_in_background: background }, agent)
+    expect(result.isError).toBe(false)
+    expect(bash.modes).toEqual(['read-only'])
+  })
+
   it('fails closed when approval cannot be routed', async () => {
     const withoutService = await setupSandboxed()
     expect(text(await call(withoutService.ctx, 'pwsh', escalate, sandboxAgent()))).toContain('no approval service')

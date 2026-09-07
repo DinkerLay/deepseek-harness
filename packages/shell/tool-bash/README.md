@@ -56,6 +56,8 @@ Escalating bash calls resolve `ctx.approval` before execution. `allowed-once` ap
 
 For sandboxing executors, each call resolves mode as one-shot escalation, then session override, then executor default. Non-sandboxing and agent-less calls carry no session override. The policy owner contributes the current capability-neutral standing mode; denial results still own the operation-specific effective mode and retry guidance. See the [`dsh-shell` fold](../shell/README.md) and [sandbox switching contract](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.md).
 
+Registered sandbox constraints also bound one-shot escalation. Requests above the Session access limit fail before approval; approved calls resolve their final policy again so limits installed during approval still apply.
+
 ## Model Experience
 
 ### System prompt

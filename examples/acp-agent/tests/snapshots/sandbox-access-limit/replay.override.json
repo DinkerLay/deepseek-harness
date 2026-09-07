@@ -1,0 +1,118 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "limit_write",
+        "name": "write",
+        "argumentsDelta": "{\"file_path\": \"limited.txt\", \"content\": \"limited\", \"sandbox_permissions\": \"danger-full-access\", \"justification\": \"write with full access\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "limit_write",
+          "name": "write",
+          "arguments": "{\"file_path\": \"limited.txt\", \"content\": \"limited\", \"sandbox_permissions\": \"danger-full-access\", \"justification\": \"write with full access\"}"
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 5
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "limit_bash",
+        "name": "bash",
+        "argumentsDelta": "{\"command\": \"printf limited\", \"description\": \"test access limit\", \"sandbox_permissions\": \"danger-full-access\", \"justification\": \"execute with full access\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "limit_bash",
+          "name": "bash",
+          "arguments": "{\"command\": \"printf limited\", \"description\": \"test access limit\", \"sandbox_permissions\": \"danger-full-access\", \"justification\": \"execute with full access\"}"
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 5
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "Both operations exceed the configured access limit."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "Both operations exceed the configured access limit."
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 5
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  }
+]

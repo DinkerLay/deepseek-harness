@@ -12,7 +12,7 @@ A history fork that always inherits cwd cannot represent an independently writab
 
 The Host fork API accepts an exact balanced seed length and an optional reserved destination identity and cwd. Repeating the same destination reconciles the existing prefix, preset and placement; a conflicting identity or open Turn prefix is rejected. The existing atSeq behavior remains available. DSH creates no Git repositories and owns no Product directory cleanup.
 
-AgentRegistry creation interceptors run before the factory creates a Session. Trusted deployment plugins own their allocation, metadata and rollback; effect disposal prevents new calls and drains admitted creations. Sandbox policy constraints run after explicit mode overrides, allowing an execution-directory ceiling to apply to filesystem and shell consumers without changing their implementations.
+AgentRegistry creation interceptors run before the factory creates a Session. Trusted deployment plugins own their allocation, metadata and rollback; effect disposal prevents new calls and drains admitted creations. Sandbox policy constraints run after explicit mode overrides, allowing an execution-directory ceiling to apply to filesystem and shell consumers including one-shot approved calls. Filesystem and shell tools reject requests above the registered limit before approval and resolve the granted policy again before execution.
 
 Continuable child inputs persist their delegating parent Session and open Turn in source.delegation, alongside their exact inbox message ID. Each followup carries its own attribution even while the same activation remains resident. Calls made outside an open parent Turn omit parentTurn.
 

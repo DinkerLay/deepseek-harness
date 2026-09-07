@@ -42,6 +42,8 @@ When `run_in_background` is true, this plugin preflights `ctx.jobs.start()` befo
 
 The tool owns its `presentCall`/`presentResult` render intent. A foreground call is a `terminal` card carrying command, description, and optional cwd; a `run_in_background` call is a `generic` card with the raw command, mirroring the bash tool's background presentation. A completed foreground result is a `terminal` card too: the exit marker becomes the card's exit-status pill (`exitCode`/`signal`), and the marker-free body is the card's output — exactly the bash tool's terminal-card story, via the shared exit-status parse from `@deepseek-ai/dsh-shell`. Background acks and execution errors stay `generic` cards with the rendered output in a `console` fence. These presenters are pure and replay-safe.
 
+Registered sandbox constraints also bound one-shot escalation. Requests above the Session access limit fail before approval; approved calls resolve their final policy again so limits installed during approval still apply.
+
 ## Model Experience
 
 ### System prompt

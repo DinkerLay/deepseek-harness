@@ -61,6 +61,8 @@ await ctx.plugin(ToolFs)                                  // this package — re
 
 包根目录只导出 Cordis 插件约定（`name`、`inject`、`Config` 和 `apply`）。读取渲染（行窗口与输出格式化）位于 `src/read-render.ts`（不依赖 Cordis，单独进行单元测试）；`src/read.ts`/`read-image.ts`/`write.ts`/`edit.ts` 是工具执行器，`src/index.ts` 负责组合。
 
+已登记的沙箱约束也限制一次性提权。超出 Session 访问上限的请求会在审批前失败；获批调用再次解析最终策略，因此审批期间新登记的限制仍然生效。
+
 ## 模型体验
 
 ### 系统提示词

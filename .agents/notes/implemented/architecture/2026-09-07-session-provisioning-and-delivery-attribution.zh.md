@@ -12,7 +12,7 @@ Status: implemented
 
 Host fork API 接受精确且闭合的种子长度，以及可选的预留目标身份和 cwd。重复使用相同目标时会核对已有历史前缀、preset 与位置；冲突的身份或包含未结束 Turn 的前缀会被拒绝。原有 atSeq 行为仍然可用。DSH 不创建 Git 仓库，也不负责 Product 目录回收。
 
-AgentRegistry 的创建拦截器在工厂创建 Session 前运行。受信任的部署插件负责目录分配、元数据和回滚；effect 释放会阻止新调用并等待已进入的创建完成。Sandbox policy 限制在显式模式覆盖之后执行，使文件和 shell 消费方都能遵守执行目录上限，而无需修改各自实现。
+AgentRegistry 的创建拦截器在工厂创建 Session 前运行。受信任的部署插件负责目录分配、元数据和回滚；effect 释放会阻止新调用并等待已进入的创建完成。Sandbox policy 限制在显式模式覆盖之后执行，使文件和 Shell 消费方都能遵守执行目录上限，包括一次性获批调用。文件和 Shell 工具在审批前拒绝超出已登记上限的请求，并在执行前再次解析获批策略。
 
 可继续对话的子任务输入在 source.delegation 中持久记录派发方父 Session 与开放 Turn，并保留精确的 inbox 消息 ID。同一次 activation 驻留期间，每条后续输入仍有自己的归属。父 Session 没有开放 Turn 时不填写 parentTurn。
 

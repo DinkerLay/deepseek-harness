@@ -61,6 +61,8 @@ When `ctx.fs.sandboxMode` reports confinement, write/edit advertise `sandbox_per
 
 The package root exports only the Cordis plugin contract (`name`, `inject`, `Config`, and `apply`). Read rendering (line windowing + output formatting) lives in `src/read-render.ts` (Cordis-free, independently unit-tested); `src/read.ts`/`read-image.ts`/`write.ts`/`edit.ts` are the tool executors and `src/index.ts` composes them.
 
+Registered sandbox constraints also bound one-shot escalation. Requests above the Session access limit fail before approval; approved calls resolve their final policy again so limits installed during approval still apply.
+
 ## Model Experience
 
 ### System prompt

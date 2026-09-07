@@ -672,6 +672,15 @@ const SCENARIOS: Scenario[] = [
     env: { DSH_PERMISSION_MODE: 'workspace-write' },
   },
   {
+    name: 'sandbox-access-limit',
+    hasModelTurn: true,
+    recorded: false,
+    overridden: true,
+    headerClass: 'sandbox',
+    configPath: fileURLToPath(new URL('../sandbox-access-limit.cordis.yml', import.meta.url)),
+    env: { DSH_PERMISSION_MODE: 'workspace-write' },
+  },
+  {
     name: 'fs-escalation-approved',
     hasModelTurn: true,
     recorded: true,

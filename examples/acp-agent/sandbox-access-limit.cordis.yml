@@ -1,0 +1,7 @@
+# Exercise registered access limits through the assembled filesystem and shell tools.
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./cordis.yml
+- id: access-limit
+  name: ./tests/fixtures/sandbox-access-limit.ts

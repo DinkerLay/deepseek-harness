@@ -890,6 +890,33 @@ describe('sandbox escalation API (write/edit)', () => {
     expect(fs.stamped).toEqual([{ mode: 'danger-full-access', workspaceRoot: resolve('/session-project') }])
   })
 
+  it.each(['write', 'edit'] as const)('blocks %s escalation above a Session limit before approval', async (name) => {
+    const { ctx, fs } = await setupConfining({ approval: true })
+    const prompted = vi.fn(() => Promise.resolve('allowed-once' as const))
+    ctx.on('approval/request', prompted)
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'workspace-write' }))
+    const result = await call(ctx, name, {
+      file_path: 'a.txt', content: 'x', old_string: 'x', new_string: 'y',
+      sandbox_permissions: 'danger-full-access', justification: 'why',
+    }, escalationAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('configured access limit')
+    expect(prompted).not.toHaveBeenCalled()
+    expect(fs.stamped).toEqual([])
+  })
+
+  it('resolves the granted write mode against limits installed during approval', async () => {
+    const { ctx, fs } = await setupConfining({ approval: true })
+    ctx.on('approval/request', () => {
+      ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+      return Promise.resolve('allowed-once' as const)
+    })
+    await call(ctx, 'write', {
+      file_path: 'a.txt', content: 'x', sandbox_permissions: 'danger-full-access', justification: 'why',
+    }, escalationAgent())
+    expect(fs.stamped).toEqual([{ mode: 'read-only', workspaceRoot: resolve('/session-project') }])
+  })
+
   it('a rejected escalation fails closed with its own text and never mutates', async () => {
     const { ctx, fs } = await setupConfining({ approval: true })
     ctx.on('approval/request', () => Promise.resolve('rejected' as const))

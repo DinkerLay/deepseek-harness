@@ -159,6 +159,14 @@
       "purpose": "Project the fork's Session capability into the Cordis API catalog"
     },
     {
+      "name": "@deepseek-ai/dsh-tool-fs",
+      "path": "packages/fs/tool-fs",
+      "source": [
+        "src/sandbox.ts"
+      ],
+      "purpose": "Enforce deployment access limits before and after one-shot filesystem escalation"
+    },
+    {
       "name": "@deepseek-ai/dsh-tool-pwsh",
       "path": "packages/shell/tool-pwsh",
       "source": [
@@ -194,6 +202,7 @@
     "@deepseek-ai/dsh-subagent",
     "@deepseek-ai/dsh-tool-bash",
     "@deepseek-ai/dsh-tool-cordis",
+    "@deepseek-ai/dsh-tool-fs",
     "@deepseek-ai/dsh-tool-pwsh",
     "@deepseek-ai/dsh-workspace"
   ]

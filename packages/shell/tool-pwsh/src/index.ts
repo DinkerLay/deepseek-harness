@@ -203,9 +203,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     throw new Error('tool-pwsh: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
   /* jscpd:ignore-end */
-  /** Resolve the complete standing policy for this call when a confining executor is mounted. */
-  const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
-    sandboxPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
+  /** Resolve the standing or granted mode with every registered execution limit. */
+  const resolveSandboxPolicy = (exec: ToolExecution, mode?: SandboxMode): SandboxExecutionPolicy | undefined =>
+    sandboxPolicy?.resolve({ ...exec.agent === undefined ? {} : { session: exec.agent.session },
+      ...mode === undefined ? {} : { mode } })
 
   /* jscpd:ignore-start -- deliberate mirror of dsh-tool-bash's escalation resolver (pwsh-tool-and-executor Agent Note). */
   /**
@@ -228,6 +229,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   ): Promise<SandboxMode> => {
     if (escalationModes.length === 0) {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
+    }
+    if (ESCALATION_TARGETS.includes(mode as SandboxMode) && resolveSandboxPolicy(exec, mode as SandboxMode)?.mode !== mode) {
+      throw new Error('The requested sandbox mode exceeds this Session\'s configured access limit.')
     }
     const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
     return approveEscalation(
@@ -355,7 +359,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         : undefined
       const policy = approvedMode === undefined
         ? standingPolicy
-        : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        : resolveSandboxPolicy(exec, approvedMode)
       const workdir = resolveWorkdir(args.workdir, exec)
       if (args.run_in_background === true) {
         if (!backgroundEnabled) {

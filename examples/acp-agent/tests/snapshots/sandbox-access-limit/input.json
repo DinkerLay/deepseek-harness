@@ -1,0 +1,14 @@
+{
+  "steps": [
+    {
+      "op": "initialize"
+    },
+    {
+      "op": "newSession"
+    },
+    {
+      "op": "prompt",
+      "text": "Attempt one write and one bash command with danger-full-access escalation. Report the rejected access limit."
+    }
+  ]
+}
