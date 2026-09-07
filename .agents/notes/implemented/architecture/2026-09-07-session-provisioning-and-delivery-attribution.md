@@ -18,7 +18,7 @@ Continuable child inputs persist their delegating parent Session and open Turn i
 
 Fork title providers receive only post-seed human input. The first-prompt cadence names that input, while inherited titles remain provisional. A user rename pins only the Session where it was accepted. Explicit refresh appends a title-policy event releasing a user pin; title-generation events record generating, ready and failed outcomes without opening a task Turn or discarding the last usable title.
 
-Naming cadence does not select or shorten messages. The title helper honors the provider selector and exposes the exact framed byte count; deployment providers own retention and excerpt policy. Shortened inputs carry `inputTruncated` in the auxiliary request and accepted title. User-stopped parents retain late child reports quietly; the stop frontier accounts for input arriving during cancellation convergence.
+Naming cadence does not select or shorten messages. The title helper honors the provider selector and exposes the exact framed byte count; deployment providers own retention and excerpt policy. Shortened inputs carry `inputTruncated` in the auxiliary request and accepted title. Parent-delivery policies can retain reports and settlement quietly without changing their content. DSH preserves default scheduling without a policy; deployments own user-stop and resume rules. A failing callback retains quietly and logs the failure.
 
 Explicit fork destinations resolve Workspace attachment from the destination directory. Source ancestry is retained independently, because assigning the original Workspace to a different immutable cwd violates its ownership contract.
 
@@ -30,10 +30,12 @@ Explicit fork destinations resolve Workspace attachment from the destination dir
 
 **Rename every branch through the user API.** That records an explicit pin and prevents automatic naming. Product aliases remain outside this API.
 
+**Hardcode every user stop as a paused parent.** A Turn interruption does not define every deployment's future wake policy. A scoped delivery restriction lets Products choose pause semantics while native callers retain their scheduling defaults.
+
 ## Consequences
 
 Products can allocate isolated execution resources while DSH retains composition, identity and history authority. The generic hooks carry no Git or Product policy. Provisioning consumers must retain recovery intents and must not describe a worktree as a sandbox. A sandbox constraint applies only to consumers which enforce the resolved policy; unrestricted external actors remain outside it.
 
-The [stopped-parent ACP composition](../../../../examples/acp-agent/subagent-stopped-parent.cordis.yml) replays cancellation before child reporting and pins the absence of another parent model request. The title and continuation application snapshots preserve the same log and message ownership used by the public APIs.
+The [stopped-parent ACP composition](../../../../examples/acp-agent/subagent-stopped-parent.cordis.yml) installs an explicit example delivery policy, replays cancellation before child reporting and pins the absence of another parent model request. The title and continuation application snapshots preserve the same log and message ownership used by the public APIs.
 
 The [same-route title composition](../../../../examples/acp-agent/session-title-same-route.cordis.yml) pins automatic updates across two Turns sharing one request header. The title service checks that the marked main request contains the pending human message; it does not assume that user/message precedes step/start.

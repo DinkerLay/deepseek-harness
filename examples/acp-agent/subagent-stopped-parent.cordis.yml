@@ -2,3 +2,7 @@
   name: '@deepseek-ai/cordis-plugin-include'
   config:
     path: ./subagent-report.cordis.yml
+    patches:
+      - insert:
+          - id: quiet-parent-delivery
+            name: './tests/fixtures/quiet-parent-delivery.ts'

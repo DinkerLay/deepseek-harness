@@ -2700,9 +2700,9 @@ describe('SubagentRuntime.interrupt', () => {
 })
 
 
-it('retains a late child result quietly after the user stops its parent', async () => {
+it('keeps default parent wakeups after a user stop when no delivery policy is registered', async () => {
   const release = Promise.withResolvers<undefined>()
-  const adapter = new GatedAdapter([{ chunks: textResponse('child result'), gate: release.promise }])
+  const adapter = new GatedAdapter([{ chunks: textResponse('child result'), gate: release.promise }, { chunks: textResponse('parent resumed') }])
   const { ctx, parent } = await setupWith(adapter)
   const child = await ctx.subagents.startContinuable(startSpec(parent))
   await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
@@ -2710,7 +2710,36 @@ it('retains a late child result quietly after the user stops its parent', async 
   parent.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
   release.resolve(undefined)
   await waitNoActivation(ctx, child.childId)
-  expect(parent.status).toBe('idle')
+  await parent.whenIdle()
+  expect(adapter.requests).toHaveLength(2)
+  expect(parent.session.events.findLast(event => event.type === 'turn/end')).toMatchObject({ data: { reason: { kind: 'completed' } } })
+})
+
+it.each([false, true])('retains reports and settlements under a scoped policy and restores default delivery on disposal; throws=%s', async (throws) => {
+  const first = Promise.withResolvers<undefined>(), second = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('first result'), gate: first.promise },
+    { chunks: textResponse('second result'), gate: second.promise }, { chunks: textResponse('parent resumed') }])
+  const { ctx, parent } = await setupWith(adapter)
+  const release = ctx.subagents.registerParentDeliveryPolicy((request) => {
+    if (request.parent !== parent) return
+    if (throws) throw new Error('policy failed')
+    return 'quiet'
+  })
+  const child = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await ctx.subagents.reportFrom(ctx.agents.get(child.childId)!, [{ type: 'text', text: 'progress' }],
+    { delivery: 'next-step', signal: new AbortController().signal })
+  expect(parent.inbox.nextStep.some(message => message.source.kind === 'subagent-report')).toBe(true)
+  first.resolve(undefined)
+  await waitNoActivation(ctx, child.childId)
   expect(parent.inbox.nextStep.some(message => message.source.kind === 'subagent-settled')).toBe(true)
   expect(adapter.requests).toHaveLength(1)
+  await release()
+  const next = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+  second.resolve(undefined)
+  await waitNoActivation(ctx, next.childId)
+  await parent.whenIdle()
+  expect(adapter.requests).toHaveLength(3)
+  expect(parent.session.events.findLast(event => event.type === 'turn/end')).toMatchObject({ data: { reason: { kind: 'completed' } } })
 })

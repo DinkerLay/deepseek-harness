@@ -1896,6 +1896,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when continuation services are unavailable, sender authorization fails, or the direct parent is not live.'],
       },
       {
+        signature: 'registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void>',
+        description: 'Restrict parent wakeups for reports and settlements without changing their message content. No policies preserves default scheduling. Any quiet decision wins; callback failures retain the message quietly and are logged. Registrations are independently owned and synchronous.',
+        parameters: [{ name: 'policy', description: 'deployment decision at the exact delivery boundary.' }],
+        returns: 'effect disposer removing this registration.',
+      },
+      {
         signature: 'registerContinuableSetup(contribution: ContinuableSetupContribution): () => void',
         description: 'Compose one deployment capability into every continuable child\'s unpublished creation context on fresh creation and cold resume. Grants wait for the next Activation; removing the contribution revokes every resident installation immediately.',
         parameters: [{ name: 'contribution', description: 'synchronous child-scope installer.' }],
@@ -4613,6 +4619,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SubagentInterruptAuthority = {\n    readonly kind: \'user\';\n    readonly parentSessionId: SessionId;\n} | {\n    readonly kind: \'ancestor\';\n    readonly agent: Agent;\n};',
   },
   {
+    name: 'SubagentParentDelivery',
+    declaration: 'export interface SubagentParentDelivery {\n    readonly parent: Agent;\n    readonly childSessionId: SessionId;\n    readonly kind: \'report\' | \'settlement\';\n}',
+  },
+  {
+    name: 'SubagentParentDeliveryPolicy',
+    declaration: 'export type SubagentParentDeliveryPolicy = (delivery: SubagentParentDelivery) => \'quiet\' | undefined;',
+  },
+  {
     name: 'SubagentProvider',
     declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
   },
@@ -4646,7 +4660,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends Service {\n    constructor(ctx: Context);\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
+    declaration: 'export class SubagentRuntime extends Service {\n    constructor(ctx: Context);\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
   },
   {
     name: 'SubagentStartRequest',

@@ -109,7 +109,7 @@ Continuable Activations await a best-effort final session flush without treating
 
 ## Execution coordination
 
-Each continuable input carries `source.delegation.parentSessionId` and, when one is open, `parentTurn`. Correlate its message ID with inbox consumption to locate the child Turn; activation run IDs remain residency telemetry. User-stopped parents retain reports and settlement quietly until fresh user or coordinator input arrives.
+Each continuable input carries `source.delegation.parentSessionId` and, when one is open, `parentTurn`. Correlate its message ID with inbox consumption to locate the child Turn; activation run IDs remain residency telemetry. Parent reports and settlement use their default scheduling unless a deployment registers `registerParentDeliveryPolicy()`. Any quiet decision keeps the message in the inbox without waking; callback errors are logged and also retain quietly. Policy disposal restores default scheduling. User-stop interpretation belongs to the deployment.
 
 [Owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
 

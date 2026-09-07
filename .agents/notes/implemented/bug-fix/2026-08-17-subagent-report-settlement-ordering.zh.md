@@ -16,7 +16,7 @@ report 工具要求 child 在发现会改变 parent 下一步动作的信息时�
 
 对于投递到驻留可继续 parent 的 next-step 报告，继续执行管理器会保留外围的 `sendWaking()` 与 `admitWaking()`。它们负责唤醒发送的准入记账，与消息面向 step 还是 turn 无关：接收方 Activation 在同步插入 inbox 与观察该唤醒的微任务之间保持在线。
 
-用户停止 parent 后，子任务报告与结算通知以静默注入保留，直到新的用户或 coordinator 输入到达。该例外及取消位置由 [Session 创建准备决策](../architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md) 定义。
+已登记的部署投递策略可以将子任务报告与结算通知静默注入保留。该扩展由 [Session 创建准备决策](../architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md) 定义。
 
 ### 不同 parent 状态下的顺序
 

@@ -137,9 +137,10 @@
       "name": "@deepseek-ai/dsh-subagent",
       "path": "packages/subagent/subagent",
       "source": [
-        "src/continuation.ts"
+        "src/continuation.ts",
+        "src/index.ts"
       ],
-      "purpose": "Per-message parent Turn attribution"
+      "purpose": "Per-message parent Turn attribution and deployment-owned parent delivery restrictions"
     },
     {
       "name": "@deepseek-ai/dsh-tool-bash",

@@ -16,7 +16,7 @@ The report tool tells a child to report whenever a finding changes what its pare
 
 The continuation manager retains `sendWaking()` and `admitWaking()` around next-step reports delivered to resident continuable parents. Their purpose is waking-send admission accounting, independent of whether the message targets a step or a turn: the receiving Activation remains live between synchronous inbox insertion and the microtask that observes the wake.
 
-A user-stopped parent retains child reports and settlement notices through quiet injection until fresh user or coordinator input arrives. This exception and its cancellation frontier belong to the [Session provisioning decision](../architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
+A deployment delivery policy can retain child reports and settlement notices through quiet injection. This extension belongs to the [Session provisioning decision](../architecture/2026-09-07-session-provisioning-and-delivery-attribution.md).
 
 ### Ordering across parent states
 

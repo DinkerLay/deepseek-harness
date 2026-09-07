@@ -100,6 +100,16 @@ declare module '@deepseek-ai/dsh-llm' {
 /** Deployment scheduling policy for accepted child reports. */
 export type SubagentReportDelivery = 'quiet' | 'next-step'
 
+/** Exact parent and child at the synchronous report or settlement delivery boundary. */
+export interface SubagentParentDelivery {
+  readonly parent: Agent
+  readonly childSessionId: SessionId
+  readonly kind: 'report' | 'settlement'
+}
+
+/** Return quiet to retain a message without waking; undefined preserves the caller's scheduling choice. */
+export type SubagentParentDeliveryPolicy = (delivery: SubagentParentDelivery) => 'quiet' | undefined
+
 /** Options for one continuable child's report to its direct parent. */
 export interface SubagentReportOptions {
   /** Already-resolved parent scheduling policy. */
@@ -171,6 +181,8 @@ type ActivationState = 'running' | 'waiting' | 'settled'
  * consumer outside this package supplies a host.
  */
 interface ContinuationHost {
+  /** Resolve deployment restrictions immediately before delivering to the parent. */
+  quietParentDelivery(delivery: SubagentParentDelivery): boolean
   /**
    * Resolve one provider's continuable-creation contribution, or reject when
    * the provider is unknown or lacks the capability.
@@ -367,8 +379,6 @@ export class SubagentContinuationManager {
    * poisoning a later same-id replacement.
    */
   private readonly closingScopes = new Map<Agent, Set<Agent>>()
-  private readonly stopFrontiers = new WeakMap<Agent, number>()
-  private readonly turnSignals = new Map<Agent, { signal: AbortSignal; abort: () => void }>()
   private draining = false
 
   constructor(
@@ -391,43 +401,6 @@ export class SubagentContinuationManager {
       yield scope.dispose
       yield () => this.drain()
     }.bind(this), 'subagents.continuations()')
-    ctx.on('agent/pre-step', ({ agent, signal }, next) => {
-      if (this.turnSignals.get(agent)?.signal !== signal) {
-        this.clearTurnSignal(agent)
-        const abort = (): void => {
-          const reason: unknown = signal.reason
-          if (typeof reason === 'object' && reason !== null && 'kind' in reason && reason.kind === 'user') {
-            this.stopFrontiers.set(agent, agent.session.events.at(-1)?.seq ?? -1)
-          }
-        }
-        this.turnSignals.set(agent, { signal, abort })
-        signal.addEventListener('abort', abort, { once: true })
-        if (signal.aborted) abort()
-      }
-      return next()
-    })
-    ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') this.clearTurnSignal(agent) })
-    ctx.on('agent/disposed', ({ agent }) => { this.clearTurnSignal(agent) })
-    ctx.effect(() => () => { for (const agent of this.turnSignals.keys()) this.clearTurnSignal(agent) }, 'subagents.parentStopSignals()')
-
-  }
-
-  private clearTurnSignal(agent: Agent): void {
-    const current = this.turnSignals.get(agent)
-    if (current === undefined) return
-    current.signal.removeEventListener('abort', current.abort)
-    this.turnSignals.delete(agent)
-  }
-
-  /** A child result remains readable while a user-stopped parent waits for fresh input. */
-  private parentPaused(parent: Agent): boolean {
-    const stop = parent.session.events.findLast(event => event.type === 'turn/end'
-      && event.data.reason.kind === 'aborted' && event.data.reason.reason.kind === 'user')
-    const frontier = this.stopFrontiers.get(parent) ?? stop?.seq
-    if (frontier === undefined) return false
-    return !parent.session.events.some(event => event.seq > frontier && (
-      event.type === 'user/message' && (event.data.source.kind === 'user' || event.data.source.kind === 'coordinator')
-      || event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'user' || message.source.kind === 'coordinator')))
   }
 
   /**
@@ -709,7 +682,10 @@ export class SubagentContinuationManager {
         senderSessionId: activation.childId,
       },
     })
-    if (this.parentPaused(parent)) { this.sendReport(parent, message, 'quiet'); return message.id }
+    if (this.host.quietParentDelivery({ parent, childSessionId: activation.childId, kind: 'report' })) {
+      this.sendReport(parent, message, 'quiet')
+      return message.id
+    }
     if (delivery === 'next-step') {
       this.sendWaking(parent, message, () => { this.sendReport(parent, message, delivery) })
     } else {
@@ -1533,7 +1509,8 @@ export class SubagentContinuationManager {
       // reading its inbox and records the account in the log either way; it
       // does NOT survive that parent's own disposal, whose `keepInbox: false`
       // cancel durably clears whatever it never claimed.
-      if (this.closingTeardownFor(parent) !== undefined || this.parentPaused(parent)) {
+      if (this.closingTeardownFor(parent) !== undefined
+        || this.host.quietParentDelivery({ parent, childSessionId: activation.childId, kind: 'settlement' })) {
         parent.inject(message)
         return
       }

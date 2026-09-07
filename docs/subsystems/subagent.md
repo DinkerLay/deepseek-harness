@@ -205,6 +205,20 @@ interface SubagentReportMessageSource {
 ```
 
 ```ts type-equiv
+/** Exact parent and child at the synchronous report or settlement delivery boundary. */
+interface SubagentParentDelivery {
+  readonly parent: Agent
+  readonly childSessionId: SessionId
+  readonly kind: 'report' | 'settlement'
+}
+```
+
+```ts type-equiv
+/** Return quiet to retain a message without waking; undefined preserves the caller's scheduling choice. */
+type SubagentParentDeliveryPolicy = (delivery: SubagentParentDelivery) => 'quiet' | undefined
+```
+
+```ts type-equiv
 /** Deployment scheduling policy for accepted child reports. */
 type SubagentReportDelivery = 'quiet' | 'next-step'
 ```
@@ -546,6 +560,15 @@ interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): vo
  *   fails, or the direct parent is not live.
  */
 async reportFrom( child: Agent, content: ContentBlock[], options: SubagentReportOptions, ): Promise<MessageId>
+
+/**
+ * Restrict parent wakeups for reports and settlements without changing their message content.
+ * No policies preserves default scheduling. Any quiet decision wins; callback failures retain
+ * the message quietly and are logged. Registrations are independently owned and synchronous.
+ * @param policy - deployment decision at the exact delivery boundary.
+ * @returns effect disposer removing this registration.
+ */
+registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void>
 
 /**
  * Compose one deployment capability into every continuable child's

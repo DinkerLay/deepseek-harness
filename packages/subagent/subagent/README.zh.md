@@ -111,7 +111,7 @@ subagent seam 允许一个 agent（智能体）通过具名提供方把工作委
 
 ## Execution coordination
 
-每条可继续对话的子任务输入携带 `source.delegation.parentSessionId`，并在父 Turn 开放时携带 `parentTurn`。通过消息 ID 与 inbox 消费记录定位子 Turn；activation run ID 仍表示驻留运行。 用户停止父会话后，报告与结算会静默保留，直到新的用户或 coordinator 输入到达。
+每条可继续对话的子任务输入携带 `source.delegation.parentSessionId`，并在父 Turn 开放时携带 `parentTurn`。通过消息 ID 与 inbox 消费记录定位子 Turn；activation run ID 仍表示驻留运行。 父会话报告与结算默认沿用原调度方式，部署方可通过 `registerParentDeliveryPolicy()` 登记策略。任一 quiet 决定都会将消息保留在 inbox 而不唤醒；回调异常会记录日志并静默保留。释放策略后恢复默认调度。用户停止的解释由部署方负责。
 
 [所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-provisioning-and-delivery-attribution.zh.md).
 

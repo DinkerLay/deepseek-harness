@@ -60,6 +60,8 @@ import type {
   SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentReportOptions,
+  SubagentParentDelivery,
+  SubagentParentDeliveryPolicy,
 } from './continuation.ts'
 import SubagentActivationSetupRegistry from './activation-setup-registry.ts'
 import type { ContinuableSetupContribution } from './activation-setup-registry.ts'
@@ -117,6 +119,8 @@ export type {
   SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentReportDelivery,
+  SubagentParentDelivery,
+  SubagentParentDeliveryPolicy,
   SubagentReportMessageSource,
   SubagentReportOptions,
   SubagentSettledMessageSource,
@@ -170,6 +174,7 @@ declare module '@deepseek-ai/cordis' {
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends Service {
   private providers = new Map<string, SubagentProvider>()
+  private readonly deliveryPolicies = new Set<{ policy: SubagentParentDeliveryPolicy }>()
   private continuations: SubagentContinuationManager | undefined
   /** Deployment contributions composed into unpublished continuable children. */
   private readonly setupRegistry = new SubagentActivationSetupRegistry()
@@ -185,6 +190,7 @@ export class SubagentRuntime extends Service {
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
+        quietParentDelivery: request => this.quietParentDelivery(request),
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
       }, this.setupRegistry)
@@ -273,6 +279,33 @@ export class SubagentRuntime extends Service {
     options: SubagentReportOptions,
   ): Promise<MessageId> {
     return this.requireContinuations().reportFrom(child, content, options)
+  }
+
+  /**
+   * Restrict parent wakeups for reports and settlements without changing their message content.
+   * No policies preserves default scheduling. Any quiet decision wins; callback failures retain
+   * the message quietly and are logged. Registrations are independently owned and synchronous.
+   * @param policy - deployment decision at the exact delivery boundary.
+   * @returns effect disposer removing this registration.
+   */
+  registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void> {
+    return this.ctx.effect(() => {
+      const registration = { policy }
+      this.deliveryPolicies.add(registration)
+      return () => { this.deliveryPolicies.delete(registration) }
+    }, 'subagents.registerParentDeliveryPolicy()')
+  }
+
+  private quietParentDelivery(request: SubagentParentDelivery): boolean {
+    let quiet = false
+    for (const registration of [...this.deliveryPolicies]) {
+      if (!this.deliveryPolicies.has(registration)) continue
+      try { if (registration.policy(request) === 'quiet') quiet = true } catch (error: unknown) {
+        quiet = true
+        this.ctx.logger.warn(`Subagent delivery policy failed; retaining parent input quietly: ${String(error)}`)
+      }
+    }
+    return quiet
   }
 
   /**

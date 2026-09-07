@@ -6,5 +6,7 @@
       - id: report-fence
         disabled: true
       - insert:
+          - id: quiet-parent-delivery
+            name: './tests/fixtures/quiet-parent-delivery.ts'
           - id: stopped-parent-fence
             name: './tests/fixtures/subagent-stopped-parent-fence.ts'
