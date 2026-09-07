@@ -165,28 +165,9 @@ export function registerSessionTitleLlmProvider(
     id: titleProvider,
     automatic,
     async generate(request) {
-      const messages = request.automatic === 'all-prompts' && automatic === 'first-prompt'
-        ? fitTitleContext(request.messages, resolved.maxInputBytes) : selectMessages(request.messages)
-      return generateSessionTitleWithLlm(ctx, resolved, request, messages, titleProvider)
+      return generateSessionTitleWithLlm(ctx, resolved, request, selectMessages(request.messages), titleProvider)
     },
   })
-}
-
-/** Keep the original topic and latest instructions within the exact framed-input budget. */
-function fitTitleContext(messages: readonly SessionTitleUserMessage[], maxBytes: number): readonly SessionTitleUserMessage[] {
-  let selected = [...messages]
-  while (selected.length > 2 && Buffer.byteLength(frameMessages(selected), 'utf8') > maxBytes) selected.splice(1, 1)
-  if (Buffer.byteLength(frameMessages(selected), 'utf8') <= maxBytes) return selected
-  const texts = selected.map(message => Array.from(message.text))
-  let low = 0, high = Math.max(0, ...texts.map(text => text.length))
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2)
-    const candidate = selected.map((message, index) => ({ ...message, text: (texts[index] ?? []).slice(0, middle).join('') }))
-    if (Buffer.byteLength(frameMessages(candidate), 'utf8') <= maxBytes) low = middle
-    else high = middle - 1
-  }
-  selected = selected.map((message, index) => ({ ...message, text: (texts[index] ?? []).slice(0, low).join('') }))
-  return selected
 }
 
 /** Resolve the explicit pair or the exact route captured from `request/header`. */
@@ -216,6 +197,15 @@ function systemPrompt(config: ResolvedSessionTitleLlmConfig): string {
 /** Frame exact messages as JSON so user text cannot break structural delimiters. */
 function frameMessages(messages: readonly SessionTitleUserMessage[]): string {
   return `Generate the session title from this JSON array of human messages:\n${JSON.stringify(messages)}`
+}
+
+/**
+ * Measure the complete framed input used by the auxiliary title request.
+ * @param messages - provider-selected messages, including any deliberate excerpts.
+ * @returns UTF-8 bytes including JSON escaping, sequence fields and instruction framing.
+ */
+export function sessionTitleInputBytes(messages: readonly SessionTitleUserMessage[]): number {
+  return Buffer.byteLength(frameMessages(messages), 'utf8')
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
@@ -261,7 +251,7 @@ export async function generateSessionTitleWithLlm(
   const inputTruncated = selectedMessages.some(message =>
     request.messages.find(source => source.seq === message.seq)?.text !== message.text)
   const framedInput = frameMessages(selectedMessages)
-  const inputBytes = Buffer.byteLength(framedInput, 'utf8')
+  const inputBytes = sessionTitleInputBytes(selectedMessages)
   if (inputBytes > config.maxInputBytes) {
     throw new Error(`session-title-llm: input is ${inputBytes} bytes, exceeding maxInputBytes ${config.maxInputBytes}`)
   }

@@ -18,7 +18,7 @@ Continuable child inputs persist their delegating parent Session and open Turn i
 
 Fork title providers receive only post-seed human input. The first-prompt cadence names that input, while inherited titles remain provisional. A user rename pins only the Session where it was accepted. Explicit refresh appends a title-policy event releasing a user pin; title-generation events record generating, ready and failed outcomes without opening a task Turn or discarding the last usable title.
 
-Naming cadence overrides preserve the original topic and recent input within a fixed byte budget. Shortened inputs carry `inputTruncated` in both the auxiliary request and accepted title. User-stopped parents retain late child reports quietly; the stop frontier accounts for input arriving during cancellation convergence.
+Naming cadence does not select or shorten messages. The title helper honors the provider selector and exposes the exact framed byte count; deployment providers own retention and excerpt policy. Shortened inputs carry `inputTruncated` in the auxiliary request and accepted title. User-stopped parents retain late child reports quietly; the stop frontier accounts for input arriving during cancellation convergence.
 
 Explicit fork destinations resolve Workspace attachment from the destination directory. Source ancestry is retained independently, because assigning the original Workspace to a different immutable cwd violates its ownership contract.
 

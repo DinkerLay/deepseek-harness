@@ -14,7 +14,7 @@
 
 <a id="configuration"></a>
 
-首提示词提供方上的 all-prompts Session 覆盖会在封装后的字节上限内保留原始主题和最新人类输入。先移除中间消息，再按 Unicode 字符边界缩短其余文本。辅助请求日志记录实际缩短后的输入。
+Provider 消息选择独立于自动生成频率。`registerSessionTitleLlmProvider()` 始终遵循传入的选择器。`sessionTitleInputBytes()` 测量完整封装输入，让部署方 Provider 自行决定保留与节选策略。执行器通过 `inputTruncated` 记录输入节选，本身不裁剪内容。
 
 ## 配置
 
