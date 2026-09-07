@@ -45,6 +45,10 @@ Plain class (not a Cordis Service). Create live sessions through `ctx.sessions.c
 - `session.seq`, `session.id` — current sequence and readonly typed identity.
 - `session.header: SessionHeader` — detached, deep-frozen creation metadata (`version`, `id`, `createdAt`, optional `cwd`/`parentSession`/`seedLength`/`delegationDepth`). Construction validates the durable record and requires its id to match `session.id`.
 
+### Execution directory
+
+`SESSION_EXECUTION_DIRECTORY_VERSION` is the explicit Runtime capability flag (1). `session.executionDirectory` reads the last own `session/execution-directory` binding. `resolveSessionCwd(session)` returns that path or creation cwd; `executionDirectoryFromEvents(header, events)` performs the same lookup for a detached prefix. Trusted hosts coordinate active consumers, append `{ sessionId, cwd }` and await `ctx.sessions.flush(session)` before file effects. The header and log location remain unchanged. Inherited parent bindings do not override a fork destination. See the [owning decision](../../../.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.md).
+
 ### Lossless JSON utilities
 
 Durable values need one accepted representation, not a check followed by a second read. `isJsonValue(value)` is the boolean predicate; `snapshotJsonValue(value)` iteratively validates and copies a plain value in one pass, returning `undefined` for invalid input and propagating a throwing getter. The snapshot helper accepts finite JSON numbers except `-0` (JSON rewrites it to `0`), dense ordinary arrays, and plain or null-prototype objects; it rejects cycles, unsupported scalars, and exotic prototypes before normalization without imposing a call-stack depth limit.

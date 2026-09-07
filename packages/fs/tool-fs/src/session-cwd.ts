@@ -8,6 +8,7 @@
  * @module @deepseek-ai/dsh-tool-fs/session-cwd
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
 
@@ -21,7 +22,7 @@ const PARENT_PATH_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/
  * @returns the calling agent's session cwd, or undefined for a non-agent caller (the backend then applies its own default).
  */
 export function sessionCwd(exec: ToolExecution, requestedPath: string): string | undefined {
-  const cwd = exec.agent?.session.header.cwd
+  const cwd = resolveSessionCwd(exec.agent?.session)
   if (cwd === undefined || (!PARENT_PATH_SEGMENT.test(cwd) && !PARENT_PATH_SEGMENT.test(requestedPath))) return cwd
   return canonicalPath(cwd)
 }

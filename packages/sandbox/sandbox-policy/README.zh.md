@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-沙箱策略解析的唯一归属位置：部署默认 [`SandboxMode`](../sandbox/README.zh.md) 与回退根目录，加上每个会话的持久模式覆盖和不可变工作区根目录。每项负责强制执行的能力在每次调用时都会收到一项解析完成的模式与根目录策略；模型在每次请求前会收到当前策略，而不会另收一份能力清单。
+沙箱策略解析的唯一归属位置：部署默认 [`SandboxMode`](../sandbox/README.zh.md) 与回退根目录，加上每个会话的持久模式覆盖和已记录执行根目录。每项负责强制执行的能力在每次调用时都会收到一项解析完成的模式与根目录策略；模型在每次请求前会收到当前策略，而不会另收一份能力清单。
 
 ## 为何需要共享归属位置
 
@@ -11,11 +11,11 @@
 ## 配置
 
 - `mode`：部署默认 `SandboxMode`（`read-only`／`workspace-write`／`danger-full-access`），加载时验证。默认为 `read-only`（故障安全）。
-- `workspaceRoot`：无 agent（智能体）的调用或没有 cwd 的会话在 `workspace-write` 下可写入的回退目录。默认为 `process.cwd()`；无论显式配置还是采用默认值，都会解析为其绝对文件系统标识。普通 agent 调用改用其会话头中不可变的 `cwd`。
+- `workspaceRoot`：无 agent（智能体）的调用或没有 cwd 的会话在 `workspace-write` 下可写入的回退目录。默认为 `process.cwd()`；无论显式配置还是采用默认值，都会解析为其绝对文件系统标识。普通 agent 调用改用`resolveSessionCwd(session)`。
 
 ## 接口
 
-- `ctx.sandboxPolicy.resolve({ session?, mode? })`：解析一项完整的逐调用策略。显式批准的模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于 `defaultMode`；会话不可变的 `cwd` 会先按文件系统语义规范化，再成为 `workspaceRoot`，否则使用配置的回退值。规范化先于词法归一化，因此 `symlink/..` 与进程工作目录解析保持一致。
+- `ctx.sandboxPolicy.resolve({ session?, mode? })`：解析一项完整的逐调用策略。显式批准的模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于 `defaultMode`；会话解析后的执行目录 会先按文件系统语义规范化，再成为 `workspaceRoot`，否则使用配置的回退值。规范化先于词法归一化，因此 `symlink/..` 与进程工作目录解析保持一致。
 - `ctx.sandboxPolicy.defaultMode`／`ctx.sandboxPolicy.workspaceRoot`：`resolve()` 使用的部署默认值与回退根目录。
 - `sandbox:policy`：直接派生自 `resolve({ session })` 的请求时缓存安全上下文贡献。它说明该模式中与具体能力无关的文件操作约定，以及 `workspace-write` 下规范化的会话工作区；工具归属方仍负责特定于操作的拒绝与升权引导。
 - `effectiveSandboxMode(events)`：会话 `sandbox/mode` 事件的纯 fold（最后一次切换胜出，没有则为 `undefined`），在 `resolve()` 内使用。
@@ -26,7 +26,7 @@
 
 ## 逐会话存储
 
-运行时切换是在对应会话日志中追加的一条 `sandbox/mode` 事件。`effective = explicit grant ?? fold(events) ?? deployment default`，因此覆盖会通过回放跨重启保留，两个会话也绝不会看到彼此状态。工作区标识无需另一条事件：创建时记录的不可变 `SessionHeader.cwd` 是该会话每次调用使用的根。该事件仍只进入日志；在下一次请求前，归属方会将当前事实贡献给完整运行时上下文快照。
+运行时切换是在对应会话日志中追加的一条 `sandbox/mode` 事件。`effective = explicit grant ?? fold(events) ?? deployment default`，因此覆盖会通过回放跨重启保留，两个会话也绝不会看到彼此状态。`session/execution-directory` 记录受信任的执行绑定；不存在自身绑定时，`resolveSessionCwd(session)` 回退到创建 `SessionHeader.cwd`。目录切换保留日志存储位置。该事件仍只进入日志；在下一次请求前，归属方会将当前事实贡献给完整运行时上下文快照。
 
 ## Execution coordination
 
@@ -71,6 +71,6 @@ Current DSH file policy: danger-full-access. The DSH file sandbox does not restr
 
 ## 已知限制与暂缓事项
 
-- **每个会话只有一个主要工作区根目录**：策略解析 `SessionHeader.cwd`；额外可写根目录不属于 `SandboxExecutionPolicy`。
+- **每个会话只有一个主要工作区根目录**：策略解析 `resolveSessionCwd(session)`；额外可写根目录不属于 `SandboxExecutionPolicy`。
 - **仅限文件操作模式**：`SandboxMode` 管控文件操作；网络和进程策略不在其词汇中，因此这里没有限制它们的旋钮。
 - **有意概述临时区域**：强制执行后端会授予不同的平台临时区域，这些区域在策略解析后才会选定，因此无法在当前上下文中如实枚举。

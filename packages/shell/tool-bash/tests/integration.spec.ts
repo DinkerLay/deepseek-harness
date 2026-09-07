@@ -93,6 +93,27 @@ async function pollUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<v
 }
 
 describe('bash tool through the agent loop', () => {
+  it('executes a relative file write in the rebound directory under the original Session identity', async () => {
+    const shared = mkdtempSync(join(tmpdir(), 'dsh-directory-main-'))
+    const worktree = mkdtempSync(join(tmpdir(), 'dsh-directory-branch-'))
+    dirs.push(shared, worktree)
+    const adapter = new MockAdapter([
+      toolCallResponse('branch-write', 'bash', { command: 'printf branch > result.txt', description: 'write branch artifact' }),
+      textResponse('Branch artifact written.'),
+    ])
+    const ctx = await harness(adapter)
+    const handle = await ctx.agents.create({ sessionId: SessionId('directory-worker'), meta: { cwd: shared }, agentOptions: { provider: 'mock', model: 'mock' } })
+    const { agent } = handle
+    agent.session.append('session/execution-directory', { sessionId: agent.id, cwd: worktree })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'write the branch artifact' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+    expect(readFileSync(join(worktree, 'result.txt'), 'utf8')).toBe('branch')
+    expect(existsSync(join(shared, 'result.txt'))).toBe(false)
+    expect(agent.session.header.cwd).toBe(shared)
+    expect(agent.id).toBe('directory-worker')
+    await handle.dispose()
+    await ctx.fiber.dispose()
+  })
   it('first-turn bash receives session identity before the lazy JSONL file materializes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-bash-session-env-'))
     dirs.push(root)

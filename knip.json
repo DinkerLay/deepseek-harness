@@ -45,6 +45,7 @@
         "headless-agent/tests/fixtures/subagent-inheritance-agent.ts",
         "headless-agent/tests/fixtures/subagent-settlement-fence.ts",
         "headless-agent/tests/fixtures/workspace-context-resume-agent.ts",
+        "headless-agent/tests/fixtures/execution-directory-agent.ts",
         "headless-agent/tests/fixtures/goal-domain/seed-goal.ts",
         "headless-agent/tests/fixtures/time-context-driver.ts",
         "headless-agent/tests/fixtures/time-context-mock-llm.ts",

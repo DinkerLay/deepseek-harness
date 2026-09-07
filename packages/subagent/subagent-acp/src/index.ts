@@ -7,6 +7,7 @@
  * @module @deepseek-ai/dsh-subagent-acp
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { accessSync, constants, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -131,7 +132,7 @@ function assertUsableCwd(label: string, cwd: string): string {
  */
 function resolveCwd(configured: string | undefined, request: SubagentStartRequest): string {
   if (configured !== undefined) return configured
-  const parentCwd = request.parent.session.header.cwd
+  const parentCwd = resolveSessionCwd(request.parent.session)
   if (parentCwd === undefined) {
     throw new Error('subagent-acp: no working directory for the child — configure `cwd` or delegate from a parent session that has one')
   }

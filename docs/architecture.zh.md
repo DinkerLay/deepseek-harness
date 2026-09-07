@@ -99,6 +99,8 @@ turn/end
 
 **模型可见即已记录。** 抵达模型请求的一切都必须能从日志重建，并由一项运行时不变量断言这一点。因此，新增一项模型可见输入就需要新增一个会话事件：扩展 `SessionEventMap` 并从日志渲染。
 
+执行目录通过 Session API 记录，与创建元数据分离。文件消费者和循环的 cwd 提示变量使用[记录式目录契约](../.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.zh.md)，目录分配和活跃使用者协调由 Host 负责。
+
 ## 能力 seam
 
 一个 **seam** 是一项可替换能力，包含三种角色：声明接口的 **Service Definition**、实现它的 **Service Provider**，以及使用它的 **Consumer**（通常是面向模型的工具）。一个包可以合并承担多个角色，但单一角色本身不是 seam；添加一项能力意味着把三者一并设计（[能力图](capability-seams.zh.md)）。

@@ -48,3 +48,5 @@ The authoritative exhaustive file diff remains Git. The manifest classifies that
 ## Session execution coordination
 
 The fork also exposes exact fork destinations, effect-owned Agent provisioning, sandbox policy constraints, per-message child attribution and branch-local automatic naming. Git ownership and ChatFlow policy remain in Product plugins.
+
+Recorded Session execution directories separate physical execution from immutable creation cwd. The [execution-directory decision](.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.md) defines the public event and resolver; Product owns lazy worktree allocation and reclamation.

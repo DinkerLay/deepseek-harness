@@ -45,6 +45,10 @@
 - `session.seq`、`session.id`：当前序号和只读类型化身份。
 - `session.header: SessionHeader`：脱离、深冻结的创建元数据（`version`、`id`、`createdAt`，以及可选的 `cwd`／`parentSession`／`seedLength`／`delegationDepth`）。构造时会校验持久记录，并要求其中的 id 与 `session.id` 一致。
 
+### 执行目录
+
+`SESSION_EXECUTION_DIRECTORY_VERSION` 是显式 Runtime 能力标记（1）。`session.executionDirectory` 读取最近的自身 `session/execution-directory` 绑定。`resolveSessionCwd(session)` 返回该路径或创建 cwd；`executionDirectoryFromEvents(header, events)` 对脱离实例的历史前缀执行相同查找。受信任 Host 协调活跃使用者，追加 `{ sessionId, cwd }`，并在文件效果之前等待 `ctx.sessions.flush(session)`。header 和日志位置保持不变，继承的父绑定不覆盖 fork 目标。参见[所属决策](../../../.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.zh.md)。
+
 ### 无损 JSON 工具
 
 持久值需要一种已接受的表示，不能先检查再二次读取。`isJsonValue(value)` 是布尔判断函数；`snapshotJsonValue(value)` 在一趟迭代中校验并复制普通值，无效输入返回 `undefined`，getter 抛出的异常则向外传播。快照辅助函数接受除 `-0` 外的有限 JSON 数值（JSON 会将其改写为 `0`）、稠密普通数组、普通对象或 null 原型对象；它会在规范化前拒绝循环引用、不支持的标量和特殊原型，同时不施加调用栈深度限制。

@@ -8,6 +8,7 @@
  * @module @deepseek-ai/dsh-tool-bash
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
@@ -147,7 +148,7 @@ function resolveWorkdir(
   exec: { agent?: Agent },
   policyWorkspaceRoot?: string,
 ): string | undefined {
-  const headerCwd = exec.agent?.session.header.cwd
+  const headerCwd = resolveSessionCwd(exec.agent?.session)
   const sessionCwd = policyWorkspaceRoot ?? (headerCwd === undefined ? undefined : canonicalPath(headerCwd))
   if (modelWorkdir === undefined) return sessionCwd
   if (sessionCwd !== undefined && !isAbsolute(modelWorkdir)) {

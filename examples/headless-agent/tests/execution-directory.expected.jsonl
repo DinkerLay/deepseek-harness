@@ -1,0 +1,73 @@
+{"type":"session","version":0,"id":"{{sessionId}}","createdAt":0,"cwd":"{{cwd}}","delegationDepth":0}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"content":[{"type":"text","text":"Read the shared baseline and produce a branch artifact."}],"source":{"kind":"user"},"role":"user","id":"{{sessionId}}"}]}}
+{"type":"turn/start","data":{"turn":1}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}
+{"type":"step/start","data":{"turn":1,"step":1}}
+{"type":"user/message","data":{"content":[{"type":"text","text":"Read the shared baseline and produce a branch artifact."}],"source":{"kind":"user"},"role":"user","id":"{{sessionId}}"},"surfaceOp":"append"}
+{"type":"session/title","data":{"title":"Read the shared baseline and","messageSeqs":[4],"source":{"kind":"fallback"}}}
+{"type":"request/header","data":{"header":{"config":{"provider":"{{sessionId}}","model":"fixture"},"system":"{{system}}","tools":"{{tools}}"},"reason":"initial"}}
+{"type":"request/context","data":{"provider":"{{sessionId}}","model":"fixture"}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"tool-call-delta","index":0,"id":"read-main","name":"read","argumentsDelta":"{\"fil"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"tool-call-delta","index":0,"id":"read-main","argumentsDelta":"e_path\":\"baseline.txt\"}"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"read-main","name":"read","arguments":"{\"file_path\":\"baseline.txt\"}"}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":1,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":1,"message":{"role":"assistant","content":[{"type":"tool-call","id":"read-main","name":"read","arguments":"{\"file_path\":\"baseline.txt\"}"}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":5}},"sourceEventSeqs":[8,9,10,11,12,13],"surfaceOp":"append"}
+{"type":"tool/call","data":{"turn":1,"step":1,"callId":"read-main","name":"read","arguments":"{\"file_path\":\"baseline.txt\"}"}}
+{"type":"tool/result","data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"read-main"},"content":[{"type":"tool-result","toolCallId":"read-main","content":[{"type":"text","text":"<path>{{cwd}}/baseline.txt</path>\n<type>file</type>\n<content>\n1: shared-baseline\n\n(End of file - total 1 lines)\n</content>"}],"isError":false}],"role":"user","id":"{{sessionId}}"},"meta":{"path":"{{cwd}}/baseline.txt","offset":1,"lines":[{"number":1,"text":"shared-baseline"}],"totalLines":1}},"sourceEventSeqs":[15],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":1}}
+{"type":"step/start","data":{"turn":1,"step":2}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"tool-call-delta","index":0,"id":"write-branch","name":"write","argumentsDelta":"{\"fil"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"tool-call-delta","index":0,"id":"write-branch","argumentsDelta":"e_path\":\"result.txt\",\"content\":\"branch-result\"}"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"write-branch","name":"write","arguments":"{\"file_path\":\"result.txt\",\"content\":\"branch-result\"}"}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":2,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":2,"message":{"role":"assistant","content":[{"type":"tool-call","id":"write-branch","name":"write","arguments":"{\"file_path\":\"result.txt\",\"content\":\"branch-result\"}"}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":5}},"sourceEventSeqs":[19,20,21,22,23,24],"surfaceOp":"append"}
+{"type":"tool/call","data":{"turn":1,"step":2,"callId":"write-branch","name":"write","arguments":"{\"file_path\":\"result.txt\",\"content\":\"branch-result\"}"}}
+{"type":"session/execution-directory","data":{"sessionId":"{{sessionId}}","cwd":"{{cwd}}/branch"}}
+{"type":"tool/result","data":{"turn":1,"step":2,"message":{"source":{"kind":"tool","callId":"write-branch"},"content":[{"type":"tool-result","toolCallId":"write-branch","content":[{"type":"text","text":"<path>{{cwd}}/branch/result.txt</path>\n<type>file</type>\n<content>\nCreated file\n</content>"}],"isError":false}],"role":"user","id":"{{sessionId}}"},"meta":{"diffs":[]}},"sourceEventSeqs":[26],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":2}}
+{"type":"step/start","data":{"turn":1,"step":3}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"tool-call-delta","index":0,"id":"read-branch","name":"read","argumentsDelta":"{\"fil"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"tool-call-delta","index":0,"id":"read-branch","argumentsDelta":"e_path\":\"result.txt\"}"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"read-branch","name":"read","arguments":"{\"file_path\":\"result.txt\"}"}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":3,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":3,"message":{"role":"assistant","content":[{"type":"tool-call","id":"read-branch","name":"read","arguments":"{\"file_path\":\"result.txt\"}"}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":5}},"sourceEventSeqs":[31,32,33,34,35,36],"surfaceOp":"append"}
+{"type":"tool/call","data":{"turn":1,"step":3,"callId":"read-branch","name":"read","arguments":"{\"file_path\":\"result.txt\"}"}}
+{"type":"tool/result","data":{"turn":1,"step":3,"message":{"source":{"kind":"tool","callId":"read-branch"},"content":[{"type":"tool-result","toolCallId":"read-branch","content":[{"type":"text","text":"<path>{{cwd}}/branch/result.txt</path>\n<type>file</type>\n<content>\n1: branch-result\n\n(End of file - total 1 lines)\n</content>"}],"isError":false}],"role":"user","id":"{{sessionId}}"},"meta":{"path":"{{cwd}}/branch/result.txt","offset":1,"lines":[{"number":1,"text":"branch-result"}],"totalLines":1}},"sourceEventSeqs":[38],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":3}}
+{"type":"step/start","data":{"turn":1,"step":4}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"tool-call-delta","index":0,"id":"search-branch","name":"glob","argumentsDelta":"{\"pat"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"tool-call-delta","index":0,"id":"search-branch","argumentsDelta":"tern\":\"*.txt\"}"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"search-branch","name":"glob","arguments":"{\"pattern\":\"*.txt\"}"}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":4,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":4,"message":{"role":"assistant","content":[{"type":"tool-call","id":"search-branch","name":"glob","arguments":"{\"pattern\":\"*.txt\"}"}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":5}},"sourceEventSeqs":[42,43,44,45,46,47],"surfaceOp":"append"}
+{"type":"tool/call","data":{"turn":1,"step":4,"callId":"search-branch","name":"glob","arguments":"{\"pattern\":\"*.txt\"}"}}
+{"type":"tool/result","data":{"turn":1,"step":4,"message":{"source":{"kind":"tool","callId":"search-branch"},"content":[{"type":"tool-result","toolCallId":"search-branch","content":[{"type":"text","text":"result.txt"}],"isError":false}],"role":"user","id":"{{sessionId}}"},"meta":{"shape":"paths","paths":["result.txt"],"truncated":false,"total":1}},"sourceEventSeqs":[49],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":4}}
+{"type":"step/start","data":{"turn":1,"step":5}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"tool-call-delta","index":0,"id":"shell-branch","name":"bash","argumentsDelta":"{\"com"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"tool-call-delta","index":0,"id":"shell-branch","argumentsDelta":"mand\":\"cat result.txt\",\"description\":\"read branch artifact from shell\"}"}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"shell-branch","name":"bash","arguments":"{\"command\":\"cat result.txt\",\"description\":\"read branch artifact from shell\"}"}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":5,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":5,"message":{"role":"assistant","content":[{"type":"tool-call","id":"shell-branch","name":"bash","arguments":"{\"command\":\"cat result.txt\",\"description\":\"read branch artifact from shell\"}"}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":5}},"sourceEventSeqs":[53,54,55,56,57,58],"surfaceOp":"append"}
+{"type":"tool/call","data":{"turn":1,"step":5,"callId":"shell-branch","name":"bash","arguments":"{\"command\":\"cat result.txt\",\"description\":\"read branch artifact from shell\"}"}}
+{"type":"tool/result","data":{"turn":1,"step":5,"message":{"source":{"kind":"tool","callId":"shell-branch"},"content":[{"type":"tool-result","toolCallId":"shell-branch","content":[{"type":"text","text":"branch-result"}],"isError":false}],"role":"user","id":"{{sessionId}}"}},"sourceEventSeqs":[60],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":5}}
+{"type":"step/start","data":{"turn":1,"step":6}}
+{"type":"assistant/chunk","data":{"turn":1,"step":6,"chunk":{"type":"block-start","index":0,"blockType":"text"}}}
+{"type":"text-chunks","data":{"turn":1,"step":6,"index":0,"dt":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"texts":["T","h","e"," ","f","i","l","e",","," ","s","e","a","r","c","h"," ","a","n","d"," ","s","h","e","l","l"," ","t","o","o","l","s"," ","s","e","e"," ","t","h","e"," ","b","r","a","n","c","h"," ","r","e","s","u","l","t","."," ","T","h","e"," ","m","a","i","n"," ","d","i","r","e","c","t","o","r","y"," ","i","s"," ","u","n","c","h","a","n","g","e","d","."]}}
+{"type":"assistant/chunk","data":{"turn":1,"step":6,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"The file, search and shell tools see the branch result. The main directory is unchanged."}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":6,"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":88}}}}
+{"type":"assistant/chunk","data":{"turn":1,"step":6,"chunk":{"type":"finish","reason":{"kind":"stop"}}}}
+{"type":"assistant/message","data":{"turn":1,"step":6,"message":{"role":"assistant","content":[{"type":"text","text":"The file, search and shell tools see the branch result. The main directory is unchanged."}],"source":{"kind":"model","provider":"{{sessionId}}","model":"fixture"},"id":"{{sessionId}}"},"usage":{"inputTokens":10,"outputTokens":88}},"sourceEventSeqs":[64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155],"surfaceOp":"append"}
+{"type":"step/end","data":{"turn":1,"step":6}}
+{"type":"turn/end","data":{"turn":1,"reason":{"kind":"completed"}}}

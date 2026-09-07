@@ -1,0 +1,29 @@
+- id: persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: './.sessions'
+    compression: none
+- id: fs-local
+  name: '@deepseek-ai/dsh-fs-local'
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+- id: bash-local
+  name: '@deepseek-ai/dsh-bash-local'
+- id: agent
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    agents: []
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    workspaceContext: false
+    skills:
+      enabled: false
+    goals: false
+- id: fs-tools
+  name: '@deepseek-ai/dsh-tool-fs'
+- id: search-tools
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+- id: directory-fixture
+  name: './tests/fixtures/execution-directory-agent.ts'

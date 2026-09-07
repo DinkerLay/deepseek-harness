@@ -10,6 +10,7 @@
  * @module @deepseek-ai/dsh-subagent-dsh-sdk
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { SubagentCapabilities, SubagentProvider, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
@@ -101,7 +102,7 @@ class SdkSubagentProvider implements SubagentProvider {
     const spec: SdkRunSpec = {
       command: this.config.command,
       args: this.config.args,
-      cwd: resolveChildCwd('subagent-dsh-sdk', this.config.cwd, request.parent.session.header.cwd),
+      cwd: resolveChildCwd('subagent-dsh-sdk', this.config.cwd, resolveSessionCwd(request.parent.session)),
       provider: this.config.provider,
       model: this.config.model,
       ...this.config.maxTokens === undefined ? {} : { maxTokens: this.config.maxTokens },

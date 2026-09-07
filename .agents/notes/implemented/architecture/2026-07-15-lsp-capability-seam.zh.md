@@ -79,7 +79,7 @@ interface LspService {
 
 映射键规范化为带前导点的小写扩展名，并按 `filePath` 的最后一个扩展名选择；语言 id 仅用于文档同步。seam 中的位置和范围从零开始按 UTF-16 计数。`findReferences` 始终包含声明：提供方在内部执行该约束，本地映射设置 `context.includeDeclaration: true`，调用方不能配置。封闭结果联合将导航统一为位置，将 `hover` 统一为内容或 `null`；导航结果携带提供方的规范工作区 URI，使消费方在执行世界的命名空间内相对化文件 URI。seam 不公开协议类型、进程或文档控制，也不提供通用请求逃生口。
 
-`dsh-lsp-stdio` 负责服务器配置、JSON-RPC、进程与临时文档状态和协议转换。它通过 `ctx.fs` 读取，通过 `ctx.subprocess` 启动，只依赖二者的 Service Definition 包而非具体提供方；[可移植执行环境决策](2026-07-28-portable-execution-world-consumers.zh.md)负责定义这种配对。服务器表的键是提供方 id。插件在注册前解析每个服务器的本地设置；如果后续映射无效或发生冲突，插件会撤销此前的注册，并为每个提供方保留独立进程池。`dsh-tool-lsp` 在运行时只注入 `tools`、`lsp` 和 `systemPrompt`，通过包内的 `sessionCwd(exec)` 辅助函数从 `exec.agent?.session.header.cwd` 取得工作区，其取值方式与文件系统工具一致，也不导入提供方。
+`dsh-lsp-stdio` 负责服务器配置、JSON-RPC、进程与临时文档状态和协议转换。它通过 `ctx.fs` 读取，通过 `ctx.subprocess` 启动，只依赖二者的 Service Definition 包而非具体提供方；[可移植执行环境决策](2026-07-28-portable-execution-world-consumers.zh.md)负责定义这种配对。服务器表的键是提供方 id。插件在注册前解析每个服务器的本地设置；如果后续映射无效或发生冲突，插件会撤销此前的注册，并为每个提供方保留独立进程池。`dsh-tool-lsp` 在运行时只注入 `tools`、`lsp` 和 `systemPrompt`，通过包内的 `sessionCwd(exec)` 辅助函数从 `resolveSessionCwd(exec.agent?.session)` 取得工作区，其取值方式与文件系统工具一致，也不导入提供方。
 
 ## 面向模型的约定
 
@@ -96,7 +96,7 @@ interface LspToolInput {
 
 `line` 和 `character` 是从 1 开始计数的正数 UTF-16 光标坐标；工具将其转换为 seam 中从零开始的 `LspPosition`，并将渲染位置转回。`findReferences` 包含声明，避免影响分析漏掉定义位置。提供方、语言 id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
 
-工具必须从会话 `header.cwd` 取得 `workspaceRoot`，没有后备值；缺失时在查询或启动前以 `LSP_WORKSPACE_REQUIRED` 失败。本地提供方基于根目录解析相对路径并直接接受绝对路径；两种路径都会进行规范化，如果目标位于规范工作区外，则在启动前拒绝。
+工具必须从会话 `resolveSessionCwd(session)` 取得 `workspaceRoot`，没有后备值；缺失时在查询或启动前以 `LSP_WORKSPACE_REQUIRED` 失败。本地提供方基于根目录解析相对路径并直接接受绝对路径；两种路径都会进行规范化，如果目标位于规范工作区外，则在启动前拒绝。
 
 位置在不应用 harness 宿主路径规则的情况下按文件稳定分组并渲染为 `path:line:character`。有效的 `file:` URI 落在提供方的规范工作区 URI 内时转换为相对路径，位于其外时转换为从 URI 派生的绝对路径；格式错误的 URI 与非 `file:` URI 保持原样。`maxLocations` 默认值为 `100`，并报告省略的条目；`maxResultChars` 默认值为 `16_000`，并限制每个完整渲染结果，其中包括截断元数据。空位置与 `null` hover 是成功的无结果响应；服务器载荷缺失或格式错误时，以结构化 `LSP_MALFORMED_RESPONSE` 错误失败。
 

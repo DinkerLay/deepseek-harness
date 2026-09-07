@@ -28,7 +28,7 @@ Status: implemented
 
 插件通过 `ctx.systemPrompt.variable(name, provider)` 注册 `{{name}}` 值。组装过程将它们解析到 waterfall 可见的变量映射中。渲染阶段拒绝以下情况：引用未知的自有属性、已注册的提供方返回 `undefined`、格式错误的完整引用、以及仍包含闭合 `}}` 的不平衡引用；孤立的未匹配 `{{` 保留为行文，替换后的值不会被重新扫描。注册阶段拒绝无效或重复的变量名，section 名称也必须唯一。
 
-`dsh-agent-loop` 注册两个内置变量，均为上下文 agent 的纯投影：`model`（= `options.model`）和 `cwd`（= `session.header.cwd`）。示例 persona 写 `powered by the {{model}} model`——模型名称只在 `model:` 配置键中声明一次。`{{cwd}}` 仅在 ACP 示例中演示：每个 ACP 会话携带客户端的 cwd，而配置预创建的 stdio agent 没有 cwd（在那里声称 `{{cwd}}` 的 persona 会导致该轮次失败——这是有意为之）。变量留在 loop 插件上（不同于下面的 section）：它们是本循环驱动的 agent 的运行时事实，替换循环自行提供自己的变量。
+`dsh-agent-loop` 注册两个内置变量，均为上下文 agent 的纯投影：`model`（= `options.model`）和 `cwd`（= `resolveSessionCwd(session)`）。示例 persona 写 `powered by the {{model}} model`——模型名称只在 `model:` 配置键中声明一次。`{{cwd}}` 仅在 ACP 示例中演示：每个 ACP 会话携带客户端的 cwd，而配置预创建的 stdio agent 没有 cwd（在那里声称 `{{cwd}}` 的 persona 会导致该轮次失败——这是有意为之）。变量留在 loop 插件上（不同于下面的 section）：它们是本循环驱动的 agent 的运行时事实，替换循环自行提供自己的变量。
 
 ### Persona 作为 order-0 section
 

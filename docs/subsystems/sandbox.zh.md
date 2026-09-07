@@ -40,7 +40,7 @@ type SandboxEnforcement = 'full' | 'partial'
 
 ## 逐调用策略
 
-完整执行策略会按每次能力调用解析并携带。它包括 `danger-full-access`，因此消费方可以只解析一次策略，再决定是否绕过约束。普通工具调用从调用会话的不可变 cwd 派生 `workspaceRoot`；部署配置是没有 agent（智能体）时的回退值。root 会先按文件系统语义规范化，再做词法规范化，因此包含 `symlink/..` 的 cwd 会标识 spawn 出的进程实际运行的目录。
+完整执行策略会按每次能力调用解析并携带。它包括 `danger-full-access`，因此消费方可以只解析一次策略，再决定是否绕过约束。普通工具调用从调用会话解析后的执行目录 派生 `workspaceRoot`；部署配置是没有 agent（智能体）时的回退值。root 会先按文件系统语义规范化，再做词法规范化，因此包含 `symlink/..` 的 cwd 会标识 spawn 出的进程实际运行的目录。
 
 ```ts type-equiv
 /**
@@ -69,7 +69,7 @@ interface SandboxExecutionPolicy {
 ```ts type-equiv
 /** Inputs that select the sandbox policy for one capability call. */
 interface SandboxPolicyRequest {
-  /** Calling session; its immutable cwd becomes the workspace boundary. */
+  /** Calling Session; its recorded execution directory becomes the workspace boundary. */
   session?: Session
   /** Explicit approved mode override, which outranks session policy. */
   mode?: SandboxMode
@@ -205,7 +205,7 @@ registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void>
 /**
  * Resolve the complete policy for one capability call. An approved explicit
  * mode outranks the session's last `sandbox/mode` event, which outranks the
- * deployment default. A session cwd is its workspace-write boundary; the
+ * deployment default. The resolved Session execution directory is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
  * cwd.
  * @param request - optional session and approved mode override.

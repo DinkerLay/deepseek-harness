@@ -235,6 +235,13 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change'
  */
 export interface SessionEventMap {
   /**
+   * Bind execution to a physical directory without changing creation metadata or
+   * log storage location. The Session id prevents forked history from adopting
+   * its parent's execution binding. Trusted hosts coordinate active consumers
+   * before appending a new binding and flush it before starting file effects.
+   */
+  'session/execution-directory': { sessionId: SessionId; cwd: string }
+  /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no
    * step; otherwise the following identified `user/message` event or batch

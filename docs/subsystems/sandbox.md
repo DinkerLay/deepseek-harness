@@ -40,7 +40,7 @@ type SandboxEnforcement = 'full' | 'partial'
 
 ## Per-call policy
 
-The complete execution policy is resolved and carried per capability call. It includes `danger-full-access` so a consumer can resolve policy once before deciding whether to bypass confinement. Normal tool calls derive `workspaceRoot` from the calling session's immutable cwd; deployment configuration is the agentless fallback. The root is canonicalized with filesystem semantics before lexical normalization, so a cwd containing `symlink/..` identifies the directory where a spawned process actually runs.
+The complete execution policy is resolved and carried per capability call. It includes `danger-full-access` so a consumer can resolve policy once before deciding whether to bypass confinement. Normal tool calls derive `workspaceRoot` from the calling Session's resolved execution directory; deployment configuration is the agentless fallback. The root is canonicalized with filesystem semantics before lexical normalization, so a cwd containing `symlink/..` identifies the directory where a spawned process actually runs.
 
 ```ts type-equiv
 /**
@@ -69,7 +69,7 @@ interface SandboxExecutionPolicy {
 ```ts type-equiv
 /** Inputs that select the sandbox policy for one capability call. */
 interface SandboxPolicyRequest {
-  /** Calling session; its immutable cwd becomes the workspace boundary. */
+  /** Calling Session; its recorded execution directory becomes the workspace boundary. */
   session?: Session
   /** Explicit approved mode override, which outranks session policy. */
   mode?: SandboxMode
@@ -203,7 +203,7 @@ registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void>
 /**
  * Resolve the complete policy for one capability call. An approved explicit
  * mode outranks the session's last `sandbox/mode` event, which outranks the
- * deployment default. A session cwd is its workspace-write boundary; the
+ * deployment default. The resolved Session execution directory is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
  * cwd.
  * @param request - optional session and approved mode override.

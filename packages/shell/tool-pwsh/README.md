@@ -19,12 +19,12 @@ The plugin also contributes the `tool:pwsh` prompt section (order 105): non-zero
 | `command` | string (required) | Run via `pwsh -Command`. No state persists between calls — use `workdir`, not `cd`. |
 | `description` | string (required) | One-line, active-voice summary of the command (5-10 words), for UI/log display only — no effect on execution. |
 | `timeoutMs` | number | Timeout override in milliseconds. The executor applies its configured default and cap. |
-| `workdir` | string | Working directory for this call. Defaults to the calling agent's session cwd (`session.header.cwd`) so each session runs in its own workspace; a relative `workdir` is resolved against that same identity. |
+| `workdir` | string | Working directory for this call. Defaults to the calling agent's session cwd (`resolveSessionCwd(session)`) so each session runs in its own workspace; a relative `workdir` is resolved against that same identity. |
 | `run_in_background` | boolean | Return a job id immediately; no timeout applies. |
 | `sandbox_permissions` | string enum | Advertised only when a sandboxing executor is mounted (`ctx.shell.sandboxMode` defined). The wider sandbox mode for a one-shot retry of a command the sandbox just denied — the narrowest wider mode that suffices, requiring `justification` and user approval through `ctx.approval` BEFORE execution. A non-widening or unapprovable request fails closed without running anything. |
 | `justification` | string | Required with `sandbox_permissions`: one sentence for the user explaining why this exact command needs the wider access. |
 
-`command`, `workdir`, and `timeoutMs` are resolved against the executor's config defaults via `ctx.shell.resolve()` before execution. The workdir default is applied in the tool layer from the calling agent's `session.header.cwd` BEFORE `resolve()` — the per-session cwd must come from `exec.agent`, since N sessions share one executor; only when no session cwd is available does the executor fall back to its own config / `process.cwd()`.
+`command`, `workdir`, and `timeoutMs` are resolved against the executor's config defaults via `ctx.shell.resolve()` before execution. The workdir default is applied in the tool layer from the calling agent's `resolveSessionCwd(session)` BEFORE `resolve()` — the per-session cwd must come from `exec.agent`, since N sessions share one executor; only when no session cwd is available does the executor fall back to its own config / `process.cwd()`.
 
 ### Managed shell environment
 

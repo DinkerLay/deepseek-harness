@@ -653,7 +653,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/context/file-reference-local/src/index.ts:35`](../packages/context/file-reference-local/src/index.ts)
+Source: [`packages/context/file-reference-local/src/index.ts:36`](../packages/context/file-reference-local/src/index.ts)
 
 <a id="deepseek-aidsh-fs-local"></a>
 
@@ -762,7 +762,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/hooks/hooks-claude-code/src/index.ts:45`](../packages/hooks/hooks-claude-code/src/index.ts)
+Source: [`packages/hooks/hooks-claude-code/src/index.ts:46`](../packages/hooks/hooks-claude-code/src/index.ts)
 
 <a id="deepseek-aidsh-hooks-codex"></a>
 
@@ -789,7 +789,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/hooks/hooks-codex/src/index.ts:44`](../packages/hooks/hooks-codex/src/index.ts)
+Source: [`packages/hooks/hooks-codex/src/index.ts:45`](../packages/hooks/hooks-codex/src/index.ts)
 
 <a id="deepseek-aidsh-host-apiproxy"></a>
 
@@ -1680,7 +1680,7 @@ export interface Config {
 
 Depends on: [`SandboxMode`](subsystems/sandbox.md)
 
-Source: [`packages/sandbox/sandbox-policy/src/index.ts:67`](../packages/sandbox/sandbox-policy/src/index.ts)
+Source: [`packages/sandbox/sandbox-policy/src/index.ts:68`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 <a id="deepseek-aidsh-sdk-jsonrpc-server"></a>
 
@@ -2216,7 +2216,7 @@ export interface Config {
 export type PermissionPolicy = 'allow' | 'reject'
 ```
 
-Source: [`packages/subagent/subagent-acp/src/index.ts:27`](../packages/subagent/subagent-acp/src/index.ts)
+Source: [`packages/subagent/subagent-acp/src/index.ts:28`](../packages/subagent/subagent-acp/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-claude-code"></a>
 
@@ -2249,7 +2249,7 @@ export interface Config {
 export type ClaudeCodePermissionMode = typeof CLAUDE_CODE_PERMISSION_MODES[number]
 ```
 
-Source: [`packages/subagent/subagent-claude-code/src/index.ts:38`](../packages/subagent/subagent-claude-code/src/index.ts)
+Source: [`packages/subagent/subagent-claude-code/src/index.ts:39`](../packages/subagent/subagent-claude-code/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-codex"></a>
 
@@ -2280,7 +2280,7 @@ export type CodexPermissionMode =
   | 'dangerously-bypass-approvals-and-sandbox'
 ```
 
-Source: [`packages/subagent/subagent-codex/src/index.ts:36`](../packages/subagent/subagent-codex/src/index.ts)
+Source: [`packages/subagent/subagent-codex/src/index.ts:37`](../packages/subagent/subagent-codex/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-dsh-sdk"></a>
 
@@ -2333,7 +2333,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/subagent/subagent-dsh-sdk/src/index.ts:29`](../packages/subagent/subagent-dsh-sdk/src/index.ts)
+Source: [`packages/subagent/subagent-dsh-sdk/src/index.ts:30`](../packages/subagent/subagent-dsh-sdk/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-fork-in-process"></a>
 
@@ -2519,7 +2519,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-bash/src/index.ts:35`](../packages/shell/tool-bash/src/index.ts)
+Source: [`packages/shell/tool-bash/src/index.ts:36`](../packages/shell/tool-bash/src/index.ts)
 
 <a id="deepseek-aidsh-tool-bash-persistent"></a>
 
@@ -2541,7 +2541,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-bash-persistent/src/index.ts:432`](../packages/shell/tool-bash-persistent/src/index.ts)
+Source: [`packages/shell/tool-bash-persistent/src/index.ts:433`](../packages/shell/tool-bash-persistent/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs"></a>
 
@@ -2684,7 +2684,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-pwsh/src/index.ts:53`](../packages/shell/tool-pwsh/src/index.ts)
+Source: [`packages/shell/tool-pwsh/src/index.ts:54`](../packages/shell/tool-pwsh/src/index.ts)
 
 <a id="deepseek-aidsh-tool-pwsh-persistent"></a>
 
@@ -2706,7 +2706,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-pwsh-persistent/src/index.ts:472`](../packages/shell/tool-pwsh-persistent/src/index.ts)
+Source: [`packages/shell/tool-pwsh-persistent/src/index.ts:473`](../packages/shell/tool-pwsh-persistent/src/index.ts)
 
 <a id="deepseek-aidsh-tool-ralph"></a>
 
@@ -2762,7 +2762,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+Source: [`packages/skill/tool-skill/src/index.ts:62`](../packages/skill/tool-skill/src/index.ts)
 
 <a id="deepseek-aidsh-tool-str-replace-editor"></a>
 

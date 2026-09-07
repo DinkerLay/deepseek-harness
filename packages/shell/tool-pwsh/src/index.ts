@@ -19,6 +19,7 @@
  * @module @deepseek-ai/dsh-tool-pwsh
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -150,7 +151,7 @@ function pwshDescription(backgroundEnabled: boolean, escalationModes: readonly S
  * otherwise use the session header cwd and leave executor defaulting as the fallback.
  */
 function resolveWorkdir(modelWorkdir: string | undefined, exec: { agent?: Agent }): string | undefined {
-  const headerCwd = exec.agent?.session.header.cwd
+  const headerCwd = resolveSessionCwd(exec.agent?.session)
   if (modelWorkdir === undefined) return headerCwd
   if (headerCwd !== undefined && !isAbsolute(modelWorkdir)) {
     return resolvePath(headerCwd, modelWorkdir)

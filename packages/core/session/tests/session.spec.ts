@@ -13,6 +13,24 @@ import SessionStore, {
 import type { CreateSessionOptions, SessionEventType, SessionHeader, SessionSurface, TodoItem } from '@deepseek-ai/dsh-session'
 
 describe('Session', () => {
+  it('keeps deletion reservations scoped while extending, partially completing and repeatedly releasing them', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const first = ctx.sessions.reserveForDeletion(SessionId('first'))
+    const other = ctx.sessions.reserveForDeletion(SessionId('other'))
+    first.extend([SessionId('child')])
+    expect(() => other.extend([SessionId('child')])).toThrow('already reserved')
+    first.complete([SessionId('child'), SessionId('unrelated')])
+    first.complete([SessionId('child')])
+    first.release()
+    first.complete()
+    first.release()
+    expect(() => first.extend([SessionId('later')])).toThrow('released')
+    expect(ctx.sessions.isDeletionReserved(SessionId('first'))).toBe(false)
+    expect(ctx.sessions.isDeletionReserved(SessionId('other'))).toBe(true)
+    other.release()
+    await ctx.fiber.dispose()
+  })
   it('exposes one stable readonly surface view', () => {
     const session = Session.create(SessionId('surface-view'))
     const surface = session.surface

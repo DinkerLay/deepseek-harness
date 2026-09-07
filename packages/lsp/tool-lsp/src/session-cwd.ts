@@ -7,6 +7,7 @@
  * @module @deepseek-ai/dsh-tool-lsp/session-cwd
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 
 /**
@@ -15,5 +16,5 @@ import type { ToolExecution } from '@deepseek-ai/dsh-tools'
  * @returns the calling agent's session cwd, or undefined for a non-agent caller.
  */
 export function sessionCwd(exec: ToolExecution): string | undefined {
-  return exec.agent?.session.header.cwd
+  return resolveSessionCwd(exec.agent?.session)
 }

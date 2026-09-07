@@ -34,6 +34,9 @@ export { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSur
 export { canonicalHeader, foldRequestHeader, headerEquals } from './request-header.ts'
 export { KNOWN_SESSION_EVENT_TYPES } from './known-event-types.ts'
 
+/** Public capability version for recorded execution-directory bindings and resolution. */
+export const SESSION_EXECUTION_DIRECTORY_VERSION = 1
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     sessions: SessionStore
@@ -240,6 +243,9 @@ function assertSessionEventEnvelope(value: Record<string, unknown>, index: numbe
     throw new Error(`seed event at index ${index} has an invalid event envelope`)
   }
   switch (type) {
+    case 'session/execution-directory':
+      validateExecutionDirectory(event['data'])
+      break
     case 'request/header':
     case 'user/message':
     case 'assistant/message':
@@ -247,6 +253,39 @@ function assertSessionEventEnvelope(value: Record<string, unknown>, index: numbe
       assertCurrentLlmShape(event, index)
       break
   }
+}
+
+/** Validate directory bindings at both the append and persisted-event boundaries. */
+function validateExecutionDirectory(data: unknown, owner?: SessionId): void {
+  const record = data !== null && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown> : undefined
+  if (typeof record?.['sessionId'] !== 'string' || record['sessionId'].length === 0
+    || typeof record['cwd'] !== 'string' || !isAbsolute(record['cwd']) || record['cwd'].includes('\0')) {
+    throw new Error('session execution directory requires a Session id and an absolute cwd')
+  }
+  if (owner !== undefined && record['sessionId'] !== owner) {
+    throw new Error('session execution directory belongs to another Session')
+  }
+}
+
+/**
+ * Resolve the recorded execution directory, falling back to creation cwd.
+ * @param session - calling Session, absent for agentless execution.
+ * @returns the physical execution directory, or undefined for backend defaulting.
+ */
+export function resolveSessionCwd(session: Pick<Session, 'header' | 'executionDirectory'> | undefined): string | undefined {
+  return session?.executionDirectory ?? session?.header.cwd
+}
+
+/**
+ * Resolve a detached or historical Session snapshot's physical execution directory.
+ * @param header - creation identity and fallback directory.
+ * @param events - the exact retained history prefix to inspect.
+ * @returns that prefix's own directory binding, or creation cwd when unbound.
+ */
+export function executionDirectoryFromEvents(header: Pick<SessionHeader, 'id' | 'cwd'>, events: readonly SessionEvent[]): string | undefined {
+  const event = events.findLast(candidate => candidate.type === 'session/execution-directory' && candidate.data.sessionId === header.id)
+  return event?.type === 'session/execution-directory' ? event.data.cwd : header.cwd
 }
 
 /** Reject obsolete request headers and malformed messages at the seed/load boundary. */
@@ -447,6 +486,23 @@ export class Session {
     return this.header.id
   }
 
+  private executionDirectoryFold: string | undefined
+  private executionDirectoryFoldSeq = 0
+
+  /**
+   * Latest own execution-directory binding. Fork seed bindings belong to their
+   * original Session and do not change this Session's creation directory.
+   */
+  get executionDirectory(): string | undefined {
+    for (const event of this.log.slice(this.executionDirectoryFoldSeq)) {
+      if (event.type === 'session/execution-directory' && event.data.sessionId === this.id) {
+        this.executionDirectoryFold = event.data.cwd
+      }
+    }
+    this.executionDirectoryFoldSeq = this.log.length
+    return this.executionDirectoryFold
+  }
+
   /**
    * The first seq appended IN THIS PROCESS: the length of the constructor
    * seed (0 without one). Events with smaller seq values entered through
@@ -616,6 +672,7 @@ export class Session {
       throw new Error(`session event "${type}" carries non-JSON-serializable data`)
     }
     assertSupportedRequestHeader(type, dataSnapshot, `session event "${type}"`)
+    if (type === 'session/execution-directory') validateExecutionDirectory(dataSnapshot, this.id)
     const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata)
     if (surfaceMetadataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`)
@@ -1169,7 +1226,7 @@ export class SessionStore extends Service {
       release: () => {
         if (!active) return
         active = false
-        if (this.deletions.get(rootSessionId) === entry) this.deletions.delete(rootSessionId)
+        this.deletions.delete(rootSessionId)
       },
     }
   }
@@ -1258,10 +1315,11 @@ export class SessionStore extends Service {
     }
     const liveSource = this._resolveForkSource(source)
     const seed = this._forkSeed(liveSource, boundary)
+    const cwd = executionDirectoryFromEvents(liveSource.header, seed)
     return this.create(childSessionId, {
       seed,
       meta: {
-        ...liveSource.header.cwd !== undefined ? { cwd: liveSource.header.cwd } : {},
+        ...cwd === undefined ? {} : { cwd },
         parentSession: liveSource.id,
         seedLength: seed.length,
       },

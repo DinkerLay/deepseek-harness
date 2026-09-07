@@ -17,7 +17,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
-import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
+import { executionDirectoryFromEvents, isAppendSurfaceEvent, isJsonValue, resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
@@ -2326,7 +2326,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         const childId = destination?.sessionId ?? `session-${randomUUID()}` as SessionId
-        const cwd = destination?.cwd ?? source.header.cwd
+        const cwd = destination?.cwd ?? executionDirectoryFromEvents(source.header, events.slice(0, cut))
         // The child inherits the parent's composition for the same reason a
         // resumed session keeps its own: the seeded history was produced under
         // those tools, and composing anything else would strand the tool calls
@@ -3144,12 +3144,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { sessionId },
           })
         }
-        if (session.header.cwd === undefined) {
+        const cwd = resolveSessionCwd(session)
+        if (cwd === undefined) {
           // Every served session records its project at create time; a
           // cwd-less header is a pre-project legacy log (not served).
           return err(request, { code: 'internal', message: `session "${sessionId}" has no project cwd`, details: {} })
         }
-        const cwd = session.header.cwd
         // The host registry is layered per scope and serves every session. A
         // composition may still realm-mount its own registry instead; that
         // instance is invisible to host contexts, so address it through the

@@ -19,6 +19,7 @@
  * @module @deepseek-ai/dsh-tool-fs-search/search-core
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { existsSync } from 'node:fs'
 import { isAbsolute, relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -224,7 +225,7 @@ export async function runRipgrep(
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
-  const cwd = exec.agent?.session.header.cwd
+  const cwd = resolveSessionCwd(exec.agent?.session)
   const workdir = cwd ?? process.cwd()
   let handle: SubprocessHandle
   try {

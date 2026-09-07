@@ -26,6 +26,13 @@ interface UserMessage extends Message {
  */
 interface SessionEventMap {
   /**
+   * Bind execution to a physical directory without changing creation metadata or
+   * log storage location. The Session id prevents forked history from adopting
+   * its parent's execution binding. Trusted hosts coordinate active consumers
+   * before appending a new binding and flush it before starting file effects.
+   */
+  'session/execution-directory': { sessionId: SessionId; cwd: string }
+  /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no
    * step; otherwise the following identified `user/message` event or batch
@@ -389,6 +396,11 @@ declare class Session {
   readonly header: SessionHeader;
   /** The session identity, derived from its durable header's single copy. */
   get id(): SessionId;
+  /**
+   * Latest own execution-directory binding. Fork seed bindings belong to their
+   * original Session and do not change this Session's creation directory.
+   */
+  get executionDirectory(): string | undefined;
   /**
    * The first seq appended IN THIS PROCESS: the length of the constructor
    * seed (0 without one). Events with smaller seq values entered through

@@ -48,3 +48,5 @@ Git 仍是完整文件差异的权威来源。manifest 在 package 与 Runtime �
 ## Session execution coordination
 
 Fork 还提供精确 fork 目标、由 effect 管理的 Agent 创建准备、sandbox policy 限制、逐条子任务输入归属和分支自动命名。Git 所有权与 ChatFlow 策略仍由 Product 插件负责。
+
+记录式 Session 执行目录将物理执行与不可变创建 cwd 分离。[执行目录决策](.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.zh.md)定义公共事件和解析器，按需 worktree 分配与回收由 Product 负责。

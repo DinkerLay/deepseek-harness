@@ -40,6 +40,16 @@ async function policyContext(ctx: Context, activeSession: Session): Promise<stri
 }
 
 describe('SandboxPolicyService', () => {
+  it('confines execution to a recorded worktree while preserving the storage directory', async () => {
+    const ctx = await mounted({ mode: 'workspace-write' })
+    const worker = session('worker', '/shared')
+    worker.append('session/execution-directory', { sessionId: worker.id, cwd: '/branches/worker' })
+    expect(ctx.sandboxPolicy.resolve({ session: worker }).workspaceRoot).toBe(resolve('/branches/worker'))
+    expect(worker.header.cwd).toBe('/shared')
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, workspaceRoot: '/shared' }))
+    expect(() => ctx.sandboxPolicy.resolve({ session: worker })).toThrow('cannot widen')
+    await ctx.fiber.dispose()
+  })
   it('rejects a constraint that widens a standing boundary', async () => {
     const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/workspace' })
     const release = ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'danger-full-access' }))

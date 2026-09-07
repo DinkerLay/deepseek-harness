@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-ACP（Agent Client Protocol）桥接层为每个会话提供独立的工作区：`session/new` 将自动化客户端的项目目录记录为 `SessionHeader.cwd`，`dsh-tool-bash` 将每次 bash 调用的 `workdir` 默认设为调用方 agent（智能体）的 `session.header.cwd`（见 [ACP 包](../../../../packages/acp/acp) 与 `dsh-tool-bash` 中的 `resolveWorkdir`）。因此会话 A 中的 bash 命令在 A 的项目目录执行，会话 B 中的在 B 的项目目录执行——一个服务器进程，N 个工作区。
+ACP（Agent Client Protocol）桥接层为每个会话提供独立的工作区：`session/new` 将自动化客户端的项目目录记录为 `SessionHeader.cwd`，`dsh-tool-bash` 将每次 bash 调用的 `workdir` 默认设为调用方 agent（智能体）的 `resolveSessionCwd(session)`（见 [ACP 包](../../../../packages/acp/acp) 与 `dsh-tool-bash` 中的 `resolveWorkdir`）。因此会话 A 中的 bash 命令在 A 的项目目录执行，会话 B 中的在 B 的项目目录执行——一个服务器进程，N 个工作区。
 
 文件系统解析使用的是插件加载时的 cwd，而 bash 使用的是会话的项目目录。因此，当自动化客户端的项目目录与服务器启动目录不同时，相对路径的解析结果就会不一致；快照测试因为让这两个路径相同而掩盖了这个 bug。
 
@@ -20,7 +20,7 @@ ACP（Agent Client Protocol）桥接层为每个会话提供独立的工作区�
 
 - `FileSystem.resolve` 接受 `resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget>`。`opts.cwd` 是相对 `path` 解析时的基准目录；绝对 `path` 忽略它；省略 `opts.cwd` 则使用后端自身的默认值。后端执行 I/O 时，`opts.signal` 可以取消解析。options 对象把调用方拥有的两个解析控制项放在一起，避免位置参数继续增长。
 - `dsh-fs-local.resolve` 使用 `resolveLocalTarget(opts?.cwd ?? this.config.cwd, path)`。`config.cwd` 仍作为调用方未提供会话 cwd 时的默认值。
-- `dsh-tool-fs` 的 `read`/`write`/`edit` 通过共享的 `sessionCwd(exec, requestedPath)` 辅助函数（`exec.agent?.session.header.cwd`，与 bash 的 `resolveWorkdir` 对应）获取会话 cwd，并传给 `resolve`。只要任一值中的父目录段可能跨越符号链接，该辅助函数就使用原生 realpath 语义，否则保留普通拼写；沙箱化 mutation 复用完整策略的 `workspaceRoot`；非 agent／无 header 的调用方得到 `undefined`，后端因此应用其默认值。
+- `dsh-tool-fs` 的 `read`/`write`/`edit` 通过共享的 `sessionCwd(exec, requestedPath)` 辅助函数（`resolveSessionCwd(exec.agent?.session)`，与 bash 的 `resolveWorkdir` 对应）获取会话 cwd，并传给 `resolve`。只要任一值中的父目录段可能跨越符号链接，该辅助函数就使用原生 realpath 语义，否则保留普通拼写；沙箱化 mutation 复用完整策略的 `workspaceRoot`；非 agent／无 header 的调用方得到 `undefined`，后端因此应用其默认值。
 
 ## 曾考虑的替代方案
 
@@ -37,3 +37,7 @@ ACP（Agent Client Protocol）桥接层为每个会话提供独立的工作区�
 - `FsTarget` 的标识不变：`targetKey` 仍为解析后绝对路径的 realpath，因此 observed-state 键控与符号链接标识不受影响——正确的每会话 cwd 产生与 bash 目标相同的 key。
 - 向后兼容：所有现有的 `resolve(path)` 调用（均在测试中）继续正常工作；新参数是可选的。
 - 单会话 stdio 演示不受影响：它不提供会话 cwd（其 agent 的会话没有 `cwd`），因此解析回退到 `config.cwd = process.cwd()`，即工作区本身。
+
+## 相关文档
+
+记录式执行绑定由[执行目录决策](2026-09-07-session-execution-directory.zh.md)定义。

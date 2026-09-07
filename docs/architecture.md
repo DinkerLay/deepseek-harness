@@ -95,6 +95,8 @@ The session log is the source of the context the model sees. `deriveMessages()` 
 
 **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
 
+Execution directories are recorded through the Session API independently of creation metadata. File consumers and the loop's cwd prompt variable use the [recorded directory contract](../.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.md); hosts own allocation and active-consumer coordination.
+
 ## Capability seams
 
 A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).

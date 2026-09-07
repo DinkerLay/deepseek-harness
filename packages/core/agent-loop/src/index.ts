@@ -21,7 +21,7 @@ import type {
 } from '@deepseek-ai/dsh-agent'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { SessionId, SessionPreparation } from '@deepseek-ai/dsh-session'
+import { resolveSessionCwd, SessionId, SessionPreparation } from '@deepseek-ai/dsh-session'
 import type { Session, SessionHeader } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -350,7 +350,7 @@ export class AgentLoop extends Service implements AgentFactory {
     ctx.effect(() => ctx.agents.setFactory(this), 'agentLoop.setFactory()')
     ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
     ctx.systemPrompt.variable('model', context => context.agent?.options.model)
-    ctx.systemPrompt.variable('cwd', context => context.agent?.session.header.cwd)
+    ctx.systemPrompt.variable('cwd', context => resolveSessionCwd(context.agent?.session))
 
     for (const { id, sessionId, cwd, resumeSessionId, ...options } of this.config.agents) {
       const meta = cwd === undefined ? {} : { cwd }

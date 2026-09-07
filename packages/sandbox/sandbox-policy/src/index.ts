@@ -18,6 +18,7 @@
  * @module @deepseek-ai/dsh-sandbox-policy
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { resolve as resolvePath, relative, isAbsolute } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -76,7 +77,7 @@ export interface Config {
 
 /** Inputs that select the sandbox policy for one capability call. */
 export interface SandboxPolicyRequest {
-  /** Calling session; its immutable cwd becomes the workspace boundary. */
+  /** Calling Session; its recorded execution directory becomes the workspace boundary. */
   session?: Session
   /** Explicit approved mode override, which outranks session policy. */
   mode?: SandboxMode
@@ -142,7 +143,7 @@ export class SandboxPolicyService extends Service {
   /**
    * Resolve the complete policy for one capability call. An approved explicit
    * mode outranks the session's last `sandbox/mode` event, which outranks the
-   * deployment default. A session cwd is its workspace-write boundary; the
+   * deployment default. The resolved Session execution directory is its workspace-write boundary; the
    * configured root is the fallback for agentless calls and sessions without a
    * cwd.
    * @param request - optional session and approved mode override.
@@ -152,7 +153,7 @@ export class SandboxPolicyService extends Service {
     const { session } = request
     let policy: SandboxExecutionPolicy = {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
-      workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+      workspaceRoot: resolveWorkspaceRoot(resolveSessionCwd(session) ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }
     for (const constraint of this.constraints) {

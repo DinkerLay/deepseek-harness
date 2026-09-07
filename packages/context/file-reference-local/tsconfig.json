@@ -28,6 +28,9 @@
     },
     {
       "path": "../file-reference"
+    },
+    {
+      "path": "../../core/session"
     }
   ]
 }
