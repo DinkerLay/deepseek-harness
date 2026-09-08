@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session-persistence` 通过后端无关的 `ctx.sessionPersistence` 服务持久存储会话的事件日志、在恢复时重新加载并列出已存储会话。持久化单元就是现有 `SessionEvent` 日志——不存在另一套并行的存储消息类型。`SessionHeader.isSeeded` 让轻量列表可见血缘，而精确的 `inheritedEventCount` 随每次带正文的存储读取与 prepared Session 一同传输。后端拥有自己的存储，而服务拥有仅追加日志、连续序列号、保留中断轮次而非截断的崩溃恢复，以及只在批次安全后才返回的持久写入。随产品交付的 JSONL provider 用每个 Session 一份产物实现该服务；第三方 provider 可以实现同一约定，而不改变 loop 或模型。
 
+`supportsDeletion` 显式声明永久删除能力。`delete(id)` 与同身份写入和退出操作串行，拒绝活跃或被独占准备的归属方，返回被删除的 Header 或 `undefined`。`listDeletionHeaders()` 包含延迟创建和已准备的身份。提交后的 `session-persistence/deleted` 事件同时携带 Header 和精确 `inheritedEventCount`；派生消费方必须将这些生命周期坐标一起使用。
+
 ## 目录
 
 - [使用本包](#use-this-package)
@@ -132,7 +134,7 @@ seam 不添加提示词或 schema。恢复会将已存储的表层事件还原�
 
 这些限制界定 seam 保证的终点。它们是当前包约束，不是任务积压。
 
-- **无删除或保留接口**——剪枝已存储会话属于带外后端维护。
+- **没有自动保留策略**——删除需要明确的 Host 归属方和声明 `supportsDeletion` 的后端。
 - **`list()` 无分页且无过滤**——它返回每个已存储会话的 header；适合本地存储，大规模时无索引。
 - **合成 closer 是唯一崩溃方案**——后端必须在 load 时合成 `tool/result`/`step/end`/`turn/end` closer；没有继续中断轮次而不先关闭它的部分轮次恢复。
 

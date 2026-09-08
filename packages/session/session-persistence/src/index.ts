@@ -99,6 +99,18 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionPersistence: SessionPersistence
   }
+
+  interface Events {
+    /**
+     * Post-commit notification that one durable Session artifact was
+     * permanently removed. Consumers clean derived indexes and accounting from
+     * this event; listener failure cannot reverse the storage commit.
+     * @param header - detached metadata of the deleted Session.
+     * @param inheritedEventCount - exact inherited cut identifying the removed log lifecycle.
+     * @mode parallel
+     */
+    'session-persistence/deleted'(header: SessionHeader, inheritedEventCount: SessionLogOffset): Promise<void> | void
+  }
 }
 
 /**
@@ -138,6 +150,9 @@ export abstract class SessionPersistence extends Service {
    * A backend that declares `true` must override {@link readRaw}.
    */
   abstract readonly supportsRawArtifacts: boolean
+
+  /** Whether this provider implements serialized permanent deletion. */
+  readonly supportsDeletion: boolean = false
 
   /**
    * Read a session's backend-owned artifact text verbatim — the exact durable
@@ -193,6 +208,18 @@ export abstract class SessionPersistence extends Service {
    * @param events - the contiguous batch to persist, in seq order.
    */
   abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+  /**
+   * Permanently remove one known Session identity. Implementations serialize
+   * the operation with same-id append, preparation, and retirement work. A
+   * lazy creation intent returns its header even when no artifact materialized;
+   * the default rejects so third-party backends cannot silently claim support.
+   * @param _id - persisted or lazy Session identity to remove.
+   * @returns the removed header, or `undefined` if already absent.
+   */
+  delete(_id: SessionId): Promise<SessionHeader | undefined> {
+    return Promise.reject(new Error('this session persistence backend does not support permanent Session deletion'))
+  }
 
   /**
    * Prepare the exact unpublished Session used by resume. Implementations may
@@ -290,6 +317,16 @@ export abstract class SessionPersistence extends Service {
    * @returns one header per materialized session.
    */
   abstract list(signal?: AbortSignal): Promise<SessionHeader[]>
+
+  /**
+   * List materialized and in-process lazy/prepared headers for recursive
+   * deletion discovery. Backends without coordinator state fall back to the
+   * materialized listing.
+   * @returns one header per known Session identity.
+   */
+  listDeletionHeaders(): Promise<SessionHeader[]> {
+    return this.list()
+  }
 
   /**
    * List materialized sessions with cheap per-log change tokens.

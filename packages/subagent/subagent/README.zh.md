@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-subagent` 是子 agent 委派背后的服务：agent（智能体）把任务交给具名子 agent，收集完成的结果，并且——对可继续子 agent 而言——跨轮次持续发送后续工作。多个提供方在同一约定下共存，因此单个组合可以并排提供进程内子 agent、进程外 ACP 或 SDK 子 agent，以及真实 Codex 或 Claude Code 子 agent。子 agent 有两种形态：一次性运行以单个结果结算，可继续子 agent 的持久会话则接受后续消息并可被中断。同一服务还回答发现类问题——存在哪些子级、它们的模式、活动状态与血缘——而不加载或恢复它们。把它与至少一个提供方后端和一个委派工具一起挂载；后端与面向模型的工具位于兄弟包中。
 
+每次接受发给子 Agent 的消息时，保留 `source.delegation.parentSessionId` 和当时打开的 `parentTurn`，覆盖重复发送和冷恢复后的继续执行。`registerParentDeliveryPolicy()` 可以让子消息和结算通知保持安静而不改变内容；回调接收 `kind: message` 或 `settlement`。安静注入不唤醒父 Agent，回调失败时安静保留，注册释放后恢复官方调度。这不是内容屏蔽。
+
 ## 目录
 
 - [使用本包](#use-this-package)

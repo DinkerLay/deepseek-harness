@@ -69,7 +69,7 @@ interface SandboxExecutionPolicy {
 ```ts type-equiv
 /** Inputs that select the sandbox policy for one capability call. */
 interface SandboxPolicyRequest {
-  /** Calling session; its immutable cwd becomes the workspace boundary. */
+  /** Calling Session; its recorded execution directory becomes the workspace boundary. */
   session?: Session
   /** Explicit approved mode override, which outranks session policy. */
   mode?: SandboxMode
@@ -196,9 +196,16 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
 
 ```ts cordis-catalog
 /**
+ * Register a deployment constraint over every enforcing consumer's policy.
+ * @param constraint - policy restriction; it must not broaden the supplied access.
+ * @returns the effect disposer removing this exact restriction.
+ */
+registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void>
+
+/**
  * Resolve the complete policy for one capability call. An approved explicit
  * mode outranks the session's last `sandbox/mode` event, which outranks the
- * deployment default. A session cwd is its workspace-write boundary; the
+ * deployment default. The resolved Session execution directory is its workspace-write boundary; the
  * configured root is the fallback for agentless calls and sessions without a
  * cwd.
  * @param request - optional session and approved mode override.

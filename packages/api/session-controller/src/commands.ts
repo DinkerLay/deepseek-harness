@@ -10,7 +10,7 @@ import {
   ReasoningEffortId, createUserMessage, freezeMessage,
 } from '@deepseek-ai/dsh-llm'
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
-import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import { executionDirectoryFromEvents, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { SessionTitleInvalidError } from '@deepseek-ai/dsh-session-title'
@@ -186,6 +186,12 @@ export class SessionCommandController {
    * @returns the new Session identity.
    */
   async fork(request: SessionForkRequest): Promise<SessionForkValue> {
+    const { seedLength, destination } = request
+    const assertSourceCurrent = this.ctx.sessions.capturePublicationCheck(request.sessionId)
+    if (seedLength !== undefined && (request.atSeq !== undefined
+      || !Number.isSafeInteger(seedLength) || seedLength < 0 || Object.is(seedLength, -0))) {
+      throw new RemoteError('gateway/bad-request', 'Exact seedLength must be a non-negative safe integer and cannot accompany atSeq.', {})
+    }
     let atSeq: ReturnType<typeof SessionSeq> | undefined
     try {
       atSeq = request.atSeq === undefined ? undefined : SessionSeq(request.atSeq)
@@ -217,7 +223,7 @@ export class SessionCommandController {
       ?? (atSeq === undefined || atSeq > lastSeq
         ? source.events.findLast(event => event.type === 'turn/end')
         : undefined)
-    if (boundary === undefined) {
+    if (seedLength === undefined && boundary === undefined) {
       throw new RemoteError(
         'session/fork-unavailable',
         atSeq !== undefined && atSeq <= lastSeq
@@ -226,13 +232,22 @@ export class SessionCommandController {
         { sessionId: request.sessionId },
       )
     }
-    let cut = SessionLogOffset(boundary.seq + 1)
-    while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') {
-      cut = SessionLogOffset(cut + 1)
+    let cut = SessionLogOffset(seedLength ?? (boundary === undefined ? 0 : boundary.seq + 1))
+    if (seedLength === undefined) {
+      while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') cut = SessionLogOffset(cut + 1)
+    }
+    if (cut > source.events.length || (cut > 0 && source.events[cut - 1]?.seq !== cut - 1)) {
+      throw new RemoteError('session/fork-unavailable', 'Exact fork prefix is unavailable.', { sessionId: request.sessionId })
+    }
+    const seed = source.events.slice(0, cut)
+    if (seed.findLast(event => event.type === 'turn/start' || event.type === 'turn/end')?.type === 'turn/start') {
+      throw new RemoteError('session/fork-unavailable', 'Exact fork prefix contains an unfinished Turn.', { sessionId: request.sessionId })
     }
     let workspace: Workspace | undefined
     try {
-      workspace = await this.forkWorkspace(source.header)
+      workspace = destination === undefined
+        ? await this.forkWorkspace(source.header)
+        : await this.ctx.workspaceRegistry.resolveByPath(destination.cwd)
     } catch (error) {
       throw new RemoteError(
         'gateway/internal',
@@ -240,16 +255,30 @@ export class SessionCommandController {
         {},
       )
     }
-    const childId = brandString<SessionId>(`session-${randomUUID()}`)
+    const childId = destination?.sessionId ?? brandString<SessionId>(`session-${randomUUID()}`)
+    const cwd = destination?.cwd ?? executionDirectoryFromEvents(source.header, seed)
     const composition = await this.agents.composeAgent(this.agents.presetForObservation(source))
+    let existing: SessionObservation | undefined
+    if (destination !== undefined) {
+      try { existing = await this.ctx.sessionQuery.observeSession(childId) } catch (error) {
+        if (!(error instanceof SessionQueryError && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND')) throw error
+      }
+    }
+    using retained = existing
+    if (retained !== undefined && (retained.header.parentSession !== source.header.id
+      || retained.inheritedEventCount !== cut || retained.header.cwd !== cwd
+      || retained.header.agentPreset !== composition.agentPreset
+      || JSON.stringify(retained.events.slice(0, cut)) !== JSON.stringify(seed))) {
+      throw new RemoteError('session/fork-unavailable', 'Reserved fork identity already has different history or placement.', { sessionId: request.sessionId })
+    }
     try {
       const { provider, model } = this.ctx.agentDefaultModel.currentSelection()
-      await this.ctx.agents.create({
+      if (retained === undefined) await this.ctx.agents.create({
         sessionId: childId,
-        seed: source.events.slice(0, cut),
+        seed,
         inheritedEventCount: cut,
         meta: {
-          ...(source.header.cwd === undefined ? {} : { cwd: source.header.cwd }),
+          ...(cwd === undefined ? {} : { cwd }),
           parentSession: source.header.id,
           isSeeded: true,
           ...(composition.agentPreset === undefined
@@ -257,8 +286,12 @@ export class SessionCommandController {
             : { agentPreset: composition.agentPreset }),
         },
         agentOptions: { provider, model },
-        setup: composition.setup,
+        setup: async (agentCtx) => {
+          const commit = await composition.setup(agentCtx)
+          return { commit() { assertSourceCurrent(); commit?.commit() } }
+        },
       })
+      assertSourceCurrent()
     } catch (error) {
       throw new RemoteError(
         'gateway/internal',

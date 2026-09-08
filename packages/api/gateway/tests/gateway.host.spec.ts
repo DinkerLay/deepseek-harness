@@ -1286,6 +1286,68 @@ async function setup(): Promise<{
   return { ctx, service: rawGoalService(ctx), serviceFiber }
 }
 
+describe('unary invocation policy', () => {
+  it('preserves cancellation identity and refuses a second delegated mutation', async () => {
+    const { ctx, service } = await setup()
+    try {
+      const signal = AbortSignal.abort(new Error('cancelled by caller'))
+      const reject = ctx.typertGateway.registerInvocationPolicy!(async () => { throw signal.reason })
+      await expect(ctx.typertGateway.invoke({ namespace: 'goals', method: 'passthrough', args: { value: 'blocked' }, signal }))
+        .rejects.toMatchObject({ code: 'gateway/cancelled' })
+      await reject()
+      const repeat = ctx.typertGateway.registerInvocationPolicy!(async (_request, next) => {
+        await next()
+        return next()
+      })
+      await expect(ctx.typertGateway.invoke({ namespace: 'goals', method: 'passthrough', args: { value: 'one mutation' } }))
+        .rejects.toThrow('next only once')
+      expect(service.calls).toEqual(['passthrough'])
+      await repeat()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('rejects before business execution and restores dispatch after policy disposal', async () => {
+    const { ctx, service } = await setup()
+    try {
+      const release = ctx.typertGateway.registerInvocationPolicy!(async () => { throw new Error('read-only Session') })
+      await expect(ctx.typertGateway.invoke({ namespace: 'goals', method: 'passthrough', args: { value: 'blocked' } }))
+        .rejects.toThrow('read-only Session')
+      expect(service.calls).toEqual([])
+      await release()
+      await expect(ctx.typertGateway.invoke({ namespace: 'goals', method: 'passthrough', args: { value: 'allowed' } }))
+        .resolves.toBe('allowed')
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('captures named arguments before awaiting policy and drains an admitted call on removal', async () => {
+    const { ctx } = await setup()
+    const entered = Promise.withResolvers<undefined>()
+    const resume = Promise.withResolvers<undefined>()
+    try {
+      const release = ctx.typertGateway.registerInvocationPolicy!(async (_request, next) => {
+        entered.resolve(undefined)
+        await resume.promise
+        return next()
+      })
+      const args = { value: 'captured' }
+      const result = ctx.typertGateway.invoke({ namespace: 'goals', method: 'passthrough', args })
+      args.value = 'changed'
+      await entered.promise
+      let removed = false
+      const removing = release().then(() => { removed = true })
+      await Promise.resolve()
+      expect(removed).toBe(false)
+      resume.resolve(undefined)
+      await expect(result).resolves.toBe('captured')
+      await removing
+      expect(removed).toBe(true)
+    } finally {
+      resume.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+})
+
 async function setupGateway(): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(TypertRegistry)

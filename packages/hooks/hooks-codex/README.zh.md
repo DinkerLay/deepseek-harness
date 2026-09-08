@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-hooks-codex` 在 agent（智能体）运行期间执行你现有 Codex 配置（`hooks.json`）中的钩子，让你已经写好的行为无需重写即可继续生效。Codex 的 5 个 hook 点会在对应时刻触发：会话开始时、提示词提交时、工具运行前后，以及运行即将停止时。钩子可以带一条模型可见的消息阻塞提示词或工具调用、向对话附加额外上下文，或强制运行继续。当你持有 Codex command 钩子、希望它们原样在 harness 中工作时选择它；没有 Codex 对应物的行为应放入原生插件。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

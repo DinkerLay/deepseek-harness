@@ -32,6 +32,7 @@ import type {
   ProjectionSnapshot,
   SessionProjectionMap,
 } from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { projectionCacheDomainSpec } from './spec.ts'
 import type { CheckpointIdentity, CheckpointRecord } from './spec.ts'
@@ -88,6 +89,8 @@ export class SessionProjectionCache extends Service {
 
   private table?: KvTable<SessionId, CheckpointRecord>
   private readonly dirty = new Map<Session, DirtyState>()
+  private readonly operations = new Map<SessionId, Set<Promise<unknown>>>()
+  private readonly deleted = new Map<SessionId, CheckpointIdentity[]>()
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'sessionProjectionCache')
@@ -96,8 +99,12 @@ export class SessionProjectionCache extends Service {
   /** Open the domain and install the write-behind listeners. */
   protected async [Service.init](): Promise<void> {
     const domain = await this.ctx.storageDomain.open(projectionCacheDomainSpec)
-    this.ctx.effect(() => () => domain.close(), 'sessionProjectionCache.domainClose')
+    this.ctx.effect(() => async () => {
+      await this.drainOperations()
+      await domain.close()
+    }, 'sessionProjectionCache.domainClose')
     this.table = domain.table('sessions')
+    this.ctx.on('session-persistence/deleted', (header, cut) => this.removeDeletedRecord(header, cut))
     this.installWritePath()
   }
 
@@ -114,6 +121,7 @@ export class SessionProjectionCache extends Service {
    * @returns the identity-matching record, or `undefined` (absent or unrelated).
    */
   private recordFor(id: SessionId, expected: CheckpointIdentity): CheckpointRecord | undefined {
+    if (this.wasDeleted(id, expected)) return undefined
     const record = this.requireTable().get(id)
     if (record === undefined) return undefined
     return identityMatches(record.identity, expected) ? record : undefined
@@ -202,7 +210,16 @@ export class SessionProjectionCache extends Service {
    * @param session - the live session to checkpoint.
    * @returns resolution after durability and event emission.
    */
-  async write(session: Session): Promise<void> {
+  write(session: Session): Promise<void> {
+    return this.track(session.id, () => this.writeCore(session))
+  }
+
+  /** Checkpoint one live lifecycle unless its deletion already committed. */
+  private async writeCore(session: Session): Promise<void> {
+    if (this.wasDeleted(session.id, identityOf(session.header, session.inheritedEventCount))) {
+      this.markClean(session)
+      return
+    }
     const rows = this.ctx.sessionProjections.checkpoint(session)
     this.markClean(session)
     // Durability barrier: the checkpoint cut was taken above, so flushing
@@ -335,12 +352,60 @@ export class SessionProjectionCache extends Service {
   }
 
   /** Replace one session's stored record with its log identity and a detached snapshot of `rows`. */
-  private async put(id: SessionId, identity: CheckpointIdentity, rows: ProjectionCheckpoint): Promise<void> {
+  private put(id: SessionId, identity: CheckpointIdentity, rows: ProjectionCheckpoint): Promise<void> {
+    return this.track(id, () => this.putCore(id, identity, rows))
+  }
+
+  /** Reject stale write-back from observations retained across committed deletion. */
+  private async putCore(id: SessionId, identity: CheckpointIdentity, rows: ProjectionCheckpoint): Promise<void> {
+    if (this.wasDeleted(id, identity)) return
     const detached = snapshotJsonValue(rows)
     if (detached === undefined) {
       throw new TypeError('projection checkpoint is not losslessly JSON-serializable (a unit state violates the plain-JSON contract)')
     }
     await this.requireTable().put(id, { identity, rows: detached as CheckpointRecord['rows'] })
+  }
+
+  /** Keep deleted lifecycle identities while this cache can receive delayed cold observations. */
+  private wasDeleted(id: SessionId, identity: CheckpointIdentity): boolean {
+    return this.deleted.get(id)?.some(deleted => identityMatches(deleted, identity)) ?? false
+  }
+
+  /** Remove only the deleted lifecycle after its in-flight checkpoint writes settle. */
+  private async removeDeletedRecord(header: SessionHeader, cut: SessionLogOffset): Promise<void> {
+    const identity = identityOf(header, cut)
+    const deleted = this.deleted.get(header.id) ?? []
+    if (!deleted.some(previous => identityMatches(previous, identity))) deleted.push(identity)
+    this.deleted.set(header.id, deleted)
+    await this.drainOperations(header.id)
+    const table = this.requireTable()
+    const record = table.get(header.id)
+    if (record !== undefined && identityMatches(record.identity, identity)) await table.delete(header.id)
+  }
+
+  /** Retain every pending cache write through deletion and service disposal. */
+  private track<T>(id: SessionId, operation: () => Promise<T>): Promise<T> {
+    const pending = operation()
+    const operations = this.operations.get(id) ?? new Set<Promise<unknown>>()
+    this.operations.set(id, operations)
+    operations.add(pending)
+    const release = () => {
+      operations.delete(pending)
+      if (operations.size === 0 && this.operations.get(id) === operations) this.operations.delete(id)
+    }
+    void pending.then(release, release)
+    return pending
+  }
+
+  /** Await a fixed identity, or all cache writes before the storage domain closes. */
+  private async drainOperations(id?: SessionId): Promise<void> {
+    while (true) {
+      const pending = id === undefined
+        ? [...this.operations.values()].flatMap(operations => [...operations])
+        : [...this.operations.get(id) ?? []]
+      if (pending.length === 0) return
+      await Promise.allSettled(pending)
+    }
   }
 
   private requireTable(): KvTable<SessionId, CheckpointRecord> {

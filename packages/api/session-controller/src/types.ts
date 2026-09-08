@@ -291,6 +291,10 @@ export interface SessionRenameValue {
 export interface SessionForkRequest {
   readonly sessionId: SessionId
   readonly atSeq?: number
+  /** Exact inherited prefix length; mutually exclusive with atSeq. */
+  readonly seedLength?: number
+  /** Trusted Host placement reserved before dispatch; retries must match the same history. */
+  readonly destination?: { readonly sessionId: SessionId; readonly cwd: string }
 }
 
 /** Identity of a newly forked Session. */

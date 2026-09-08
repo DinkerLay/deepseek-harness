@@ -3,7 +3,8 @@
  * @module @deepseek-ai/dsh-session-persistence/preparations
  */
 
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionStorageMetadata } from './index.ts'
 
 interface PreparedSource {
   readonly session: Session
@@ -240,6 +241,38 @@ export class SessionPreparations<Source extends PreparedSource, CommitState> {
   invalidate(id: SessionId): void {
     const entry = this.entries.get(id)
     if (entry !== undefined) this.remove(entry)
+  }
+
+  /**
+   * Discard a reusable preparation before permanent deletion. An exclusive
+   * resume owner must release its reservation first; deleting underneath it
+   * would let an already-returned Session publish after its durable source was
+   * removed.
+   * @param id - session identity being deleted.
+   * @returns the removed cached header, or `undefined` when no preparation existed.
+   * @throws when an unpublished resume currently owns the identity.
+   */
+  invalidateForDeletion(id: SessionId): SessionStorageMetadata | undefined {
+    const entry = this.entries.get(id)
+    if (entry === undefined) return undefined
+    if (entry.phase !== 'ready') {
+      throw new Error(`cannot delete session "${id}" while its persisted preparation is ${entry.phase}`)
+    }
+    const session = entry.source?.session
+    this.remove(entry)
+    return session === undefined ? undefined : { meta: session.header, inheritedEventCount: session.inheritedEventCount }
+  }
+
+  /**
+   * List loaded unpublished headers for deletion-lineage discovery.
+   * @returns header references borrowed from immutable prepared Sessions.
+   */
+  headers(): SessionHeader[] {
+    const headers: SessionHeader[] = []
+    for (const entry of this.entries.values()) {
+      if (entry.source !== undefined) headers.push(entry.source.session.header)
+    }
+    return headers
   }
 
   /**

@@ -11,6 +11,8 @@ kind: "package-reference"
 
 agent（智能体）可以在会话期间发现并加载 skill（技能）：在首次请求前，它们会收到一份持久目录，列出每个可用 skill 的名称与有长度上限的描述，并可通过 `skill` 加载工具按名称加载任一列出 skill 的完整指令。用户也可以用 `/name` token 直接调用某个 skill，把该 skill 的指令注入当轮次。目录保持最新：成员关系、描述或可见性变化会追加完整的替换目录，被删除的 skill 会被显式停用。当 agent 需要加载 skill 时，请把它与 skill 注册表（以及至少一个提供方）一起挂载；它唯一的配置项限制目录描述长度。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

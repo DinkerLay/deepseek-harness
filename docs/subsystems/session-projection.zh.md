@@ -157,7 +157,7 @@ hydratePrepared( session: Session, events: readonly SessionEvent[], ): Projectio
  * @param session - the live session to checkpoint.
  * @returns resolution after durability and event emission.
  */
-async write(session: Session): Promise<void>
+write(session: Session): Promise<void>
 
 /**
  * Cold-read one session's projections from its complete log. Each unit is

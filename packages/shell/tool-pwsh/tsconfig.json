@@ -49,6 +49,12 @@
     },
     {
       "path": "../../sandbox/sandbox-policy"
+    },
+    {
+      "path": "../../shell/shell-exec-env"
+    },
+    {
+      "path": "../../core/session"
     }
   ]
 }

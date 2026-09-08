@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-message-feedback` 让产品界面提供逐消息反馈：用户可以把一条 assistant 消息标记为好评或差评，并可附上简短备注，评分会与该消息绑定。评分与会话一起保存，重启后依然存在，并且绝不会进入模型历史或遥测。产品界面通过 `messageFeedback` 服务读取、创建和修改评分，其 `list`、`put`、`delete` 三个操作就是全部对外表面。唯一需要部署方设置的项是备注最大长度（`maxNoteBytes`），Web 组合将其设为 8192。浏览器控件位于独立的客户端包中；本包提供服务本身。
 
+提交后的 `session-persistence/deleted` 通知清理归 Session 所有的派生记录。它不删除 Session 日志或外部项目目录；这些操作仍由各自生命周期归属方负责。
+
 ## 目录
 
 - [使用本包](#use-this-package)

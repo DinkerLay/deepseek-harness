@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-tool-fs` 提供面向模型的文件系统工具——`read`、`read_image`、`write` 与 `edit`——及其执行器。借助它们，模型可以带行号读取文件、原子地创建或替换文件，并执行有针对性的字面量编辑；结果都有上限，失败携带稳定错误码与恢复指令，所有文件操作都运行在已挂载的 `ctx.fs` 后端之上。编辑前读取策略位于独立插件（`dsh-fs-observation-policy`）中，因此省略它只会得到无条件、依然原子的变更。`read_image` 在持久附件存储已挂载时出现，并且只在路由模型声明图片输入时允许执行。当模型需要读取、创建、替换或编辑 UTF-8 文本文件时选择本包；发现工具（`glob`/`grep`）在同级包中。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

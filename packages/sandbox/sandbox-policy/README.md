@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-sandbox-policy` resolves the file-effect mode and workspace root for every confined capability call from one shared policy home, and tells the model the current policy before each request. A deployment sets a default mode and a fallback workspace root; a session can switch its own mode, and the switch survives restart because it lives in the session log. Every enforcing capability — bash, filesystem, terminal — reads the same resolved policy, so the mode a call runs under never depends on which family resolved it. The model sees one concise `sandbox:policy` contribution naming the mode and workspace, without a separate inventory of mounted capabilities.
 
+`registerConstraint()` installs an effect-owned restriction after the selected and approved mode are resolved. Consumers re-resolve the granted policy before execution. The workspace root follows the trusted Session execution record; a constraint cannot broaden access or silently relocate that root.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

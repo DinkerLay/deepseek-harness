@@ -24,6 +24,7 @@ The shell group provides command execution to agents: run a foreground command a
 
 | Package | Role | ctx key |
 |---|---|---|
+| [`shell-exec-env`](shell-exec-env/README.md) | Trusted per-execution business environment, separate from DSH_* facts | `ctx.shellExecEnv` |
 | [`shell`](shell/README.md) | Defines the executor contract: foreground runs, background handles, and request resolution | `ctx.shell` |
 | [`bash-local`](bash-local/README.md) | Runs Bash commands as fresh `bash -c` processes on POSIX | registers `ctx.shell` |
 | [`bash-sandbox`](bash-sandbox/README.md) | Runs Bash commands confined through the sandbox capability, reporting denials as facts | registers `ctx.shell` |

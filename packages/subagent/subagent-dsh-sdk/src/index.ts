@@ -11,6 +11,7 @@
  * @module @deepseek-ai/dsh-subagent-dsh-sdk
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import { statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
@@ -147,7 +148,7 @@ class SdkSubagentProvider implements SubagentProvider {
     }
     let cwd: string
     try {
-      cwd = resolveChildCwd('subagent-dsh-sdk', this.config.cwd, request.parent.session.header.cwd)
+      cwd = resolveChildCwd('subagent-dsh-sdk', this.config.cwd, resolveSessionCwd(request.parent.session))
     } catch (error: unknown) {
       const failure = sdkConfigurationFailure(error)
       this.ctx.logger.warn(`subagent-dsh-sdk "${this.name}": child start failed: %o`, error)

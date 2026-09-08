@@ -9,6 +9,7 @@
  * @module @deepseek-ai/dsh-hooks-claude-code
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -145,7 +146,7 @@ export function apply(ctx: Context, config: Config): void {
     const outputs: HookOutput[] = []
     // Run the hook in the agent's session workspace (the `session/new` cwd on the session
     // header), not the executor or entry-point process's launch dir.
-    const workdir = opts.agent?.session.header.cwd
+    const workdir = resolveSessionCwd(opts.agent?.session)
     // CLAUDE_PROJECT_DIR: an explicit config value wins; otherwise default it to the session
     // workspace (the same dir the hook runs in).
     const projectDir = config.projectDir ?? workdir
@@ -325,7 +326,7 @@ function base(ctx: Context, agent: Agent | undefined, event: string): Record<str
     transcript_path: agent === undefined
       ? ''
       : ctx.get('sessionPersistence')?.locate(agent.session.header)?.path ?? '',
-    cwd: agent?.session.header.cwd ?? process.cwd(),
+    cwd: resolveSessionCwd(agent?.session) ?? process.cwd(),
     hook_event_name: event,
   }
 }

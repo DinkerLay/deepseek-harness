@@ -440,3 +440,29 @@ describe('AgentRegistry factory seam', () => {
     expect(states.get(raw!)).toEqual(['create', 'resume'])
   })
 })
+
+describe('Agent creation provisioning policy', () => {
+  it('changes the destination before the factory and removes its contribution with its owner', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    const received: CreateAgentOptions[] = []
+    ctx.agents.setFactory({
+      createAgent: async (_owner, options) => {
+        received.push(options)
+        return { agent: stubAgent(options.sessionId), dispose: async () => {} }
+      },
+      resume: async () => { throw new Error('not a resume scenario') },
+    })
+    const release = ctx.agents.registerCreateInterceptor((options, next) => next({ ...options, meta: { ...options.meta, cwd: '/isolated' } }))
+    await ctx.agents.create({ sessionId: SessionId('managed'), meta: { cwd: '/shared' } })
+    expect(received[0]?.meta?.cwd).toBe('/isolated')
+    await release()
+    await ctx.agents.create({ sessionId: SessionId('ordinary'), meta: { cwd: '/shared' } })
+    expect(received[1]?.meta?.cwd).toBe('/shared')
+    const invalid = ctx.agents.registerCreateInterceptor((options, next) => next({ ...options, sessionId: SessionId('other') }))
+    await expect(ctx.agents.create({ sessionId: SessionId('reserved') })).rejects.toThrow('preserve identity')
+    expect(received).toHaveLength(2)
+    await invalid()
+    await ctx.fiber.dispose()
+  })
+})

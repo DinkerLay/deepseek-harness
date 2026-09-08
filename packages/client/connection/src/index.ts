@@ -20,6 +20,7 @@ export type {
   ConnectionRpcEndpointMatcher,
   ConnectionRpcFailure,
   ConnectionRpcHandler,
+  ConnectionRpcHandlerOptions,
   ConnectionRequestRejection,
   ConnectionRpcResult,
   ConnectionTrustRequest,

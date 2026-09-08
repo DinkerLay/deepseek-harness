@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 Two-sided Typert RPC endpoint for Host and Client Cordis environments. The Host entry provides `ctx.typertGateway`, while `@deepseek-ai/dsh-api-gateway/client` provides `ctx.remote`; both consume the same generated `InvocationDescriptor` contract and leave business selection to API Remotes. Connection carries unary request correlation, trust, and response envelopes, while Gateway owns multiplexed Remote streams.
 
+The Host `invocationPolicyVersion: 1` capability supports `registerInvocationPolicy()`. Unary admission surrounds lookup and business execution, snapshots named arguments before awaiting, preserves endpoint identity and permits at most one delegation. Removing a policy drains its admitted calls. Stream observation and Remote Event ownership retain their existing lifecycles.
+
 ## Table of Contents
 
 - [Host service: `TypertGatewayService` (ctx key: `typertGateway`)](#host-service-typertgatewayservice-ctx-key-typertgateway)

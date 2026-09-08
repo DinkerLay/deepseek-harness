@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 The package carries browser-to-Host Remote calls, exact Fetch responses, and connection generations. The Client plugin mounts `ctx.connection` with current-page loopback state, a generic RPC carrier, the active generation and its Host facts, observable recovery state, an immediate reconnect command, and the registration point for one generation source. A generation becomes visible when its source reports ready; source completion, failure, withdrawal, or an explicit stop clears it before `ConnectionController` applies its retry policy.
 
+Host RPC exposes `channelAuthorityVersion: 1`. An optional `handle(channel, handler, { authority: loopback })` restriction excludes configured non-loopback authorities while keeping the browser authentication requirement. Omitting the option preserves ordinary authenticated trusted-host access.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

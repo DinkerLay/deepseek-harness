@@ -129,17 +129,27 @@ export interface HostConnectionFetch {
   register(route: ConnectionFetchRoute): () => Promise<void>
 }
 
+/** Additional authority restriction for an authenticated administrative channel. */
+export interface ConnectionRpcHandlerOptions {
+  /** Loopback excludes configured non-loopback authorities without bypassing browser authentication. */
+  readonly authority: 'trusted-host' | 'loopback'
+}
+
 /** Host registry for logical RPC channels carried by the current transport. */
 export interface HostConnectionRpc {
+  /** Explicit support for per-channel authority restrictions. */
+  readonly channelAuthorityVersion?: 1
   /**
    * Register one authenticated absolute channel prefix.
    * @param channel - absolute logical channel such as `/rpc`.
    * @param handler - decoded endpoint handler returning the existing RPC result shape.
+   * @param options - optional restriction in addition to configured trust and authentication.
    * @returns asynchronous disposer removing the channel and its physical route.
    */
   handle(
     channel: string,
     handler: ConnectionRpcHandler,
+    options?: ConnectionRpcHandlerOptions,
   ): () => Promise<void>
 
   /**

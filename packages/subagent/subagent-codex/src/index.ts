@@ -6,6 +6,7 @@
  * @module @deepseek-ai/dsh-subagent-codex
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -71,7 +72,7 @@ class CodexProvider implements SubagentProvider {
   ) {}
 
   start(request: ResolvedSubagentStartRequest) {
-    const parentCwd = request.parent.session.header.cwd
+    const parentCwd = resolveSessionCwd(request.parent.session)
     if (parentCwd === undefined) {
       throw new Error(
         'subagent-codex: no working directory for the child — delegate from a parent session that has one',

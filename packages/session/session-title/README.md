@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-title` gives every session a title clients can display: a deterministic fallback from the first eligible human message, an optional asynchronous provider (such as a model-backed one), or an explicit user rename. Every accepted revision is a log-only `session/title` event, so titles survive replay, resume, and paging exactly like any other session event and never enter the model surface. The service owns scheduling and acceptance; the optional provider owns generation. Automatic work never delays the main agent response, and a newer revision supersedes older work. Configuration and title sources come first; the implementation internals live in a collapsible developer section below.
 
+`registerAutomaticMode()` selects cadence per Session without overriding an own user pin. Automatic input and generation status exclude the inherited prefix; inherited titles remain provisional until the branch supplies its own input. Refresh records `session/title-policy`; `session/title-generation` reports attempts and cold-restoration failures. The `titleGeneration` client projection exposes the latest own outcome. Provider results may report deliberate excerpts through `inputTruncated`.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

@@ -88,6 +88,16 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
+/** Exact parent and child at one synchronous parent-delivery decision. */
+export interface SubagentParentDelivery {
+  readonly parent: Agent
+  readonly childSessionId: SessionId
+  readonly kind: 'message' | 'settlement'
+}
+
+/** Quiet retains the accepted input without waking; undefined preserves official scheduling. */
+export type SubagentParentDeliveryPolicy = (delivery: SubagentParentDelivery) => 'quiet' | undefined
+
 /** What a caller asks for when starting a continuable background child. */
 export interface ContinuableStartSpec {
   /** The `ctx.subagents` provider whose continuable-creation capability establishes the child. */
@@ -154,6 +164,8 @@ type ActivationState = 'running' | 'waiting' | 'settled'
  * consumer outside this package supplies a host.
  */
 interface ContinuationHost {
+  /** Resolve deployment restrictions immediately before delivering to the parent. */
+  quietParentDelivery(delivery: SubagentParentDelivery): boolean
   /**
    * Resolve one provider's continuable-creation contribution, or reject when
    * the provider is unknown or lacks the capability.
@@ -282,13 +294,13 @@ function agentMessageSource(sender: Agent): AgentMessageSource {
 }
 
 /** Build the model-visible and durable representation of one adjacent-Agent message. */
-function agentMessage(sender: Agent, content: ContentBlock[]) {
+function agentMessage(sender: Agent, content: ContentBlock[], delegation?: { parentSessionId: SessionId; parentTurn?: number }) {
   return createUserMessage({
     content: [
       { type: 'text' as const, text: `Agent ${sender.id} sent a message:` },
       ...content,
     ],
-    source: agentMessageSource(sender),
+    source: { ...agentMessageSource(sender), ...delegation === undefined ? {} : { delegation } },
   })
 }
 
@@ -705,7 +717,8 @@ export class SubagentContinuationManager {
       )
     }
     const message = agentMessage(sender, content)
-    this.sendWaking(parent, message, () => { this.sendAgentMessage(parent, message) })
+    if (this.host.quietParentDelivery({ parent, childSessionId: sender.id, kind: 'message' })) parent.inject(message)
+    else this.sendWaking(parent, message, () => { this.sendAgentMessage(parent, message) })
     return message.id
   }
 
@@ -1269,9 +1282,13 @@ export class SubagentContinuationManager {
     // Parent-originated delivery keeps the parent live through ownership, so
     // establish it before the message can enter the child's inbox.
     this.acquireOwnership(parent, activation.childId)
+    const boundary = parent.session.snapshotEvents().findLast(event => event.type === 'turn/start' || event.type === 'turn/end')
+    const delegation = { parentSessionId: parent.id,
+      ...(boundary?.type === 'turn/start' ? { parentTurn: boundary.data.turn } : {}),
+    }
     const message = options.delivery === 'steer'
-      ? agentMessage(parent, content)
-      : createUserMessage({ content, source: options.source })
+      ? agentMessage(parent, content, delegation)
+      : createUserMessage({ content, source: { ...options.source, delegation } })
     const accepted = this.admitWaking(activation, message.id, () => {
       if (options.delivery === 'steer') activation.handle.agent.steer(message)
       else activation.handle.agent.followup(message)
@@ -1561,7 +1578,8 @@ export class SubagentContinuationManager {
       // reading its inbox and records the account in the log either way; it
       // does NOT survive that parent's own disposal, whose `keepInbox: false`
       // cancel durably clears whatever it never claimed.
-      if (this.closingTeardownFor(parent) !== undefined) {
+      if (this.closingTeardownFor(parent) !== undefined
+        || this.host.quietParentDelivery({ parent, childSessionId: activation.childId, kind: 'settlement' })) {
         parent.inject(message)
         return
       }

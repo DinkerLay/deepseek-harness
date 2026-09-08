@@ -45,6 +45,13 @@
 interface AgentHandle {
   agent: Agent
   dispose(): Promise<void>
+  /**
+   * Atomically reserve a truly idle Agent for permanent deletion. Implementors
+   * omit this capability when they cannot distinguish maintenance or queued
+   * input from public `idle` status.
+   * @returns a reservation, or `undefined` when work is active or queued.
+   */
+  reserveIdleDisposal?(): AgentIdleDisposalReservation | undefined
 }
 ```
 
@@ -721,6 +728,14 @@ setFactory(factory: AgentFactory): () => void
 async create(options: CreateAgentOptions): Promise<AgentHandle>
 
 /**
+ * Register a trusted provisioning policy before Session creation. Disposal prevents
+ * new calls and awaits admitted calls; middleware owns its resource rollback.
+ * @param interceptor - creation policy, including any destination and setup changes.
+ * @returns effect disposer that drains this policy's pending creations.
+ */
+registerCreateInterceptor(interceptor: AgentCreateInterceptor): () => Promise<void>
+
+/**
  * Load a persisted session and resume an agent on it through the registered
  * factory. Rejects if no factory is registered; the factory rejects if
  * session persistence is not configured or persistence/setup fails.
@@ -728,6 +743,15 @@ async create(options: CreateAgentOptions): Promise<AgentHandle>
  * @returns the handle after setup, rollback-covered publication, and loop start complete.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Atomically reserve a registry-owned Agent for idle disposal without
+ * exposing its teardown handle. Agents registered directly or created by a
+ * configuration helper have no retained handle and return `unowned`.
+ * @param sessionId - live Agent identity to claim.
+ * @returns claimed reservation, busy state, or missing ownership.
+ */
+reserveIdleDisposal(sessionId: SessionId): AgentIdleDisposalAttempt
 
 /**
  * Register a live agent. Throws if an agent with the same id is already

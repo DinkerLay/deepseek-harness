@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session-persistence-jsonl` 把每个会话存为一份仅追加 JSONL 日志——默认以带校验和的 Zstandard 帧存储，禁用压缩时以换行分隔的原始文本行存储。它提供与任何持久化后端相同的逻辑 `SessionEvent` 流，因此选择它不会改变 agent loop、模型或回放的任何行为；压缩、打包与崩溃恢复都是存储内部细节。当消费方需要按会话的磁盘产物时选择它：`locate(meta)` 返回 transcript 路径，选择 `compression: 'none'` 后日志可作为纯文本按行读取。根目录是唯一必填配置；持久性、延迟实体化与中断轮次恢复都随后端提供。
 
+通过 `supportsDeletion` 和串行的 `delete(id)` 提供永久删除，只移除归后端所有的日志及其空目录。公开的 `./legacy-sqlite` 子路径导出 `exportLegacySqlite({ runtimeRoot, database, destination, signal? })`：只读备份源数据库，在独立进程中运行已记录的 rc2 fork 读取器，通过公开 API 验证可移植的未压缩 JSONL，返回新的 `sessionRoot` 和记录计数。目标已存在时拒绝操作。原记录保持不变；JSONL 显式写出约定的零委派深度默认值。返回的根目录应配置 `compression: none`。输出发布后的失败会保留输出供检查；不会自动切换 profile 或删除数据库。
+
 ## 目录
 
 - [使用本包](#use-this-package)
@@ -145,7 +147,7 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope �
 - **只加载已配置编码和当前 `SESSION_FORMAT_VERSION`（v0）**——更改压缩需要独立或全新根，或选择原始文本模式；预发布格式没有迁移。
 - **平铺文件存储布局不加载**——加载前使用独立根，或将预发布产物移入项目/会话目录布局。
 - **压缩文件不能直接按行读取**——使用后端加载；或在写入新根前选择 `compression: 'none'`，供外部行读取方使用。
-- **不删除会话文件**——日志在 `root` 下累积，直到外部移除；seam 无删除接口。
+- **删除范围由 Host 所有**——调用方在后端删除之外协调预留、派生清理和授权范围。
 - **每会话一个活动写入方**——append 与修复只在所属后端实例内协调；在该所有者达到完全停稳的 dispose 前，另一实例或进程不得写入同一会话。
 - **POSIX 实体化需要硬链接支持**——第一次 append 使用 `link()`，使同 id 竞态失败而不覆盖已提交日志；Windows 使用无替换 write-through rename。
 

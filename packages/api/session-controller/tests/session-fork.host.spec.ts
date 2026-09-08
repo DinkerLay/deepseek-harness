@@ -302,3 +302,49 @@ describe('sessions.fork', () => {
     await ctx.fiber.dispose()
   })
 })
+
+
+describe('reserved exact forks', () => {
+  it('reuses the exact reserved child and attaches only the destination Workspace', async () => {
+    const ctx = await composed()
+    const attachSession = vi.fn(async () => {})
+    const resolveByPath = vi.fn(async () => ({ id: 'destination-workspace', attachSession }))
+    Object.assign(ctx.workspaceRegistry, { resolveByPath })
+    const source = liveAgent(ctx, 'exact-source', 2)
+    const seedLength = source.snapshotEvents().find(event => event.type === 'turn/end')!.seq + 1
+    const destination = { sessionId: sid('reserved-child'), cwd: '/reserved-worktree' }
+    const api = remote(ctx)
+    const first = await api.fork({ sessionId: source.id, seedLength, destination })
+    expect(first).toMatchObject({ ok: true, value: { sessionId: destination.sessionId } })
+    const child = ctx.sessions.get(destination.sessionId)!
+    expect(child.header).toMatchObject({ cwd: destination.cwd, parentSession: source.id, isSeeded: true })
+    expect(child.inheritedEventCount).toBe(seedLength)
+    expect(child.snapshotEvents(SessionLogOffset(0), child.inheritedEventCount))
+      .toEqual(source.snapshotEvents(SessionLogOffset(0), child.inheritedEventCount))
+    expect(resolveByPath).toHaveBeenCalledWith(destination.cwd)
+    expect(attachSession).toHaveBeenCalledWith(child.id)
+    await expect(api.fork({ sessionId: source.id, seedLength, destination })).resolves.toEqual(first)
+    expect(ctx.sessions.get(child.id)).toBe(child)
+    await expect(api.fork({ sessionId: source.id, seedLength: 0, destination })).resolves.toMatchObject({
+      ok: false, error: { code: 'session/fork-unavailable' },
+    })
+    await expect(api.fork({ sessionId: source.id, seedLength, destination: { ...destination, cwd: '/different' } })).resolves.toMatchObject({
+      ok: false, error: { code: 'session/fork-unavailable' },
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('admits an empty exact prefix and rejects unavailable or open prefixes', async () => {
+    const ctx = await composed()
+    Object.assign(ctx.workspaceRegistry, { resolveByPath: async () => undefined })
+    const source = liveAgent(ctx, 'exact-open-source', 1, 'open')
+    const api = remote(ctx)
+    await expect(api.fork({ sessionId: source.id, seedLength: 0, destination: { sessionId: sid('empty-child'), cwd: '/empty' } })).resolves.toMatchObject({ ok: true })
+    expect(ctx.sessions.get(sid('empty-child'))?.inheritedEventCount).toBe(0)
+    for (const seedLength of [source.seq, source.seq + 1]) {
+      await expect(api.fork({ sessionId: source.id, seedLength })).resolves.toMatchObject({ ok: false, error: { code: 'session/fork-unavailable' } })
+    }
+    await expect(api.fork({ sessionId: source.id, seedLength: 0, atSeq: 0 })).resolves.toMatchObject({ ok: false, error: { code: 'gateway/bad-request' } })
+    await ctx.fiber.dispose()
+  })
+})

@@ -537,6 +537,14 @@ async sendMessage( sender: Agent, targetId: SessionId, content: ContentBlock[], 
 interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void
 
 /**
+ * Restrict parent wakeups for accepted messages and settlements without changing their content.
+ * Callback failures retain input quietly; registrations dispose with their owner.
+ * @param policy - synchronous restriction at the exact parent delivery boundary.
+ * @returns effect disposer removing this registration.
+ */
+registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void>
+
+/**
  * Close continuable admission below exact live parent Agents, stop only their
  * visible descendant Activations synchronously, then await admitted scoped
  * materializations and release those forests child-first. The scoped cutoff

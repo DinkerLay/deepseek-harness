@@ -217,6 +217,23 @@ describe('SessionProjectionCache write policy', () => {
     }, { timeout: 5_000 })
   })
 
+  it('removes the exact deleted lifecycle and rejects late live and cold write-back', async () => {
+    const { ctx, root, cache } = await harness()
+    const session = ctx.sessions.create(SessionId('deleted-cache-row'), { meta: { createdAt: 10 } })
+    mark(session, ['cached'])
+    await cache.write(session)
+    expect(await storedRecord(root, session.id)).toBeDefined()
+
+    await ctx.parallel('session-persistence/deleted', { ...session.header, createdAt: 9 }, session.inheritedEventCount)
+    expect(await storedRecord(root, session.id)).toBeDefined()
+    await ctx.parallel('session-persistence/deleted', session.header, session.inheritedEventCount)
+    expect(await storedRecord(root, session.id)).toBeUndefined()
+    await cache.write(session)
+    cache.coldSnapshot(session.header, session.inheritedEventCount, session.snapshotEvents())
+    await (cache as unknown as { drainOperations(id: SessionId): Promise<void> }).drainOperations(session.id)
+    expect(await storedRecord(root, session.id)).toBeUndefined()
+  })
+
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
     const { ctx, root } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
     const session = ctx.sessions.create(SessionId('count'))

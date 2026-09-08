@@ -300,4 +300,31 @@ list(): BashEnvVariableInfo[]
 Types: [DshEnvironment](subprocess.md) · [ToolExecution](tools.md)
 
 Source: [`packages/shell/shell-env/src/index.ts`](../../packages/shell/shell-env/src/index.ts)
+
+<a id="ctxshellexecenv--shellexecenvironmentregistry"></a>
+
+### `ctx.shellExecEnv` — `ShellExecEnvironmentRegistry`
+
+Effect-owned registry collected afresh for every Bash or Pwsh call.
+
+```ts cordis-catalog
+/**
+ * Register one exact environment owner.
+ * @param contributor - declared keys and their execution-time resolver.
+ * @returns the exact contribution disposer.
+ */
+register(contributor: ShellExecEnvironmentContributor): () => void
+
+/**
+ * Collect the current trusted environment snapshot. Provider failures reject
+ * the shell call before a child process starts.
+ * @param execution - current shell Tool execution.
+ * @returns an immutable, key-sorted environment map.
+ */
+async collect(execution: ToolExecution): Promise<Readonly<Record<string, string>>>
+```
+
+Types: [ToolExecution](tools.md)
+
+Source: [`packages/shell/shell-exec-env/src/index.ts`](../../packages/shell/shell-exec-env/src/index.ts)
 <!-- END GENERATED cordis-surface -->

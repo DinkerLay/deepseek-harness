@@ -231,6 +231,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'The JSONL backend persists the SessionEvent vocabulary as one artifact per Session.',
   },
   {
+    key: 'sessionDeletion',
+    pkg: 'session-deletion',
+    title: 'Host recursive Session deletion',
+    mode: 'core',
+    note: 'Reserves Session lineage, claims registry-owned idle Agents, and removes durable records bottom-up through the selected persistence backend.',
+  },
+  {
     key: 'settings',
     pkg: 'settings',
     title: 'User-settings seam',
@@ -473,6 +480,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     mode: 'core',
     consumers: ['tool-bash', 'tool-pwsh'],
     note: 'Plugins declare effect-scoped DSH_* facts; each shell tool collects one trusted snapshot per execution and its executor rebuilds the namespace.',
+  },
+  {
+    key: 'shellExecEnv',
+    pkg: 'shell-exec-env',
+    title: 'Trusted shell execution environment registry',
+    mode: 'core',
+    consumers: ['tool-bash', 'tool-pwsh'],
+    note: 'Trusted plugins resolve non-enumerable, non-DSH_* capabilities per execution; shell Consumers discover the optional registry without changing their model schemas.',
   },
   {
     key: 'terminals',

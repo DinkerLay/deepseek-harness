@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-persistence-jsonl` stores each session in its own append-only JSONL log — checksummed Zstandard frames by default, raw newline-delimited lines when compression is disabled. It serves the same logical `SessionEvent` stream as any persistence backend, so choosing it changes nothing for the agent loop, the model, or replay; compression, packing, and crash recovery are storage-internal details. Choose it when consumers need a per-session artifact on disk: `locate(meta)` returns the transcript path, and the logs are readable as plain lines when `compression: 'none'` is selected. A root directory is the one required configuration; durability, lazy materialization, and interrupted-turn recovery come with the backend.
 
+Permanent deletion is available through `supportsDeletion` and serialized `delete(id)`, which unlinks only the owned log and its empty directory. The public `./legacy-sqlite` subpath exports `exportLegacySqlite({ runtimeRoot, database, destination, signal? })`: it backs up the source read-only, runs the recorded rc2 fork reader in a separate process, verifies portable uncompressed JSONL through public APIs, and returns a new `sessionRoot` plus corpus counts. An existing destination is rejected. Original records remain untouched; JSONL makes the documented zero delegation-depth default explicit. Configure the returned root with `compression: none`. A failure after output publication retains that output for inspection; no automatic profile switch or database deletion occurs.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)
@@ -145,7 +147,7 @@ These limits define when this backend is a poor fit or needs special operational
 - **Only the configured encoding and current `SESSION_FORMAT_VERSION` (v0) load** — changing compression requires a separate or fresh root, or selecting raw mode; the pre-release format has no migration.
 - **The flat-file storage layout does not load** — use a separate root or move pre-release artifacts into the project/session directory layout before loading.
 - **Compressed files are not directly line-readable** — use the backend to load them, or select `compression: 'none'` before writing a fresh root when external line readers are required.
-- **Nothing deletes session files** — logs accumulate under `root` until removed externally; the seam has no deletion API.
+- **Deletion scope is Host-owned** — callers coordinate reservations, derived cleanup and authorized scope around backend deletion.
 - **One live writer per session** — append and repair are coordinated only inside the owning backend instance; another instance or process must not write the same session until that owner reaches quiescent disposal.
 - **POSIX materialization requires hard-link support** — first append uses `link()` so same-id races fail instead of overwriting a committed log; Windows uses write-through rename without replacement.
 

@@ -24,6 +24,7 @@ import {
 } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   InvokeRemoteRequest,
+  RemoteInvocationPolicy,
   TypertGateway,
   TypertGatewayErrorCode,
   TypertGatewayWireStream,
@@ -59,6 +60,7 @@ import {
 
 export type {
   InvokeRemoteRequest,
+  RemoteInvocationPolicy,
   TypertGateway,
   TypertGatewayErrorCode,
   TypertGatewayWireStream,
@@ -179,6 +181,31 @@ export class TypertGatewayService extends Service implements TypertGateway {
     failure: error => rpcError(error),
   }
 
+  /** Capability version for unary admission before lookup and execution. */
+  get invocationPolicyVersion(): 1 { return 1 }
+  private readonly invocationPolicies = new Set<{
+    readonly policy: RemoteInvocationPolicy
+    readonly active: Set<Promise<unknown>>
+    closing: boolean
+  }>()
+
+  /**
+   * Register admission around unary lookup and business execution with endpoint identity preserved.
+   * @param policy - caller-owned wrapper; next accepts replacement arguments at most once.
+   * @returns disposer removing future admission and draining its in-flight invocations.
+   */
+  registerInvocationPolicy(policy: RemoteInvocationPolicy): () => Promise<void> {
+    return this.ctx.effect(() => {
+      const entry = { policy, active: new Set<Promise<unknown>>(), closing: false }
+      this.invocationPolicies.add(entry)
+      return async () => {
+        entry.closing = true
+        this.invocationPolicies.delete(entry)
+        while (entry.active.size > 0) await Promise.allSettled([...entry.active])
+      }
+    }, 'typertGateway.invocationPolicy')
+  }
+
   private srcClaims: ReadonlySet<string> | undefined
   private remoteEvents: RegisteredRemoteEventSource | undefined
   private readonly remoteEventClients = new Map<RemoteEventClientId, RemoteEventClient>()
@@ -296,6 +323,31 @@ export class TypertGatewayService extends Service implements TypertGateway {
    * @throws {@link TypertGatewayError} for dispatch, provider, or boundary failures; lookup-policy and business errors retain identity.
    */
   async invoke(request: InvokeRemoteRequest): Promise<unknown> {
+    if (this.invocationPolicies.size === 0) return this.invokeCore(request)
+    const entries = [...this.invocationPolicies]
+    const invoke = async (index: number, current: InvokeRemoteRequest): Promise<unknown> => {
+      const entry = entries[index]
+      if (entry === undefined) return this.invokeCore(current)
+      if (entry.closing) throw new Error('Remote invocation policy was removed during admission.')
+      let continued = false
+      const pending = Promise.resolve().then(() => entry.policy(current, (args = current.args) => {
+        if (continued) throw new Error('Remote invocation policy may call next only once.')
+        continued = true
+        return invoke(index + 1, { ...current, args: structuredClone(args) })
+      }))
+      entry.active.add(pending)
+      try { return await pending } finally { entry.active.delete(pending) }
+    }
+    try {
+      return await invoke(0, { ...request, args: structuredClone(request.args) })
+    } catch (error) {
+      if (request.signal?.aborted === true) throw remoteCancelled(endpointOf(request.namespace, request.method), error)
+      throw error
+    }
+  }
+
+  /** Execute a unary call after all admitted policies have delegated. */
+  private async invokeCore(request: InvokeRemoteRequest): Promise<unknown> {
     const prepared = await this.prepareInvocation(request)
     if (prepared.descriptor.mode === 'stream') {
       throw new TypertGatewayError(

@@ -28,6 +28,7 @@ The group splits into four families: durable storage (persistence seam, backends
 
 | Package | Role | ctx key |
 |---|---|---|
+| [`session-deletion`](session-deletion/README.md) | Host-only recursive permanent deletion and lifecycle reservations | `ctx.sessionDeletion` |
 | [`session-persistence/`](session-persistence/README.md) | Defines the durable session-storage service and the shared write coordination every backend composes | `ctx.sessionPersistence` |
 | [`session-persistence-jsonl/`](session-persistence-jsonl/README.md) | Shipped backend: one append-only JSONL log per session, optionally Zstandard-compressed | registers on `ctx.sessionPersistence` |
 | [`session-checkpoint-policy/`](session-checkpoint-policy/README.md) | Makes model requests, top-level tool side effects, and completed steps durable before the next action | wraps `ctx.llm` and `ctx.tools` |

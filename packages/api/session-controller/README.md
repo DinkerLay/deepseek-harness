@@ -10,6 +10,8 @@ English | [中文](README.zh.md)
 
 `@deepseek-ai/dsh-api-session-controller` owns the Host `ctx.sessionController` service and the generated Client `session`, `skills`, and `fileReferences` Remote namespaces. It serves Session lifecycle and history, the Host-generation model catalog, workspace-path opening, user-invocable skill discovery, and the adapter for Agent-scoped file references. Use it through API Gateway when a Client needs operations addressed by a Session.
 
+Host `forkCapabilities` declares support for exact `seedLength` and reserved `destination: { sessionId, cwd }`. Exact length and `atSeq` are mutually exclusive; the prefix must exist and contain no open Turn. Repeating a destination reuses only matching history, preset and creation directory. Destination Workspace ownership is resolved independently of source ancestry. Source-deletion checks participate in the Agent setup commit, and committed cold deletion emits Session removal.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

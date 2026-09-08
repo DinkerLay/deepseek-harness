@@ -26,6 +26,13 @@ interface UserMessage extends Message {
  */
 interface SessionEventMap {
   /**
+   * Bind execution to a physical directory without changing creation metadata or
+   * log storage location. The Session id prevents forked history from adopting
+   * its parent's execution binding. Trusted hosts coordinate active consumers
+   * before appending a new binding and flush it before starting file effects.
+   */
+  'session/execution-directory': { sessionId: SessionId; cwd: string }
+  /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no
    * step; otherwise the following identified `user/message` event or batch
@@ -393,6 +400,11 @@ declare class Session {
   readonly inheritedEventCount: SessionLogOffset;
   /** The session identity, derived from its durable header's single copy. */
   get id(): SessionId;
+  /**
+   * Latest own execution-directory binding. Fork seed bindings belong to their
+   * original Session and do not change this Session's creation directory.
+   */
+  get executionDirectory(): string | undefined;
   /**
    * The first seq appended IN THIS PROCESS: the length of the constructor
    * seed (0 without one). Events with smaller seq values entered through
@@ -922,6 +934,34 @@ get(id: SessionId): Session | undefined
  * @returns a fresh array; mutating it does not affect the store.
  */
 list(): Session[]
+
+/**
+ * Whether an active Host deletion reservation currently owns one exact id.
+ * Activity entry points use this before prompting or resuming an existing
+ * live Agent; Session publication performs the stronger lineage check.
+ * @param id - Session identity to inspect.
+ * @returns whether deletion currently fences the id.
+ */
+isDeletionReserved(id: SessionId): boolean
+
+/**
+ * Capture an identity's deletion epoch before an asynchronous source observation.
+ * The returned check rejects active deletion and a completed deletion even
+ * after its reservation has been released. Call at the derived publication commit.
+ * @param id - source Session identity whose continued existence authorizes publication.
+ * @returns synchronous validation for the captured source epoch.
+ */
+capturePublicationCheck(id: SessionId): () => void
+
+/**
+ * Reserve a root and its known subtree against Session publication. The
+ * deletion provider may extend the set while repeated persistence snapshots
+ * converge. Overlapping reservations reject synchronously.
+ * @param rootSessionId - subtree root.
+ * @param initialSessionIds - root and already discovered descendants.
+ * @returns the single-shot reservation capability.
+ */
+reserveForDeletion( rootSessionId: SessionId, initialSessionIds: readonly SessionId[] = [rootSessionId], ): SessionDeletionReservation
 
 /**
  * Create a live child session from a stable prefix of a live source.

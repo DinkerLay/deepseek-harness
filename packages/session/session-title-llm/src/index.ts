@@ -25,6 +25,8 @@ import type {
 
 /** Exact model-visible request recorded before one auxiliary title dispatch. */
 export interface SessionTitleLlmRequestEventData {
+  /** At least one cited message is represented by a shortened excerpt. */
+  readonly inputTruncated?: true
   /** Registered title-provider identity responsible for the request. */
   readonly titleProvider: SessionTitleProviderId
   /** Exact human `user/message` seqs represented in `messages`. */
@@ -199,6 +201,15 @@ function frameMessages(messages: readonly SessionTitleUserMessage[]): string {
   return `Generate the session title from this JSON array of human messages:\n${JSON.stringify(messages)}`
 }
 
+/**
+ * Measure the complete framed input used by the auxiliary title request.
+ * @param messages - provider-selected messages, including any deliberate excerpts.
+ * @returns UTF-8 bytes including JSON escaping, sequence fields and instruction framing.
+ */
+export function sessionTitleInputBytes(messages: readonly SessionTitleUserMessage[]): number {
+  return Buffer.byteLength(frameMessages(messages), 'utf8')
+}
+
 /** Translate terminal finish reasons into an auxiliary-call failure. */
 function finishError(finish: FinishReason): Error | undefined {
   switch (finish.kind) {
@@ -239,8 +250,10 @@ export async function generateSessionTitleWithLlm(
   if (selectedMessages.length === 0) {
     throw new Error('session-title-llm: at least one source message is required')
   }
+  const inputTruncated = selectedMessages.some(message =>
+    request.messages.find(source => source.seq === message.seq)?.text !== message.text)
   const framedInput = frameMessages(selectedMessages)
-  const inputBytes = Buffer.byteLength(framedInput, 'utf8')
+  const inputBytes = sessionTitleInputBytes(selectedMessages)
   if (inputBytes > config.maxInputBytes) {
     throw new Error(`session-title-llm: input is ${inputBytes} bytes, exceeding maxInputBytes ${config.maxInputBytes}`)
   }
@@ -263,6 +276,7 @@ export async function generateSessionTitleWithLlm(
   })
   request.session.append('session/title-llm-request', {
     titleProvider,
+    ...inputTruncated ? { inputTruncated: true as const } : {},
     messageSeqs: selectedMessages.map(message => message.seq),
     route,
     system,
@@ -290,6 +304,7 @@ export async function generateSessionTitleWithLlm(
   if (title.length === 0) throw new Error('session-title-llm: title model produced no text')
   return {
     title,
+    ...inputTruncated ? { inputTruncated: true } : {},
     messageSeqs: selectedMessages.map(message => message.seq),
     model: route,
   }

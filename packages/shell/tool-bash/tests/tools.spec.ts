@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -23,6 +23,7 @@ import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as BashEnvPlugin from '@deepseek-ai/dsh-shell-env'
+import ShellExecEnvironmentRegistry from '@deepseek-ai/dsh-shell-exec-env'
 import { processOutcome } from '../src/background.ts'
 import { renderProcessRead, renderResult } from '../src/render.ts'
 
@@ -649,6 +650,31 @@ describe('sandbox escalation through the generic task producer', () => {
       data: Record<string, unknown>,
     ) => unknown)('sandbox/mode', { mode: 'unknown-mode' })
     expect(text(await call(ctx, 'bash', escalate, malformed))).toContain('not strictly wider')
+  })
+
+  it('blocks escalation above a Session limit before approval or execution', async () => {
+    const { ctx, bash } = await setupSandboxed(true)
+    const prompted = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    ctx.on('approval/request', prompted)
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+    const result = await call(ctx, 'bash', escalate, sandboxAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('configured access limit')
+    expect(prompted).not.toHaveBeenCalled()
+    expect(bash.modes).toEqual([])
+  })
+
+  it.each([false, true])('resolves granted execution against limits installed during approval (background: %s)', async (background) => {
+    const { ctx, bash } = await setupSandboxed(true)
+    ctx.on('approval/request', () => {
+      ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+      return Promise.resolve<ApprovalOutcome>('allowed-once')
+    })
+    const agent = sandboxAgent(undefined, ctx)
+    ctx.agents.register(agent)
+    const result = await call(ctx, 'bash', { ...escalate, run_in_background: background }, agent)
+    expect(result.isError).toBe(false)
+    expect(bash.modes).toEqual(['read-only'])
   })
 
   it('fails closed when approval cannot be routed', async () => {
@@ -1306,5 +1332,89 @@ describe('the model-facing bash tool builds its request from named args only (no
     expect('env' in request).toBe(false)
     expect('stdin' in request).toBe(false)
     expect('stdoutMaxBytes' in request).toBe(false)
+  })
+})
+
+describe('trusted per-execution environment', () => {
+  it('collects optional plugin values after the ambient credential scrub', async () => {
+    const ctx = await setup()
+    await ctx.plugin(ShellExecEnvironmentRegistry)
+    ctx.shellExecEnv.register({
+      name: 'test-capability',
+      keys: ['TEST_CAPABILITY'],
+      resolve: () => ({ TEST_CAPABILITY: 'current-value' }),
+    })
+    const result = await call(ctx, 'bash', {
+      command: 'printf %s "$TEST_CAPABILITY"',
+      description: 'read trusted capability',
+    })
+    expect(text(result)).toContain('current-value')
+  })
+
+  it('collects a fresh snapshot for foreground and background calls', async () => {
+    const ctx = await setupWithTasks()
+    await ctx.plugin(ShellExecEnvironmentRegistry)
+    let current = 'foreground'
+    ctx.shellExecEnv.register({
+      name: 'rotating-capability',
+      keys: ['ROTATING_CAPABILITY'],
+      resolve: () => ({ ROTATING_CAPABILITY: current }),
+    })
+
+    const foreground = await call(ctx, 'bash', {
+      command: 'printf %s "$ROTATING_CAPABILITY"',
+      description: 'read foreground capability',
+    })
+    expect(text(foreground)).toContain('foreground')
+
+    current = 'background'
+    const started = await call(ctx, 'bash', {
+      command: 'printf %s "$ROTATING_CAPABILITY"',
+      description: 'read background capability',
+      run_in_background: true,
+    })
+    const jobId = text(started).match(/started background job (\S+)/u)?.[1]
+    expect(jobId).toBeDefined()
+    const output = await callUntilText(ctx, 'job_output', { job_id: jobId }, 'background')
+    expect(text(output)).toContain('background')
+  })
+
+  it('does not start a command when environment resolution fails', async () => {
+    const ctx = await setup()
+    const marker = join(spillDir, 'env-resolution-command-ran')
+    rmSync(marker, { force: true })
+    await ctx.plugin(ShellExecEnvironmentRegistry)
+    ctx.shellExecEnv.register({
+      name: 'failing-capability',
+      keys: ['FAILING_CAPABILITY'],
+      resolve: () => { throw new Error('capability unavailable') },
+    })
+    const result = await call(ctx, 'bash', {
+      command: `printf executed > ${JSON.stringify(marker)}`,
+      description: 'must not execute',
+    })
+    expect(text(result)).toContain('capability unavailable')
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it('rejects unavailable background execution before resolving a capability', async () => {
+    const ctx = await setup()
+    await ctx.plugin(ShellExecEnvironmentRegistry)
+    let resolutions = 0
+    ctx.shellExecEnv.register({
+      name: 'unused-capability',
+      keys: ['UNUSED_CAPABILITY'],
+      resolve: () => {
+        resolutions++
+        return { UNUSED_CAPABILITY: 'value' }
+      },
+    })
+    const result = await call(ctx, 'bash', {
+      command: 'true',
+      description: 'must not execute',
+      run_in_background: true,
+    })
+    expect(text(result)).toContain('background jobs unavailable')
+    expect(resolutions).toBe(0)
   })
 })

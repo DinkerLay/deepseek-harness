@@ -111,7 +111,7 @@ describe('title projection unit', () => {
     for (const state of invalidStates) {
       const malformed = {
         ...checkpoint,
-        titleInput: { ...row!, val: state },
+        titleInput: { ...row!, val: { ...state, inheritedEventCount: SessionLogOffset(0) } },
       }
       expect(() => ctx.sessionProjections.restore(
         malformed, [], SessionLogOffset(0), session.header, session.inheritedEventCount,
@@ -123,7 +123,7 @@ describe('title projection unit', () => {
       ...checkpoint,
       titleInput: {
         ...row!,
-        val: { first: { seq: 1, text: 'first' }, count: 1, lastSeq: 1 },
+        val: { first: { seq: 1, text: 'first' }, count: 1, lastSeq: 1, inheritedEventCount: SessionLogOffset(0) },
       },
     }, [], SessionLogOffset(0), session.header, session.inheritedEventCount)).not.toThrow()
   })

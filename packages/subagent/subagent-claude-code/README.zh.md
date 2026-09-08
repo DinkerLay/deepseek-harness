@@ -11,6 +11,8 @@ kind: "package-bundle"
 
 `dsh-subagent-claude-code` 注册由 Profile 命名、默认名称为 `claude-code` 的 Claude Code subagent 提供方，它在发起委派的会话工作区中通过官方 Agent SDK 运行真实的 Claude Code CLI 子 agent（智能体）。每次接受的运行提交一个自包含文本任务，并通过共享的 subagent 结果约定返回严格的最终答案——或独立的安全失败诊断。该提供方作为可选的 Profile Bundle 发布：安装会带入锁定的 Agent SDK 与一个兼容的平台 CLI 载荷，而注册的提供方在绑定工具调用前保持休眠。原生 Claude 设置与身份验证继续是权威来源，Profile 选择的 `permissionMode` 决定这个无人值守 query 如何处理权限检查。当子 agent 应该是与父 harness 完全隔离的真实 Claude Code 产品会话时，选择它。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

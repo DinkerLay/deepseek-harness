@@ -98,6 +98,63 @@ export function appendLog(session: Session, events: readonly SessionEvent[]): vo
  */
 export function runPersistenceContract(name: string, make: () => Promise<ContractBackend>): void {
   describe(`SessionPersistence contract: ${name}`, () => {
+    it('advertises serialized deletion support', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        expect(persistence.supportsDeletion).toBe(true)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('permanently deletes one materialized Session and treats a retry as absent', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('delete-materialized')
+        await persistence.create(m)
+        await persistence.append(m.id, oneTurnLog())
+
+        await expect(persistence.delete(m.id)).resolves.toMatchObject(m)
+        await expect(persistence.delete(m.id)).resolves.toBeUndefined()
+        expect((await persistence.list()).map(header => header.id)).not.toContain(m.id)
+        await expect(persistence.load(m.id)).rejects.toThrow(/not found/)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('removes lazy creation intent and permits the identity to be created again', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('delete-lazy')
+        await persistence.create(m)
+        expect((await persistence.listDeletionHeaders()).map(header => header.id)).toContain(m.id)
+
+        await expect(persistence.delete(m.id)).resolves.toMatchObject(m)
+        await persistence.create(m)
+        await persistence.append(m.id, oneTurnLog())
+        expect((await persistence.list()).map(header => header.id)).toContain(m.id)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('refuses deletion while an unpublished resume reservation owns the identity', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('delete-reserved-preparation')
+        await persistence.create(m)
+        await persistence.append(m.id, oneTurnLog())
+        const preparation = await persistence.prepare(m.id)
+
+        await expect(persistence.delete(m.id)).rejects.toThrow(/persisted preparation is reserved/)
+        preparation[Symbol.dispose]()
+        await expect(persistence.delete(m.id)).resolves.toMatchObject(m)
+      } finally {
+        await dispose()
+      }
+    })
+
     it('round-trips a session: create + append → load returns identical meta and byte-identical events', async () => {
       const { persistence, dispose } = await make()
       try {

@@ -8,6 +8,7 @@
  * @module @deepseek-ai/dsh-tool-bash
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
@@ -18,6 +19,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-shell-env'
+import type {} from '@deepseek-ai/dsh-shell-exec-env'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { ESCALATION_TARGETS, approveEscalation, canonicalPath, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
@@ -145,7 +147,7 @@ function resolveWorkdir(
   exec: { agent?: Agent },
   policyWorkspaceRoot?: string,
 ): string | undefined {
-  const headerCwd = exec.agent?.session.header.cwd
+  const headerCwd = resolveSessionCwd(exec.agent?.session)
   const sessionCwd = policyWorkspaceRoot ?? (headerCwd === undefined ? undefined : canonicalPath(headerCwd))
   if (modelWorkdir === undefined) return sessionCwd
   if (sessionCwd !== undefined && !isAbsolute(modelWorkdir)) {
@@ -194,9 +196,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (defaultMode !== undefined && sandboxPolicy === undefined) {
     throw new Error('tool-bash: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
-  /** Resolve the complete standing policy for this call when a confining executor is mounted. */
-  const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
-    sandboxPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
+  /** Resolve the standing or granted mode with every registered execution limit. */
+  const resolveSandboxPolicy = (exec: ToolExecution, mode?: SandboxMode): SandboxExecutionPolicy | undefined =>
+    sandboxPolicy?.resolve({ ...exec.agent === undefined ? {} : { session: exec.agent.session },
+      ...mode === undefined ? {} : { mode } })
 
   /**
    * Resolve a sandbox-escalation request through `ctx.approval` BEFORE
@@ -217,6 +220,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   ): Promise<SandboxMode> => {
     if (escalationModes.length === 0) {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
+    }
+    if (ESCALATION_TARGETS.includes(mode as SandboxMode) && resolveSandboxPolicy(exec, mode as SandboxMode)?.mode !== mode) {
+      throw new Error('The requested sandbox mode exceeds this Session\'s configured access limit.')
     }
     const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
     return approveEscalation(
@@ -335,21 +341,27 @@ export function apply(ctx: Context, config: Config = {}): void {
         : undefined
       const policy = approvedMode === undefined
         ? standingPolicy
-        : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        : resolveSandboxPolicy(exec, approvedMode)
       const workdir = resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
+      if (args.run_in_background === true) {
+        if (!backgroundEnabled) {
+          throw new Error('run_in_background is disabled for this deployment (enableRunInBackground: false)')
+        }
+        if (ctx.get('jobs') === undefined) {
+          throw new Error('background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs')
+        }
+      }
+      const env = await ctx.get('shellExecEnv')?.collect(exec)
       const dshEnv = ctx.shellEnv.collect(exec)
       const request = {
         command: args.command,
         ...workdir !== undefined ? { workdir } : {},
         ...args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {},
+        ...env !== undefined && Object.keys(env).length > 0 ? { env: { ...env } } : {},
         dshEnv,
         ...policy !== undefined ? { sandboxPolicy: policy } : {},
       }
       if (args.run_in_background === true) {
-        // Undeclared keys are allowed, so schema omission also needs enforcement.
-        if (!backgroundEnabled) {
-          throw new Error('run_in_background is disabled for this deployment (enableRunInBackground: false)')
-        }
         const jobs = ctx.get('jobs')
         if (jobs === undefined) {
           throw new Error('background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs')

@@ -220,6 +220,15 @@ export interface PersistenceBackend<TornMarker = unknown> {
   ): Promise<void>
 
   /**
+   * Permanently remove one materialized Session. The operation returns the
+   * exact stored header when an artifact existed and `undefined` when it was
+   * already absent. A backend must commit the header and event removal as one
+   * durable operation.
+   * @param id - persisted session identity to remove.
+   */
+  deleteStored?(id: SessionId): Promise<SessionStorageMetadata | undefined>
+
+  /**
    * List all stored (materialized) sessions' metadata.
    * @param signal - optional cancellation for backend listing work.
    */
@@ -763,6 +772,62 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new TypeError('session event batch is not losslessly JSON-serializable because it contains non-JSON-serializable data')
     }
     return this.serialize(id, () => this.appendCore(id, batch))
+  }
+
+  /**
+   * Permanently remove one Session after same-id publication and preparation
+   * work reaches quiescence. A live Session or reserved unpublished resume
+   * rejects before the backend is touched.
+   * @param id - session identity to remove.
+   * @returns the removed known header, or `undefined` when the identity was
+   *   already absent.
+   */
+  async delete(id: SessionId): Promise<SessionHeader | undefined> {
+    await this.waitForRetirement(id)
+    return this.serialize(id, () => this.deleteCore(id))
+  }
+
+  /** Delete one same-id artifact from coordinator and backend state. */
+  private async deleteCore(id: SessionId): Promise<SessionHeader | undefined> {
+    if (this.ctx.sessions.get(id) !== undefined) {
+      throw new Error(`cannot delete session "${id}" while it is live`)
+    }
+    const state = this.states.get(id)
+    if (state?.owner !== undefined) {
+      throw new Error(`cannot delete session "${id}" while persistence still has a live owner`)
+    }
+    const prepared = this.preparations.invalidateForDeletion(id)
+    if (this.backend.deleteStored === undefined) {
+      throw new Error(`${this.backend.name} does not support permanent Session deletion`)
+    }
+    const stored = await this.backend.deleteStored(id)
+    const deleted = stored ?? state?.storage ?? prepared
+    this.states.delete(id)
+    this.preparations.invalidate(id)
+    if (deleted !== undefined) await this.emitDeleted(deleted)
+    return deleted?.meta
+  }
+
+  /**
+   * List every materialized, lazy, or prepared header currently known to this
+   * coordinator for recursive-deletion lineage discovery.
+   * @returns one header per known Session identity.
+   */
+  async listDeletionHeaders(): Promise<SessionHeader[]> {
+    const headers = new Map<SessionId, SessionHeader>()
+    for (const header of await this.backend.list()) headers.set(header.id, header)
+    for (const state of this.states.values()) headers.set(state.storage.meta.id, state.storage.meta)
+    for (const header of this.preparations.headers()) headers.set(header.id, header)
+    return [...headers.values()]
+  }
+
+  /** Publish a committed deletion without allowing observer failure to reverse it. */
+  private async emitDeleted({ meta: header, inheritedEventCount }: SessionStorageMetadata): Promise<void> {
+    try {
+      await this.ctx.parallel('session-persistence/deleted', header, inheritedEventCount)
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`session "${header.id}": session-persistence/deleted listener rejected: ${String(error)}`)
+    }
   }
 
   private async appendCore(id: SessionId, events: readonly SessionEvent[]): Promise<void> {

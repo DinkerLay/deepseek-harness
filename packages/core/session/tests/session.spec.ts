@@ -5,6 +5,7 @@ import SessionStore, {
   adoptSessionEvent,
   SESSION_FORMAT_VERSION,
   Session,
+  SessionDeletionReservationError,
   SessionEvent,
   SessionId,
   SessionLogOffset,
@@ -14,6 +15,24 @@ import SessionStore, {
 import type { CreateSessionOptions, SessionEventType, SessionHeader, SessionSurface } from '@deepseek-ai/dsh-session'
 
 describe('Session', () => {
+  it('keeps deletion reservations scoped while extending, partially completing and repeatedly releasing them', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const first = ctx.sessions.reserveForDeletion(SessionId('first'))
+    const other = ctx.sessions.reserveForDeletion(SessionId('other'))
+    first.extend([SessionId('child')])
+    expect(() => { other.extend([SessionId('child')]) }).toThrow('already reserved')
+    first.complete([SessionId('child'), SessionId('unrelated')])
+    first.complete([SessionId('child')])
+    first.release()
+    first.complete()
+    first.release()
+    expect(() => { first.extend([SessionId('later')]) }).toThrow('released')
+    expect(ctx.sessions.isDeletionReserved(SessionId('first'))).toBe(false)
+    expect(ctx.sessions.isDeletionReserved(SessionId('other'))).toBe(true)
+    other.release()
+    await ctx.fiber.dispose()
+  })
   it('exposes one stable readonly surface view', () => {
     const session = Session.create(SessionId('surface-view'))
     const surface = session.surface
@@ -1130,6 +1149,51 @@ describe('Session', () => {
 
 
 describe('SessionStore', () => {
+  it('fences reserved identities, descendants, and overlapping deletion plans', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const root = SessionId('deleting-root')
+    const child = SessionId('deleting-child')
+    const reservation = ctx.sessions.reserveForDeletion(root, [child])
+
+    expect(() => ctx.sessions.prepare(root)).toThrow(expect.objectContaining({
+      code: 'SESSION_DELETION_IN_PROGRESS',
+    }) as SessionDeletionReservationError)
+    expect(() => ctx.sessions.prepare(SessionId('new-descendant'), { meta: { parentSession: root } }))
+      .toThrow(expect.objectContaining({ code: 'PARENT_SESSION_DELETION_IN_PROGRESS' }) as SessionDeletionReservationError)
+    expect(() => ctx.sessions.reserveForDeletion(SessionId('other-root'), [child]))
+      .toThrow(expect.objectContaining({ code: 'OVERLAPPING_SESSION_DELETION' }) as SessionDeletionReservationError)
+
+    reservation.release()
+    expect(ctx.sessions.prepare(root).id).toBe(root)
+    await ctx.fiber.dispose()
+  })
+
+  it('invalidates pre-deletion Session objects only after deletion commits', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const root = SessionId('epoch-root')
+    const child = ctx.sessions.prepare(SessionId('epoch-child'), { meta: { parentSession: root } })
+    const released = ctx.sessions.reserveForDeletion(root, [child.id])
+    released.release()
+    const detach = ctx.sessions.enter(child)
+    detach()
+
+    const stale = ctx.sessions.prepare(child.id, { meta: { parentSession: root } })
+    const committed = ctx.sessions.reserveForDeletion(root, [child.id])
+    committed.complete()
+    committed.release()
+    expect(() => ctx.sessions.enter(stale)).toThrow(expect.objectContaining({
+      code: 'STALE_SESSION_PREPARATION',
+    }) as SessionDeletionReservationError)
+
+    const fresh = ctx.sessions.prepare(child.id, { meta: { parentSession: root } })
+    const detachFresh = ctx.sessions.enter(fresh)
+    expect(ctx.sessions.get(child.id)).toBe(fresh)
+    detachFresh()
+    await ctx.fiber.dispose()
+  })
+
   it('creates sessions, emits session/created and session/event', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -1699,4 +1763,19 @@ describe('SessionStore', () => {
 
     expect(heard).toEqual([session])
   })
+})
+
+
+it('keeps an asynchronous publication check invalid after deletion reservations release', async () => {
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  const id = SessionId('publication-source')
+  const check = ctx.sessions.capturePublicationCheck(id)
+  const reservation = ctx.sessions.reserveForDeletion(id)
+  expect(check).toThrow(/permanently deleted/)
+  reservation.complete()
+  reservation.release()
+  expect(check).toThrow(/deleted during source preparation/)
+  expect(ctx.sessions.capturePublicationCheck(id)).not.toThrow()
+  await ctx.fiber.dispose()
 })

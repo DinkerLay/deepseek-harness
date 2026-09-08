@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session-title` 为每个会话提供客户端可以显示的标题：来自第一条符合条件用户消息的确定性回退、一个可选异步提供方（例如模型支持的提供方），或显式用户重命名。每个已接受的修订都是仅写入日志的 `session/title` 事件，因此标题像任何其他会话事件一样在回放、恢复与分页中存活，且绝不进入模型可见面。服务拥有调度与接受；可选提供方负责生成。自动工作绝不会延迟主 agent 响应，较新的修订会取代旧工作。配置与标题来源在前；实现内部细节放在下方可折叠的开发者章节中。
 
+`registerAutomaticMode()` 按 Session 选择更新频率，但不覆盖本 Session 的用户固定标题。自动命名输入与生成状态排除继承前缀；分支提供自身输入前，继承标题保持临时作用。刷新记录 `session/title-policy`，`session/title-generation` 报告命名尝试和冷恢复失败。`titleGeneration` 客户端投影公开最近的自身结果。提供方结果可以通过 `inputTruncated` 声明有意使用的摘录。
+
 ## 目录
 
 - [使用本包](#use-this-package)

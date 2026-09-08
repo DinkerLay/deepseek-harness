@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
+import { executionDirectoryFromEvents } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
@@ -43,7 +44,7 @@ export class SessionSkillCatalog extends TypertRemoteService {
       if (observation.projections === undefined) {
         throw new Error('skill catalog requires a projected Session observation')
       }
-      cwd = observation.header.cwd
+      cwd = executionDirectoryFromEvents(observation.header, observation.events)
       agentPreset = observation.projections.values.agentPreset ?? undefined
     } catch (error: unknown) {
       if (error instanceof SessionQueryError

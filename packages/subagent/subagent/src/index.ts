@@ -70,6 +70,8 @@ import type {
   ContinuableStartSpec,
   SubagentInterruptAuthority,
   SubagentSendMessageOptions,
+  SubagentParentDelivery,
+  SubagentParentDeliveryPolicy,
 } from './continuation.ts'
 import { listChildren as listSubagentChildren, listDescendants as listSubagentDescendants } from './list-children.ts'
 import type { SubagentDescendantListEntry, SubagentListEntry } from './list-children.ts'
@@ -126,6 +128,8 @@ export type {
   ContinuableStartSpec,
   SubagentInterruptAuthority,
   SubagentSendMessageOptions,
+  SubagentParentDelivery,
+  SubagentParentDeliveryPolicy,
   SubagentSettledMessageSource,
 } from './continuation.ts'
 export type * from './control-types.ts'
@@ -190,6 +194,7 @@ interface BrowserPromptSource {
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends TypertRemoteService {
   private providers = new Map<string, SubagentProvider>()
+  private readonly deliveryPolicies = new Set<{ policy: SubagentParentDeliveryPolicy }>()
   private continuations: SubagentContinuationManager | undefined
   /**
    * The contained lifecycle-edge publisher. Built here because scoped dispatch
@@ -203,6 +208,7 @@ export class SubagentRuntime extends TypertRemoteService {
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
+        quietParentDelivery: request => this.quietParentDelivery(request),
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
       })
@@ -292,6 +298,32 @@ export class SubagentRuntime extends TypertRemoteService {
    */
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void {
     this.continuations?.interrupt(targetSessionId, authority)
+  }
+
+  /**
+   * Restrict parent wakeups for accepted messages and settlements without changing their content.
+   * Callback failures retain input quietly; registrations dispose with their owner.
+   * @param policy - synchronous restriction at the exact parent delivery boundary.
+   * @returns effect disposer removing this registration.
+   */
+  registerParentDeliveryPolicy(policy: SubagentParentDeliveryPolicy): () => Promise<void> {
+    return this.ctx.effect(() => {
+      const registration = { policy }
+      this.deliveryPolicies.add(registration)
+      return () => { this.deliveryPolicies.delete(registration) }
+    }, 'subagents.registerParentDeliveryPolicy()')
+  }
+
+  private quietParentDelivery(request: SubagentParentDelivery): boolean {
+    let quiet = false
+    for (const registration of [...this.deliveryPolicies]) {
+      if (!this.deliveryPolicies.has(registration)) continue
+      try { if (registration.policy(request) === 'quiet') quiet = true } catch (error: unknown) {
+        quiet = true
+        this.ctx.logger.warn(`Subagent delivery policy failed; retaining parent input quietly: ${String(error)}`)
+      }
+    }
+    return quiet
   }
 
   /**

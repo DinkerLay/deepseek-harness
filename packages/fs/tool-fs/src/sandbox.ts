@@ -77,7 +77,8 @@ export class FsSandboxController {
    * strictly wider retry resolved through `ctx.approval` before anything
    * executes), else the session's standing mode. The calling session's cwd is
    * always carried as the workspace root. Validates the escalation argument
-   * pairing first.
+   * pairing first. Registered limits reject wider requests before approval and
+   * constrain the granted policy again after approval.
    * @param toolName - the mutating tool's name, for the approval audit trail.
    * @param args - the call's escalation arguments.
    * @param exec - the tool-execution context (agent, callId, signal).
@@ -94,6 +95,11 @@ export class FsSandboxController {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)')
     }
     const policy = standingPolicy as SandboxExecutionPolicy
+    if (ESCALATION_TARGETS.includes(args.sandbox_permissions as SandboxMode)
+      && this.policy?.resolve({ ...exec.agent ? { session: exec.agent.session } : {},
+        mode: args.sandbox_permissions as SandboxMode }).mode !== args.sandbox_permissions) {
+      throw new Error('The requested sandbox mode exceeds this Session\'s configured access limit.')
+    }
     const approvedMode = await approveEscalation(
       { requestedMode: args.sandbox_permissions, justification: args.justification, effectiveMode: policy.mode, subject: 'operation' },
       {
@@ -104,7 +110,7 @@ export class FsSandboxController {
         signal: exec.signal,
       },
     )
-    return { ...policy, mode: approvedMode }
+    return this.policy?.resolve({ ...exec.agent ? { session: exec.agent.session } : {}, mode: approvedMode })
   }
 
   /**

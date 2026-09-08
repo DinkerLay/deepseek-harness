@@ -24,7 +24,7 @@ import type {
 } from '@deepseek-ai/dsh-agent'
 import { errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-settings'
-import { SessionPreparation, SessionSeq } from '@deepseek-ai/dsh-session'
+import { resolveSessionCwd, SessionPreparation, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -413,7 +413,7 @@ export class AgentLoop extends Service implements AgentFactory {
     ctx.effect(() => ctx.agents.setFactory(this), 'agentLoop.setFactory()')
     ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
     ctx.systemPrompt.variable('model', context => context.agent?.options.model)
-    ctx.systemPrompt.variable('cwd', context => context.agent?.session.header.cwd)
+    ctx.systemPrompt.variable('cwd', context => resolveSessionCwd(context.agent?.session))
 
     for (const { id, sessionId, cwd, resumeSessionId, ...options } of this.config.agents) {
       const meta = cwd === undefined ? {} : { cwd }
@@ -629,7 +629,26 @@ export class AgentLoop extends Service implements AgentFactory {
           // session-start extension point), so only the liveness recheck is owed.
           emitAgentEvent(loopCtx, agent, 'agent/session-start', { source })
           assertLive()
-          return { agent, dispose }
+          return {
+            agent,
+            dispose,
+            reserveIdleDisposal: () => {
+              if (!agent.claimIdleDisposal()) return undefined
+              let active = true
+              return {
+                dispose: async () => {
+                  if (!active) throw new Error(`agent "${id}" idle-disposal reservation is released`)
+                  active = false
+                  await dispose()
+                },
+                release: () => {
+                  if (!active) return
+                  active = false
+                  agent.releaseIdleDisposal()
+                },
+              }
+            },
+          }
         },
         dispose,
       }

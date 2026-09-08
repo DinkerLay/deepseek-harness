@@ -179,6 +179,11 @@ export class MessageFeedbackService extends TypertRemoteService {
       await domain.close()
     }, 'message-feedback.domainClose')
     this.table = domain.table('sessions')
+    this.ctx.on('session-persistence/deleted', header => this.enqueue(header.id, async () => {
+      const table = this.requireTable()
+      const row = table.get(header.id)
+      if (row !== undefined && sameIdentity(row, header)) await table.delete(header.id)
+    }))
   }
 
   /**

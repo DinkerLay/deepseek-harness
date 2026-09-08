@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-subagent-acp` runs each delegated child in a fresh subprocess and drives it as an Agent Client Protocol client: the child gets its own runtime, session, model configuration, and tools, and it can be any ACP-compatible agent, not just Harness. It is the out-of-process alternative to the in-process spawn and fork backends, sharing only the parent session's working directory with the child. Each run spawns a fresh process, initializes an ACP session, sends the task, and collects the streamed final answer; permission prompts are auto-answered by configuration, so no human is needed. The parent receives only the child's final answer or a safe error — no intermediate messages or tool traffic crosses the boundary. Choose it when the child must be fully isolated from the parent harness and can speak ACP.
 
+This consumer resolves the calling Session through `resolveSessionCwd()`: a committed execution-directory binding takes precedence over creation cwd. Agentless calls retain their documented backend defaults; a fork does not inherit its parent's directory-binding event as its own.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

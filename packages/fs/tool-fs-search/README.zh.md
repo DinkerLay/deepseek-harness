@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-tool-fs-search` 提供面向模型的文件系统发现工具——`glob` 与 `grep`——由打包的 ripgrep 二进制支持，因此既不需要宿主 `rg` 安装，也不需要文件系统后端。每次调用都由 ripgrep 自身以固定参数集执行，并返回相对于工作目录的结果；由于每种载体都打包 ripgrep，工具始终可用。结果受可配置上限约束，达到上限的结果会在挂载可选 spill 存储时完整保存。当模型需要按模式发现文件或搜索文件内容时选择本包；文本文件的读取、写入与编辑是同级 `dsh-tool-fs` 包的职责。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

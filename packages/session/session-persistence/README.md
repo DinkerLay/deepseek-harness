@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-persistence` stores a session's event log durably, reloads it on resume, and lists stored sessions through the backend-neutral `ctx.sessionPersistence` service. The persisted unit is the existing `SessionEvent` log — there is no parallel stored message type. `SessionHeader.isSeeded` makes lineage visible to lightweight listing, while the exact `inheritedEventCount` accompanies every body-bearing storage read and prepared Session. A backend owns its storage, while the service owns append-only logs, contiguous sequence numbers, crash recovery that preserves an interrupted turn instead of truncating it, and durable writes that resolve only after the batch is safe. The shipped JSONL provider implements this service with one artifact per Session; third-party providers may implement the same contract without changing the loop or model.
 
+`supportsDeletion` explicitly advertises permanent deletion. `delete(id)` serializes with same-id writes and retirement, rejects live or exclusively prepared owners, and returns the removed header or `undefined`. `listDeletionHeaders()` includes lazy and prepared identities. The post-commit `session-persistence/deleted` event carries the header and exact `inheritedEventCount`; derived consumers must keep those lifecycle coordinates together.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)
@@ -132,7 +134,7 @@ Persistence does not mutate live request prefixes. A resumed loop can reuse prov
 
 These limits define where the seam's guarantees stop. They are current package constraints, not a task backlog.
 
-- **No deletion or retention API** — pruning stored sessions is out-of-band backend maintenance.
+- **No automatic retention policy** — deletion requires an explicit Host owner and a backend advertising `supportsDeletion`.
 - **`list()` is unpaginated and unfiltered** — it returns every stored session's header; fine for local stores, unindexed at scale.
 - **Synthetic closers are the only crash story** — a backend must synthesize `tool/result`/`step/end`/`turn/end` closers on load; there is no partial-turn resume that continues an interrupted turn instead of closing it.
 

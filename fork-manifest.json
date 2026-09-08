@@ -1,0 +1,341 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+    "tag": "dsh-v0.1.2-rc.1",
+    "commit": "a66e4702047846cdaa10c66c9d3df3951f5ea70d"
+  },
+  "addedBundles": [],
+  "addedPackages": [
+    {
+      "name": "@deepseek-ai/dsh-session-deletion",
+      "path": "packages/session/session-deletion",
+      "purpose": "Host-only recursive Session-lineage deletion capability"
+    },
+    {
+      "name": "@deepseek-ai/dsh-shell-exec-env",
+      "path": "packages/shell/shell-exec-env",
+      "purpose": "Trusted per-execution environment registry for shell Consumers"
+    }
+  ],
+  "modifiedPackages": [
+    {
+      "name": "@deepseek-ai/dsh-agent",
+      "path": "packages/core/agent",
+      "purpose": "Agent deletion reservations and effect-owned creation provisioning",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-agent-instructions",
+      "path": "packages/context/agent-instructions",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts",
+        "src/state.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-agent-loop",
+      "path": "packages/core/agent-loop",
+      "purpose": "Coordinate Agent lifecycle with Session deletion reservations; recorded execution-directory resolution",
+      "source": [
+        "src/agent.ts",
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-api-gateway",
+      "path": "packages/api/gateway",
+      "purpose": "Effect-owned unary invocation admission with cancellation and teardown draining",
+      "source": [
+        "src/index.ts",
+        "src/types.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-api-session-controller",
+      "path": "packages/api/session-controller",
+      "purpose": "Exact recoverable fork destinations, deletion publication checks and removed-Session notifications",
+      "source": [
+        "src/commands.ts",
+        "src/index.ts",
+        "src/skill-catalog.ts",
+        "src/types.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-connection",
+      "path": "packages/client/connection",
+      "purpose": "Optional per-channel loopback authority in addition to browser authentication",
+      "source": [
+        "src/index.ts",
+        "src/rpc-host.ts",
+        "src/rpc.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-file-reference-local",
+      "path": "packages/context/file-reference-local",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-hooks-claude-code",
+      "path": "packages/hooks/hooks-claude-code",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-hooks-codex",
+      "path": "packages/hooks/hooks-codex",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-message-feedback",
+      "path": "packages/feedback/message-feedback",
+      "purpose": "Delete Session-owned feedback sidecars",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-sandbox-policy",
+      "path": "packages/sandbox/sandbox-policy",
+      "purpose": "Deployment restrictions over resolved execution policy; recorded execution-directory resolution",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session",
+      "path": "packages/core/session",
+      "purpose": "Reserve and remove Session families atomically in memory; recorded execution-directory resolution",
+      "source": [
+        "src/index.ts",
+        "src/known-event-types.ts",
+        "src/types.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-persistence",
+      "path": "packages/session/session-persistence",
+      "purpose": "Define deletion discovery and persistence deletion operations",
+      "source": [
+        "src/coordinator.ts",
+        "src/index.ts",
+        "src/preparations.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-persistence-jsonl",
+      "path": "packages/session/session-persistence-jsonl",
+      "purpose": "Delete owned JSONL Session artifacts without following links",
+      "source": [
+        "src/index.ts",
+        "src/legacy-sqlite-worker.ts",
+        "src/legacy-sqlite.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-projection-cache",
+      "path": "packages/session/session-projection-cache",
+      "purpose": "Evict deleted Session projections and reject stale publication",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-query-sqlite",
+      "path": "packages/session-query/session-query-sqlite",
+      "purpose": "Remove deleted Sessions from the query index",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-title",
+      "path": "packages/session/session-title",
+      "purpose": "Branch-owned automatic titles and durable generation state",
+      "source": [
+        "src/index.ts",
+        "src/types.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-session-title-llm",
+      "path": "packages/session/session-title-llm",
+      "purpose": "Exact auxiliary title input sizing and excerpt provenance",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subagent",
+      "path": "packages/subagent/subagent",
+      "purpose": "Per-message parent Turn attribution and deployment-owned parent delivery restrictions",
+      "source": [
+        "src/continuation.ts",
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subagent-acp",
+      "path": "packages/subagent/subagent-acp",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subagent-claude-code",
+      "path": "packages/subagent/subagent-claude-code",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subagent-codex",
+      "path": "packages/subagent/subagent-codex",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subagent-dsh-sdk",
+      "path": "packages/subagent/subagent-dsh-sdk",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-bash",
+      "path": "packages/shell/tool-bash",
+      "purpose": "Consume the optional trusted per-execution environment registry",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-bash-persistent",
+      "path": "packages/shell/tool-bash-persistent",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-cordis",
+      "path": "packages/extensions/tool-cordis",
+      "purpose": "Publish the reviewed Runtime extension API catalog",
+      "source": [
+        "src/api-catalog.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-fs",
+      "path": "packages/fs/tool-fs",
+      "purpose": "Enforce deployment access limits before and after one-shot filesystem escalation",
+      "source": [
+        "src/sandbox.ts",
+        "src/session-cwd.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-fs-search",
+      "path": "packages/fs/tool-fs-search",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/search-core.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-lsp",
+      "path": "packages/lsp/tool-lsp",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/session-cwd.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-pwsh",
+      "path": "packages/shell/tool-pwsh",
+      "purpose": "Consume the optional trusted per-execution environment registry",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-pwsh-persistent",
+      "path": "packages/shell/tool-pwsh-persistent",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-skill",
+      "path": "packages/skill/tool-skill",
+      "purpose": "Resolve recorded Session execution directories for this capability",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-workspace",
+      "path": "packages/workspace/workspace",
+      "purpose": "Remove deleted Session workspace metadata",
+      "source": [
+        "src/index.ts"
+      ]
+    }
+  ],
+  "runtimePatchPackages": [
+    "@deepseek-ai/dsh-agent",
+    "@deepseek-ai/dsh-agent-instructions",
+    "@deepseek-ai/dsh-agent-loop",
+    "@deepseek-ai/dsh-api-gateway",
+    "@deepseek-ai/dsh-api-session-controller",
+    "@deepseek-ai/dsh-client-connection",
+    "@deepseek-ai/dsh-file-reference-local",
+    "@deepseek-ai/dsh-hooks-claude-code",
+    "@deepseek-ai/dsh-hooks-codex",
+    "@deepseek-ai/dsh-message-feedback",
+    "@deepseek-ai/dsh-sandbox-policy",
+    "@deepseek-ai/dsh-session",
+    "@deepseek-ai/dsh-session-deletion",
+    "@deepseek-ai/dsh-session-persistence",
+    "@deepseek-ai/dsh-session-persistence-jsonl",
+    "@deepseek-ai/dsh-session-projection-cache",
+    "@deepseek-ai/dsh-session-query-sqlite",
+    "@deepseek-ai/dsh-session-title",
+    "@deepseek-ai/dsh-session-title-llm",
+    "@deepseek-ai/dsh-shell-exec-env",
+    "@deepseek-ai/dsh-subagent",
+    "@deepseek-ai/dsh-subagent-acp",
+    "@deepseek-ai/dsh-subagent-claude-code",
+    "@deepseek-ai/dsh-subagent-codex",
+    "@deepseek-ai/dsh-subagent-dsh-sdk",
+    "@deepseek-ai/dsh-tool-bash",
+    "@deepseek-ai/dsh-tool-bash-persistent",
+    "@deepseek-ai/dsh-tool-cordis",
+    "@deepseek-ai/dsh-tool-fs",
+    "@deepseek-ai/dsh-tool-fs-search",
+    "@deepseek-ai/dsh-tool-lsp",
+    "@deepseek-ai/dsh-tool-pwsh",
+    "@deepseek-ai/dsh-tool-pwsh-persistent",
+    "@deepseek-ai/dsh-tool-skill",
+    "@deepseek-ai/dsh-workspace"
+  ]
+}

@@ -39,6 +39,9 @@
       "path": "../../shell/shell-env"
     },
     {
+      "path": "../../shell/shell-exec-env"
+    },
+    {
       "path": "../../interaction/user-approval"
     },
     {
@@ -46,6 +49,9 @@
     },
     {
       "path": "../../sandbox/sandbox-policy"
+    },
+    {
+      "path": "../../core/session"
     }
   ]
 }

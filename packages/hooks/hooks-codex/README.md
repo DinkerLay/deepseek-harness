@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-hooks-codex` runs the hooks from your existing Codex config — a `hooks.json` — during agent runs, so the behavior you already wrote keeps working without rewriting it. Five of Codex's hook points fire at the matching moments: when a session starts, when a prompt is submitted, before and after a tool runs, and when the run is about to stop. A hook can block a prompt or tool call with a message the model sees, attach extra context to the conversation, or force the run to continue. Choose it when you have Codex command hooks and want them to work in the harness as-is; behavior with no Codex equivalent belongs in a native plugin.
 
+This consumer resolves the calling Session through `resolveSessionCwd()`: a committed execution-directory binding takes precedence over creation cwd. Agentless calls retain their documented backend defaults; a fork does not inherit its parent's directory-binding event as its own.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

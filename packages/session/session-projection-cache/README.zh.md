@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-session-projection-cache` 将每个已注册投影单元的状态检查点（`ctx.sessionProjectionCache`）存为 `session_projcache` 存储域 `per-record` 布局下的逐会话版本化文档。随附 JSON 后端将每条记录存于 `<root>/session_projcache/sessions/<id>.json`，缓存绝不读取会话持久化层。存储行是折叠捷径，绝不是权威：它可能陈旧——`seq` 精确说明陈旧到哪——但绝不会错。三个必写点（会话创建、`turn/end` 与会话释放）加上可配置的条数与间隔节流让缓存保持新鲜。当列表视图需要同步缓存值，或冷投影折叠应跳过已检查点化的前缀时，选择本包。
 
+提交后的删除只移除与被删除 Header 及继承截断位置匹配的检查点。缓存等待在途写入结束，并在延迟观测仍可能到达期间保留已删除生命周期标识，防止旧的活跃或冷读取结果重新写回检查点。同一 Session id 被复用后的其他生命周期保持独立。
+
 ## 目录
 
 - [使用本包](#use-this-package)

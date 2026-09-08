@@ -3,13 +3,16 @@ import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, ToolCallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SessionTitleService, { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
   generateSessionTitleWithLlm,
+  registerSessionTitleLlmProvider,
   resolveSessionTitleLlmConfig,
   SESSION_TITLE_TIMEOUT_CODE,
+  sessionTitleInputBytes,
 } from '@deepseek-ai/dsh-session-title-llm'
 import type { SessionTitleLlmConfig } from '@deepseek-ai/dsh-session-title-llm'
 
@@ -362,4 +365,43 @@ describe('generateSessionTitleWithLlm', () => {
       vi.useRealTimers()
     }
   })
+})
+
+
+it('preserves the provider selection when a Session overrides automatic cadence', async () => {
+  const { ctx, adapter } = await withScript(SCRIPT)
+  await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
+  const selected = request(ctx)
+  selected.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: 'Latest topic ' + '资料'.repeat(500) }],
+  }), { surfaceOp: 'append' })
+  ctx.sessionTitle.registerAutomaticMode(() => 'all-prompts')
+  registerSessionTitleLlmProvider(ctx, { ...CONFIG, provider: 'current-route', model: 'current-model', maxInputBytes: 256 },
+    'role-title', 'first-prompt', messages => messages.slice(0, 1))
+  const result = await ctx.sessionTitle.refresh(selected.session)
+  expect(result?.messageSeqs).toEqual([selected.messages[0]?.seq])
+  expect(result?.inputTruncated).toBeUndefined()
+  const content = adapter.requests[0]?.messages[0]?.content
+  const text = content?.filter(block => block.type === 'text').map(block => block.text).join('') ?? ''
+  expect(Buffer.byteLength(text)).toBe(sessionTitleInputBytes(selected.messages.slice(0, 1)))
+  expect(text).toContain('first prompt')
+  expect(text).not.toContain('Latest topic')
+  await ctx.fiber.dispose()
+})
+
+it('measures escaped and multibyte input exactly and retains excerpt provenance', async () => {
+  const { ctx, adapter } = await withScript(SCRIPT)
+  const original = request(ctx)
+  const messages = [{ seq: original.messages[0]!.seq, text: '中文😀\n"quote"' }]
+  const bytes = sessionTitleInputBytes(messages)
+  const result = await generateSessionTitleWithLlm(ctx, { ...CONFIG, maxInputBytes: bytes }, original, messages, TITLE_PROVIDER)
+  expect(result.inputTruncated).toBe(true)
+  const input = adapter.requests[0]!.messages[0]!.content[0]!
+  if (input.type !== 'text') throw new Error('expected framed text')
+  expect(Buffer.byteLength(input.text, 'utf8')).toBe(bytes)
+  await expect(generateSessionTitleWithLlm(ctx, { ...CONFIG, maxInputBytes: bytes - 1 }, original, messages, TITLE_PROVIDER))
+    .rejects.toThrow('exceeding maxInputBytes')
+  expect(adapter.requests).toHaveLength(1)
+  await ctx.fiber.dispose()
 })

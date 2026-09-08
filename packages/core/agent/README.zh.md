@@ -11,6 +11,8 @@ kind: "package-reference"
 
 使用 `dsh-agent`，你可以创建或恢复 agent、发送后续提示词、中途引导（steering）当前步骤、注入面向模型（model-facing）的上下文、取消活动，并等待 agent 进入空闲——这一切都通过每个插件面向编程的 `Agent` 句柄与跟踪运行中 agent 的实时注册表（`ctx.agents`）完成。该包还携带进程本地发起方作用域，把异步工作归因于启动它的 agent，并声明插件用来观察或拦截进行中工作的 `agent/*` 事件词汇。它不依赖循环：具体的创建与驱动位于 `dsh-agent-loop`，它在此注册工厂，因此驱动器保持可替换。构建 UI、钩子、编排器或涉及实时 agent 的扩展插件时请选择本包；接口本身不运行任何模型调用。
 
+`registerCreateInterceptor()` 提供可信的创建时 cwd/setup 策略，同时保留身份、preset、祖先关系和继承历史；只调用一次 `next`，保留调用方 setup，并负责资源回滚。注册释放会停止新调用并等待已准入工作结束。`reserveIdleDisposal(id)` 只认领注册表保留的精确句柄，且要求没有活跃或排队工作，否则报告 busy 或 unowned。
+
 ## 目录
 
 - [使用本包](#use-this-package)

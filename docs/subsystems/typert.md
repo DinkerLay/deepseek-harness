@@ -180,8 +180,17 @@ type TypertGatewayErrorCode =
 ```ts type-equiv
 /** Host dispatcher consumed by Connection adapters. */
 interface TypertGateway {
+  /** Explicit support for admission policies surrounding unary calls. */
+  readonly invocationPolicyVersion?: 1
+  /**
+   * Install caller-owned admission around lookup and execution; disposal drains admitted calls.
+   * @param policy - wrapper that may replace named arguments and calls next at most once.
+   * @returns disposer preventing new admissions and awaiting existing calls.
+   */
+  registerInvocationPolicy?(policy: RemoteInvocationPolicy): () => Promise<void>
   /** Carrier adapter shared by WebSocket and in-process transports. */
   readonly wireStream: TypertGatewayWireStream
+
   /**
    * Register the application-selected forwarded-event source.
    * @param source - stream factory installed by the Remote assembly.
@@ -192,6 +201,7 @@ interface TypertGateway {
     source: TypertRemoteEventSource,
     host: RemoteEventHostInfo,
   ): () => Promise<void>
+
   /**
    * Invoke one live Remote method without assuming a carrier or response envelope.
    * @param request - decoded endpoint and named wire arguments.
@@ -199,6 +209,7 @@ interface TypertGateway {
    * @throws {@link TypertGatewayError} for dispatch, provider, or boundary failures; lookup-policy and business errors retain identity.
    */
   invoke(request: InvokeRemoteRequest): Promise<unknown>
+
   /**
    * Open one live stream Remote method without assuming a physical carrier.
    * @param request - decoded endpoint and named wire arguments.
@@ -315,6 +326,13 @@ Source: [`packages/typert/registry/src/service.ts`](../../packages/typert/regist
 Resolve strict generated definitions or conservative SRC markers against current Cordis Services and Typert providers.
 
 ```ts cordis-catalog
+/**
+ * Register admission around unary lookup and business execution with endpoint identity preserved.
+ * @param policy - caller-owned wrapper; next accepts replacement arguments at most once.
+ * @returns disposer removing future admission and draining its in-flight invocations.
+ */
+registerInvocationPolicy(policy: RemoteInvocationPolicy): () => Promise<void>
+
 /**
  * Register the sole application-selected forwarded-event source.
  * @param source - stream factory installed by the Remote assembly.

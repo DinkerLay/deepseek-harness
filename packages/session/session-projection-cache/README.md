@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session-projection-cache` persists the state checkpoints of every registered projection unit (`ctx.sessionProjectionCache`) as one versioned document per session in the `session_projcache` storage domain's `per-record` layout. The shipped JSON backend stores each record at `<root>/session_projcache/sessions/<id>.json`, and the cache never reads the session-persistence layer. A stored row is a fold shortcut, never an authority: it may be stale — its `seq` says exactly how stale — but never wrong. Three mandatory checkpoints (session creation, `turn/end`, and session disposal) plus configurable count and interval throttles keep the cache fresh. Choose it when list views need synchronous cached values or cold projection folds should skip an already-checkpointed prefix.
 
+Committed deletion removes only the checkpoint matching the deleted Header and inherited cut. The cache drains pending writes and retains deleted lifecycle identities while delayed observations can still arrive, preventing old live or cold write-back from recreating the checkpoint. Other lifecycles under a reused Session id remain distinct.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

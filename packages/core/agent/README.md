@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 With `dsh-agent` you can create or resume an agent, send a follow-up prompt, steer the current step, inject model-facing context, cancel an activity, and wait until the agent is idle — all through the `Agent` handle every plugin programs against and the live registry (`ctx.agents`) that tracks running agents. The package also carries the process-local initiator scope, which attributes asynchronous work to the agent that started it, and declares the `agent/*` event vocabulary plugins use to observe or intercept work in flight. It has zero loop dependency: concrete creation and driving live in `dsh-agent-loop`, which registers its factory here, so the driver stays swappable. Choose this package when you build UI, hooks, orchestrators, or extension plugins that touch live agents; the interface itself runs no model calls.
 
+`registerCreateInterceptor()` supplies trusted creation-time cwd/setup policy while preserving identity, preset, lineage and inherited history; invoke `next` once, retain caller setup and own resource rollback. Registration disposal stops new calls and drains admitted work. `reserveIdleDisposal(id)` claims only an exact registry-retained handle with no active or queued work, otherwise reporting busy or unowned.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

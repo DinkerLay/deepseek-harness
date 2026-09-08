@@ -125,6 +125,10 @@ export interface CreateAgentOptions {
   readonly setup?: AgentSetup
 }
 
+/** Trusted creation middleware; invoke next once with the final immutable Session metadata. */
+export type AgentCreateInterceptor = (options: CreateAgentOptions,
+  next: (options: CreateAgentOptions) => Promise<AgentHandle>) => Promise<AgentHandle>
+
 /**
  * Options for resuming an agent on a persisted session
  * ({@link AgentRegistry.resume}).
@@ -165,7 +169,28 @@ export interface ResumeAgentOptions {
 export interface AgentHandle {
   agent: Agent
   dispose(): Promise<void>
+  /**
+   * Atomically reserve a truly idle Agent for permanent deletion. Implementors
+   * omit this capability when they cannot distinguish maintenance or queued
+   * input from public `idle` status.
+   * @returns a reservation, or `undefined` when work is active or queued.
+   */
+  reserveIdleDisposal?(): AgentIdleDisposalReservation | undefined
 }
+
+/** Exact idle claim that either follows normal disposal or is released unused. */
+export interface AgentIdleDisposalReservation {
+  /** Dispose the claimed Agent through its ordinary lifecycle owner. */
+  dispose(): Promise<void>
+  /** Release an unused claim without disposing the Agent. */
+  release(): void
+}
+
+/** Result of asking the registry to reserve one owned live Agent for disposal. */
+export type AgentIdleDisposalAttempt =
+  | { readonly kind: 'claimed'; readonly reservation: AgentIdleDisposalReservation }
+  | { readonly kind: 'busy' }
+  | { readonly kind: 'unowned' }
 
 /**
  * The agent-creation factory the loop implementation provides to the registry
@@ -248,6 +273,7 @@ interface FactorySlot {
  */
 export class AgentRegistry extends Service {
   private store = new Map<SessionId, AgentEntry>()
+  private readonly handles = new Map<SessionId, AgentHandle>()
   private factory: FactorySlot | undefined
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
   private readonly initiatorRuns = new AsyncLocalStorage<InitiatorRun>()
@@ -289,6 +315,10 @@ export class AgentRegistry extends Service {
       yield () => this.disposeInitiators()
       yield () => { this.closeInitiators() }
     }.bind(this), 'agents.initiatorLifecycle()')
+    ctx.on('agent/disposed', ({ agent }) => {
+      if (this.handles.get(agent.id)?.agent === agent) this.handles.delete(agent.id)
+    })
+    ctx.effect(() => () => { this.handles.clear() }, 'agents.ownedHandles()')
   }
 
   /**
@@ -404,8 +434,57 @@ export class AgentRegistry extends Service {
     // capability and need no Cordis tracker magic.
     const { target } = this.requireFactory()
     const receiver = getTraceable(ownerCtx, target)
-    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.createAgent, receiver, [ownerCtx, options])
+    const registrations = [...this.createInterceptors]
+    const create = async (index: number, candidate: CreateAgentOptions): Promise<AgentHandle> => {
+      const registration = registrations[index]
+      if (registration === undefined) {
+        // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply supplies the traced factory receiver.
+        return await Reflect.apply(target.createAgent, receiver, [ownerCtx, candidate])
+      }
+      if (registration.closing) throw new Error('agent creation policy was removed during provisioning')
+      let invoked = false
+      const pending = Promise.resolve().then(() => registration.interceptor(candidate, (nextOptions) => {
+        if (invoked) throw new Error('agent creation middleware may call next only once')
+        if (nextOptions.sessionId !== candidate.sessionId || nextOptions.seed !== candidate.seed
+          || nextOptions.meta?.parentSession !== candidate.meta?.parentSession
+          || nextOptions.inheritedEventCount !== candidate.inheritedEventCount
+          || nextOptions.meta?.isSeeded !== candidate.meta?.isSeeded
+          || nextOptions.meta?.agentPreset !== candidate.meta?.agentPreset
+          || nextOptions.meta?.origin !== candidate.meta?.origin
+          || nextOptions.meta?.delegationDepth !== candidate.meta?.delegationDepth) {
+          throw new Error('agent creation policy must preserve identity, history, preset and delegation metadata')
+        }
+        invoked = true
+        return create(index + 1, nextOptions)
+      }))
+      registration.active.add(pending)
+      try { return await pending } finally { registration.active.delete(pending) }
+    }
+    return this.rememberHandle(await create(0, options))
+  }
+
+  private readonly createInterceptors = new Set<{
+    interceptor: AgentCreateInterceptor
+    closing: boolean
+    active: Set<Promise<AgentHandle>>
+  }>()
+
+  /**
+   * Register a trusted provisioning policy before Session creation. Disposal prevents
+   * new calls and awaits admitted calls; middleware owns its resource rollback.
+   * @param interceptor - creation policy, including any destination and setup changes.
+   * @returns effect disposer that drains this policy's pending creations.
+   */
+  registerCreateInterceptor(interceptor: AgentCreateInterceptor): () => Promise<void> {
+    return this.ctx.effect(() => {
+      const registration = { interceptor, closing: false, active: new Set<Promise<AgentHandle>>() }
+      this.createInterceptors.add(registration)
+      return async () => {
+        registration.closing = true
+        this.createInterceptors.delete(registration)
+        while (registration.active.size > 0) await Promise.allSettled([...registration.active])
+      }
+    }, 'agents.registerCreateInterceptor()')
   }
 
   /**
@@ -420,7 +499,31 @@ export class AgentRegistry extends Service {
     const { target } = this.requireFactory()
     const receiver = getTraceable(ownerCtx, target)
     // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
-    return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+    return this.rememberHandle(await Reflect.apply(target.resume, receiver, [ownerCtx, options]))
+  }
+
+  /** Retain one exact factory handle while its Agent remains the live registry entry. */
+  private rememberHandle(handle: AgentHandle): AgentHandle {
+    if (this.get(handle.agent.id) === handle.agent) this.handles.set(handle.agent.id, handle)
+    return handle
+  }
+
+  /**
+   * Atomically reserve a registry-owned Agent for idle disposal without
+   * exposing its teardown handle. Agents registered directly or created by a
+   * configuration helper have no retained handle and return `unowned`.
+   * @param sessionId - live Agent identity to claim.
+   * @returns claimed reservation, busy state, or missing ownership.
+   */
+  reserveIdleDisposal(sessionId: SessionId): AgentIdleDisposalAttempt {
+    const agent = this.get(sessionId)
+    const handle = this.handles.get(sessionId)
+    if (agent === undefined || handle === undefined || handle.agent !== agent
+      || handle.reserveIdleDisposal === undefined) {
+      return { kind: 'unowned' }
+    }
+    const reservation = handle.reserveIdleDisposal()
+    return reservation === undefined ? { kind: 'busy' } : { kind: 'claimed', reservation }
   }
 
   /**

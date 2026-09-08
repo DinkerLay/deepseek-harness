@@ -116,6 +116,32 @@ function browserCookie(connection: HostConnectionHandle, authority: string): str
 }
 
 describe('connection node half', () => {
+  it('keeps administrative channel authority narrower than authenticated trusted-host access', async () => {
+    const { routes, connection, dispose } = await mounted({ trustedHosts: ['harness.example'] })
+    try {
+      expect(connection.rpc.channelAuthorityVersion).toBe(1)
+      let calls = 0
+      connection.rpc.handle('/management', async () => {
+        calls += 1
+        return { ok: true, value: 'managed' }
+      }, { authority: 'loopback' })
+      const route = routes.find(route => route.path === '/management')!
+      for (const [host, authenticated, status] of [
+        ['localhost:3080', false, 401],
+        ['harness.example', true, 403],
+        ['localhost:3080', true, 200],
+      ] as const) {
+        const headers = { host, ...authenticated ? { cookie: browserCookie(connection, host) } : {} }
+        const response = fakeResponse()
+        await route.handler(fakePost(headers, '/management/read', {
+          type: 'client-request', rpcId: RpcId('management-call'), method: 'read', payload: {},
+        }), response.response)
+        expect(response.state.status).toBe(status)
+      }
+      expect(calls).toBe(1)
+    } finally { await dispose() }
+  })
+
   it('reserves enough default carrier capacity for the 200 MiB image batch', () => {
     expect(DEFAULT_MAX_REQUEST_BODY_BYTES).toBe(300 * 1024 * 1024)
     expect(DEFAULT_MAX_REQUEST_BODY_BYTES).toBeGreaterThan(Math.ceil(200 * 1024 * 1024 * 4 / 3) + 1024 * 1024)

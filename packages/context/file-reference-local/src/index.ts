@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-file-reference-local
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -50,7 +51,7 @@ export class LocalFileReferenceService extends FileReferenceService {
   })
 
   private readonly config: FileSearchConfig
-  private readonly searches = new Map<Agent, WorkspaceFileSearch>()
+  private readonly searches = new Map<Agent, { cwd: string; search: WorkspaceFileSearch }>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly promptDisposals = new Set<Promise<void>>()
 
@@ -89,17 +90,17 @@ export class LocalFileReferenceService extends FileReferenceService {
     for (const agent of ctx.agents.list()) installPrompt(agent)
     ctx.on('agent/created', ({ agent }) => { installPrompt(agent) })
     ctx.on('agent/disposed', ({ agent }) => {
-      this.searches.get(agent)?.dispose()
+      this.searches.get(agent)?.search.dispose()
       this.searches.delete(agent)
       disposePrompt(agent)
     })
     ctx.on('session/event', (session, event) => {
       if (event.type !== 'tool/result') return
       const agent = ctx.agents.get(session.id)
-      if (agent !== undefined) this.searches.get(agent)?.invalidate()
+      if (agent !== undefined) this.searches.get(agent)?.search.invalidate()
     })
     ctx.effect(() => async () => {
-      for (const search of this.searches.values()) search.dispose()
+      for (const entry of this.searches.values()) entry.search.dispose()
       this.searches.clear()
       const promptFibers = [...this.promptFibers.values()]
       this.promptFibers.clear()
@@ -115,12 +116,14 @@ export class LocalFileReferenceService extends FileReferenceService {
     query: string,
     signal: AbortSignal,
   ): Promise<FileReferenceCandidate[]> {
-    let search = this.searches.get(agent)
-    if (search === undefined) {
-      search = new WorkspaceFileSearch(agent.session.header.cwd ?? process.cwd(), this.config)
-      this.searches.set(agent, search)
+    const cwd = resolveSessionCwd(agent.session) ?? process.cwd()
+    let entry = this.searches.get(agent)
+    if (entry === undefined || entry.cwd !== cwd) {
+      entry?.search.dispose()
+      entry = { cwd, search: new WorkspaceFileSearch(cwd, this.config) }
+      this.searches.set(agent, entry)
     }
-    return search.list(query, signal)
+    return entry.search.list(query, signal)
   }
 }
 

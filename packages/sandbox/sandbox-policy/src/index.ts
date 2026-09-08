@@ -20,7 +20,8 @@
  * @module @deepseek-ai/dsh-sandbox-policy
  */
 
-import { resolve as resolvePath } from 'node:path'
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
+import { resolve as resolvePath, relative, isAbsolute } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import z from '@deepseek-ai/schemastery'
@@ -79,7 +80,7 @@ export interface Config {
 
 /** Inputs that select the sandbox policy for one capability call. */
 export interface SandboxPolicyRequest {
-  /** Calling session; its immutable cwd becomes the workspace boundary. */
+  /** Calling Session; its recorded execution directory becomes the workspace boundary. */
   session?: Session
   /** Explicit approved mode override, which outranks session policy. */
   mode?: SandboxMode
@@ -99,6 +100,8 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
     sandboxMode: SandboxModeState
   }
 }
+/** Trusted deployment constraint applied after user-selected and approved mode overrides. */
+export type SandboxPolicyConstraint = (request: SandboxPolicyRequest, policy: SandboxExecutionPolicy) => SandboxExecutionPolicy
 
 /**
  * The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment
@@ -107,6 +110,19 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
  * mode log and immutable cwd travel together to every enforcing capability.
  */
 export class SandboxPolicyService extends Service {
+  private readonly constraints = new Set<SandboxPolicyConstraint>()
+
+  /**
+   * Register a deployment constraint over every enforcing consumer's policy.
+   * @param constraint - policy restriction; it must not broaden the supplied access.
+   * @returns the effect disposer removing this exact restriction.
+   */
+  registerConstraint(constraint: SandboxPolicyConstraint): () => Promise<void> {
+    return this.ctx.effect(() => {
+      this.constraints.add(constraint)
+      return () => { this.constraints.delete(constraint) }
+    }, 'sandboxPolicy.registerConstraint()')
+  }
   // Inline schema call: the config catalog walks `static Config` statically.
   static Config: z<Config> = z.object({
     mode: z.union(['read-only', 'workspace-write', 'danger-full-access'] as const).default('read-only'),
@@ -154,7 +170,7 @@ export class SandboxPolicyService extends Service {
   /**
    * Resolve the complete policy for one capability call. An approved explicit
    * mode outranks the session's last `sandbox/mode` event, which outranks the
-   * deployment default. A session cwd is its workspace-write boundary; the
+   * deployment default. The resolved Session execution directory is its workspace-write boundary; the
    * configured root is the fallback for agentless calls and sessions without a
    * cwd.
    * @param request - optional session and approved mode override.
@@ -162,11 +178,24 @@ export class SandboxPolicyService extends Service {
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
-    return {
+    let policy: SandboxExecutionPolicy = {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
-      workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+      workspaceRoot: resolveWorkspaceRoot(resolveSessionCwd(session) ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }
+    for (const constraint of this.constraints) {
+      const restricted = constraint(request, policy)
+      const rank: Record<SandboxMode, number> = { 'read-only': 0, 'workspace-write': 1, 'danger-full-access': 2 }
+      const root = resolveWorkspaceRoot(restricted.workspaceRoot)
+      const path = relative(policy.workspaceRoot, root)
+      if (rank[restricted.mode] > rank[policy.mode] || restricted.sessionId !== policy.sessionId
+        || policy.mode === 'workspace-write' && restricted.mode === 'workspace-write'
+          && (isAbsolute(path) || path === '..' || path.startsWith('../') || path.startsWith('..\\'))) {
+        throw new Error('sandbox policy constraint cannot widen access or change the calling Session')
+      }
+      policy = { ...restricted, workspaceRoot: root }
+    }
+    return policy
   }
 
   /**

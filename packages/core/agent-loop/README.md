@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-agent-loop` creates agents — fresh or resumed from persisted history — and runs the turn and step lifecycle that claims prompts, assembles requests, streams model responses, dispatches tool calls, and appends every result back to the session log. As the default driver it implements the `Agent` interface from `dsh-agent` and registers its factory there, so plugins create and drive agents through `ctx.agents` without depending on this package. Declarative config entries start agents automatically at boot, and `maxParallelToolCalls` caps how many parallel-safe tool calls run at once. It is the harness's only concrete loop — everything beyond "call the model, run the tools, repeat" belongs to plugins listening on the event taxonomy. Choose it as the driver for standard compositions; swap it by implementing `Agent` and registering through `ctx.agents`.
 
+The loop resolves its cwd prompt variable from the recorded Session execution directory. A factory-owned idle-disposal claim rejects new input and maintenance until released or disposed; disposal still follows the normal handle lifecycle.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

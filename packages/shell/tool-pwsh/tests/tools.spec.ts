@@ -32,6 +32,7 @@ import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as BashEnvPlugin from '@deepseek-ai/dsh-shell-env'
+import ShellExecEnvironmentRegistry from '@deepseek-ai/dsh-shell-exec-env'
 import type { ShellProcessRead } from '@deepseek-ai/dsh-shell'
 import { processOutcome } from '../src/background.ts'
 import { renderPwshProcessRead, renderPwshResult } from '../src/render.ts'
@@ -386,6 +387,18 @@ describe('argument validation', () => {
 })
 
 describe('execution through the bash seam', () => {
+  it('collects optional trusted environment contributions', async () => {
+    const { ctx, bash } = await setup()
+    await ctx.plugin(ShellExecEnvironmentRegistry)
+    ctx.shellExecEnv.register({
+      name: 'test-capability',
+      keys: ['TEST_CAPABILITY'],
+      resolve: () => ({ TEST_CAPABILITY: 'current-value' }),
+    })
+    await call(ctx, 'pwsh', { command: 'Write-Output ok', description: 'read capability' })
+    expect(bash.requests[0]?.env).toEqual({ TEST_CAPABILITY: 'current-value' })
+  })
+
   it('forwards command, session cwd, timeout, and managed DSH_* environment', async () => {
     const dshHome = mkdtempSync(join(tmpdir(), 'dsh-tool-pwsh-home-'))
     const { ctx, bash } = await setup({}, dshHome)
@@ -634,6 +647,31 @@ describe('sandbox escalation through ctx.approval', () => {
       data: Record<string, unknown>,
     ) => unknown)('sandbox/mode', { mode: 'unknown-mode' })
     expect(text(await call(ctx, 'pwsh', escalate, malformed))).toContain('not strictly wider')
+  })
+
+  it('blocks escalation above a Session limit before approval or execution', async () => {
+    const { ctx, bash } = await setupSandboxed(true)
+    const prompted = vi.fn(() => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    ctx.on('approval/request', prompted)
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+    const result = await call(ctx, 'pwsh', escalate, sandboxAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('configured access limit')
+    expect(prompted).not.toHaveBeenCalled()
+    expect(bash.modes).toEqual([])
+  })
+
+  it.each([false, true])('resolves granted execution against limits installed during approval (background: %s)', async (background) => {
+    const { ctx, bash } = await setupSandboxed(true)
+    ctx.on('approval/request', () => {
+      ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'read-only' }))
+      return Promise.resolve<ApprovalOutcome>('allowed-once')
+    })
+    const agent = sandboxAgent(undefined, ctx)
+    ctx.agents.register(agent)
+    const result = await call(ctx, 'pwsh', { ...escalate, run_in_background: background }, agent)
+    expect(result.isError).toBe(false)
+    expect(bash.modes).toEqual(['read-only'])
   })
 
   it('fails closed when approval cannot be routed', async () => {

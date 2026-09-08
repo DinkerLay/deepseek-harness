@@ -15,7 +15,7 @@ import type {
   Session,
   SessionEvent,
 } from '@deepseek-ai/dsh-session'
-import { SessionSeq } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -75,6 +75,11 @@ declare module '@deepseek-ai/dsh-session/types' {
      * surface or derived history.
      */
     'session/title': SessionTitleEventData
+    /** Log-only status of the latest automatic naming attempt. */
+    /** Explicit naming policy; independent of the last usable title text. */
+    'session/title-policy': { automatic: boolean }
+    /** Outcome of the latest automatic naming call; failure retains the latest usable title. */
+    'session/title-generation': { state: 'generating' | 'ready' | 'failed'; error?: string }
   }
 }
 
@@ -93,6 +98,8 @@ export type SessionTitleAutomaticMode = 'first-prompt' | 'all-prompts'
 
 /** Immutable input supplied to one title-provider call. */
 export interface SessionTitleProviderRequest {
+  /** Effective cadence for this Session role; omission uses the provider default. */
+  readonly automatic?: SessionTitleAutomaticMode
   /** Live session being titled. */
   readonly session: Session
   /** All eligible human messages through this generation revision. */
@@ -105,6 +112,8 @@ export interface SessionTitleProviderRequest {
 
 /** Provider output before service-owned normalization and log acceptance. */
 export interface SessionTitleProviderResult {
+  /** Whether the provider shortened any referenced source message. */
+  readonly inputTruncated?: boolean
   /** Proposed title text. */
   readonly title: string
   /** Exact seqs from `request.messages` used by this result. */
@@ -203,6 +212,7 @@ function assertPositiveInteger(name: keyof Config, value: number): void {
 function titleSnapshotFromState(state: TitleProjection): SessionTitleSnapshot {
   return deepFreeze({
     title: state.title,
+    ...state.inputTruncated === true ? { inputTruncated: true as const } : {},
     messageSeqs: [...state.messageSeqs],
     source: copySessionTitleSource(state.source),
     eventSeq: state.eventSeq,
@@ -210,7 +220,7 @@ function titleSnapshotFromState(state: TitleProjection): SessionTitleSnapshot {
   })
 }
 
-const EMPTY_TITLE_INPUT: TitleInputState = { first: null, count: 0, lastSeq: null }
+const EMPTY_TITLE_INPUT: TitleInputState = { first: null, count: 0, lastSeq: null, inheritedEventCount: SessionLogOffset(0) }
 
 const sessionTitleUserMessageSchema: ZodType<SessionTitleUserMessage> = zod.object({
   seq: zod.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq),
@@ -218,6 +228,7 @@ const sessionTitleUserMessageSchema: ZodType<SessionTitleUserMessage> = zod.obje
 }).strict()
 
 const titleInputStateSchema: ZodType<TitleInputState> = zod.object({
+  inheritedEventCount: zod.number().int().nonnegative().transform(SessionLogOffset),
   first: sessionTitleUserMessageSchema.nullable(),
   count: zod.number().int().nonnegative(),
   lastSeq: zod.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(SessionSeq).nullable(),
@@ -257,6 +268,19 @@ function collectSessionTitleMessages(
   return messages
 }
 
+/** Own title input excludes the fork-inherited prefix. */
+function ownTitleMessages(session: Session, throughSeq?: SessionSeq): SessionTitleUserMessage[] {
+  return collectSessionTitleMessages(session.snapshotEvents(session.inheritedEventCount), throughSeq)
+}
+
+/** An explicit automatic policy releases an own user pin without discarding its title. */
+function titlePinned(session: Session): boolean {
+  const events = session.snapshotEvents(session.inheritedEventCount)
+  const title = foldSessionTitle(events)
+  const policy = events.findLast(event => event.type === 'session/title-policy')
+  return title?.source.kind === 'user' && !(policy !== undefined && policy.seq > title.eventSeq && policy.data.automatic)
+}
+
 const titleViewSchema: ZodType<string | null> = zod.string().min(1).nullable()
 
 /** Latest logged title text and its client view. */
@@ -284,6 +308,7 @@ export function foldSessionTitle(events: readonly SessionEvent[]): SessionTitleS
   if (event === undefined) return undefined
   return titleSnapshotFromState({
     title: event.data.title,
+    ...event.data.inputTruncated === true ? { inputTruncated: true as const } : {},
     messageSeqs: event.data.messageSeqs,
     source: event.data.source,
     eventSeq: event.seq,
@@ -306,6 +331,20 @@ export class SessionTitleService extends Service {
   private readonly work = new Map<Session, SessionTitleWorkState>()
   private readonly lifetime = new AbortController()
   private readonly inFlight = new Set<Promise<unknown>>()
+  private readonly automaticModes = new Set<(session: Session) => SessionTitleAutomaticMode | undefined>()
+
+  /**
+   * Select automatic cadence for a deployment-owned Session role; explicit user pins still win.
+   * @param policy - optional override for the supplied Session, evaluated at input admission.
+   * @returns effect disposer removing this policy.
+   */
+  registerAutomaticMode(policy: (session: Session) => SessionTitleAutomaticMode | undefined): () => Promise<void> {
+    return this.ctx.effect(() => {
+      this.automaticModes.add(policy)
+      return () => { this.automaticModes.delete(policy) }
+    }, 'sessionTitle.registerAutomaticMode()')
+  }
+
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'sessionTitle')
@@ -339,18 +378,38 @@ export class SessionTitleService extends Service {
 
     ctx.sessionProjections.register<'titleInput', TitleInputState>({
       key: 'titleInput',
-      stateVersion: 3,
+      stateVersion: 4,
       stateSchema: titleInputStateSchema,
-      init: () => EMPTY_TITLE_INPUT,
+      init: (_header, inheritedEventCount) => ({ ...EMPTY_TITLE_INPUT, inheritedEventCount }),
       apply: (state, event) => {
+        if (event.seq < state.inheritedEventCount) return state
         const message = sessionTitleUserMessageOf(event)
         if (message === undefined) return state
         return {
+          inheritedEventCount: state.inheritedEventCount,
           first: state.first ?? message,
           count: state.count + 1,
           lastSeq: message.seq,
         }
       },
+    })
+
+    const generationValueSchema = zod.object({ state: zod.enum(['generating', 'ready', 'failed']), error: zod.string().optional() }).nullable()
+    ctx.sessionProjections.register({
+      key: 'titleGeneration',
+      stateVersion: 2,
+      stateSchema: zod.object({
+        inheritedEventCount: zod.number().int().nonnegative().transform(SessionLogOffset),
+        value: generationValueSchema,
+      }),
+      init: (_header, inheritedEventCount) => ({ inheritedEventCount, value: null }),
+      apply: (state, event) => {
+        if (event.seq < state.inheritedEventCount) return state
+        if (event.type === 'session/title-generation') return { ...state, value: event.data }
+        if (event.type === 'session/title' && event.data.source.kind === 'user') return { ...state, value: { state: 'ready' as const } }
+        return state
+      },
+      wire: { viewSchema: generationValueSchema, view: state => state.value },
     })
 
     ctx.on('session/event', (session, event) => {
@@ -369,6 +428,16 @@ export class SessionTitleService extends Service {
       this.onMainRequest(options)
       return next()
     }, { global: true, prepend: true })
+    ctx.on('session/created', (session) => {
+      const latest = session.snapshotEvents(session.inheritedEventCount).findLast(event => event.type === 'session/title-generation')
+      if (latest?.data.state !== 'generating') return
+      this.defer(() => {
+        if (this.ctx.sessions.get(session.id) !== session || this.work.get(session)?.active !== undefined
+          || session.snapshotEvents().findLast(event => event.type === 'session/title-generation')?.seq !== latest.seq
+          || (this.get(session)?.eventSeq ?? -1) > latest.seq) return
+        session.append('session/title-generation', { state: 'failed', error: 'Title generation was interrupted; retry naming.' })
+      })
+    })
     ctx.on('session/disposed', (session) => {
       const state = this.work.get(session)
       if (state === undefined) return
@@ -432,6 +501,7 @@ export class SessionTitleService extends Service {
     if (this.ctx.sessions.get(session.id) !== session) {
       throw new Error(`session "${session.id}" is not live in this store`)
     }
+    if (this.get(session)?.source.kind === 'user') session.append('session/title-policy', { automatic: true })
     const registration = this.registration
     const input = this.titleInputOf(session)
     if (registration === undefined || registration.closing || input.lastSeq === null) {
@@ -499,12 +569,14 @@ export class SessionTitleService extends Service {
     if (!this.serviceActive()) return
     if (event.data.source.kind !== 'user' || sessionTitleUserMessageOf(event) === undefined) return
     // A user rename pins the title: no automatic revision may override it.
-    if (this.get(session)?.source.kind === 'user') return
+    if (titlePinned(session)) return
     const registration = this.registration
     if (registration !== undefined && !registration.closing) {
       const count = this.titleInputOf(session).count
-      const shouldSchedule = registration.provider.automatic === 'all-prompts'
-        || (session.header.parentSession === undefined && count === 1 && this.get(session) === undefined)
+      const automatic = [...this.automaticModes].map(policy => policy(session)).findLast(mode => mode !== undefined)
+        ?? registration.provider.automatic
+      const shouldSchedule = automatic === 'all-prompts'
+        || (count === 1 && foldSessionTitle(session.snapshotEvents(session.inheritedEventCount)) === undefined)
       if (shouldSchedule) {
         const state = this.stateFor(session)
         const revision = this.supersede(state, 'newer user message superseded title generation')
@@ -543,8 +615,9 @@ export class SessionTitleService extends Service {
     if (session === undefined || state === undefined || pending === undefined) return
     const boundary = this.ctx.sessionProjections.stateOf(session, 'turnBoundary')?.lastStepBoundary
     const route = session.requestHeader()?.config
+    const input = session.eventAt(pending.throughSeq)
     if (boundary?.kind !== 'start'
-      || boundary.seq <= pending.throughSeq
+      || input?.type !== 'user/message' || !options.messages.some(message => message.id === input.data.id)
       || route?.provider !== options.provider
       || route.model !== options.model) return
     this.startPending(session, state, pending, { provider: options.provider, model: options.model })
@@ -593,9 +666,12 @@ export class SessionTitleService extends Service {
       this.assertCurrent(session, work)
       await this.ensureFallback(session)
       this.assertCurrent(session, work)
-      const messages = collectSessionTitleMessages(session.snapshotEvents(), work.throughSeq)
+      session.append('session/title-generation', { state: 'generating' })
+      const messages = ownTitleMessages(session, work.throughSeq)
       const result = await work.registration.provider.generate({
         session,
+        automatic: [...this.automaticModes].map(policy => policy(session)).findLast(mode => mode !== undefined)
+          ?? work.registration.provider.automatic,
         messages,
         ...route === undefined ? {} : { route },
         signal: work.signal,
@@ -604,6 +680,7 @@ export class SessionTitleService extends Service {
       const accepted = this.validateResult(result, messages)
       session.append('session/title', {
         title: accepted.title,
+        ...accepted.inputTruncated === true ? { inputTruncated: true as const } : {},
         messageSeqs: [...accepted.messageSeqs],
         source: {
           kind: 'provider',
@@ -611,7 +688,14 @@ export class SessionTitleService extends Service {
           ...accepted.model === undefined ? {} : { model: accepted.model },
         },
       })
+      session.append('session/title-generation', { state: 'ready' })
       return this.get(session)
+    } catch (error: unknown) {
+      if (this.work.get(session)?.active === work && this.work.get(session)?.revision === work.revision
+        && !work.controller.signal.aborted && this.ctx.sessions.get(session.id) === session && this.serviceActive()) {
+        session.append('session/title-generation', { state: 'failed', error: String(error).slice(0, 240) })
+      }
+      throw error
     } finally {
       const state = this.work.get(session)
       if (state?.active === work) delete state.active
@@ -661,8 +745,10 @@ export class SessionTitleService extends Service {
       }
       model = { provider: record.provider, model: record.model }
     }
+    if (candidate.inputTruncated !== undefined && typeof candidate.inputTruncated !== 'boolean') throw new Error('title inputTruncated must be boolean')
     return {
       title,
+      ...candidate.inputTruncated === true ? { inputTruncated: true } : {},
       messageSeqs,
       ...(model === undefined ? {} : { model }),
     }
@@ -721,7 +807,7 @@ export class SessionTitleService extends Service {
   }
 
   /** Queue detached service work and retain it through service disposal. */
-  private defer(task: () => Promise<void>): void {
+  private defer(task: () => void | Promise<void>): void {
     const run = Promise.resolve().then(async () => {
       if (!this.serviceActive()) return
       await task()
@@ -795,7 +881,7 @@ export class SessionTitleService extends Service {
   /** Create the first deterministic fallback if the session still lacks a title. */
   private async ensureFallback(session: Session): Promise<SessionTitleSnapshot | undefined> {
     this.assertServiceActive()
-    const current = this.get(session)
+    const current = foldSessionTitle(session.snapshotEvents(session.inheritedEventCount))
     if (current !== undefined) return current
     const first = this.titleInputOf(session).first
     if (first === null) return undefined
@@ -812,7 +898,7 @@ export class SessionTitleService extends Service {
       if (this.ctx.sessions.get(session.id) !== session) {
         throw new Error(`session "${session.id}" is not live in this store`)
       }
-      const accepted = this.get(session)
+      const accepted = foldSessionTitle(session.snapshotEvents(session.inheritedEventCount))
       if (accepted !== undefined) return accepted
       session.append('session/title', {
         title,

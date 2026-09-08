@@ -273,6 +273,36 @@ interface SessionPersistenceSnapshot {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxsessiondeletion--sessiondeletion"></a>
+
+### `ctx.sessionDeletion` — `SessionDeletion`
+
+Host-only permanent Session deletion provider. Product code validates placement and archive authority before invoking this service.
+
+```ts cordis-catalog
+/**
+ * Resolve the current recursive deletion plan without reserving or mutating
+ * any Session.
+ * @param rootSessionId - subtree root to inspect.
+ * @returns immutable ids in bottom-up deletion order.
+ */
+async preview(rootSessionId: SessionId): Promise<SessionDeletionPreview>
+
+/**
+ * Permanently remove one Session subtree. All live members are claimed idle
+ * before any Agent is disposed; durable records then delete bottom-up.
+ * Retrying after partial storage success converges because missing children
+ * are skipped and the root remains last.
+ * @param rootSessionId - subtree root to delete.
+ * @returns immutable plan and ids removed by this attempt.
+ */
+async deleteTree(rootSessionId: SessionId): Promise<SessionDeletionResult>
+```
+
+Types: [SessionId](core.zh.md)
+
+Source: [`packages/session/session-deletion/src/index.ts`](../../packages/session/session-deletion/src/index.ts)
+
 <a id="ctxsessionpersistence--sessionpersistence-abstract-seam"></a>
 
 ### `ctx.sessionPersistence` — `SessionPersistence` (abstract seam)
@@ -336,6 +366,16 @@ ensureMaterialized(_session: Session): Promise<void>
  * @param events - the contiguous batch to persist, in seq order.
  */
 abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+/**
+ * Permanently remove one known Session identity. Implementations serialize
+ * the operation with same-id append, preparation, and retirement work. A
+ * lazy creation intent returns its header even when no artifact materialized;
+ * the default rejects so third-party backends cannot silently claim support.
+ * @param _id - persisted or lazy Session identity to remove.
+ * @returns the removed header, or `undefined` if already absent.
+ */
+delete(_id: SessionId): Promise<SessionHeader | undefined>
 
 /**
  * Prepare the exact unpublished Session used by resume. Implementations may
@@ -420,6 +460,14 @@ abstract readFrom(id: SessionId, fromSeq: SessionLogOffset, signal?: AbortSignal
 abstract list(signal?: AbortSignal): Promise<SessionHeader[]>
 
 /**
+ * List materialized and in-process lazy/prepared headers for recursive
+ * deletion discovery. Backends without coordinator state fall back to the
+ * materialized listing.
+ * @returns one header per known Session identity.
+ */
+listDeletionHeaders(): Promise<SessionHeader[]>
+
+/**
  * List materialized sessions with cheap per-log change tokens.
  *
  * Repeated observations of an unchanged log return the same revision. A
@@ -433,6 +481,32 @@ abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot
 ```
 
 Types: [Session](session.zh.md) · [SessionEvent](session.zh.md) · [SessionId](core.zh.md) · [SessionLogOffset](session.zh.md)
+
+Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistence-events"></a>
+
+### `session-persistence/*` events
+
+<a id="session-persistencedeleted--parallel"></a>
+
+#### `session-persistence/deleted` — parallel
+
+Post-commit notification that one durable Session artifact was permanently removed. Consumers clean derived indexes and accounting from this event; listener failure cannot reverse the storage commit.
+
+```ts cordis-catalog
+/**
+ * Post-commit notification that one durable Session artifact was
+ * permanently removed. Consumers clean derived indexes and accounting from
+ * this event; listener failure cannot reverse the storage commit.
+ * @param header - detached metadata of the deleted Session.
+ * @param inheritedEventCount - exact inherited cut identifying the removed log lifecycle.
+ * @mode parallel
+ */
+'session-persistence/deleted'(header: SessionHeader, inheritedEventCount: SessionLogOffset): Promise<void> | void
+```
+
+Types: [SessionLogOffset](session.zh.md)
 
 Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
 <!-- END GENERATED cordis-surface -->

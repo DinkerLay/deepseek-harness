@@ -11,6 +11,8 @@ kind: "package-reference"
 
 `dsh-subagent-acp` 在全新的子进程中运行每个被委派的子 agent，并作为 Agent Client Protocol 客户端驱动它：子 agent（智能体）拥有自己的运行时、会话、模型配置和工具，可以是任何兼容 ACP 的 agent，而不只是 Harness。它是进程内 spawn 与 fork 后端的进程外替代方案，只与子 agent 共享父会话的工作目录。每次运行都会 spawn 全新进程、初始化 ACP 会话、发送任务并收集流式最终答案；权限提示由配置自动应答，因此无需人工参与。父级只收到子 agent 的最终答案或安全错误——中间消息与工具流量不会跨越边界。当子 agent 必须与父 harness 完全隔离且能说 ACP 时，选择它。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)

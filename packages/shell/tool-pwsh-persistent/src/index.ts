@@ -5,6 +5,7 @@
  * @module @deepseek-ai/dsh-tool-pwsh-persistent
  */
 
+import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -294,7 +295,7 @@ function persistentShells(ctx: Context, config: ResolvedConfig): PersistentShell
     const combinedSignal = AbortSignal.any([signal, lifecycle.signal])
     const creation = (async () => {
       try {
-        const cwd = owner.session.header.cwd
+        const cwd = resolveSessionCwd(owner.session)
         const spawned = await ctx.terminals.spawn(owner, {
           type: config.backendType,
           ...cwd === undefined ? {} : { cwd },

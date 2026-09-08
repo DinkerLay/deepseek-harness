@@ -21,6 +21,7 @@ import type {
   ConnectionRpcEndpointMatcher,
   ConnectionRpcFailure,
   ConnectionRpcHandler,
+  ConnectionRpcHandlerOptions,
   ConnectionRpcResult,
   ConnectionRequestRejection,
   ConnectionTrustRequest,
@@ -78,7 +79,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
   get rpc(): HostConnectionRpc {
     const owner = this.ctx
     return {
-      handle: (channel, handler) => this.register(owner, channel, handler),
+      channelAuthorityVersion: 1,
+      handle: (channel, handler, options) => this.register(owner, channel, handler, options),
       intercept: (channel, matches, handler) =>
         this.registerInterceptor(owner, channel, matches, handler),
     }
@@ -153,6 +155,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     owner: Context,
     channel: string,
     handler: ConnectionRpcHandler,
+    options?: ConnectionRpcHandlerOptions,
   ): () => Promise<void> {
     assertChannel(channel)
     const fetchHandler = rpcFetchHandler(channel, handler)
@@ -160,7 +163,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
       kind: 'prefix',
       path: channel,
       handler: async (req, res) => {
-        const rejection = this.requestRejection(req)
+        const rejection = options?.authority === 'loopback' && !isTrustedApiRequest(req, [])
+          ? 403 : this.requestRejection(req)
         if (rejection !== undefined) {
           res.writeHead(rejection)
           res.end(rejection === 401 ? 'unauthorized' : 'forbidden')

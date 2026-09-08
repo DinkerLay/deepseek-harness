@@ -32,6 +32,9 @@ export { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSur
 export { canonicalHeader, foldRequestHeader, headerEquals } from './request-header.ts'
 export { KNOWN_SESSION_EVENT_TYPES } from './known-event-types.ts'
 
+/** Public capability version for recorded execution-directory bindings and resolution. */
+export const SESSION_EXECUTION_DIRECTORY_VERSION = 1
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     sessions: SessionStore
@@ -240,6 +243,9 @@ function assertSessionEventEnvelope(value: Record<string, unknown>, index: numbe
     throw new Error(`seed event at index ${index} has an invalid event envelope`)
   }
   switch (type) {
+    case 'session/execution-directory':
+      validateExecutionDirectory(event['data'])
+      break
     case 'request/header':
     case 'user/message':
     case 'assistant/message':
@@ -247,6 +253,39 @@ function assertSessionEventEnvelope(value: Record<string, unknown>, index: numbe
       assertCurrentLlmShape(event, index)
       break
   }
+}
+
+/** Validate directory bindings at both the append and persisted-event boundaries. */
+function validateExecutionDirectory(data: unknown, owner?: SessionId): void {
+  const record = data !== null && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown> : undefined
+  if (typeof record?.['sessionId'] !== 'string' || record['sessionId'].length === 0
+    || typeof record['cwd'] !== 'string' || !isAbsolute(record['cwd']) || record['cwd'].includes('\0')) {
+    throw new Error('session execution directory requires a Session id and an absolute cwd')
+  }
+  if (owner !== undefined && record['sessionId'] !== owner) {
+    throw new Error('session execution directory belongs to another Session')
+  }
+}
+
+/**
+ * Resolve the recorded execution directory, falling back to creation cwd.
+ * @param session - calling Session, absent for agentless execution.
+ * @returns the physical execution directory, or undefined for backend defaulting.
+ */
+export function resolveSessionCwd(session: Pick<Session, 'header' | 'executionDirectory'> | undefined): string | undefined {
+  return session?.executionDirectory ?? session?.header.cwd
+}
+
+/**
+ * Resolve a detached or historical Session snapshot's physical execution directory.
+ * @param header - creation identity and fallback directory.
+ * @param events - the exact retained history prefix to inspect.
+ * @returns that prefix's own directory binding, or creation cwd when unbound.
+ */
+export function executionDirectoryFromEvents(header: Pick<SessionHeader, 'id' | 'cwd'>, events: readonly SessionEvent[]): string | undefined {
+  const event = events.findLast(candidate => candidate.type === 'session/execution-directory' && candidate.data.sessionId === header.id)
+  return event?.type === 'session/execution-directory' ? event.data.cwd : header.cwd
 }
 
 /** Reject obsolete request headers and malformed messages at the seed/load boundary. */
@@ -448,6 +487,23 @@ export class Session {
   /** The session identity, derived from its durable header's single copy. */
   get id(): SessionId {
     return this.header.id
+  }
+
+  private executionDirectoryFold: string | undefined
+  private executionDirectoryFoldSeq = 0
+
+  /**
+   * Latest own execution-directory binding. Fork seed bindings belong to their
+   * original Session and do not change this Session's creation directory.
+   */
+  get executionDirectory(): string | undefined {
+    for (const event of this.log.slice(this.executionDirectoryFoldSeq)) {
+      if (event.type === 'session/execution-directory' && event.data.sessionId === this.id) {
+        this.executionDirectoryFold = event.data.cwd
+      }
+    }
+    this.executionDirectoryFoldSeq = this.log.length
+    return this.executionDirectoryFold
   }
 
   /**
@@ -680,6 +736,7 @@ export class Session {
       throw new Error(`session event "${type}" carries non-JSON-serializable data`)
     }
     assertSupportedRequestHeader(type, dataSnapshot, `session event "${type}"`)
+    if (type === 'session/execution-directory') validateExecutionDirectory(dataSnapshot, this.id)
     const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata)
     if (surfaceMetadataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`)
@@ -847,6 +904,45 @@ export class SessionForkError extends Error {
   }
 }
 
+/** Stable reason Session publication or activity is fenced by deletion. */
+export type SessionDeletionReservationErrorCode =
+  | 'SESSION_DELETION_IN_PROGRESS'
+  | 'PARENT_SESSION_DELETION_IN_PROGRESS'
+  | 'OVERLAPPING_SESSION_DELETION'
+  | 'STALE_SESSION_PREPARATION'
+
+/** Refusal raised while a Host deletion reservation owns an identity or lineage. */
+export class SessionDeletionReservationError extends Error {
+  /**
+   * @param message - deletion-fence context.
+   * @param code - machine-readable refusal reason.
+   */
+  constructor(
+    message: string,
+    public readonly code: SessionDeletionReservationErrorCode,
+  ) {
+    super(message)
+    this.name = 'SessionDeletionReservationError'
+  }
+}
+
+/** Host-only lifecycle reservation used by a recursive deletion provider. */
+export interface SessionDeletionReservation {
+  /** Add newly discovered descendants to the publication fence. */
+  extend(sessionIds: readonly SessionId[]): void
+  /** Commit deletion epochs so already-prepared Session objects stay invalid. */
+  complete(sessionIds?: readonly SessionId[]): void
+  /** Release the active publication fence. */
+  release(): void
+}
+
+/** Mutable state behind one active recursive-deletion reservation. */
+interface SessionDeletionEntry {
+  readonly rootSessionId: SessionId
+  readonly sessionIds: Set<SessionId>
+  readonly completedSessionIds: Set<SessionId>
+}
+
 /**
  * In-memory session store (`ctx.sessions`).
  *
@@ -856,6 +952,9 @@ export class SessionForkError extends Error {
 export class SessionStore extends Service {
   private store = new Map<SessionId, SessionEntry>()
   private counter = 0
+  private readonly deletions = new Map<SessionId, SessionDeletionEntry>()
+  private readonly deletionEpochs = new Map<SessionId, number>()
+  private readonly preparedEpochs = new WeakMap<Session, ReadonlyMap<SessionId, number>>()
 
   constructor(ctx: Context) {
     super(ctx, 'sessions')
@@ -933,8 +1032,12 @@ export class SessionStore extends Service {
       sessionId = brandString<SessionId>(id)
     }
     if (this.store.has(sessionId)) throw new Error(`session "${sessionId}" already exists`)
+    const parentSession = options?.meta?.parentSession
+    this.assertPublicationAllowed(sessionId, parentSession)
     if (options?.seedSource === 'persistence') {
-      return Session.fromRestore(sessionId, options.seed, options.meta, options.inheritedEventCount)
+      const restored = Session.fromRestore(sessionId, options.seed, options.meta, options.inheritedEventCount)
+      this.rememberPreparation(restored)
+      return restored
     }
     const seed = options?.seed
     const meta = options?.meta
@@ -949,7 +1052,9 @@ export class SessionStore extends Service {
       ...meta?.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
       ...meta?.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
     }
-    return Session.create(sessionId, seed, header, options?.inheritedEventCount)
+    const session = Session.create(sessionId, seed, header, options?.inheritedEventCount)
+    this.rememberPreparation(session)
+    return session
   }
 
   /**
@@ -977,6 +1082,8 @@ export class SessionStore extends Service {
   enter(session: Session): () => void {
     const id = session.id
     const carrier = scopeTarget(session, scopeOf(this.ctx))
+    this.assertPreparationCurrent(session)
+    this.assertPublicationAllowed(id, session.header.parentSession)
     // This is the authoritative collision boundary after arbitrary unpublished
     // preparation. Only one exact same-id transaction can publish.
     if (this.store.has(id)) throw new Error(`session "${id}" already exists`)
@@ -1129,6 +1236,151 @@ export class SessionStore extends Service {
   }
 
   /**
+   * Whether an active Host deletion reservation currently owns one exact id.
+   * Activity entry points use this before prompting or resuming an existing
+   * live Agent; Session publication performs the stronger lineage check.
+   * @param id - Session identity to inspect.
+   * @returns whether deletion currently fences the id.
+   */
+  isDeletionReserved(id: SessionId): boolean {
+    for (const entry of this.deletions.values()) {
+      if (entry.sessionIds.has(id)) return true
+    }
+    return false
+  }
+
+  /**
+   * Capture an identity's deletion epoch before an asynchronous source observation.
+   * The returned check rejects active deletion and a completed deletion even
+   * after its reservation has been released. Call at the derived publication commit.
+   * @param id - source Session identity whose continued existence authorizes publication.
+   * @returns synchronous validation for the captured source epoch.
+   */
+  capturePublicationCheck(id: SessionId): () => void {
+    this.assertPublicationAllowed(id)
+    const epoch = this.deletionEpochs.get(id) ?? 0
+    return () => {
+      this.assertPublicationAllowed(id)
+      if ((this.deletionEpochs.get(id) ?? 0) !== epoch) {
+        throw new SessionDeletionReservationError(
+          `session "${id}" was deleted during source preparation`,
+          'STALE_SESSION_PREPARATION',
+        )
+      }
+    }
+  }
+
+  /**
+   * Reserve a root and its known subtree against Session publication. The
+   * deletion provider may extend the set while repeated persistence snapshots
+   * converge. Overlapping reservations reject synchronously.
+   * @param rootSessionId - subtree root.
+   * @param initialSessionIds - root and already discovered descendants.
+   * @returns the single-shot reservation capability.
+   */
+  reserveForDeletion(
+    rootSessionId: SessionId,
+    initialSessionIds: readonly SessionId[] = [rootSessionId],
+  ): SessionDeletionReservation {
+    const entry: SessionDeletionEntry = {
+      rootSessionId,
+      sessionIds: new Set([rootSessionId, ...initialSessionIds]),
+      completedSessionIds: new Set(),
+    }
+    this.assertNoDeletionOverlap(entry)
+    this.deletions.set(rootSessionId, entry)
+    let active = true
+    return {
+      extend: (sessionIds) => {
+        if (!active) throw new Error(`Session deletion reservation for "${rootSessionId}" is released`)
+        const candidate: SessionDeletionEntry = {
+          ...entry,
+          sessionIds: new Set([...entry.sessionIds, ...sessionIds]),
+        }
+        this.assertNoDeletionOverlap(candidate, entry)
+        for (const sessionId of sessionIds) entry.sessionIds.add(sessionId)
+      },
+      complete: (sessionIds = [...entry.sessionIds]) => {
+        if (!active) return
+        for (const sessionId of sessionIds) {
+          if (!entry.sessionIds.has(sessionId) || entry.completedSessionIds.has(sessionId)) continue
+          entry.completedSessionIds.add(sessionId)
+          this.deletionEpochs.set(sessionId, (this.deletionEpochs.get(sessionId) ?? 0) + 1)
+        }
+      },
+      release: () => {
+        if (!active) return
+        active = false
+        this.deletions.delete(rootSessionId)
+      },
+    }
+  }
+
+  /** Reject a reservation whose subtree intersects another active deletion. */
+  private assertNoDeletionOverlap(
+    candidate: SessionDeletionEntry,
+    self?: SessionDeletionEntry,
+  ): void {
+    for (const active of this.deletions.values()) {
+      if (active === self) continue
+      const overlap = [...candidate.sessionIds].find(sessionId => active.sessionIds.has(sessionId))
+      if (overlap === undefined) continue
+      throw new SessionDeletionReservationError(
+        `session "${overlap}" is already reserved by deletion of "${active.rootSessionId}"`,
+        'OVERLAPPING_SESSION_DELETION',
+      )
+    }
+  }
+
+  /** Reject a new identity or descendant while a deletion reservation is active. */
+  private assertPublicationAllowed(id: SessionId, parentSession?: SessionId): void {
+    if (this.isDeletionReserved(id)) {
+      throw new SessionDeletionReservationError(
+        `session "${id}" is being permanently deleted`,
+        'SESSION_DELETION_IN_PROGRESS',
+      )
+    }
+    let ancestor = parentSession
+    const visited = new Set<SessionId>()
+    while (ancestor !== undefined && !visited.has(ancestor)) {
+      if (this.isDeletionReserved(ancestor)) {
+        throw new SessionDeletionReservationError(
+          `cannot publish session "${id}" below deleting parent "${ancestor}"`,
+          'PARENT_SESSION_DELETION_IN_PROGRESS',
+        )
+      }
+      visited.add(ancestor)
+      ancestor = this.store.get(ancestor)?.session.header.parentSession
+    }
+  }
+
+  /** Capture deletion epochs for an unpublished Session and its direct lineage. */
+  private rememberPreparation(session: Session): void {
+    const epochs = new Map<SessionId, number>()
+    epochs.set(session.id, this.deletionEpochs.get(session.id) ?? 0)
+    if (session.header.parentSession !== undefined) {
+      epochs.set(
+        session.header.parentSession,
+        this.deletionEpochs.get(session.header.parentSession) ?? 0,
+      )
+    }
+    this.preparedEpochs.set(session, epochs)
+  }
+
+  /** Refuse an unpublished Session captured before its identity or parent was deleted. */
+  private assertPreparationCurrent(session: Session): void {
+    const epochs = this.preparedEpochs.get(session)
+    if (epochs === undefined) return
+    for (const [sessionId, preparedEpoch] of epochs) {
+      if ((this.deletionEpochs.get(sessionId) ?? 0) === preparedEpoch) continue
+      throw new SessionDeletionReservationError(
+        `session "${session.id}" was prepared before session "${sessionId}" was deleted`,
+        'STALE_SESSION_PREPARATION',
+      )
+    }
+  }
+
+  /**
    * Create a live child session from a stable prefix of a live source.
    * `boundary` is an inclusive source event seq; omitted means the source's
    * current last event. The selected slice may end with a between-turn event
@@ -1148,11 +1400,12 @@ export class SessionStore extends Service {
     }
     const liveSource = this._resolveForkSource(source)
     const seed = this._forkSeed(liveSource, boundary)
+    const cwd = executionDirectoryFromEvents(liveSource.header, seed)
     return this.create(childSessionId, {
       seed,
       inheritedEventCount: SessionLogOffset(seed.length),
       meta: {
-        ...liveSource.header.cwd !== undefined ? { cwd: liveSource.header.cwd } : {},
+        ...cwd === undefined ? {} : { cwd },
         parentSession: liveSource.id,
         isSeeded: true,
       },

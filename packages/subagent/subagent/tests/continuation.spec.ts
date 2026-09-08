@@ -680,8 +680,19 @@ describe('direct-child Queue residency routing', () => {
     expect(child?.status).toBe('running')
 
     // Both messages queue behind the open turn, in call order.
+    parent.session.append('turn/start', { turn: 10 })
     const firstMessage = await queuePrompt(ctx, parent, started.childId, message('first follow-up'))
+    parent.session.append('turn/end', { turn: 10, reason: { kind: 'completed' } })
+    parent.session.append('turn/start', { turn: 11 })
     const secondMessage = await queuePrompt(ctx, parent, started.childId, message('second follow-up'))
+    parent.session.append('turn/end', { turn: 11, reason: { kind: 'completed' } })
+    const inputs = child!.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced' ? event.data.inserted : [])
+    expect(inputs.find(input => input.id === firstMessage)?.source).toMatchObject({
+      delegation: { parentSessionId: parent.id, parentTurn: 10 },
+    })
+    expect(inputs.find(input => input.id === secondMessage)?.source).toMatchObject({
+      delegation: { parentSessionId: parent.id, parentTurn: 11 },
+    })
     expect(firstMessage).not.toBe(secondMessage)
     // Still the same Activation: no second child Agent was created.
     expect(ctx.agents.get(started.childId)).toBe(child)
@@ -2981,4 +2992,49 @@ describe('SubagentRuntime.interrupt', () => {
     hold.resolve(undefined)
     await drained
   })
+})
+
+
+it('keeps default parent wakeups after a user stop when no delivery policy is registered', async () => {
+  const release = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('child result'), gate: release.promise }, { chunks: textResponse('parent resumed') }])
+  const { ctx, parent } = await setupWith(adapter)
+  const child = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  parent.session.append('turn/start', { turn: 1 })
+  parent.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
+  release.resolve(undefined)
+  await waitNoActivation(ctx, child.childId)
+  await parent.whenIdle()
+  expect(adapter.requests).toHaveLength(2)
+  expect(parent.session.snapshotEvents().findLast(event => event.type === 'turn/end')).toMatchObject({ data: { reason: { kind: 'completed' } } })
+})
+
+it.each([false, true])('retains reports and settlements under a scoped policy and restores default delivery on disposal; throws=%s', async (throws) => {
+  const first = Promise.withResolvers<undefined>(), second = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('first result'), gate: first.promise },
+    { chunks: textResponse('second result'), gate: second.promise }, { chunks: textResponse('parent resumed') }])
+  const { ctx, parent } = await setupWith(adapter)
+  const release = ctx.subagents.registerParentDeliveryPolicy((request) => {
+    if (request.parent !== parent) return
+    if (throws) throw new Error('policy failed')
+    return 'quiet'
+  })
+  const child = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  await ctx.subagents.sendMessage(ctx.agents.get(child.childId)!, parent.id, [{ type: 'text', text: 'progress' }],
+    { signal: new AbortController().signal })
+  expect(parent.inbox.nextStep.some(message => message.source.kind === 'agent-message')).toBe(true)
+  first.resolve(undefined)
+  await waitNoActivation(ctx, child.childId)
+  expect(parent.inbox.nextStep.some(message => message.source.kind === 'subagent-settled')).toBe(true)
+  expect(adapter.requests).toHaveLength(1)
+  await release()
+  const next = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+  second.resolve(undefined)
+  await waitNoActivation(ctx, next.childId)
+  await parent.whenIdle()
+  expect(adapter.requests).toHaveLength(3)
+  expect(parent.session.snapshotEvents().findLast(event => event.type === 'turn/end')).toMatchObject({ data: { reason: { kind: 'completed' } } })
 })

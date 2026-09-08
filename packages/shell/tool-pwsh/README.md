@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-tool-pwsh` gives the agent a `pwsh` tool that runs PowerShell commands through the mounted shell executor — the Windows counterpart of `dsh-tool-bash`, mirroring it call-for-call. Each call runs in a fresh pwsh process, so no state survives; `run_in_background` turns long-running commands into background jobs. Commands are PowerShell-dialect: native `C:\...` paths and `$env:NAME` variables, with no dialect translation. Every call runs with the managed `DSH_*` environment, and under a sandboxing executor the tool teaches and enforces the Windows-specific language-mode and named-pipe contracts. Mount it with a PowerShell executor such as `dsh-pwsh-local` and the `dsh-shell-env` plugin.
 
+Execution uses the recorded Session directory and optionally collects `ctx.shellExecEnv` immediately before foreground or background process creation. Trusted business values stay separate from official `DSH_*` facts and are not advertised in prompt/schema text. Registered Sandbox restrictions apply before approval and after the granted policy is resolved.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

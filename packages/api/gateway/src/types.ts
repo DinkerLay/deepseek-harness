@@ -18,6 +18,12 @@ export interface InvokeRemoteRequest {
   readonly signal?: AbortSignal
 }
 
+/** Effect-owned admission around one complete unary invocation, before lookup and business execution. */
+export type RemoteInvocationPolicy = (
+  request: InvokeRemoteRequest,
+  next: (args?: InvokeRemoteRequest['args']) => Promise<unknown>,
+) => Promise<unknown>
+
 /** One Host Cordis notification forwarded unchanged to Client Remote subscribers. */
 export interface TypertRemoteEventFrame {
   /** Original Host Cordis event name. */
@@ -119,6 +125,14 @@ export type TypertGatewayErrorCode =
 
 /** Host dispatcher consumed by Connection adapters. */
 export interface TypertGateway {
+  /** Explicit support for admission policies surrounding unary calls. */
+  readonly invocationPolicyVersion?: 1
+  /**
+   * Install caller-owned admission around lookup and execution; disposal drains admitted calls.
+   * @param policy - wrapper that may replace named arguments and calls next at most once.
+   * @returns disposer preventing new admissions and awaiting existing calls.
+   */
+  registerInvocationPolicy?(policy: RemoteInvocationPolicy): () => Promise<void>
   /** Carrier adapter shared by WebSocket and in-process transports. */
   readonly wireStream: TypertGatewayWireStream
 

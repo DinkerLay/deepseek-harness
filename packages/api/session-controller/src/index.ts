@@ -108,6 +108,11 @@ export class SessionController extends TypertRemoteService {
   private readonly canOpenPath: () => boolean
   private readonly promotions = new Set<Promise<void>>()
 
+  /** Public Host support for reserved destinations and exact recoverable fork prefixes. */
+  readonly forkCapabilities: { readonly version: 1; readonly destination: true; readonly exactSeed: true } = {
+    version: 1, destination: true, exactSeed: true,
+  }
+
   /**
    * @param ctx - Host context containing the Session capability assembly.
    * @param config - cold-list observation policy.
@@ -134,12 +139,18 @@ export class SessionController extends TypertRemoteService {
     ctx.plugin(SessionFileReferences)
     ctx.plugin(SessionSkillCatalog)
 
+    const removedSessionIds = new Set<SessionId>()
     ctx.on('session/created', (session) => {
+      removedSessionIds.delete(session.id)
       ctx.emit('api-session/added', this.listState.summaryFor(session))
     })
-    ctx.on('session/disposed', (session) => {
-      ctx.emit('api-session/removed', session.id)
-    })
+    const removeSession = (id: SessionId) => {
+      if (removedSessionIds.has(id)) return
+      removedSessionIds.add(id)
+      ctx.emit('api-session/removed', id)
+    }
+    ctx.on('session/disposed', (session) => { removeSession(session.id) })
+    ctx.on('session-persistence/deleted', (header) => { removeSession(header.id) })
     ctx.on('agent/status', ({ agent, status }) => {
       ctx.emit('api-session/status', agent.id, status === 'running')
     })

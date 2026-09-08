@@ -11,7 +11,7 @@
 export {}
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { OptionalSessionSeq, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { OptionalSessionSeq, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session/types'
 
 /** Identifies one session-title provider registration. */
 export type SessionTitleProviderId = Branded<'SessionTitleProviderId'>
@@ -39,6 +39,8 @@ export type SessionTitleSource =
 
 /** Payload of the log-only `session/title` event. */
 export interface SessionTitleEventData {
+  /** At least one cited source message was deliberately shortened. */
+  readonly inputTruncated?: true
   /** Normalized non-empty title text. */
   readonly title: string
   /** Exact human `user/message` seqs used to derive this title; empty for an explicit user rename. */
@@ -68,6 +70,8 @@ export interface SessionTitleUserMessage {
 
 /** Eligible title input stored as a bounded aggregate. */
 export interface TitleInputState {
+  /** Prefix excluded from branch-owned automatic title input. */
+  readonly inheritedEventCount: SessionLogOffset
   /** The oldest eligible message, or null before any. */
   readonly first: SessionTitleUserMessage | null
   /** Total eligible messages folded so far. */
@@ -82,6 +86,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
     title: string | null
     /** Eligible human title input. */
     titleInput: TitleInputState
+    titleGeneration: { inheritedEventCount: SessionLogOffset; value: { state: 'generating' | 'ready' | 'failed'; error?: string | undefined } | null }
   }
   interface SessionProjectionMap {
     /**
@@ -90,5 +95,6 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
      * plain string: the shape the client list rows consume.
      */
     title: string | null
+    titleGeneration: { state: 'generating' | 'ready' | 'failed'; error?: string | undefined } | null
   }
 }

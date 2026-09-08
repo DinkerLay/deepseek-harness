@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-session` provides the append-only session log that records an agent's whole interaction history — the single source of truth every model-visible fact flows through. The LLM message history is *derived* from the log (`deriveMessages()`), never stored separately, so replay is re-derivation from the same events and compaction can shadow older surface entries without deleting history. The package also provides the in-memory store (`ctx.sessions`), the typed `SessionEvent` vocabulary that plugins extend by declaration merging, and the surface layer that orders message-producing events. Persistence is deliberately a separate concern: backends subscribe to `session/event` and flush on `session/flush`. Choose it as the foundation of any agent session; it runs no model calls itself.
 
+`resolveSessionCwd(session)` and `executionDirectoryFromEvents(header, events)` read the Session-owned `session/execution-directory` binding, falling back to creation cwd; inherited bindings never change the child directory. `reserveForDeletion()` fences publication and records completed deletion epochs. `capturePublicationCheck(id)` carries an epoch check across asynchronous source reads and rejects publication after that source is deleted.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

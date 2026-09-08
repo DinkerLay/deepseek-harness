@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-skill'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,9 +9,11 @@ import { SessionSkillCatalog } from '../src/skill-catalog.ts'
 
 function observation(
   sessionId: SessionId,
-  options: { readonly cwd?: string; readonly agentPreset?: string } = {},
+  options: { readonly cwd?: string; readonly agentPreset?: string; readonly executionCwd?: string } = {},
 ): SessionObservation {
-  const events = Object.freeze([])
+  const events = Object.freeze(options.executionCwd === undefined ? [] : [{
+    type: 'session/execution-directory' as const, seq: SessionSeq(0), time: 1, data: { sessionId, cwd: options.executionCwd },
+  }])
   const lease = (): SessionObservation => ({
     source: 'live',
     header: {
@@ -23,9 +25,9 @@ function observation(
     },
     events,
     inheritedEventCount: SessionLogOffset(0),
-    cursor: -1,
+    cursor: events.at(-1)?.seq ?? -1,
     projections: {
-      asOfSeq: -1,
+      asOfSeq: events.at(-1)?.seq ?? -1,
       values: {
         ...options.agentPreset === undefined ? {} : { agentPreset: options.agentPreset },
       },
@@ -224,4 +226,19 @@ describe('SessionSkillCatalog', () => {
         code: 'gateway/internal', message: 'skill listing failed: Error: catalog offline',
       })
   })
+})
+
+
+it('lists skills from a recorded cold execution directory without activating the Session', async () => {
+  const ctx = await context()
+  try {
+    const sessionId = SessionId('rebound-cold-skills')
+    ctx.provide('sessionQuery', { observeSession: async () => observation(sessionId, { cwd: '/created', executionCwd: '/executing' }) } as never)
+    const list = vi.fn(async () => [])
+    ctx.provide('skills', { list } as never)
+    const catalog = new SessionSkillCatalog(ctx)
+    await catalog.list({ sessionId }, new AbortController().signal)
+    expect(list).toHaveBeenCalledWith({ cwd: '/executing', scope: undefined })
+    expect(ctx.agents.list()).toEqual([])
+  } finally { await ctx.fiber.dispose() }
 })

@@ -43,6 +43,39 @@ async function policyContext(ctx: Context, activeSession: Session): Promise<stri
 }
 
 describe('SandboxPolicyService', () => {
+  it('confines execution to a recorded worktree while preserving the storage directory', async () => {
+    const ctx = await mounted({ mode: 'workspace-write' })
+    const worker = session('worker', '/shared')
+    worker.append('session/execution-directory', { sessionId: worker.id, cwd: '/branches/worker' })
+    expect(ctx.sandboxPolicy.resolve({ session: worker }).workspaceRoot).toBe(resolve('/branches/worker'))
+    expect(worker.header.cwd).toBe('/shared')
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, workspaceRoot: '/shared' }))
+    expect(() => ctx.sandboxPolicy.resolve({ session: worker })).toThrow('cannot widen')
+    await ctx.fiber.dispose()
+  })
+  it('rejects a constraint that widens a standing boundary', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/workspace' })
+    const release = ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, mode: 'danger-full-access' }))
+    expect(() => ctx.sandboxPolicy.resolve()).toThrow('cannot widen')
+    await release()
+    ctx.sandboxPolicy.registerConstraint((_request, policy) => ({ ...policy, workspaceRoot: '/another' }))
+    expect(() => ctx.sandboxPolicy.resolve()).toThrow('cannot widen')
+    await ctx.fiber.dispose()
+  })
+
+  it('applies a scoped deployment ceiling to explicit escalation and releases it on disposal', async () => {
+    const ctx = await mounted({ mode: 'danger-full-access' })
+    const managed = session('managed', '/execution/managed')
+    const release = ctx.sandboxPolicy.registerConstraint((request, policy) => request.session?.id === managed.id
+      ? { ...policy, mode: policy.mode === 'read-only' ? 'read-only' : 'workspace-write' } : policy)
+    expect(ctx.sandboxPolicy.resolve({ session: managed, mode: 'danger-full-access' }).mode).toBe('workspace-write')
+    expect(ctx.sandboxPolicy.resolve({ session: managed, mode: 'read-only' }).mode).toBe('read-only')
+    expect(ctx.sandboxPolicy.resolve({ session: session('external') }).mode).toBe('danger-full-access')
+    await release()
+    expect(ctx.sandboxPolicy.resolve({ session: managed }).mode).toBe('danger-full-access')
+    await ctx.fiber.dispose()
+  })
+
   it('defaults to read-only under the process cwd', async () => {
     const ctx = await mounted()
     expect(ctx.sandboxPolicy.defaultMode).toBe('read-only')

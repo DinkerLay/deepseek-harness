@@ -184,6 +184,25 @@ describe('MessageFeedbackService public contract', () => {
     expect(Object.isFrozen(listed.value.items[0])).toBe(true)
   })
 
+  it('removes the matching sidecar after committed Session deletion', async () => {
+    const { ctx, persistence } = await harness()
+    const fixture = messageFixture('deleted-feedback-session')
+    persistence.persist(fixture.session)
+    const item = expectItem(await ctx.messageFeedback.put({
+      sessionId: fixture.session.id,
+      messageId: fixture.assistantMessageIds[0],
+      rating: 'positive',
+      ifVersion: null,
+    }))
+    expect(item.rating).toBe('positive')
+
+    await ctx.parallel('session-persistence/deleted', fixture.session.header, fixture.session.inheritedEventCount)
+    await expect(ctx.messageFeedback.list({ sessionId: fixture.session.id })).resolves.toEqual({
+      ok: true,
+      value: { items: [] },
+    })
+  })
+
   it('reports non-blank and complete UTF-8 byte limits without touching persistence', async () => {
     const { ctx, persistence } = await harness(4)
     const fixture = messageFixture('note-limits')

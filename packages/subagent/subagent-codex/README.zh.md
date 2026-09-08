@@ -11,6 +11,8 @@ kind: "package-bundle"
 
 `dsh-subagent-codex` 注册由 Profile 命名、默认名称为 `codex` 的 Codex subagent 提供方，它在发起委派的会话工作区中通过官方 app-server 协议运行真实的 Codex 子 agent（智能体）。每次接受的运行以 `app-server --stdio` 启动包内 Codex wrapper，创建一个临时 Codex 线程，提交一个自包含文本任务，并通过共享的 subagent 结果约定返回选定的最终答案——或独立的安全失败诊断。该提供方作为可选的 Profile Bundle 发布：安装会带入官方 wrapper 与一个兼容的原生平台载荷，而注册的提供方在绑定工具调用前保持休眠。原生 Codex 配置与身份验证继续是权威来源，Profile 选择的 `permissionMode` 会映射进线程的 approval、reviewer 与 sandbox 字段。当子 agent 应该是与父 harness 完全隔离的真实 Codex 会话时，选择它。
 
+本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+
 ## 目录
 
 - [使用本包](#use-this-package)
