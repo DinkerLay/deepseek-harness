@@ -21,6 +21,8 @@ Session 删除能力修改以下官方 package：`dsh-agent`、`dsh-agent-loop`�
 
 [`fork-manifest.json`](fork-manifest.json) 是所有修改 package、变更生产源码文件和 `runtimePatchPackages` 条目的精确清单，下游 Runtime 必须整体覆盖这些 package。生成文档、测试、翻译记录和仓库脚本不是 Runtime package，因此不在该列表中重复记录。
 
+Gateway 调用策略与 Connection 通道来源限制保留通用准入边界。`dsh-client-modules` 接受显式 `libraryPackages`，提供公开浏览器导出而不激活默认插件；其 Host 与 Client 协议必须一起覆盖。
+
 ## 所有权边界
 
 此 fork 只包含可复用的 DSH 能力与缺失的扩展点，不包含 SuperCode UI、AIME 鉴权、Product 策略、Product bundle 或 `@ainvest-team/*` 代码。外部 Product 插件可以消费已发布 API，但 DSH 不得导入该插件。

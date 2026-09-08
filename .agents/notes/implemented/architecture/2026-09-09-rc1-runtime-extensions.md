@@ -22,6 +22,8 @@ The JSONL package's public `./legacy-sqlite` helper creates a consistent read-on
 
 Gateway invocation policies keep Product admission around the complete unary lookup and operation, replacing APIProxy method replacement for history-only Agent revisions. Connection RPC channel authority remains an explicit optional restriction in addition to rc1 browser authentication; Product administrative channels can retain loopback-only access. Both capabilities report version 1 and fail Product activation when unavailable.
 
+The Client module registry exposes explicitly configured library factories without activating their default UI plugins. This lets a Product consume published UI classes through the same module identity while choosing one presentation and service provider. Library rows retain artifact provenance and HMR; ordinary active rows keep their existing activation behavior. Host and Client halves must be updated together.
+
 ## Alternatives considered
 
 **Keep the old APIProxy or Client Runtime alongside the controllers.** Parallel owners would duplicate state and require old protocol adapters to remain executable. The retained behavior belongs on the new public owners.

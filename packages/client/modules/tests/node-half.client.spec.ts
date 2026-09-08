@@ -11,7 +11,7 @@ import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderIndexInjections, type WebServer, type WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import * as modulesClient from '../src/client/index.ts'
-import { ClientModuleRegistry, bootInjections, orderByModuleGraph } from '../src/index.ts'
+import { ClientModuleRegistry, bootInjections, orderByModuleGraph, type Config } from '../src/index.ts'
 import type { ClientModuleLoaderTarget, WebBootEntry, WebBootGraph } from '../src/client/index.ts'
 
 const MODULES_ID = '@deepseek-ai/dsh-client-modules'
@@ -64,10 +64,13 @@ function constructWithRoute(
     contextBaseUrl?: string
     entryBaseUrl?: string
     internal?: NonNullable<Context['loader']['internal']>
+    config?: Config
+    onContext?: (context: Context) => void
   } = {},
 ): { context: Context; service: ClientModuleRegistry; route: WebRoute } {
   const ctx = new Context()
   ctx.baseUrl = options.contextBaseUrl ?? pathToFileURL(root!).href + '/'
+  options.onContext?.(ctx)
   ctx.provide('loader', {
     internal: options.internal,
     *entries() {
@@ -91,7 +94,7 @@ function constructWithRoute(
     tapIndex: () => () => {},
   }
   ctx.provide('webServer', webServer as WebServer)
-  const service = new ClientModuleRegistry(ctx)
+  const service = new ClientModuleRegistry(ctx, options.config)
   if (route === undefined) throw new Error('client bundle route was not registered')
   return { context: ctx, service, route }
 }
@@ -100,6 +103,97 @@ function constructWithRoute(
 function construct(packageNames: string[]): ClientModuleRegistry {
   return constructWithRoute(packageNames).service
 }
+
+describe('module-only composition', () => {
+  it('serves and rebuilds a public factory without adding its default plugin or activation dependencies', async () => {
+    writeBuiltPackage('@test/library', { inject: ['@test/default-ui-only'] })
+    const { context, service } = constructWithRoute([], { config: { libraryPackages: ['@test/library'] } })
+    try {
+      expect(service.libraryModulesVersion).toBe(1)
+      expect(service.graph().entries).toEqual([expect.objectContaining({ id: '@test/library', library: true, inject: [] })])
+      expect(modulesClient.parseBootManifest(service.graph()).plugins).toEqual([])
+      const before = service.graph().rev
+      const path = service.clientPath('@test/library')
+      if (path === undefined) throw new Error('library factory was not published')
+      writeFileSync(path, 'module.exports = { value: 42 }\n')
+      service.rebuilt('@test/library')
+      expect(service.graph().rev).not.toBe(before)
+      expect(service.graph().entries[0]?.library).toBe(true)
+      expect(modulesClient.parseBootManifest(service.graph()).plugins).toEqual([])
+    } finally {
+      await context.fiber.dispose()
+    }
+  })
+
+  it('keeps an explicitly active plugin active when its factory is also named as a library', async () => {
+    writeBuiltPackage('@test/library', {})
+    const { context, service } = constructWithRoute(['@test/library'], { config: { libraryPackages: ['@test/library'] } })
+    try {
+      expect(service.graph().entries).toHaveLength(1)
+      expect(service.graph().entries[0]?.library).toBeUndefined()
+      expect(modulesClient.parseBootManifest(service.graph()).plugins.map(row => row.id)).toEqual(['@test/library'])
+    } finally {
+      await context.fiber.dispose()
+    }
+  })
+
+  it('changes activation ownership without withdrawing a retained library factory', async () => {
+    writeBuiltPackage('@test/library', {})
+    const entries: string[] = []
+    const { context, service } = constructWithRoute(entries, { config: { libraryPackages: ['@test/library'] } })
+    try {
+      entries.push('@test/library')
+      emitLoaderEntryChange(context, '@test/library')
+      await Promise.resolve()
+      expect(modulesClient.parseBootManifest(service.graph()).plugins.map(row => row.id)).toEqual(['@test/library'])
+      entries.splice(0)
+      emitLoaderEntryChange(context, '@test/library')
+      await Promise.resolve()
+      expect(service.graph().entries[0]?.library).toBe(true)
+      expect(modulesClient.parseBootManifest(service.graph()).plugins).toEqual([])
+    } finally {
+      await context.fiber.dispose()
+    }
+  })
+
+  it('rejects conflicting active and library package provenance', async () => {
+    writeBuiltPackage('@test/library', {})
+    const overlay = join(root!, 'overlay')
+    const alternate = join(overlay, 'node_modules/@test/library')
+    mkdirSync(join(alternate, 'lib'), { recursive: true })
+    writeFileSync(join(alternate, 'package.json'), JSON.stringify({ name: '@test/library',
+      exports: { './client': './lib/client.js', './package.json': './package.json' },
+      dsh: { client: { platform: 'web' } },
+    }))
+    writeFileSync(join(alternate, 'lib/client.js'), 'module.exports = {}\n')
+    let context: Context | undefined
+    try {
+      expect(() => constructWithRoute(['@test/library'], {
+        config: { libraryPackages: ['@test/library'] },
+        entryBaseUrl: pathToFileURL(overlay).href + '/', onContext: (owner) => { context = owner },
+      })).toThrow('resolve to different Client factories')
+    } finally {
+      await context?.fiber.dispose()
+    }
+  })
+
+  it.each([
+    { names: ['../private'], reason: 'exact package root' },
+    { names: ['@test/library', '@test/library'], reason: 'duplicate library package' },
+    { names: ['@test/missing'], reason: 'no resolvable Client factory' },
+    { names: ['@test/library'], reason: 'requires a Loader base URL', unsetBase: true },
+  ])('rejects invalid library configuration: $reason', async ({ names, reason, unsetBase }) => {
+    writeBuiltPackage('@test/library', {})
+    let context: Context | undefined
+    try {
+      expect(() => constructWithRoute([], {
+        config: { libraryPackages: names }, onContext: (value) => { context = value; if (unsetBase === true) delete value.baseUrl },
+      })).toThrow(reason)
+    } finally {
+      await context?.fiber.dispose()
+    }
+  })
+})
 
 /** Invoke the registered plugin route and capture status, headers, and bytes. */
 async function routeRequest(route: WebRoute, url: string, method = 'GET'): Promise<{

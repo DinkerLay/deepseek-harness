@@ -22,6 +22,8 @@ JSONL 包公开的 `./legacy-sqlite` 辅助模块创建一致的只读备份，�
 
 Gateway 调用策略将 Product 准入覆盖到完整的一元查找与操作，用来替代只读历史 Agent revision 的 APIProxy 方法替换。Connection RPC 通道来源限制仍是 rc1 浏览器认证之外的显式可选限制，使 Product 管理通道保留仅环回访问。两项能力都报告版本 1，缺失时 Product 激活失败。
 
+Client 模块注册表提供显式配置的仅模块 factory，而不激活其默认 UI 插件。这样 Product 可以通过同一模块身份消费公开 UI 类，同时只选择一个展示与服务提供方。仅模块行保留产物来源与 HMR；普通活跃行继续按原有方式激活。Host 和 Client 两侧必须一起更新。
+
 ## 考虑过的替代方案
 
 **让旧 APIProxy 或 Client Runtime 与控制器并存。** 多个归属方会重复状态，并要求旧协议适配器继续执行。保留的行为应归属新的公开实现。

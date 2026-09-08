@@ -39,9 +39,11 @@ The application combo scripts register plugin factories once during boot; module
 
 The shell seeds a frozen module table (`PLATFORM_MODULES`: React, Cordis, and static UI libraries); every dynamic bundle resolves its externals against exactly that baseline. `dsh.client.external` adds only exact non-baseline requests, each answered by the dynamic package row it names or an exact static-table key. Type-only imports are erased and create no request. Composition rejects malformed requests, missing suppliers, self-requests, and synchronous request cycles.
 
+Set `libraryPackages` on the module-registry plugin to expose exact package-root Client factories without activating their default plugins. Consumers declare those imports in `dsh.client.external` and obtain services from their selected providers. Library rows keep normal bundle hashing and HMR, omit activation-only `inject` edges, and report `libraryModulesVersion: 1`. An explicitly active row takes precedence when it resolves to the same factory; conflicting sources fail composition.
+
 ### Build requirements
 
-The host serves built client bundles, so `pnpm run build` must have produced each `lib/client.js` before launch; a missing bundle fails activation loudly with one build instruction and a package/path list. Source launch maps host imports to TypeScript source but still consumes the built client export. The package accepts no plugin config of its own.
+The host serves built client bundles, so `pnpm run build` must have produced each `lib/client.js` before launch; a missing bundle fails activation loudly with one build instruction and a package/path list. Source launch maps host imports to TypeScript source but still consumes the built client export.
 
 -----
 

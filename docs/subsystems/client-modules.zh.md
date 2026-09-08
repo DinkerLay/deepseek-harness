@@ -6,6 +6,8 @@ Web 插件表：[dsh-client-modules](../../packages/client/modules) 中 client �
 
 源码：[`packages/client/modules/src/client/manifest.ts`](../../packages/client/modules/src/client/manifest.ts)
 
+`libraryPackages` 将公开浏览器导出与默认插件激活分开。Host 将显式配置的 factory 保留为带 `library: true` 的图行；Client 把它们留在模块表中，但从 Cordis 激活列表中排除。只有指向相同 Client 产物时，活跃 Loader 行才可优先于仅模块引用。首次启动、归属变化和 bundle 重建都保留这一区分。
+
 ## wire
 
 图是 Node 半与浏览器半之间协议层的唯一真源。宿主从扫描到的包组合出 `WebBootEntry` 行与 `WebBootBatch` 描述，随后在 Vite entry 之前向结构化 index 注入表贡献 registration facade、application preload、bootstrap 脚本与图全局量。`global` 行渲染为 `globalThis["__DSH_BOOT__"]`，其中 `<` 已转义，插件可控的字符串因此无法逃出 script 元素。没有有效 manifest 的页面无法启动：浏览器解析器会拒绝畸形 row 或批次、未知成员，以及未恰好归属一个初始 combo 描述的 entry。
@@ -20,6 +22,8 @@ Web 插件表：[dsh-client-modules](../../packages/client/modules) 中 client �
  * non-inject module requests (see {@link WebBootGraph.entries}).
  */
 interface WebBootEntry {
+  /** Register a public module factory without activating its default Client plugin. */
+  library?: boolean
   /** Entry name == package name. */
   id: string
   /** Revisioned single-resource combo endpoint used by HMR. */
@@ -114,7 +118,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.clientModules` — `ClientModuleRegistry`
 
-The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
+Host-owned browser factory inventory, activation graph and content-addressed bundle routes.
 
 ```ts cordis-catalog
 /**

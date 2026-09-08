@@ -39,9 +39,11 @@ application combo 脚本在启动时注册插件 factory；模块主体仍保持
 
 外壳播种一张冻结模块表（`PLATFORM_MODULES`：React、Cordis 与静态 UI 库）；每个动态 bundle 都精确针对该基座解析其 external。`dsh.client.external` 只添加基座之外的精确请求，每个请求由其命名的动态包 row 或精确静态表键回答。纯类型 import 会被擦除，不产生请求。组合阶段会拒绝畸形请求、缺失提供方、自请求与同步请求环。
 
+在模块注册表插件上配置 `libraryPackages`，可提供精确包根的 Client factory，而不激活这些包的默认插件。消费方在 `dsh.client.external` 中声明导入，并从所选提供方获取服务。仅模块行保留正常的 bundle 哈希与 HMR，省略只用于激活的 `inject` 边，并报告 `libraryModulesVersion: 1`。显式激活行解析到同一个 factory 时优先；来源冲突则使组合失败。
+
 ### 构建要求
 
-宿主提供的是已构建的客户端 bundle，因此启动前 `pnpm run build` 必须已产出每个 `lib/client.js`；缺失 bundle 会以一条构建说明加包／路径列表的方式让激活大声失败。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出。本包自身不接受任何插件配置。
+宿主提供的是已构建的客户端 bundle，因此启动前 `pnpm run build` 必须已产出每个 `lib/client.js`；缺失 bundle 会以一条构建说明加包／路径列表的方式让激活大声失败。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出。
 
 -----
 

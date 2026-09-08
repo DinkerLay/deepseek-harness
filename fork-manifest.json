@@ -76,6 +76,15 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-client-modules",
+      "path": "packages/client/modules",
+      "purpose": "Explicit module-only Client libraries with separate plugin activation and artifact provenance",
+      "source": [
+        "src/client/manifest.ts",
+        "src/index.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-file-reference-local",
       "path": "packages/context/file-reference-local",
       "purpose": "Resolve recorded Session execution directories for this capability",
@@ -308,6 +317,7 @@
     "@deepseek-ai/dsh-api-gateway",
     "@deepseek-ai/dsh-api-session-controller",
     "@deepseek-ai/dsh-client-connection",
+    "@deepseek-ai/dsh-client-modules",
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",
     "@deepseek-ai/dsh-hooks-codex",

@@ -353,6 +353,22 @@ describe('failure modes', () => {
 })
 
 describe('boot manifest wire', () => {
+  it('keeps library bytes addressable while excluding their default plugin from activation', () => {
+    const manifest = parseBootManifest({
+      rev: 'graph',
+      entries: [
+        { id: 'library', url: '/library.js', rev: '1', library: true },
+        { id: 'app', url: '/app.js', rev: '2', external: ['library/client'] },
+      ],
+      batches: [{ phase: 'application', url: '/batch.js', rev: 'batch', entries: ['library', 'app'] }],
+    })
+    expect(manifest.modules.map(row => row.id)).toEqual(['library', 'app'])
+    expect(manifest.plugins.map(row => row.id)).toEqual(['app'])
+    expect(() => parseBootManifest({
+      rev: 'invalid', entries: [{ id: 'library', url: '/library.js', rev: '1', library: 'true' }], batches: [],
+    })).toThrow('library must be a boolean')
+  })
+
   it('normalizes absent shared-module fields and carries the declared ones', () => {
     const manifest = parseBootManifest({
       rev: 'graph',

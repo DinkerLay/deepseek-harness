@@ -562,8 +562,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'clientModules',
-    summary: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows.',
-    description: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
+    summary: 'Host-owned browser factory inventory, activation graph and content-addressed bundle routes.',
+    description: 'Host-owned browser factory inventory, activation graph and content-addressed bundle routes.',
     methods: [
       {
         signature: 'graph(): WebBootGraph',
@@ -6134,7 +6134,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WebBootEntry',
-    declaration: 'export interface WebBootEntry {\n    id: string;\n    url: string;\n    rev: string;\n    inject?: string[];\n    immediately?: boolean;\n    external?: string[];\n}',
+    declaration: 'export interface WebBootEntry {\n    library?: boolean;\n    id: string;\n    url: string;\n    rev: string;\n    inject?: string[];\n    immediately?: boolean;\n    external?: string[];\n}',
   },
   {
     name: 'WebBootGraph',

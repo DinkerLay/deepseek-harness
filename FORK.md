@@ -21,6 +21,8 @@ The trusted shell-execution capability modifies `dsh-tool-bash` and `dsh-tool-pw
 
 [`fork-manifest.json`](fork-manifest.json) is the exact inventory of every modified package, changed production source file, and `runtimePatchPackages` entry that a downstream Runtime must override together. Generated docs, tests, translation records, and repository scripts are not Runtime packages and therefore are not repeated in that list.
 
+Gateway invocation policies and Connection channel authority preserve generic admission boundaries. `dsh-client-modules` accepts explicit `libraryPackages`, exposing public browser exports while leaving their default plugins inactive; its Host and Client wire must be overridden together.
+
 ## Ownership boundary
 
 This fork contains reusable DSH capabilities and missing extension points only. It does not contain SuperCode UI, AIME authentication, Product policy, Product bundles, or `@ainvest-team/*` code. An external Product plugin may consume the published APIs, but DSH must not import that plugin.

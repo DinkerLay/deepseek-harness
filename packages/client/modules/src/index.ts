@@ -31,6 +31,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
 import { optionalStringArray, stripClientSuffix } from './client/manifest.ts'
@@ -66,6 +67,7 @@ interface DshClientDeclaration {
 
 /** The declared fields a graph row carries, normalized (absent array declarations become empty). */
 interface WebBootRowFields {
+  library?: true
   inject?: string[]
   /** Module specifiers the package requests from the module table. */
   external: string[]
@@ -419,6 +421,7 @@ function graphRow(id: string, rev: string, fields: WebBootRowFields): WebBootEnt
     id,
     url: comboUrl([id], rev),
     rev,
+    ...(fields.library === true ? { library: true } : {}),
     ...(fields.inject !== undefined ? { inject: fields.inject } : {}),
     ...(fields.immediately ? { immediately: true } : {}),
     ...(fields.external.length > 0 ? { external: fields.external } : {}),
@@ -523,18 +526,23 @@ window.__ModuleLoader__={
   return rows
 }
 
-/**
- * The web plugin table service: incremental `dsh.client` scan + wire composition
- * + bundle route + index injection rows. Construction runs the activation scan
- * synchronously — a malformed declaration or missing bundle among the
- * already-loaded entries aggregates into one loud throw (FAILED fiber; the
- * boot activation audit reports it).
- */
+/** Browser factories exposed without selecting their default plugin implementation. */
+export interface Config {
+  /** Exact package roots whose public Client exports are needed by another selected plugin. */
+  libraryPackages?: string[]
+}
+
+/** Host-owned browser factory inventory, activation graph and content-addressed bundle routes. */
 export class ClientModuleRegistry extends Service {
   static inject = ['webServer', 'loader']
+  static Config: Schema<Config> = Schema.object({ libraryPackages: Schema.array(Schema.string()).default([]) })
+
+  /** Explicit support for module rows which do not activate a default Client plugin. */
+  get libraryModulesVersion(): 1 { return 1 }
 
   private readonly table = new Map<string, WebPluginRecord>()
   private readonly sources = new Map<string, ClientPackageSource>()
+  private readonly libraries = new Map<string, ClientPackageSource>()
   // Resolution is entry-local: the same specifier can resolve differently in
   // separate config trees. Negative verdicts remain stable until restart.
   private readonly pkgMeta = new Map<string, ResolvedPkgMeta | null>()
@@ -553,9 +561,26 @@ export class ClientModuleRegistry extends Service {
   /**
    * Build the service: subscribe, seed, and run the activation flush.
    * @param ctx - plugin context carrying webServer and loader.
+   * @param config - explicitly selected module-only package roots.
    */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'clientModules')
+    for (const name of config.libraryPackages ?? []) {
+      const baseUrl = ctx.baseUrl
+      if (baseUrl === undefined) throw new Error('client-modules: library configuration requires a Loader base URL')
+      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(name)) {
+        throw new TypeError(`client-modules: library package must be an exact package root: ${JSON.stringify(name)}`)
+      }
+      if (this.libraries.has(name)) throw new TypeError(`client-modules: duplicate library package ${name}`)
+      const resolved = this.resolveMeta(name, baseUrl)
+      if (resolved === null) throw new Error(`client-modules: library package ${name} has no resolvable Client factory`)
+      this.libraries.set(name, {
+        ...resolved,
+        meta: { ...resolved.meta, inject: [], library: true },
+        loaderName: name, baseUrl, sourceKey: `library:${this.sourceKey(name, baseUrl)}`,
+      })
+      this.dirty.add(name)
+    }
     // Subscribe before seeding so a fiber arriving mid-activation lands in the
     // same dirty set (Set idempotence makes the overlap harmless). An entry-less
     // fiber is a child plugin or a manual mount — never a loader row; O(1) drop.
@@ -908,6 +933,8 @@ export class ClientModuleRegistry extends Service {
     }
 
     const affectedPackages = new Set<string>()
+    const library = this.libraries.get(entryName)
+    if (library !== undefined) affectedPackages.add(library.packageName)
     for (const [sourceKey, source] of this.sources) {
       if (source.loaderName !== entryName) continue
       affectedPackages.add(source.packageName)
@@ -952,7 +979,12 @@ export class ClientModuleRegistry extends Service {
         `client-modules: package ${packageName} resolves from multiple active Loader sources: ${locations}; remove one entry`,
       )
     }
-    const source = sources[0]
+    const active = sources[0]
+    const library = this.libraries.get(packageName)
+    if (active !== undefined && library !== undefined && active.meta.clientPath !== library.meta.clientPath) {
+      throw new Error(`client-modules: active and library sources for ${packageName} resolve to different Client factories`)
+    }
+    const source = active ?? library
     if (source === undefined) return this.table.delete(packageName)
     if (this.table.get(packageName)?.sourceKey === source.sourceKey) return false
     // The opaque initial rev rides the row until HMR observes a file change;

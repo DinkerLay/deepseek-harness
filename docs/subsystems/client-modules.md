@@ -6,6 +6,8 @@ The web plugin table: the Node half of the client module system in [dsh-client-m
 
 Source: [`packages/client/modules/src/client/manifest.ts`](../../packages/client/modules/src/client/manifest.ts)
 
+`libraryPackages` separates public browser exports from default plugin activation. The Host retains explicitly configured factories as `library: true` graph rows; the Client keeps them in its module table and excludes them from the Cordis activation list. Active Loader rows supersede a library reference only when both identify the same client artifact. Initial boot, ownership changes, and bundle rebuilds preserve this distinction.
+
 ## The wire
 
 The graph is the wire single source between the Node and browser halves. The host composes `WebBootEntry` rows and `WebBootBatch` descriptors from scanned packages, then contributes the registration facade, application preloads, bootstrap scripts, and graph global to the structured index-injection table before the Vite entry. The `global` row renders as `globalThis["__DSH_BOOT__"]` with `<` escaped so plugin-controlled strings cannot break out of the script element. A page without a valid manifest cannot boot: the browser parser rejects malformed rows or batches, unknown members, and entries without exactly one initial combo descriptor.
@@ -20,6 +22,8 @@ The graph is the wire single source between the Node and browser halves. The hos
  * non-inject module requests (see {@link WebBootGraph.entries}).
  */
 interface WebBootEntry {
+  /** Register a public module factory without activating its default Client plugin. */
+  library?: boolean
   /** Entry name == package name. */
   id: string
   /** Revisioned single-resource combo endpoint used by HMR. */
@@ -114,7 +118,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.clientModules` — `ClientModuleRegistry`
 
-The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
+Host-owned browser factory inventory, activation graph and content-addressed bundle routes.
 
 ```ts cordis-catalog
 /**

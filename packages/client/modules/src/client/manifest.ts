@@ -48,6 +48,8 @@ declare module '@deepseek-ai/cordis' {
  * non-inject module requests (see {@link WebBootGraph.entries}).
  */
 export interface WebBootEntry {
+  /** Register a public module factory without activating its default Client plugin. */
+  library?: boolean
   /** Entry name == package name. */
   id: string
   /** Revisioned single-resource combo endpoint used by HMR. */
@@ -198,6 +200,9 @@ export function parseBootManifest(wire: unknown): BootManifest {
     if (row.immediately !== undefined && typeof row.immediately !== 'boolean') {
       throw new Error(`client-modules: boot manifest entry ${where} immediately must be a boolean`)
     }
+    if (row.library !== undefined && typeof row.library !== 'boolean') {
+      throw new Error(`client-modules: boot manifest entry ${where} library must be a boolean`)
+    }
     moduleFields.push({
       id: row.id,
       url: row.url,
@@ -205,7 +210,7 @@ export function parseBootManifest(wire: unknown): BootManifest {
       inject: inject === undefined ? [] : [...inject],
       external: external === undefined ? [] : [...external],
     })
-    plugins.push({
+    if (row.library !== true) plugins.push({
       id: row.id,
       inject: inject === undefined ? [] : [...inject],
       immediately: row.immediately === true,

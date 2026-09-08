@@ -55,5 +55,8 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "workspace:^"
   }
 }
