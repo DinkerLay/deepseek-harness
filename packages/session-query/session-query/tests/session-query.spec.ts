@@ -5,6 +5,7 @@ import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, Ses
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence, {
+  SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
@@ -464,7 +465,7 @@ describe('session-query exact reads', () => {
   it('lists unsupported historical headers without accepting their event bodies', async () => {
     const stored = header('unsupported-history', 1, { cwd: '/recorded' })
     TestPersistence.reset([{ meta: stored, events: eventLog() }])
-    const refusal = Object.assign(new Error('unsupported old extension'), { name: 'SessionFormatUnsupportedMigrationError' })
+    const refusal = new SessionFormatUnsupportedError('unsupported old extension', { kind: 'jsonl', path: '/session.v0.jsonl' })
     TestPersistence.readFailure = new Error('cannot restore old generation', { cause: refusal })
     const ctx = await liveContext()
     await ctx.plugin(TestPersistence)

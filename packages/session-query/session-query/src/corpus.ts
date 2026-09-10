@@ -4,7 +4,7 @@ import type { Context, Fiber } from '@deepseek-ai/cordis'
 import { executionDirectoryFromEvents, resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId , SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
-import type { SessionPersistenceRevision, SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
+import { SessionFormatUnsupportedError, type SessionPersistenceRevision, type SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionRecord } from './types.ts'
 import { SessionQueryError } from './config.ts'
 import { readColdSessionLog, type ColdSessionLog } from './cold-read.ts'
@@ -145,7 +145,7 @@ export class SessionCorpus {
           if (controller.signal.aborted) throw error
           let cause: unknown = error
           while (cause instanceof Error) {
-            if (cause.name === 'SessionFormatUnsupportedMigrationError') {
+            if (cause instanceof SessionFormatUnsupportedError) {
               // Listing a readable header does not require accepting its old body.
               // Explicit history reads still report the unsupported format.
               this._ctx.logger.warn(`Session ${snapshot.header.id} has unsupported historical data; displaying its recorded creation directory.`)
