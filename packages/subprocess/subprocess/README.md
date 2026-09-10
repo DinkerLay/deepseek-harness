@@ -123,7 +123,10 @@ Read these pages when the package-level contract is not enough. They move from t
 
 -----
 
+Terminal handles expose `resize(cols, rows)` for positive integer dimensions.
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 Indirectly, through consumer seams such as the bash executor family, which own all model-facing rendering of process output and lifecycle.

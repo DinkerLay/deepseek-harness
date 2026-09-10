@@ -167,6 +167,12 @@ export interface MarkdownFileMentions {
    * undefined when the token names no known file — it then stays inert code.
    */
   resolve(value: string): { open: () => void; label: string; title: string } | undefined
+  /**
+   * Resolve an authored local-file link using the caller's workspace policy.
+   * @param href - the authored Markdown destination; never trusted as a browser URL.
+   * @returns a file opener, or undefined to retain ordinary URL sanitization.
+   */
+  resolveLink?(href: string): { open: () => void; label: string; title: string } | undefined
 }
 
 /**
@@ -337,8 +343,13 @@ function renderNode(node: Md.RootContent, key: Key, context: MarkdownRenderConte
       return renderListItem(node, listItemLoose(node), key, context)
     case 'table':
       return renderTable(node, key, context)
-    case 'link':
-      return renderAnchor(node.url, renderChildren(node.children, { ...context, inLink: true }), key, !anchorWrapsOnlyImages(node.children))
+    case 'link': {
+      const children = renderChildren(node.children, { ...context, inLink: true })
+      const file = context.inLink ? undefined : context.fileMentions?.resolveLink?.(node.url)
+      if (file !== undefined) return <button key={key} type="button" className={css.fileMention}
+        title={file.title} aria-label={file.label} onClick={file.open}>{children}</button>
+      return renderAnchor(node.url, children, key, !anchorWrapsOnlyImages(node.children))
+    }
     case 'linkReference':
       return renderLinkReference(node, key, context)
     case 'image':
@@ -608,6 +619,9 @@ function renderLinkReference(
     return <Fragment key={key}>{'['}{renderChildren(node.children, context)}{referenceSuffix(node)}</Fragment>
   }
   const rendered = renderChildren(node.children, { ...context, inLink: true })
+  const file = context.inLink ? undefined : context.fileMentions?.resolveLink?.(definition.url)
+  if (file !== undefined) return <button key={key} type="button" className={css.fileMention}
+    title={file.title} aria-label={file.label} onClick={file.open}>{rendered}</button>
   return renderAnchor(definition.url, rendered, key, !anchorWrapsOnlyImages(node.children))
 }
 

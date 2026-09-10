@@ -7,6 +7,7 @@ kind: "package-library"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 本包逐个物理行解码已发布的 v0 Session JSONL，并生成共享布局的 v1 格式，以还原历史 Session。除把版本从 0 改为 1 外，它会保留经过校验的标头与事件，并仅应用 v0 持久化接受的有限旧格式规范化。畸形或不支持的历史记录会在当前还原器运行前使迁移失败，同时保留源文件以便恢复。该迁移只接受冻结的第一方事件清单，且不发布或选择后续格式迁移。
@@ -77,6 +78,8 @@ Alpha 迁移边会拒绝冻结清单之外的所有事件类型，包括带有 `
 - [Session 子系统](../../../docs/subsystems/session.zh.md)——当前逻辑 Session 语义。
 
 -----
+
+已发布的本机记忆和重试来源信息经过校验后保留，见[兼容决策](../../../.agents/notes/implemented/bug-fix/2026-09-10-retained-memory-and-workspace-interactions.zh.md)。
 
 <a id="model-experience"></a>
 ## 模型体验

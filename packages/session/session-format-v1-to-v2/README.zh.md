@@ -7,6 +7,7 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 `dsh-session-format-v1-to-v2` 通过一个有状态事件 Stage，把已发布 v1 Session 转换为已发布 v2 事件模型。它会消费顶层 `assistant/chunk` 事件，把精确的带时间流嵌入匹配的 `assistant/message`，并在失败、重试、取消或 stream error attempt 已到达 settlement、但没有产生 surface message 时记录 `assistant/attempt`。该迁移边会密集重映射存活事件和每个已声明的同 Session 序号引用；v2 codec 则让每行只存一个事件，并从带标记的 `session/end-seed` 事件推导继承切点。
@@ -81,6 +82,8 @@ v2 物理 header 要求 `isSeeded`，且不存储数值切点。编解码器从�
 - [嵌入式 Assistant stream 决策](../../../.agents/notes/implemented/architecture/2026-09-01-v2-embedded-assistant-streams.zh.md)——理由、替代方案与后果。
 
 -----
+
+本地重试端点跟随结构坐标映射；外部捕获保留其来源代际。
 
 <a id="model-experience"></a>
 ## 模型体验

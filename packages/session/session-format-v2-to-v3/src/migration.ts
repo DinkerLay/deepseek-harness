@@ -65,7 +65,11 @@ class ReleasedV2ToV3Stage implements SessionFormatMigrationStage {
       if (data['sessionFormatVersion'] === 3) throw new SessionFormatError('format v2 delivery marker claims target format v3')
       if (data['sessionFormatVersion'] === 2 && data['sessionId'] !== this.input.sourceHeader.id) this.lastForeignDeliverySeq = event.seq
     }
-    const target = remapEvent(source, this.targetSeq, this.mapping)
+    const target = remapReleasedRetryReferences(remapEvent(source, this.targetSeq, this.mapping), this.input.sourceHeader.id, (seq) => {
+      const mapped = this.mapping[seq]
+      if (mapped === undefined) throw new SessionFormatError('retry source end must identify an earlier event')
+      return mapped
+    })
     this.mapping.push(this.targetSeq++)
     context.emitEvent(canonicalizeTransformedEvent(renamePtcEvent(target)))
     if (event.type === 'step/start') {
@@ -175,3 +179,4 @@ function renameMessageSource(message: SessionFormatJsonObject): SessionFormatJso
   if (source['kind'] !== 'plugin' || source['plugin'] !== 'tools-code-mode') return message
   return { ...message, source: { ...source, plugin: 'tools-ptc' } }
 }
+import { remapReleasedRetryReferences } from '@deepseek-ai/dsh-session-format-v0-to-v1'

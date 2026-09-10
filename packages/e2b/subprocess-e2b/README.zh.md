@@ -7,6 +7,7 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 `dsh-subprocess-e2b` 让 agent（智能体）的 shell 命令与交互式终端在 E2B 远程沙箱而非宿主中运行。现有的命令、终端与语言服务器工作流无需 E2B 专用工具即可继续使用。宿主环境变量与密钥不会传入沙箱；只有显式请求的环境条目会进入沙箱。请与 `dsh-e2b`、`dsh-fs-e2b` 一起使用，让命令、终端与文件共享同一个沙箱。远程执行会增加延迟，因为每条命令都需要异步初始化。
@@ -124,6 +125,8 @@ agent 可以在沙箱中打开交互式终端、发送输入、读取输出，�
 - [生成配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-subprocess-e2b)——每个受支持配置字段及其源声明。
 
 -----
+
+终端尺寸调整使用 E2B PTY API，并纳入在途操作的清理跟踪。
 
 <a id="model-experience"></a>
 ## 模型体验

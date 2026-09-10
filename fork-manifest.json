@@ -115,6 +115,14 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-client-ui-primitives",
+      "path": "packages/client/ui-primitives",
+      "purpose": "Explicit caller-owned Markdown file-link navigation",
+      "source": [
+        "src/markdown/render.tsx"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-file-reference-local",
       "path": "packages/context/file-reference-local",
       "purpose": "Resolve the recorded Session execution directory for local file references",
@@ -181,8 +189,10 @@
       "purpose": "Strictly admit retained historical event fields during V0 migration",
       "source": [
         "src/dispositions.ts",
+        "src/index.ts",
         "src/migration.ts",
-        "src/payload-validation.ts"
+        "src/payload-validation.ts",
+        "src/retry-references.ts"
       ]
     },
     {
@@ -321,6 +331,30 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-subprocess",
+      "path": "packages/subprocess/subprocess",
+      "purpose": "Interactive terminal resize operation",
+      "source": [
+        "src/types.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subprocess-e2b",
+      "path": "packages/e2b/subprocess-e2b",
+      "purpose": "Tracked E2B PTY resize",
+      "source": [
+        "src/terminal.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-subprocess-local",
+      "path": "packages/subprocess/subprocess-local",
+      "purpose": "Local PTY resize",
+      "source": [
+        "src/terminal.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-tool-bash",
       "path": "packages/shell/tool-bash",
       "purpose": "Consume the optional trusted per-execution environment registry",
@@ -431,6 +465,7 @@
     "@deepseek-ai/dsh-client-modules",
     "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
+    "@deepseek-ai/dsh-client-ui-primitives",
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",
     "@deepseek-ai/dsh-hooks-codex",
@@ -456,6 +491,9 @@
     "@deepseek-ai/dsh-subagent-claude-code",
     "@deepseek-ai/dsh-subagent-codex",
     "@deepseek-ai/dsh-subagent-dsh-sdk",
+    "@deepseek-ai/dsh-subprocess",
+    "@deepseek-ai/dsh-subprocess-e2b",
+    "@deepseek-ai/dsh-subprocess-local",
     "@deepseek-ai/dsh-tool-bash",
     "@deepseek-ai/dsh-tool-bash-persistent",
     "@deepseek-ai/dsh-tool-cordis",

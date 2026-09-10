@@ -78,7 +78,10 @@ The physical codec validates each packed row atomically, emits it as a compact r
 
 -----
 
+Released local-memory and retry provenance is validated and retained; see the [compatibility decision](../../../.agents/notes/implemented/bug-fix/2026-09-10-retained-memory-and-workspace-interactions.md).
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 ### Historical restoration

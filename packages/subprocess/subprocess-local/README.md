@@ -113,7 +113,10 @@ Read these pages when the provider-level contract is not enough. They move from 
 
 -----
 
+Terminal resize updates node-pty and rejects calls after exit or during termination.
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 Indirectly, through consumer seams such as the bash executor family, which own all model-facing rendering of spawned process output and lifecycle.

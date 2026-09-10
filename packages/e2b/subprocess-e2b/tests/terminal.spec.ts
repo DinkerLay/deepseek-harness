@@ -99,6 +99,7 @@ class FakeTerminalSandbox {
   sendError: unknown
   commandFailure: unknown
   makeDirRequest: ((signal: AbortSignal | undefined) => Promise<void>) | undefined
+  readonly sizes: Array<{ pid: number; cols: number; rows: number }> = []
   sendInputRequest: ((signal: AbortSignal | undefined) => Promise<void>) | undefined
   foregroundRequest: ((signal: AbortSignal | undefined) => Promise<void>) | undefined
   signalRequest: ((signal: AbortSignal | undefined) => Promise<void>) | undefined
@@ -204,6 +205,10 @@ class FakeTerminalSandbox {
         await options.onData(Buffer.from('buffered banner\n'))
         return this.handle.asHandle()
       },
+      resize: async (pid: number, size: { cols: number; rows: number }, options?: { signal?: AbortSignal }) => {
+        options?.signal?.throwIfAborted()
+        this.sizes.push({ pid, ...size })
+      },
       sendInput: async (pid: number, data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void> => {
         options?.signal?.throwIfAborted()
         await this.sendInputRequest?.(options?.signal)
@@ -308,6 +313,9 @@ describe('E2B terminal allocation', () => {
     await fake.createOptions?.onData(Buffer.from('late bootstrap callback'))
     expect(output).toBe('requested-shell$ ')
 
+    await terminal.resize(90, 28)
+    expect(fake.sizes).toEqual([{ pid: terminal.pid, cols: 90, rows: 28 }])
+    await expect(terminal.resize(0, 28)).rejects.toThrow('positive integers')
     await terminal.write('echo ok\r')
     expect(fake.inputs.at(-1)?.data.toString()).toBe('echo ok\r')
     await expect(terminal.inspectForeground()).resolves.toEqual({ processGroupId: 456, inputWaiting: false })

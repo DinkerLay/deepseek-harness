@@ -7,6 +7,7 @@ kind: "package-library"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 使用 `dsh-client-ui-primitives`，通过共享 React UI 构建 Web 客户端控件并渲染 agent 输出。它提供标准控件、图标、锚定浮层，以及用于带 TeX 公式的 Markdown、终端输出、文件读取、差异、搜索、网页检索和 JSON 的渲染器。这些渲染器会丢弃原始 HTML、限制链接并解析 ANSI 转义序列，以处理不受信任的模型输出。组件不 import Cordis 运行时；调用方提供本地化 label，主题相关颜色使用 `--dsw-*` 设计 token。
@@ -124,6 +125,8 @@ kind: "package-library"
 - [Web 样式](../../../docs/web-styling.zh.md)——Web 客户端组件的权威样式规则。
 
 -----
+
+`MarkdownFileMentions.resolveLink` 可选地把显式文件链接映射到调用方批准的打开操作；未提供时本地链接保持不可交互。
 
 <a id="model-experience"></a>
 ## 模型体验

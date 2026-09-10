@@ -82,7 +82,10 @@ The incremental edge retains one unsettled Assistant attempt, events whose outpu
 
 -----
 
+Local retry endpoints follow structural coordinate remapping; foreign captures stay in their source generation.
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 ### Historical restoration

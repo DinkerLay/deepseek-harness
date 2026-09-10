@@ -7,6 +7,7 @@ kind: "package-library"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 将受支持的已发布 V2 Session 恢复为 V3，同时保留历史请求含义。本页是这条相邻迁移边的单一规范真源：先说明转换、保留与拒绝的内容，再单独说明原生 V3 准入。本库将系统提示词提升为消息，重映射本地事件引用，转换 PTC 与预设名称，并规范化信封。持久化通过静态目录使用本库；本库不读取或发布文件。
@@ -173,6 +174,8 @@ V2 `session-log-deepseek/delivery-accepted` 若携带 `data.sessionFormatVersion
 - [规范 V3 信封决策](../../../.agents/notes/implemented/architecture/2026-09-06-v3-canonical-session-envelopes.zh.md) — 严格准入与校验归属。
 
 -----
+
+本地重试端点跟随系统消息插入后的坐标；外部捕获保持不变。
 
 <a id="model-experience"></a>
 ## 模型体验

@@ -7,6 +7,7 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+
 ## 概述
 
 `ctx.subprocess` 可解析可执行文件、启动显式指定的子进程或真实终端会话、流式读取或有界收集输出，并终止完整的受管进程范围。每个组合配置一个 subprocess 实现，并根据命令运行位置选择本地或远程执行。每次请求都指定 argv、工作目录、stdio、环境覆盖、终止宽限期与取消信号，不会添加 shell 解释或隐藏的执行默认值。子进程环境会先移除环境中的凭据与 `DSH_*` 值，再应用显式覆盖；时限、拆卸策略与面向模型的渲染由调用方负责，收集的输出在进程退出后仍可读取。
@@ -122,6 +123,8 @@ spawn 会立即返回活动句柄，而不公开目标身份。`done` 独立报�
 - [subprocess seam Agent Note](../../../.agents/notes/archived/architecture/2026-07-26-subprocess-seam.md)——进程部分为何成为独立的 seam，以及随之迁移的内容。
 
 -----
+
+终端句柄通过 `resize(cols, rows)` 接受正整数尺寸。
 
 <a id="model-experience"></a>
 ## 模型体验

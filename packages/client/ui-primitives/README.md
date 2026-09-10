@@ -125,7 +125,10 @@ These pages place the atoms in the client stack and the design system.
 
 -----
 
+`MarkdownFileMentions.resolveLink` optionally maps authored file links to caller-approved openers; without it local links remain inert.
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 None, as the package is a browser-side UI plugin layer that registers nothing model-facing.

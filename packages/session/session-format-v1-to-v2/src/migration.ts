@@ -337,7 +337,8 @@ function emitSource(
   }
   ensureTargetCut(state, event.seq, event.time, source.type, context)
   state.mapping.set(event.seq, state.targetSeq)
-  context.emitEvent(remapReferences(source, state.targetSeq, state.mapping))
+  context.emitEvent(remapReleasedRetryReferences(remapReferences(source, state.targetSeq, state.mapping), state.sourceHeader.id,
+    seq => mapOne(seq, state.mapping, 'retry source end')))
   state.targetSeq += 1
 }
 
@@ -697,3 +698,4 @@ function coordinate(value: SessionFormatJsonValue | undefined): number {
 function refusal(message: string): SessionFormatUnsupportedMigrationError {
   return new SessionFormatUnsupportedMigrationError(message)
 }
+import { remapReleasedRetryReferences } from '@deepseek-ai/dsh-session-format-v0-to-v1'

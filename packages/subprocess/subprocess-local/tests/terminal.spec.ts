@@ -14,6 +14,7 @@ import type { SubprocessTerminalSignal } from '@deepseek-ai/dsh-subprocess'
 class FakePty {
   pid = 123
   readonly writes: string[] = []
+  readonly resize = vi.fn()
   readonly kills: string[] = []
   autoExitOnKill = true
   throwKill = false
@@ -114,6 +115,17 @@ function makeHandle(pty: FakePty, inspector: ProcessInspector, graceMs: number):
 }
 
 describe('LocalTerminalHandle', () => {
+  it('resizes the live PTY and rejects invalid dimensions or an exited process', async () => {
+    const pty = new FakePty()
+    const handle = makeHandle(pty, new FakeInspector(), 10)
+    await handle.resize(80, 24)
+    expect(pty.resize).toHaveBeenCalledWith(80, 24)
+    await expect(handle.resize(0, 24)).rejects.toThrow('positive integers')
+    pty.emitExit()
+    await expect(handle.resize(80, 24)).rejects.toThrow('exited')
+    await handle.terminate()
+  })
+
   it('terminates a managed range with TERM when it stops within the grace period', async () => {
     vi.useFakeTimers()
     const pty = new FakePty()

@@ -3,6 +3,7 @@
 export * from './codec.ts'
 export * from './dispositions.ts'
 export * from './migration.ts'
+export { remapReleasedRetryReferences } from './retry-references.ts'
 export { assertReleasedPayloadSemantics } from './payload-validation.ts'
 export { assertReleasedArtifactRelationships } from './relationships.ts'
 export {

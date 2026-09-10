@@ -174,7 +174,10 @@ The [stage](src/migration.ts) owns synchronous per-artifact sequence maps, messa
 
 -----
 
+Local retry endpoints follow system-message insertion coordinates; foreign captures stay unchanged.
+
 <a id="model-experience"></a>
+
 ## Model Experience
 
 ### Historical restoration
