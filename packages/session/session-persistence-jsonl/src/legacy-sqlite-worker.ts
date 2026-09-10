@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
+import { reconstructRc2ChunkProvenance } from './legacy-sqlite-provenance.ts'
 
 interface LegacyHeader { readonly id: string; readonly delegationDepth?: number; readonly [key: string]: unknown }
 interface LegacyInspection { readonly meta: LegacyHeader; readonly events: readonly unknown[] }
@@ -60,25 +61,26 @@ try {
   let emptySessions = 0
   for (const header of headers.sort((left, right) => left.id.localeCompare(right.id))) {
     const input = await source.sessionPersistence.inspect(header.id)
+    const exportedEvents = reconstructRc2ChunkProvenance(input.events)
     // JSONL stores the documented zero default explicitly when SQLite omits it.
     const targetMeta = { ...input.meta, delegationDepth: input.meta.delegationDepth ?? 0 }
     await target.sessionPersistence.create(targetMeta)
-    if (input.events.length === 0) {
+    if (exportedEvents.length === 0) {
       // The public backend hook materializes a header without fabricating a Session event.
       await target.sessionPersistence.appendBatch(targetMeta, [], false)
       emptySessions += 1
     } else {
-      await target.sessionPersistence.append(input.meta.id, input.events)
+      await target.sessionPersistence.append(input.meta.id, exportedEvents)
     }
     const output = await target.sessionPersistence.inspect(input.meta.id)
-    if (!isDeepStrictEqual(targetMeta, output.meta) || !isDeepStrictEqual(input.events, output.events)) {
+    if (!isDeepStrictEqual(targetMeta, output.meta) || !isDeepStrictEqual(exportedEvents, output.events)) {
       const fields = [...new Set([...Object.keys(input.meta), ...Object.keys(output.meta)])]
         .filter(key => !isDeepStrictEqual(input.meta[key], output.meta[key]))
-      const event = input.events.findIndex((value, index) => !isDeepStrictEqual(value, output.events[index]))
+      const event = exportedEvents.findIndex((value, index) => !isDeepStrictEqual(value, output.events[index]))
       throw new Error(`Legacy export verification failed for Session ${header.id}: metadata ${fields.join(', ')}, `
-        + `event ${event}, lengths ${input.events.length}/${output.events.length}.`)
+        + `event ${event}, lengths ${exportedEvents.length}/${output.events.length}.`)
     }
-    events += input.events.length
+    events += exportedEvents.length
   }
   await writeFile(reportPath, JSON.stringify({ sessions: headers.length, events, emptySessions }), { flag: 'wx', mode: 0o600 })
 } finally {

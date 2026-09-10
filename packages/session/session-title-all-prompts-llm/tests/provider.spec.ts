@@ -32,7 +32,7 @@ async function settle(): Promise<void> {
 }
 
 describe('all-messages LLM title provider', () => {
-  it('includes seeded history and the latest prompt while inheriting the logged request route', async () => {
+  it('uses branch-local prompts while inheriting the logged request route', async () => {
     const seeded = Session.create(SessionId('seed-source'))
     seeded.append('turn/start', { turn: 1 })
     const inherited = seeded.append('user/message', createUserMessage({
@@ -69,10 +69,10 @@ describe('all-messages LLM title provider', () => {
 
     expect(adapter.requests[0]).toMatchObject({ provider: 'current-route', model: 'current-model' })
     const content = adapter.requests[0]?.messages[0]?.content[0]
-    expect(content?.type === 'text' && content.text).toContain('inherited prompt')
+    expect(content?.type === 'text' && content.text).not.toContain('inherited prompt')
     expect(content?.type === 'text' && content.text).toContain('latest prompt')
     expect(ctx.sessionTitle.get(session)).toMatchObject({
-      messageSeqs: [inherited.seq, latest.seq],
+      messageSeqs: [latest.seq],
     })
   })
 })

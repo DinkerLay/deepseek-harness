@@ -9,7 +9,8 @@
 import { lookup as systemLookup } from 'node:dns/promises'
 import type { LookupAddress, LookupOptions } from 'node:dns'
 import { isIP } from 'node:net'
-import type { Response } from 'undici'
+import type { Dispatcher, Response } from 'undici'
+
 import ipaddr from 'ipaddr.js'
 import { WebError } from '@deepseek-ai/dsh-web'
 
@@ -31,6 +32,14 @@ export interface PinnedResponse {
 
 /** Resolver signature used to test public-address policy without process DNS changes. */
 export type AddressResolver = (hostname: string, options: { all: true; order: 'verbatim' }) => Promise<LookupAddress[]>
+
+/** Recovery for synthetic DNS answers; every replacement address is validated before connection. */
+export interface SyntheticAddressFallback {
+  /** Whether this address belongs to the deployment's configured synthetic ranges. */
+  matches(address: string): boolean
+  /** Resolve a real answer set without the synthetic system DNS path. */
+  resolve(hostname: string, signal: AbortSignal): Promise<LookupAddress[]>
+}
 
 /** RFC 6052 prefix lengths that may carry an IPv4 destination through NAT64. */
 const RFC6052_PREFIX_LENGTHS = [32, 40, 48, 56, 64, 96] as const
@@ -69,18 +78,37 @@ export function isPublicIpAddress(input: string): boolean {
  * @param hostname - URL hostname, including brackets when it is an IPv6 literal.
  * @param signal - aborts the wait for system resolution; an in-flight OS lookup may finish unused.
  * @param resolver - lookup implementation, overridden only by focused tests.
+ * @param fallback - optional recovery used only when system DNS returns a configured synthetic address.
  * @returns the validated, non-empty address set.
  */
 export async function resolvePublicAddresses(
   hostname: string,
   signal: AbortSignal,
   resolver: AddressResolver = systemLookup,
+  fallback?: SyntheticAddressFallback,
 ): Promise<PublicAddress[]> {
   const unbracketed = stripIpv6Brackets(hostname)
   const literalFamily = isIP(unbracketed)
-  const resolved = literalFamily === 0
+  let resolved = literalFamily === 0
     ? await raceWithSignal(resolver(unbracketed, { all: true, order: 'verbatim' }), signal)
     : [{ address: unbracketed, family: literalFamily }]
+
+  let effectiveResolver = resolver
+  if (literalFamily === 0 && fallback !== undefined && resolved.some(entry => fallback.matches(entry.address))) {
+    // A synthetic answer can coexist only with other configured synthetic or
+    // already-public addresses. A real private result blocks the URL before
+    // any hostname is disclosed to the recovery resolver.
+    for (const entry of resolved) {
+      if ((entry.family !== 4 && entry.family !== 6) || isIP(entry.address) !== entry.family) {
+        throw new WebError(`hostname "${hostname}" resolved to an invalid IP address`, 'WEB_PROVIDER_ERROR')
+      }
+      if (!isPublicIpAddress(entry.address) && !fallback.matches(entry.address)) {
+        throw new WebError(`URL hostname "${hostname}" resolves to a non-public IP address`, 'WEB_BLOCKED_URL')
+      }
+    }
+    resolved = await fallback.resolve(unbracketed, signal)
+    effectiveResolver = name => fallback.resolve(name, signal)
+  }
 
   if (resolved.length === 0) {
     throw new WebError(`hostname "${hostname}" resolved to no addresses`, 'WEB_PROVIDER_ERROR')
@@ -88,7 +116,7 @@ export async function resolvePublicAddresses(
 
   const hasIpv6 = resolved.some(entry => entry.family === 6 && isIP(entry.address) === 6)
   const nat64Prefixes = hasIpv6
-    ? await discoverNat64Prefixes(signal, resolver)
+    ? await discoverNat64Prefixes(signal, effectiveResolver)
     : []
 
   const addresses: PublicAddress[] = []
@@ -158,14 +186,34 @@ function embeddedIpv4Address(bytes: readonly number[], prefixLength: Nat64Prefix
 }
 
 /**
- * Fetch through an Undici agent whose lookup callback returns only the already
- * validated address set. The URL hostname remains intact for HTTP Host and TLS SNI.
+ * Whether a hostname is an IP literal that {@link resolvePublicAddresses} would refuse.
  *
- * @param url - validated HTTP(S) URL.
+ * A proxied hop skips those checks because the proxy resolves the origin, but a literal needs no
+ * resolution: the address is already stated, and handing it to a proxy running on this machine
+ * would reach exactly the loopback or private service the checks exist to keep out of reach.
+ *
+ * @param hostname - a URL's hostname, bracketed or not.
+ * @returns true when the host is a literal address no request may be sent to.
+ */
+export function isNonPublicIpLiteral(hostname: string): boolean {
+  const unbracketed = stripIpv6Brackets(hostname)
+  return isIP(unbracketed) !== 0 && !isPublicIpAddress(unbracketed)
+}
+
+/**
+ * Fetch through an agent whose lookup callback returns only the already validated address set. The
+ * URL hostname remains intact for HTTP Host and TLS SNI.
+ *
+ * The agent is this request's own because the address set is: pinning is how this package refuses a
+ * DNS answer that changes between validation and connection, and it may not apply process-wide —
+ * an operator-configured MCP server or model endpoint on loopback is a supported destination, and
+ * only the URLs this tool fetches are the model's to choose.
+ *
+ * @param url - validated HTTP(S) URL the policy does not route through a proxy.
  * @param addresses - public addresses returned by {@link resolvePublicAddresses}.
  * @param headers - request headers.
  * @param signal - request and body-read cancellation signal.
- * @returns a response plus the dispatcher disposer its consumer must call.
+ * @returns a response plus the disposer its consumer must call.
  */
 export async function requestPinned(
   url: URL,
@@ -173,15 +221,15 @@ export async function requestPinned(
   headers: Record<string, string>,
   signal: AbortSignal,
 ): Promise<PinnedResponse> {
-  // Keep the Node-only transport out of browser-worker startup. The preview
-  // can load the provider and fail loud at its DNS stub without evaluating
-  // Undici; a real request on Node resolves this maintained dependency here.
+  // Keep the Node-only transport out of browser-worker startup. The preview can load the provider
+  // and fail loud at its DNS stub without evaluating Undici; a real request resolves it here.
   const { Agent, fetch } = await import('undici')
-  const dispatcher = new Agent({
-    autoSelectFamily: true,
-    connect: { lookup: createPinnedLookup(addresses) },
-  })
+  // Reached only where `proxyRouteFor` reported no proxy for this URL, and the pinned lookup this
+  // agent carries is per-request state the process-wide dispatcher cannot hold.
+  // proxy-exempt: pinning one request's validated addresses, on a URL the policy routes directly.
+  const dispatcher = new Agent({ autoSelectFamily: true, connect: { lookup: createPinnedLookup(addresses) } })
   try {
+    // proxy-exempt: the agent above, whose lifetime is this one request.
     const response = await fetch(url, { method: 'GET', redirect: 'manual', headers, signal, dispatcher })
     return { response, close: async () => { await dispatcher.close() } }
   } catch (error: unknown) {
@@ -190,10 +238,38 @@ export async function requestPinned(
   }
 }
 
+/**
+ * Fetch through the dispatcher the proxy policy already installed, letting the proxy resolve the
+ * origin.
+ *
+ * No address set is pinned because none exists to pin: the proxy performs the lookup, and a
+ * connection pinned to a locally resolved address would reach the origin directly and defeat the
+ * proxy. The dispatcher is the process-wide one, so hops share its connection pool and no caller
+ * closes it.
+ *
+ * @param dispatcher - the route's dispatcher, from `proxyRouteFor`.
+ * @param url - validated HTTP(S) URL the policy routes through a proxy.
+ * @param headers - request headers.
+ * @param signal - request and body-read cancellation signal.
+ * @returns a response plus a disposer that releases nothing, so both paths close alike.
+ */
+export async function requestVia(
+  dispatcher: Dispatcher,
+  url: URL,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<PinnedResponse> {
+  const { fetch } = await import('undici')
+  // proxy-exempt: the dispatcher is the installed policy's own, handed over by `proxyRouteFor`.
+  const response = await fetch(url, { method: 'GET', redirect: 'manual', headers, signal, dispatcher })
+  return { response, close: () => Promise.resolve() }
+}
+
 /** Production network operations kept as an object so provider tests can replace resolution only. */
 export const publicHttpNetwork = {
   resolve: resolvePublicAddresses,
   request: requestPinned,
+  requestVia,
 }
 
 type LookupCallback = (

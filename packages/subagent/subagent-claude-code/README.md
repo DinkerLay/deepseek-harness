@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-subagent-claude-code` registers a Profile-named Claude Code subagent provider (default `claude-code`) that runs a real Claude Code CLI child in the delegating session's workspace through the official Agent SDK. Each accepted run submits one self-contained text task and returns the strict final answer — or a separate safe failure diagnostic — through the shared subagent result contract. The provider ships as an optional Profile Bundle: installing it brings the pinned Agent SDK and one compatible platform CLI payload, while the registered provider stays dormant until a bound tool calls it. Native Claude settings and authentication remain authoritative, and the Profile-selected `permissionMode` decides how the unattended query handles permission checks. Choose it when the child should be a genuine Claude Code product session, fully isolated from the parent harness.
-
-This consumer resolves the calling Session through `resolveSessionCwd()`: a committed execution-directory binding takes precedence over creation cwd. Agentless calls retain their documented backend defaults; a fork does not inherit its parent's directory-binding event as its own.
+Delegated work can run as a fresh unattended Claude Code Session in the parent's recorded execution directory. Each run accepts one self-contained task and returns only the final answer or a safe diagnostic; reasoning, tool traffic, stderr, usage, and diffs stay outside the parent Session. Native Claude settings and authentication remain authoritative, while profile configuration selects model, environment, and permission mode. The pinned runtime never falls back to a Host executable.
 
 ## Table of Contents
 
@@ -49,7 +47,7 @@ Removing the package withdraws the provider and its private runtime closure on t
 | `model` | native Claude settings | Optional non-empty model name fixed for every run from this provider instance; omission sends no SDK override |
 | `env` | `{}` | Explicit SDK/CLI environment layered over the credential-scrubbed parent environment |
 | `permissionMode` | `dontAsk` | Native non-interactive permission policy fixed for every run from this provider instance |
-| `disposeGraceMs` | `3000` | Grace between the shared process-tree owner's termination tiers |
+| `disposeGraceMs` | `3000` | Grace between the shared managed-range owner's termination tiers |
 
 | `permissionMode` value | Native behavior |
 |---|---|
@@ -111,7 +109,7 @@ This section explains how the provider drives a real Claude Code CLI and where t
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: config schema, provider registration |
 | [`src/run.ts`](src/run.ts) | The SDK query lifecycle, result acceptance, and permission handling |
-| [`src/process.ts`](src/process.ts) | Process-tree termination escalation on disposal |
+| [`src/process.ts`](src/process.ts) | Managed-range termination escalation on disposal |
 | [`cordis.patch.yml`](cordis.patch.yml) | The Profile patch layer that registers the dormant provider |
 
 ### Run flow
@@ -192,8 +190,8 @@ These limits define when this provider is a poor fit or needs special operationa
 This Dev Note is working context for maintainers: open questions and undecided directions. It is explicitly non-authoritative — shipped behavior and limits live in the sections above and in the package code.
 
 - **Payload size disclosure** — the current darwin-arm64 platform payload packs to about 92 MB and unpacks to about 325 MB; these are disclosure numbers, not installation thresholds.
-- **Version-pinned protocol** — the runtime dependency is pinned to Agent SDK 0.3.241; upgrading pins a new SDK version and requires re-running the keyless real-product and loader-composition evidence.
+- **Version-pinned protocol** — the runtime dependency is pinned to Agent SDK 0.3.263; upgrading pins a new SDK version and requires re-running the keyless real-product and loader-composition evidence.
 
 </details>
 
-**Runtime invariant:** No companion is published. Lifecycle pairing belongs to the shared subagent service and process-tree ownership belongs to the subprocess service.
+**Runtime invariant:** No companion is published. Lifecycle pairing belongs to the shared subagent service, and managed-range ownership belongs to the subprocess service.

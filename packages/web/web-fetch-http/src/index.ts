@@ -8,6 +8,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-web'
+import { createFakeIpFallback } from './dns-fallback.ts'
+import { publicHttpNetwork } from './network.ts'
 import { HttpFetchProvider } from './provider.ts'
 import type { HttpFetchLimits } from './provider.ts'
 
@@ -30,6 +32,16 @@ export const inject = ['web']
 
 /** Plugin config: the provider's transport and size limits plus its `User-Agent` (all defaulted). */
 export interface Config {
+  /** Recover configured synthetic system-DNS answers through a pinned public DoH resolver. */
+  fakeIpDnsEnabled?: boolean
+  /** HTTPS RFC 8484 endpoint; queried only after a direct request receives a synthetic answer. */
+  fakeIpDnsEndpoint?: string
+  /** Public IP literals used to reach the resolver without system DNS. */
+  fakeIpDnsBootstrapAddresses?: string[]
+  /** Synthetic DNS CIDRs eligible for recovery; other non-public answers remain blocked. */
+  fakeIpRanges?: string[]
+  /** Shared deadline for the recovery resolver's A and AAAA queries. */
+  fakeIpDnsTimeoutMs?: number
   /** Maximum response body size in bytes. */
   maxResponseBytes?: number
   /** Maximum decoded body length in characters. */
@@ -43,6 +55,11 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
+  fakeIpDnsEnabled: z.boolean().default(true),
+  fakeIpDnsEndpoint: z.string().default('https://cloudflare-dns.com/dns-query'),
+  fakeIpDnsBootstrapAddresses: z.array(z.string()).default(['1.1.1.1', '1.0.0.1']),
+  fakeIpRanges: z.array(z.string()).default(['198.18.0.0/15']),
+  fakeIpDnsTimeoutMs: z.number().default(5_000),
   maxResponseBytes: z.number().default(5_000_000),
   maxBodyChars: z.number().default(100_000),
   timeoutMs: z.number().default(30_000),
@@ -90,5 +107,16 @@ export function apply(ctx: Context, config: Config): void {
     maxRedirects: resolved.maxRedirects,
     userAgent: resolved.userAgent,
   }
-  ctx.web.registerFetchProvider(new HttpFetchProvider(limits))
+  const fallback = resolved.fakeIpDnsEnabled
+    ? createFakeIpFallback({
+      endpoint: resolved.fakeIpDnsEndpoint,
+      bootstrapAddresses: resolved.fakeIpDnsBootstrapAddresses,
+      ranges: resolved.fakeIpRanges,
+      timeoutMs: resolved.fakeIpDnsTimeoutMs,
+    })
+    : undefined
+  ctx.web.registerFetchProvider(new HttpFetchProvider(
+    limits,
+    (hostname, signal) => publicHttpNetwork.resolve(hostname, signal, undefined, fallback),
+  ))
 }

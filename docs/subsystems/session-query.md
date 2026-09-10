@@ -20,9 +20,11 @@ type SessionEventSurface = 'current' | 'shadowed' | 'log-only'
 interface SessionRecord {
   /** Cloned session header selected from the live-preferred corpus. */
   header: SessionHeader
+  /** Latest recorded execution directory, falling back to immutable creation cwd. */
+  executionDirectory?: string
   /** Whether the id currently exists in `ctx.sessions`. */
   live: boolean
-  /** Whether the active persistence backend currently materializes the id. */
+  /** Whether the active persistence backend currently lists the id, including a created-but-unmaterialized session it already observes. */
   persisted: boolean
 }
 ```
@@ -34,9 +36,11 @@ interface SessionRecord {
 interface SessionLogSnapshot {
   /** Cloned session header selected from the same observation as `events`. */
   session: SessionHeader
+  /** Effective directory resolved from the same observed log. */
+  executionDirectory?: string
   /** Exact number of fork-inherited events in the observed log. */
   inheritedEventCount: SessionLogOffset
-  /** Cloned contiguous raw events after persistence repair and replay validation. */
+  /** Cloned contiguous raw events after in-memory interrupted-turn balancing and replay validation. */
   events: SessionEvent[]
 }
 ```
@@ -46,6 +50,8 @@ interface SessionLogSnapshot {
 interface SessionSurfaceSnapshot {
   /** Cloned session header selected from the same corpus observation as `events`. */
   session: SessionHeader
+  /** Effective directory resolved from the same observed log. */
+  executionDirectory?: string
   /** Exact number of fork-inherited events in the observed log. */
   inheritedEventCount: SessionLogOffset
   /** Highest raw-log seq included in the observation, or `null` for an empty log. */

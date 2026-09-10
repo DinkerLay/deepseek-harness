@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-session-query-sqlite` searches session history with a SQLite FTS5 index and returns ranked, cursor-paginated results grouped by session or within one session. Mount it together with `dsh-session-query` and you get full-text search plus the whole query surface — exact reads, filters, and traces — at once. Live sessions are indexed from memory and persisted sessions from a dedicated derived-index database, so results always reflect the newest state without touching the session-persistence store. Search is opt-in and off by default in shipped compositions: `openAt` decides whether the index opens at startup, at the first search, or never. Setup and usage come first; the implementation internals live in a collapsible developer section below.
-
-The post-commit `session-persistence/deleted` notification removes Session-owned derived records. It does not delete the Session log or external project directories; those operations remain with their lifecycle owners.
+Applications can add ranked SQLite FTS5 search across all Session history or within one Session, with cursor pagination. A separate derived index tracks live and persisted logs without modifying them; exact reads, filters, and traces remain available through the query API. Search matches tokens and phrases, opens according to policy, and permits only one process owner per index path. Committed Session deletion removes matching index records.
 
 ## Table of Contents
 
@@ -51,13 +49,14 @@ Choose it when you want full-text recall over prior sessions with ranking and pa
 | `maxLimit` | `100` | Largest accepted request page size |
 | `snippetChars` | `240` | Maximum snippet length in Unicode code points |
 | `readWindowMax` | `50` | Maximum `before`/`after` raw events for the inherited `readEvent()` |
-| `persistedInspectConcurrency` | `4` | Concurrent persisted-log inspections for inherited batch reads |
+| `persistedReadConcurrency` | `4` | Concurrent persisted-log reads for inherited batch reads |
+| `preparedSessionCacheSize` | `5` | Cold prepared-Session observations the inherited `observeSession` reader retains for reuse |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-session-query-sqlite) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Search behavior
 
-`searchSessions` searches the whole corpus and groups results by each session's strongest matching event; `searchEvents` searches one logical session. Queries are literal phrases: they are trimmed and whitespace-normalized, and FTS5 syntax such as quotes, `OR`, `NEAR`, and `*` is treated as data, never as executable query syntax. Metadata filters (session id, cwd, created-at, parent, availability, event seq/time/type/surface) narrow results before ranking. All `current`, `shadowed`, and `log-only` events are searchable by default; pass a surface filter to narrow.
+`searchSessions` searches the whole corpus and groups results by each session's strongest matching event; `searchEvents` searches one logical session. Queries are literal phrases: they are trimmed and whitespace-normalized, and FTS5 syntax such as quotes, `OR`, `NEAR`, and `*` is treated as data, never as executable query syntax. Metadata filters (session id, effective execution cwd, created-at, parent, availability, event seq/time/type/surface) narrow results before ranking. All `current`, `shadowed`, and `log-only` events are searchable by default; pass a surface filter to narrow.
 
 Ranking is deterministic: more actual FTS5 highlighted-match spans first, then shorter documents, with event time, session id, and seq breaking ties. Results carry plain-text snippets bounded by `snippetChars` Unicode code points, with no provider-specific numeric score. Pages continue through an opaque `SessionSearchCursor` bound to the exact normalized request; a cursor becomes stale when its relevant corpus changes (`SESSION_QUERY_STALE_CURSOR`), and a within-session cursor survives changes to unrelated sessions while a cross-session cursor does not.
 
@@ -86,11 +85,11 @@ This section explains the design decisions behind the backend and points at the 
 The backend is built on one separation and three commitments:
 
 - **Derived index, never the source store.** The FTS rows live in a dedicated disposable database; the session-persistence database is never opened here.
-- **Live-preferred observation.** One serialized state machine compares persistence snapshot revisions, inspects only new or changed logs, and reconciles in one transaction, so a search reflects the newest stable state.
+- **Live-preferred observation.** One serialized state machine compares persistence snapshot revisions, reads only new or changed logs through short-lived read handles, and reconciles in one transaction, so a search reflects the newest stable state.
 - **Generation-bound cursors.** Every corpus change bumps a generation; cursors carry the generation they were created under and fail stale rather than returning a shifted page.
 - **Literal phrases as data.** Caller query text is quoted into one FTS5 phrase so query syntax stays inert, and reserved highlight markers are stripped from documents before indexing.
 
-The design history lives in the [SQLite FTS5 session search note](../../../.agents/notes/implemented/feature/2026-07-10-sqlite-session-query-provider.md) and the [unified service decision](../../../.agents/notes/archived/architecture/2026-07-23-unified-session-query-service.md).
+The design history lives in the [SQLite FTS5 session search note](../../../.agents/notes/archived/feature/2026-07-10-sqlite-session-query-provider.md) and the [unified service decision](../../../.agents/notes/archived/architecture/2026-07-23-unified-session-query-service.md).
 
 ### Source map
 
@@ -103,7 +102,7 @@ The design history lives in the [SQLite FTS5 session search note](../../../.agen
 
 ### Index lifecycle
 
-Persisted FTS rows live in a dedicated derived database and survive restarts; live sessions use connection-local TEMP tables that shadow the durable base for the same session and reveal it again when the live owner detaches. Both tables retain the exact inherited cut in numeric `seed_length`; reconstructed headers expose only `isSeeded`, while the cut participates in live fingerprints and persisted source revisions. Each search runs one serialized observation: list persistence snapshots, compare per-session revisions with the indexed rows, inspect only new or changed logs, extract semantic documents, and commit the reconciliation in one transaction before running the query. Repeated queries and unchanged reopens inspect nothing; switching stores or observing new, changed, deleted, or externally repaired sources reconciles on the next stable observation. Source or transaction failure commits nothing and the next search retries.
+Persisted FTS rows live in a dedicated derived database and survive restarts; live sessions use connection-local TEMP tables that shadow the durable base for the same session and reveal it again when the live owner detaches. Both tables retain the exact inherited cut in numeric `seed_length`; reconstructed headers expose only `isSeeded`, while the cut participates in live fingerprints and persisted source revisions. Each search runs one serialized observation: list persistence snapshots, compare per-session revisions with the indexed rows, read only new or changed logs through a read handle (balancing an interrupted final turn in memory, never writing back), extract semantic documents, and commit the reconciliation in one transaction before running the query. Repeated queries and unchanged reopens read nothing; switching stores or observing new, changed, deleted, or externally repaired sources reconciles on the next stable observation. Source or transaction failure commits nothing and the next search retries.
 
 ### Schema ownership
 
@@ -121,7 +120,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Session Query subsystem reference](../../../docs/subsystems/session-query.md) — the full type-level contract this backend implements.
 - [dsh-session-query](../session-query/README.md) — the service definition: exact reads, filters, and traces this backend inherits.
 - [dsh-tool-session-query](../tool-session-query/README.md) — the model-facing consumer that calls these search methods.
-- [SQLite FTS5 session search](../../../.agents/notes/implemented/feature/2026-07-10-sqlite-session-query-provider.md) — search semantics, reconciliation, and the tokenizer decision.
+- [SQLite FTS5 session search](../../../.agents/notes/archived/feature/2026-07-10-sqlite-session-query-provider.md) — search semantics, reconciliation, and the tokenizer decision.
 - [JSONL session persistence](../../session/session-persistence-jsonl/README.md) — the authoritative Session store this disposable index observes; keep its root separate from this package's database path.
 
 -----

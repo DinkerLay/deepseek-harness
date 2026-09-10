@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-session-deletion",
   "description": "Host-only recursive Session deletion capability for the DeepSeek Harness",
-  "version": "0.1.2-rc.1",
+  "version": "0.1.5-rc.1",
   "publishConfig": {
     "access": "public"
   },

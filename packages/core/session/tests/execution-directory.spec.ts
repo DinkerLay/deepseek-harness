@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId, SessionSeq, executionDirectoryFromEvents, resolveSessionCwd } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq, executionDirectoryFromEvents, resolveSessionCwd } from '@deepseek-ai/dsh-session'
 
 function create(id = 'worker', cwd = '/shared'): Session {
   const sessionId = SessionId(id)
-  return Session.create(sessionId, undefined, { version: 0, id: sessionId, createdAt: 0, cwd, isSeeded: false })
+  return Session.create(sessionId, undefined, { version: SESSION_FORMAT_VERSION, id: sessionId, createdAt: 0, cwd, isSeeded: false })
 }
 
 describe('Session execution directory', () => {
@@ -16,6 +16,7 @@ describe('Session execution directory', () => {
     expect(session.header.cwd).toBe('/shared')
     const restored = Session.fromRestore(
       session.id, structuredClone(session.snapshotEvents()), { ...session.header }, session.inheritedEventCount,
+      'detached',
     )
     expect(resolveSessionCwd(restored)).toBe('/branches/worker')
     restored.append('session/execution-directory', { sessionId: restored.id, cwd: '/branches/continued' })
@@ -27,7 +28,7 @@ describe('Session execution directory', () => {
     const parent = create('parent')
     parent.append('session/execution-directory', { sessionId: parent.id, cwd: '/branches/parent' })
     const childId = SessionId('child')
-    const child = Session.create(childId, parent.snapshotEvents(), { version: 0, id: childId, createdAt: 1, cwd: '/selected-baseline', parentSession: parent.id, isSeeded: true }, parent.seq)
+    const child = Session.create(childId, parent.snapshotEvents(), { version: SESSION_FORMAT_VERSION, id: childId, createdAt: 1, cwd: '/selected-baseline', parentSession: parent.id, isSeeded: true }, parent.seq)
     expect(child.executionDirectory).toBeUndefined()
     expect(resolveSessionCwd(child)).toBe('/selected-baseline')
     child.append('session/execution-directory', { sessionId: child.id, cwd: '/branches/child' })

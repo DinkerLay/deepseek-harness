@@ -9,9 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-session-query-sqlite` 用 SQLite FTS5 索引搜索会话历史，返回按会话分组或会话内排序、游标分页的结果。与 `dsh-session-query` 一起挂载，即可同时获得全文搜索与完整查询表面——精确读取、过滤与追踪。实时会话从内存索引，持久化会话从专用派生索引数据库索引，因此结果始终反映最新状态，且不触碰会话持久化存储。搜索是可选能力，已发布组合默认关闭：`openAt` 决定索引在启动时、首次搜索时打开，还是永不打开。设置与用法在前；实现内部细节放在下方可折叠的开发者章节中。
-
-提交后的 `session-persistence/deleted` 通知清理归 Session 所有的派生记录。它不删除 Session 日志或外部项目目录；这些操作仍由各自生命周期归属方负责。
+应用可以通过游标分页，在所有 Session 历史中或单个 Session 内执行排序的 SQLite FTS5 搜索。独立派生索引跟踪 live 与持久化日志而不修改它们；精确读取、过滤与 trace 仍由查询 API 提供。搜索匹配 token 与短语，按策略打开，并要求每个索引路径只有一个进程所有者。已提交的 Session 删除会移除匹配索引记录。
 
 ## 目录
 
@@ -51,13 +49,14 @@ kind: "package-reference"
 | `maxLimit` | `100` | 接受的最大请求分页大小 |
 | `snippetChars` | `240` | 按 Unicode 码点计算的最大 snippet 长度 |
 | `readWindowMax` | `50` | 继承的 `readEvent()` 的 `before`/`after` 原始事件数上限 |
-| `persistedInspectConcurrency` | `4` | 继承批量读取的并发持久化日志检查数 |
+| `persistedReadConcurrency` | `4` | 继承批量读取的并发持久化日志读取数 |
+| `preparedSessionCacheSize` | `5` | 继承的 `observeSession` 读取器为复用保留的冷 prepared-Session 观察数 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-session-query-sqlite)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 ### 搜索行为
 
-`searchSessions` 搜索整个语料库，并按每个会话匹配最强的事件分组结果；`searchEvents` 搜索一个逻辑会话。查询是字面短语：首尾空白会被移除、内部空白会被规范化，引号、`OR`、`NEAR` 和 `*` 等 FTS5 语法被视为数据，绝不作为可执行查询语法。元数据过滤器（会话 id、cwd、创建时间、父级、可用性、事件 seq/时间/类型/表层）在排序前缩小结果。默认搜索全部 `current`、`shadowed` 与 `log-only` 事件；传入表层过滤器可缩小范围。
+`searchSessions` 搜索整个语料库，并按每个会话匹配最强的事件分组结果；`searchEvents` 搜索一个逻辑会话。查询是字面短语：首尾空白会被移除、内部空白会被规范化，引号、`OR`、`NEAR` 和 `*` 等 FTS5 语法被视为数据，绝不作为可执行查询语法。元数据过滤器（会话 id、有效执行 cwd、创建时间、父级、可用性、事件 seq/时间/类型/表层）在排序前缩小结果。默认搜索全部 `current`、`shadowed` 与 `log-only` 事件；传入表层过滤器可缩小范围。
 
 排序是确定性的：实际 FTS5 高亮匹配 span 更多的在前，然后文档更短的在前，事件时间、会话 id 与 seq 打破平局。结果携带按 `snippetChars` 个 Unicode 码点截断的纯文本摘录，没有提供方专用数值分数。分页通过不透明 `SessionSearchCursor` 延续，游标绑定到规范化后的确切请求；相关语料库变化时游标变为陈旧（`SESSION_QUERY_STALE_CURSOR`），会话内游标可在不相关会话变化后延续，跨会话游标则不能。
 
@@ -86,11 +85,11 @@ kind: "package-reference"
 本后端建立在一个分离与三项承诺之上：
 
 - **派生索引，绝不动源存储。** FTS 行存放在专用可丢弃数据库中；这里的代码从不打开 session-persistence 数据库。
-- **实时优先的观察。** 一个串行化状态机比较持久化快照修订，只检查新增或已更改日志，并在一个事务中对账，因此搜索反映最新的稳定状态。
+- **实时优先的观察。** 一个串行化状态机比较持久化快照修订，只通过短生命周期读取 handle 读取新增或已更改日志，并在一个事务中对账，因此搜索反映最新的稳定状态。
 - **世代绑定的游标。** 每次语料库变化都会递增世代；游标携带其创建时的世代，宁可陈旧失败也不返回偏移后的页面。
 - **字面短语即数据。** 调用方查询文本被引成一个 FTS5 短语，查询语法保持惰性；保留高亮标记在索引前从文档中剥离。
 
-设计历史记录在 [SQLite FTS5 会话搜索笔记](../../../.agents/notes/implemented/feature/2026-07-10-sqlite-session-query-provider.zh.md)与[统一服务决策](../../../.agents/notes/archived/architecture/2026-07-23-unified-session-query-service.md)中。
+设计历史记录在 [SQLite FTS5 会话搜索笔记](../../../.agents/notes/archived/feature/2026-07-10-sqlite-session-query-provider.md)与[统一服务决策](../../../.agents/notes/archived/architecture/2026-07-23-unified-session-query-service.md)中。
 
 ### 源码地图
 
@@ -103,7 +102,7 @@ kind: "package-reference"
 
 ### 索引生命周期
 
-持久化 FTS 行存放在专用派生数据库中并跨重启保留；实时会话使用连接本地 TEMP 表，遮蔽同一会话的持久化基库，并在实时所有者脱离后再次显示基库。两类表都在数字 `seed_length` 中保留精确继承切点；重建的 header 只公开 `isSeeded`，而切点参与实时 fingerprint 与持久来源修订。每次搜索执行一次串行化观察：列出持久化快照、把逐会话修订与已索引行比较、只检查新增或已更改日志、提取语义文档，并在运行查询前于一个事务中提交对账。重复查询与不变的重新打开不会检查任何内容；切换存储或观察到新增、已更改、已删除或经外部修复的来源时，会在下次稳定观察时对账。来源或事务失败不提交任何内容，下一次搜索重试。
+持久化 FTS 行存放在专用派生数据库中并跨重启保留；实时会话使用连接本地 TEMP 表，遮蔽同一会话的持久化基库，并在实时所有者脱离后再次显示基库。两类表都在数字 `seed_length` 中保留精确继承切点；重建的 header 只公开 `isSeeded`，而切点参与实时 fingerprint 与持久来源修订。每次搜索执行一次串行化观察：列出持久化快照、把逐会话修订与已索引行比较、只通过读取 handle 读取新增或已更改日志（在内存中补齐被中断的末尾轮次，从不写回）、提取语义文档，并在运行查询前于一个事务中提交对账。重复查询与不变的重新打开不读取任何内容；切换存储或观察到新增、已更改、已删除或经外部修复的来源时，会在下次稳定观察时对账。来源或事务失败不提交任何内容，下一次搜索重试。
 
 ### Schema 归属
 
@@ -121,7 +120,7 @@ kind: "package-reference"
 - [会话查询子系统参考](../../../docs/subsystems/session-query.zh.md)——本后端实现的完整类型级约定。
 - [dsh-session-query](../session-query/README.zh.md)——服务定义：本后端继承的精确读取、过滤与追踪。
 - [dsh-tool-session-query](../tool-session-query/README.zh.md)——调用这些搜索方法的面向模型消费方。
-- [SQLite FTS5 会话搜索](../../../.agents/notes/implemented/feature/2026-07-10-sqlite-session-query-provider.zh.md)——搜索语义、对账与 tokenizer 决策。
+- [SQLite FTS5 会话搜索](../../../.agents/notes/archived/feature/2026-07-10-sqlite-session-query-provider.md)——搜索语义、对账与 tokenizer 决策。
 - [JSONL 会话持久化](../../session/session-persistence-jsonl/README.zh.md)——本可丢弃索引观察的权威 Session store；其 root 必须与本包的数据库路径分开。
 
 -----

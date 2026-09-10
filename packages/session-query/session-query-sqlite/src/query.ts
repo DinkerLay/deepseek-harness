@@ -151,7 +151,7 @@ export function buildSessionWhere(filters: readonly SessionResultFilter[]): SqlW
         addList(clauses, params, 'session_id', filter.values)
         break
       case 'cwd':
-        addNullableList(clauses, params, 'cwd', filter.values)
+        addNullableList(clauses, params, 'execution_cwd', filter.values)
         break
       case 'created-at':
         addRange(clauses, params, 'created_at', filter)

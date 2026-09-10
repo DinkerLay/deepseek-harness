@@ -122,7 +122,7 @@ function sessionPredicate(filter: SessionResultFilter): (record: SessionRecord) 
     case 'id':
       return record => filter.values.includes(record.header.id)
     case 'cwd':
-      return record => filter.values.includes(record.header.cwd ?? null)
+      return record => filter.values.includes(record.executionDirectory ?? null)
     case 'created-at': {
       const range = validateRange(filter.kind, filter)
       return record => matchesRange(record.header.createdAt, range)

@@ -28,7 +28,9 @@ A workspace package reached by a runtime value import from the Host entry closur
 
 An export whose constructor identity or module state must be shared appears in `peerRequiredHostExports`; importing one such export keeps the whole package edge in matching `peerDependencies` and `devDependencies`. Each export-table key is an exact module specifier and each value is a reviewed export set. The verifier follows runtime local imports from the Host entry, records named and default imports and re-exports, and rejects exports covered by neither the package list nor an export table; namespace, dynamic, and side-effect imports remain unbounded unless the complete exact entry is package-classified.
 
-Workspace imports used by the Client bundle, type-only imports, module augmentations, `dsh.client.inject`, invariant companions, and existing metadata-only peers belong only in `devDependencies`. Ordinary third-party packages imported by the Host runtime belong in `dependencies`; other third-party relationships keep their declared section. Workspace references use `workspace:^`.
+The workspace-file Host imports `executionDirectoryFromEvents` and `resolveSessionCwd` from Session as duplicate-safe functions: both consume structural values and retain no module identity or state. Its `SessionQueryError` import remains peer-required because the Host distinguishes that class with `instanceof`; a second package copy would break the identity check.
+
+Workspace imports used by the Client bundle, type-only imports, module augmentations, `dsh.client.inject`, and existing metadata-only peers belong only in `devDependencies`. Host runtime imports, including additional Node entries, follow the Host classification. [Browser third-party build inputs](2026-09-08-browser-third-party-build-inputs.md) governs ordinary third-party declarations; it partially supersedes their preservation in this decision. Workspace references use `workspace:^`.
 
 Some development relationships exist only in `dsh.client.inject` or TypeScript project references. The policy's `configurationOnlyDevDependencies` table names only those reviewed edges and keeps them in `devDependencies`.
 
@@ -74,7 +76,7 @@ pnpm run benchmark:npm-resolution:next -- --runs=1 --finalist-runs=5 --finalists
 
 [`verify-npm-install-layout`](../../../../scripts/verify-npm-install-layout.ts) is a deterministic package-path and version check in the `Release (dsh)` workflow on every pull request and master push; it does not enforce resolver duration. [`benchmark-npm-resolution`](../../../../scripts/benchmark-npm-resolution.ts) and [`benchmark-next-package-dependency`](../../../../scripts/benchmark-next-package-dependency.ts) remain manual because resolver time varies with machine load and metadata completion order. Their fresh-consumer, metadata-only runs isolate npm's dependency-tree calculation from registry latency and archive downloads, so relative results identify peer relays without creating a release-time performance promise.
 
-The generated policy currently leaves 27 managed Host runtime edges in `dependencies` across 13 packages. Two edges remain in `peerDependencies`: `dsh-api-remotes → dsh-scope` for `carrierKeyOf`, and `dsh-session → dsh-scope` for `scopeOf` and `scopeTarget`.
+The generated policy currently leaves 41 managed Host runtime edges in `dependencies` across 17 packages. Six edges remain in `peerDependencies`: `dsh-api-remotes → dsh-scope`, `dsh-api-workspace-files → dsh-session-query`, `dsh-client-file-upload → dsh-scope`, `dsh-session → dsh-scope`, `dsh-session-log-export → dsh-session`, and `dsh-session-log-export → dsh-session-persistence`.
 
 ## Alternatives considered
 

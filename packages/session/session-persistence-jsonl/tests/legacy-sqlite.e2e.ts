@@ -10,11 +10,10 @@ import { Context } from '@deepseek-ai/cordis'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, resolveSessionCwd } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import { SESSION_FORMAT_VERSION, SessionId, resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '../src/index.ts'
 import { exportLegacySqlite } from '../src/legacy-sqlite.ts'
+import { generationLogPath } from '../src/format.ts'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 
 const runtimeRoot = process.env.DSH_LEGACY_RUNTIME_ROOT
@@ -41,7 +40,7 @@ describe.skipIf(runtimeRoot === undefined)('legacy SQLite public-API export', { 
     const original = await readFile(database)
     const records = JSON.parse(await readFile(expected, 'utf8')) as Array<{
       meta: { id: string; cwd: string; seedLength?: number; delegationDepth?: number }
-      events: SessionEvent[]
+      events: Array<{ type: string; seq: number; data?: unknown; [key: string]: unknown }>
     }>
     const result = await exportLegacySqlite({ runtimeRoot, database, destination: join(root, 'converted') })
     expect(result.sessions).toBe(records.length)
@@ -50,16 +49,54 @@ describe.skipIf(runtimeRoot === undefined)('legacy SQLite public-API export', { 
 
     const ctx = new Context()
     contexts.push(ctx)
-    await mountAgentLoopTestDependencies(ctx, { systemPrompt: { persona: 'Resume the retained conversation.' } })
-    await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(JsonlSessionPersistence, { root: result.sessionRoot, compression: 'none', packChunks: false })
-    expect((await ctx.sessionPersistence.list()).map(meta => meta.id).sort()).toEqual(records.map(record => record.meta.id).sort())
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(JsonlSessionPersistence, { root: result.sessionRoot, compression: 'none' })
+    expect((await ctx.sessionPersistence.list()).map(snapshot => snapshot.header.id).sort())
+      .toEqual(records.map(record => record.meta.id).sort())
     for (const record of records) {
-      const observed = await ctx.sessionPersistence.inspect(SessionId(record.meta.id))
-      expect(observed.events).toEqual(record.events)
-      const { seedLength, ...header } = record.meta
-      expect(observed.meta).toEqual({ ...header, delegationDepth: header.delegationDepth ?? 0, isSeeded: seedLength !== undefined })
-      expect(observed.inheritedEventCount).toBe(record.meta.seedLength ?? 0)
+      const sourcePath = generationLogPath(result.sessionRoot, record.meta.cwd, SessionId(record.meta.id), 0, 'none')
+      const sourceBytes = await readFile(sourcePath)
+      const reader = await ctx.sessionPersistence.open(SessionId(record.meta.id), 'read')
+      try {
+        const observed = await reader.read()
+        const { seedLength, ...header } = record.meta
+        expect(reader.header).toEqual({
+          ...header,
+          version: SESSION_FORMAT_VERSION,
+          delegationDepth: header.delegationDepth ?? 0,
+          isSeeded: seedLength !== undefined,
+        })
+        const coordinates = await ctx.sessionPersistence.migrationCoordinates(SessionId(record.meta.id))
+        expect(coordinates).toMatchObject({
+          sessionId: record.meta.id,
+          source: { version: 0 },
+          target: { version: SESSION_FORMAT_VERSION },
+        })
+        expect(coordinates?.targetSeqBySourceSeq).toHaveLength(record.events.length)
+        const inheritedEventCount = seedLength === undefined ? 0 : coordinates?.targetSeqBySourceSeq[seedLength]
+        expect(inheritedEventCount).not.toBeNull()
+        expect(reader.inheritedEventCount).toBe(inheritedEventCount)
+        const chunkSeqs = record.events.filter(event => event.type === 'assistant/chunk').map(event => event.seq)
+        if (chunkSeqs.length > 0) {
+          expect(coordinates?.targetSeqBySourceSeq.filter((_value, seq) => chunkSeqs.includes(seq)))
+            .toEqual(chunkSeqs.map(() => null))
+          const final = record.events.find(event => event.type === 'assistant/message')
+          if (final === undefined) throw new Error('fixture chunk run has no final assistant message')
+          expect(coordinates?.targetSeqBySourceSeq[final.seq]).not.toBeNull()
+          expect(sourceBytes.toString('utf8')).toContain(`"sourceEventSeqs":[${chunkSeqs.join(',')}]`)
+        }
+        for (const sourceEvent of record.events.filter(event => event.type === 'session/execution-directory')) {
+          const targetSeq = coordinates?.targetSeqBySourceSeq[sourceEvent.seq]
+          expect(targetSeq).not.toBeNull()
+          expect(observed.events[targetSeq as number]).toMatchObject({
+            type: 'session/execution-directory',
+            data: sourceEvent.data,
+          })
+        }
+      } finally {
+        await reader.close()
+      }
+      expect(await readFile(sourcePath)).toEqual(sourceBytes)
     }
     if (empty) return
     const adapter = new MockAdapter([textResponse('Resumed from SQLite history')])

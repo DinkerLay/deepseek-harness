@@ -142,6 +142,52 @@ describe('public-network policy', () => {
       .rejects.toThrow(expect.objectContaining({ code: 'WEB_BLOCKED_URL' }))
   })
 
+  it('recovers configured synthetic hostname answers and validates the replacement set', async () => {
+    const fallback = {
+      matches: (address: string) => address.startsWith('198.18.'),
+      resolve: vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]),
+    }
+    await expect(resolvePublicAddresses(
+      'fake-ip.test',
+      new AbortController().signal,
+      async () => [{ address: '198.18.1.2', family: 4 }],
+      fallback,
+    )).resolves.toEqual([{ address: '8.8.8.8', family: 4 }])
+    expect(fallback.resolve).toHaveBeenCalledWith('fake-ip.test', expect.any(AbortSignal))
+
+    fallback.resolve.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
+    await expect(resolvePublicAddresses(
+      'private-recovery.test',
+      new AbortController().signal,
+      async () => [{ address: '198.18.1.3', family: 4 }],
+      fallback,
+    )).rejects.toThrow(expect.objectContaining({ code: 'WEB_BLOCKED_URL' }))
+  })
+
+  it('refuses a mixed synthetic and real private system answer before fallback', async () => {
+    const fallback = {
+      matches: (address: string) => address.startsWith('198.18.'),
+      resolve: vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]),
+    }
+    await expect(resolvePublicAddresses(
+      'mixed-private.test',
+      new AbortController().signal,
+      async () => [{ address: '198.18.1.4', family: 4 }, { address: '10.0.0.1', family: 4 }],
+      fallback,
+    )).rejects.toThrow(expect.objectContaining({ code: 'WEB_BLOCKED_URL' }))
+    expect(fallback.resolve).not.toHaveBeenCalled()
+  })
+
+  it('never treats a synthetic-range IP literal as a recoverable hostname', async () => {
+    const fallback = {
+      matches: () => true,
+      resolve: vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]),
+    }
+    await expect(resolvePublicAddresses('198.18.1.5', new AbortController().signal, undefined, fallback))
+      .rejects.toThrow(expect.objectContaining({ code: 'WEB_BLOCKED_URL' }))
+    expect(fallback.resolve).not.toHaveBeenCalled()
+  })
+
   it('rejects empty and invalid resolver results', async () => {
     await expect(resolvePublicAddresses('empty.test', new AbortController().signal, async () => []))
       .rejects.toThrow(expect.objectContaining({ code: 'WEB_PROVIDER_ERROR' }))

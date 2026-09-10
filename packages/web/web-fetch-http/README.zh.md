@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取公共 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的内容。当组合需要 URL 校验、公开地址解析、连接固定、仅同源重定向、字节和字符上限及显式产品 `User-Agent` 时选择它。它把非 2xx 响应作为结果而非错误返回，并拒绝非公开目标、二进制数据与不受支持的内容类型。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`，由它渲染本提供方的正文。
+有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取公共 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的内容。当组合需要 URL 校验、原生代理路由、公开地址固定、仅同源重定向、响应上限以及从所配置合成 DNS 范围恢复直接请求时选择它。它把非 2xx 响应作为结果返回，并拒绝非公开目标、二进制数据与不受支持的内容类型。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`。
 
 ## 目录
 
@@ -42,6 +42,11 @@ kind: "package-reference"
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
+| `fakeIpDnsEnabled` | `true` | 对直接源站路由中配置的合成答案执行恢复 |
+| `fakeIpDnsEndpoint` | `https://cloudflare-dns.com/dns-query` | 只用于合成答案恢复的 HTTPS RFC 8484 解析器 |
+| `fakeIpDnsBootstrapAddresses` | `1.1.1.1`、`1.0.0.1` | 解析器自身原生路由为直接连接时固定使用的公开地址 |
+| `fakeIpRanges` | `198.18.0.0/15` | 可以触发恢复的合成答案范围 |
+| `fakeIpDnsTimeoutMs` | `5,000` | A 与 AAAA 查询共用的恢复截止时间 |
 | `maxResponseBytes` | `5,000,000` | 响应主体最大字节数 |
 | `maxBodyChars` | `100,000` | 解码主体最大字符数 |
 | `timeoutMs` | `30,000` | 抓取超时——资源兜底，不是面向模型的工具预算 |
@@ -61,11 +66,11 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### 传输行为
 
-提供方保持请求匿名且有界：只接受不含内嵌凭据且不超过 2,048 个字符的 `http:` 与 `https:` URL。它只解析一次主机名；只要结果中有任何 IPv4 或 IPv6 地址不是公共单播地址，就拒绝整个结果，并把连接固定到已校验的地址集合。IPv6 检查会发现活动 DNS64 前缀，并拒绝指向非公开 IPv4 的转换地址。每次同源重定向都会重复解析与固定；跨源重定向会失败并要求重新调用。提供方还强制执行字节、字符、跳数和时间上限，拒绝不支持的内容类型，并发送显式产品 `User-Agent`。
+提供方保持请求匿名且有界：只接受不含内嵌凭据且不超过 2,048 个字符的 `http:` 与 `https:` URL。原生代理策略先选择每一跳。代理源站由代理解析；直接源站在本地解析，校验完整地址集合，并固定连接。直接查询返回所配置的合成地址时，提供方查询已配置的 HTTPS DNS 解析器，并通过普通公开地址路径校验和固定替代地址。解析器 URL 独立执行自己的原生路由决策：代理路由使用原生代理 dispatcher，直接路由则使用已配置的公开 bootstrap 地址以避免合成 DNS 递归。IPv6 检查会发现活动 DNS64 前缀，并拒绝指向非公开 IPv4 的转换地址。每次同源重定向都会重复该策略；跨源重定向会失败并要求重新调用。
 
 ### 失败与恢复
 
-失败抛出携带可按机器路由 code 的 `WebError`：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。直接调用方可以按 code 路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
+失败抛出携带可按机器路由 code 的 `WebError`：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_ABORTED`、`WEB_DNS_RESOLUTION_FAILED` 或 `WEB_PROVIDER_ERROR`。直接调用方可以按 code 路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
 
 -----
 
@@ -91,12 +96,13 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 | [`src/index.ts`](src/index.ts) | 插件入口：配置 schema、上限验证、提供方注册 |
 | [`src/provider.ts`](src/provider.ts) | `HttpFetchProvider`：固定连接、重定向跟随、有界读取、charset 解码 |
 | [`src/network.ts`](src/network.ts) | 公开地址解析、DNS64 发现与连接固定 |
+| [`src/dns-fallback.ts`](src/dns-fallback.ts) | 合成答案检测与有界 HTTPS DNS 恢复 |
 | [`src/policy.ts`](src/policy.ts) | URL 校验、同源检查、内容类型分类、charset 解析 |
 | — | 不发布运行时不变式伴生入口；上限在提供方处强制执行。 |
 
 ### 读取路径
 
-抓取先校验 URL，只解析一次主机名，结果中只要有非公开地址就拒绝，并把连接固定到已接受地址。每次同源重定向都重复该检查；跨源重定向或非公开目标在接收响应字节前失败。最终响应按 `Content-Type` 分类、依声明的 charset 解码，并在字节上限内读取；解码后的文本再截断到字符上限。
+抓取先校验 URL，并向原生代理策略查询路由。直接连接会解析并固定公开地址；配置的合成答案触发一次有界 HTTPS DNS 恢复，解析器路由也独立遵循同一代理策略。所有恢复答案都在连接源站前通过普通公开地址和 DNS64 检查。每次同源重定向都重复这一过程；跨源重定向或非公开目标会在接收响应字节前失败。最终响应按 `Content-Type` 分类、依声明的 charset 解码，并在字节上限内读取；解码后的文本再截断到字符上限。
 
 </details>
 
@@ -134,6 +140,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 - **只解码文本内容**——包括 html/xhtml 与 `text/*` 加 JSON/XML 家族；缺少 `Content-Type` 或任何二进制类型都会抛出 `WEB_UNSUPPORTED_CONTENT_TYPE`，可提取文本的 PDF 解码属于明确的延期工作。
 - **charset 只来自 `Content-Type` 标头**（默认 UTF-8）——HTML `<meta charset>` 声明会被忽略；声明但无法识别的 charset 标签会抛出异常，而非回退。
+- **合成答案恢复会向已配置的解析器披露查询主机名**——默认解析器是 Cloudflare；不适合此披露时，应禁用 `fakeIpDnsEnabled` 或配置另一个 HTTPS endpoint。
 
 <a id="dev-note"></a>
 ### 开发备注

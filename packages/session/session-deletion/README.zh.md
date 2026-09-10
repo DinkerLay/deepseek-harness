@@ -26,7 +26,7 @@ kind: "package-reference"
 
 `preview(rootSessionId)` 按自底向上的删除顺序返回已知后代，最后返回根节点。`deleteTree(rootSessionId)` 会阻止该血缘继续发布，重复发现直到 reservation 覆盖当前完整闭包，并在 disposal 任何 Agent 前，通过 retained idle-disposal 能力认领所有 live Agent。运行中的工作、maintenance、排队输入或未 retained 的 live Agent 都会在持久化删除开始前被拒绝。
 
-已知 persistence identity 通过 `ctx.sessionPersistence.delete()` 自底向上删除。JSONL unlink 精确的 Session 日志，并且只移除已经为空的后端自有目录；lazy identity 会在不创建 artifact 的情况下取消。每个由 persistence 移除的 identity 都会发布 `session-persistence/deleted`。零事件 live Session 的 lazy intent 可能已经在 Agent disposal 期间完成 retirement，因此仍出现在 `sessionIds`，但不进入 `deletedSessionIds`。重试会跳过已不存在的记录，并最终收敛到根节点删除。本包不会归档、改变 Workspace placement、删除产品 allocation 或删除 Project 目录。
+已知 persistence identity 通过 `ctx.sessionPersistence.delete()` 自底向上删除。JSONL 获取原生写所有权和跨进程租约，随后删除所有规范 generation，同时保留稳定锁文件；已关闭且未实体化的 identity 没有可删除的 artifact。每个由 persistence 移除的 identity 都会发布 `session-persistence/deleted`。零事件 live Session 的 lazy intent 可能已经在 Agent disposal 期间完成 retirement，因此仍出现在 `sessionIds`，但不进入 `deletedSessionIds`。重试会跳过已不存在的记录，并最终收敛到根节点删除。本包不会归档、改变 Workspace placement、删除产品 allocation 或删除 Project 目录。
 
 `AgentRegistry.create()` 与 `AgentRegistry.resume()` 会保留其返回的精确 `AgentHandle`，但不会把它暴露给本服务。直接注册或由配置创建的 Agent 在 live 状态下保持不可删除；通过其 owner 停止或 dispose 后，冷 Session 才能在之后被删除。
 

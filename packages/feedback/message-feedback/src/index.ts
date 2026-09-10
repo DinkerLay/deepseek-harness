@@ -1,29 +1,31 @@
 /**
- * Durable, lifecycle-bound feedback for finalized assistant messages.
+ * Canonical Session-log feedback for finalized assistant messages.
  * @module @deepseek-ai/dsh-message-feedback
  */
 
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
-import { SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { z } from 'zod'
+import { FEEDBACK_CATEGORIES } from '@deepseek-ai/dsh-command-feedback'
+import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import { deriveEventMessage, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
-import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+import type {} from '@deepseek-ai/dsh-session'
 import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
-import { messageFeedbackDomainSpec } from './spec.ts'
-import type { MessageFeedbackRow, MessageFeedbackSessionIdentity } from './spec.ts'
+import { legacyMessageFeedbackDomainSpec } from './legacy.ts'
+import type { LegacyMessageFeedbackRow } from './legacy.ts'
 import type {
   MessageFeedbackDeleteRequest,
   MessageFeedbackDeleteResult,
-  MessageFeedbackDeleteValue,
   MessageFeedbackFailure,
   MessageFeedbackItem,
   MessageFeedbackListRequest,
   MessageFeedbackListResult,
-  MessageFeedbackListValue,
   MessageFeedbackNoteBlank,
   MessageFeedbackNoteTooLarge,
   MessageFeedbackPutRequest,
@@ -36,321 +38,304 @@ import type {
 } from './types.ts'
 
 export type * from './types.ts'
-export {
-  messageFeedbackDomainSpec,
-  messageFeedbackItemSchema,
-  messageFeedbackRatingSchema,
-  messageFeedbackRowSchema,
-  messageFeedbackSessionIdentitySchema,
-  messageFeedbackVersionSchema,
-} from './spec.ts'
-export type { MessageFeedbackRow, MessageFeedbackSessionIdentity } from './spec.ts'
 
 /** Required deployment policy for optional notes. */
 export interface Config {
   /** Maximum UTF-8 byte length accepted for one note. */
   readonly maxNoteBytes: number
+  /**
+   * Maximum number of released sidecar items read for one Session.
+   * Larger rows fail explicitly without entering a Remote result.
+   */
+  readonly maxLegacyItemsPerSession?: number
 }
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     messageFeedback: MessageFeedbackService
   }
-}
-
-/** Immutable empty list reused only as an input to caller-owned copying. */
-const EMPTY_ITEMS: readonly MessageFeedbackItem[] = Object.freeze([])
-
-/** Validate the one deployment-varying limit at the configuration boundary. */
-function resolveMaxNoteBytes(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new TypeError(
-      `message-feedback: maxNoteBytes must be a positive safe integer, got ${String(value)}`,
-    )
+  interface Events {
+    /**
+     * Observe a durable cold feedback mutation without publishing a live Session.
+     * Observers run before write ownership is released and must not await
+     * another message-feedback operation for this Session. The payload is borrowed
+     * read-only; deep-clone it before transferring ownership (for example, to Session.fromRestore).
+     * @param inspection - committed canonical prefix, including the feedback as its last event.
+     * @mode parallel
+     */
+    'feedback/committed'(inspection: SessionInspection): void
   }
-  return value
 }
 
-/** Copy and freeze one item before it crosses the service boundary. */
+const timestamp = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const itemSchema = z.object({
+  messageId: z.string().min(1),
+  rating: z.enum(['positive', 'negative']),
+  note: z.string().refine(note => note.trim().length > 0).optional(),
+  category: z.enum(FEEDBACK_CATEGORIES).optional(),
+  version: z.uuid(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+}).refine(item => item.updatedAt >= item.createdAt)
+const putSchema = z.object({ sessionId: z.string().min(1), item: itemSchema })
+const deleteSchema = z.object({ sessionId: z.string().min(1), messageId: z.string().min(1) })
+
+type FeedbackEvent = SessionEvent<'feedback/message-put' | 'feedback/message-delete'>
+type Mutation = Pick<SessionEvent<'feedback/message-put'>, 'type' | 'data'>
+  | Pick<SessionEvent<'feedback/message-delete'>, 'type' | 'data'>
+type Append = (event?: Mutation) => Promise<void>
+type MissingSession = MessageFeedbackRejected<MessageFeedbackSessionNotFound>
+type ResolvedNote = MessageFeedbackSuccess<string | undefined>
+  | MessageFeedbackRejected<MessageFeedbackNoteBlank | MessageFeedbackNoteTooLarge>
+
+/** Return a caller-owned immutable value, detached from the log. */
 function snapshotItem(item: MessageFeedbackItem): MessageFeedbackItem {
-  return Object.freeze({
-    messageId: item.messageId,
-    rating: item.rating,
-    ...(item.note === undefined ? {} : { note: item.note }),
-    version: item.version,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  })
+  return Object.freeze({ ...item })
 }
 
-/** Copy and freeze a list response. */
-function snapshotList(items: readonly MessageFeedbackItem[]): MessageFeedbackListValue {
-  return Object.freeze({ items: Object.freeze(items.map(snapshotItem)) })
-}
-
-/** Build a frozen success branch. */
 function success<T>(value: T): MessageFeedbackSuccess<T> {
   return Object.freeze({ ok: true, value })
 }
 
-/** Build a frozen business-failure branch. */
 function rejected<E extends MessageFeedbackFailure>(error: E): MessageFeedbackRejected<E> {
   return Object.freeze({ ok: false, error: Object.freeze(error) })
 }
 
-/** Project the Session fields that distinguish one persisted log lifecycle. */
-function identityOf(header: SessionHeader): MessageFeedbackSessionIdentity {
-  return Object.freeze({
-    createdAt: header.createdAt,
-    ...(header.cwd === undefined ? {} : { cwd: header.cwd }),
-  })
+/** Validate persisted payloads before deriving current, Session-owned feedback. */
+function currentItems(
+  sessionId: SessionId,
+  events: readonly SessionEvent[],
+  legacy: readonly MessageFeedbackItem[] = [],
+): MessageFeedbackItem[] {
+  const items = new Map(legacy.map(item => [item.messageId, item]))
+  for (const event of events) {
+    switch (event.type) {
+      case 'feedback/message-put':
+        putSchema.parse(event.data)
+        if (event.data.sessionId === sessionId) items.set(event.data.item.messageId, event.data.item)
+        break
+      case 'feedback/message-delete':
+        deleteSchema.parse(event.data)
+        if (event.data.sessionId === sessionId) items.delete(event.data.messageId)
+        break
+      default:
+        // Other plugins' events do not change message feedback.
+        break
+    }
+  }
+  return [...items.values()]
 }
 
-/** Whether a stored row belongs to the inspected Session lifecycle. */
-function sameIdentity(row: MessageFeedbackRow, header: SessionHeader): boolean {
+/** Whether one message id names a finalized append-origin assistant message. */
+function hasFeedbackTarget(events: readonly SessionEvent[], messageId: string): boolean {
+  return events.some(event => event.type === 'assistant/message'
+    && isAppendSurfaceEvent(event)
+    && deriveEventMessage(event)?.id === messageId)
+}
+
+/** Whether a released sidecar row belongs to this exact Session lifecycle. */
+function sameLegacyIdentity(row: LegacyMessageFeedbackRow, header: SessionHeader): boolean {
   return row.session.createdAt === header.createdAt && row.session.cwd === header.cwd
 }
 
-/** Whether two observations name the same persisted Session lifecycle. */
-function sameHeaderIdentity(left: SessionHeader, right: SessionHeader): boolean {
-  return left.id === right.id && left.createdAt === right.createdAt && left.cwd === right.cwd
-}
-
-/** Freeze the replacement row so storage-domain never exposes mutable aliases. */
-function rowSnapshot(
-  session: MessageFeedbackSessionIdentity,
-  items: readonly MessageFeedbackItem[],
-): MessageFeedbackRow {
-  const copiedItems = items.map(snapshotItem)
-  Object.freeze(copiedItems)
-  return Object.freeze({
-    session,
-    items: copiedItems,
-  })
-}
-
-/** Generate an opaque equality token for one material mutation. */
-function nextVersion(): MessageFeedbackVersion {
-  return randomUUID() as MessageFeedbackVersion
-}
-
-/** Session inspection result that keeps absence inside the business union. */
-type KnownSession =
-  | MessageFeedbackSuccess<SessionInspection>
-  | MessageFeedbackRejected<MessageFeedbackSessionNotFound>
-
-/** Validated note or one explicit request failure. */
-type ResolvedNote =
-  | MessageFeedbackSuccess<string | undefined>
-  | MessageFeedbackRejected<MessageFeedbackNoteBlank | MessageFeedbackNoteTooLarge>
-
-/**
- * Storage-domain sidecar service. It inspects persisted Session history and
- * never creates or resumes an Agent or Session.
- */
+/** Session-log service; cold operations never construct a Session or Agent. */
 export class MessageFeedbackService extends TypertRemoteService {
-  static inject = ['storageDomain', 'sessionPersistence', 'sessions']
+  static inject = ['sessionPersistence', 'sessions', 'storageDomain']
 
   /** Loader validation for the required note-size policy. */
   static Config: s<Config> = s.object({
     maxNoteBytes: s.number().step(1).min(1).required(),
+    maxLegacyItemsPerSession: s.number().step(1).min(1).default(1000),
   })
 
   private readonly maxNoteBytes: number
-  private table?: KvTable<SessionId, MessageFeedbackRow>
+  private readonly maxLegacyItemsPerSession: number
+  private legacyTable?: KvTable<SessionId, LegacyMessageFeedbackRow>
   private readonly operationTails = new Map<SessionId, Promise<void>>()
   private mutationAdmissionOpen = true
 
   /**
-   * @param ctx - Host context carrying persistence and the storage-domain form.
+   * @param ctx - Host context carrying Session persistence and live owners.
    * @param config - Required note-size policy.
    */
   constructor(ctx: Context, config: Config) {
     super(ctx, 'messageFeedback')
-    this.maxNoteBytes = resolveMaxNoteBytes(config.maxNoteBytes)
+    if (!Number.isSafeInteger(config.maxNoteBytes) || config.maxNoteBytes < 1) {
+      throw new TypeError('message-feedback: maxNoteBytes must be a positive safe integer')
+    }
+    this.maxNoteBytes = config.maxNoteBytes
+    this.maxLegacyItemsPerSession = config.maxLegacyItemsPerSession ?? 1000
+    if (!Number.isSafeInteger(this.maxLegacyItemsPerSession) || this.maxLegacyItemsPerSession < 1) {
+      throw new TypeError('message-feedback: maxLegacyItemsPerSession must be a positive safe integer')
+    }
   }
 
-  /** Open and own the one message-feedback sidecar domain. */
   protected async [Service.init](): Promise<void> {
-    const domain = await this.ctx.storageDomain.open(messageFeedbackDomainSpec)
+    const legacy = await this.ctx.storageDomain.open(legacyMessageFeedbackDomainSpec)
+    this.legacyTable = legacy.table('sessions')
+    for (const sessionId of this.legacyTable.keys()) {
+      if (sessionId.length === 0) throw new Error('message-feedback: legacy sidecar contains an empty Session id')
+    }
     this.ctx.effect(() => async () => {
       this.mutationAdmissionOpen = false
       await Promise.all(this.operationTails.values())
-      await domain.close()
-    }, 'message-feedback.domainClose')
-    this.table = domain.table('sessions')
-    this.ctx.on('session-persistence/deleted', header => this.enqueue(header.id, async () => {
-      const table = this.requireTable()
-      const row = table.get(header.id)
-      if (row !== undefined && sameIdentity(row, header)) await table.delete(header.id)
-    }))
+      await legacy.close()
+    }, 'message-feedback.drain')
   }
 
   /**
-   * Read feedback belonging to the current persisted Session lifecycle.
-   * A stale row from a reused Session id is invisible.
-   * @param request - Session identity to inspect and list.
-   * @returns current immutable items or `session-not-found`.
+   * Read current feedback from the canonical log.
+   * @param request - Session to inspect.
+   * @returns immutable items or a definite persistence miss.
    */
   @Remote('list')
-  async list(request: MessageFeedbackListRequest): Promise<MessageFeedbackListResult> {
-    const known = await this.inspectSession(request.sessionId)
-    if (!known.ok) return known
-    const row = this.requireTable().get(request.sessionId)
-    const items = row !== undefined && sameIdentity(row, known.value.meta) ? row.items : EMPTY_ITEMS
-    return success(snapshotList(items))
+  list(request: MessageFeedbackListRequest): Promise<MessageFeedbackListResult> {
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, false, (header, events) =>
+      success(Object.freeze({ items: Object.freeze(this.itemsFor(header, events).map(snapshotItem)) }))))
   }
 
   /**
-   * Create or replace feedback for one derived append-origin assistant
-   * message. Every request must match the addressed item's current version;
-   * a matching no-op returns the stored item without changing its revision.
-   * @param request - target, desired value, and observed item version.
-   * @returns the committed item or an explicit business failure.
+   * Create or replace feedback after checking its current version.
+   * Matching no-ops retain the version and append no event.
+   * @param request - Target, desired value, and observed item version.
+   * @returns the durable item or an explicit business failure.
    */
   @Remote('put')
   put(request: MessageFeedbackPutRequest): Promise<MessageFeedbackPutResult> {
     const note = this.resolveNote(request.note)
     if (!note.ok) return Promise.resolve(note)
-    return this.enqueue(request.sessionId, async () => {
-      const known = await this.inspectSession(request.sessionId)
-      if (!known.ok) return known
-      if (!this.hasFeedbackTarget(known.value, request.messageId)) {
-        return rejected({
-          code: 'target-not-found',
-          sessionId: request.sessionId,
-          messageId: request.messageId,
-        })
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (header, events, append) => {
+      const items = this.itemsFor(header, events)
+      if (!hasFeedbackTarget(events, request.messageId)) {
+        return rejected({ code: 'target-not-found', sessionId: request.sessionId, messageId: request.messageId })
       }
-
-      const durable = await this.ensureTargetDurable(known.value)
-      if (!sameHeaderIdentity(durable.meta, known.value.meta)
-        || !this.hasFeedbackTarget(durable, request.messageId)) {
-        return rejected({
-          code: 'target-not-found',
-          sessionId: request.sessionId,
-          messageId: request.messageId,
-        })
-      }
-
-      const table = this.requireTable()
-      const stored = table.get(request.sessionId)
-      const current = stored !== undefined && sameIdentity(stored, durable.meta) ? stored : undefined
-      const items = current?.items ?? EMPTY_ITEMS
-      const index = items.findIndex(item => item.messageId === request.messageId)
-      const existing = items[index]
+      const existing = items.find(item => item.messageId === request.messageId)
       if (request.ifVersion !== (existing?.version ?? null)) {
         return rejected(this.versionConflict(existing ?? null))
       }
-      if (existing !== undefined
-        && existing.rating === request.rating
-        && existing.note === note.value) {
+      if (existing !== undefined && existing.rating === request.rating && existing.note === note.value
+        && existing.category === request.category) {
+        await append()
         return success(snapshotItem(existing))
       }
-
       const now = Date.now()
-      const item = snapshotItem({
+      const item: MessageFeedbackItem = {
         messageId: request.messageId,
         rating: request.rating,
         ...(note.value === undefined ? {} : { note: note.value }),
-        version: nextVersion(),
+        ...(request.category === undefined ? {} : { category: request.category }),
+        version: randomUUID() as MessageFeedbackVersion,
         createdAt: existing?.createdAt ?? now,
         updatedAt: existing === undefined ? now : Math.max(now, existing.updatedAt),
-      })
-      const nextItems = [...items]
-      if (index === -1) nextItems.push(item)
-      else nextItems[index] = item
-      await table.put(
-        request.sessionId,
-        rowSnapshot(identityOf(durable.meta), nextItems),
-      )
+      }
+      await append({ type: 'feedback/message-put', data: { sessionId: request.sessionId, item } })
       return success(snapshotItem(item))
-    })
+    }))
   }
 
   /**
-   * Delete one feedback item. Absence is successful regardless of the
-   * supplied version; an existing item requires an exact version match.
+   * Delete one item after checking its version; absence succeeds without an event.
    * @param request - Session, message, and observed item version.
-   * @returns the stable absent postcondition, or an explicit failure.
+   * @returns the stable absent postcondition or an explicit failure.
    */
   @Remote('delete')
   delete(request: MessageFeedbackDeleteRequest): Promise<MessageFeedbackDeleteResult> {
-    return this.enqueue(request.sessionId, async () => {
-      const known = await this.inspectSession(request.sessionId)
-      if (!known.ok) return known
-
-      const table = this.requireTable()
-      const stored = table.get(request.sessionId)
-      const current = stored !== undefined && sameIdentity(stored, known.value.meta) ? stored : undefined
-      const items = current?.items ?? EMPTY_ITEMS
-      const existing = items.find(item => item.messageId === request.messageId)
-      if (existing === undefined) {
-        return success<MessageFeedbackDeleteValue>(Object.freeze({ absent: true }))
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (header, events, append) => {
+      const existing = this.itemsFor(header, events).find(item => item.messageId === request.messageId)
+      if (existing !== undefined) {
+        if (request.ifVersion !== existing.version) return rejected(this.versionConflict(existing))
+        await append({ type: 'feedback/message-delete', data: { sessionId: request.sessionId, messageId: request.messageId } })
+      } else {
+        await append()
       }
-      if (request.ifVersion !== existing.version) {
-        return rejected(this.versionConflict(existing))
-      }
+      return success(Object.freeze({ absent: true as const }))
+    }))
+  }
 
-      await table.put(
-        request.sessionId,
-        rowSnapshot(identityOf(known.value.meta), items.filter(item => item !== existing)),
+  /** Merge one matching released sidecar row below canonical log mutations. */
+  private itemsFor(header: SessionHeader, events: readonly SessionEvent[]): MessageFeedbackItem[] {
+    const row = this.legacyTable?.get(header.id)
+    if (row === undefined || !sameLegacyIdentity(row, header)) return currentItems(header.id, events)
+    if (row.items.length > this.maxLegacyItemsPerSession) {
+      throw new Error(
+        `message-feedback: legacy sidecar for Session '${header.id}' has ${String(row.items.length)} items; `
+        + `maximum is ${String(this.maxLegacyItemsPerSession)}`,
       )
-      return success<MessageFeedbackDeleteValue>(Object.freeze({ absent: true }))
-    })
-  }
-
-  /**
-   * Resolve a live owner directly; otherwise use the storage catalog as the
-   * existence authority before inspecting the log. Inspection failures for a
-   * catalogued Session remain infrastructure failures rather than being
-   * guessed into the business `session-not-found` branch.
-   */
-  private async inspectSession(sessionId: SessionId): Promise<KnownSession> {
-    if (this.ctx.sessions.get(sessionId) === undefined) {
-      const snapshots = await this.ctx.sessionPersistence.listSnapshots()
-      if (!snapshots.some(snapshot => snapshot.header.id === sessionId)
-        && this.ctx.sessions.get(sessionId) === undefined) {
-        return rejected({ code: 'session-not-found', sessionId })
-      }
     }
-    return success(await this.ctx.sessionPersistence.inspect(sessionId))
-  }
-
-  /** Require the exact finalized append-origin assistant message projection. */
-  private hasFeedbackTarget(inspection: SessionInspection, messageId: MessageFeedbackItem['messageId']): boolean {
-    return inspection.events.some((event) => {
-      if (event.type !== 'assistant/message' || !isAppendSurfaceEvent(event)) return false
-      const message = deriveEventMessage(event)
-      return message?.role === 'assistant' && message.id === messageId
-    })
-  }
-
-  /**
-   * Put the target log prefix behind a durability barrier before its sidecar.
-   * A live owner flushes through the SessionStore's canonical checkpoint; a
-   * cold owner is re-read from the physical durable prefix.
-   */
-  private async ensureTargetDurable(inspection: SessionInspection): Promise<SessionInspection> {
-    const live = this.ctx.sessions.get(inspection.meta.id)
-    if (live !== undefined && sameHeaderIdentity(live.header, inspection.meta)) {
-      if (!(await this.ctx.sessions.flush(live))) {
+    for (const item of row.items) {
+      if (!hasFeedbackTarget(events, item.messageId)) {
         throw new Error(
-          `message-feedback: no durability listener participated for live session '${inspection.meta.id}'`,
+          `message-feedback: legacy sidecar for Session '${header.id}' references unknown assistant message '${item.messageId}'`,
         )
       }
-      return await this.ctx.sessionPersistence.readFrom(
-        inspection.meta.id,
-        SessionLogOffset(0),
-      )
     }
-    return await this.ctx.sessionPersistence.readFrom(
-      inspection.meta.id,
-      SessionLogOffset(0),
-    )
+    return currentItems(header.id, events, row.items)
   }
 
-  /** Validate optional-note semantics and the configured complete UTF-8 byte bound. */
+  /** Hold cold write ownership across read/compare/append; use live owners directly. */
+  private async withSession<T>(
+    sessionId: SessionId,
+    write: boolean,
+    operation: (header: SessionHeader, events: readonly SessionEvent[], append: Append) => T | Promise<T>,
+  ): Promise<T | MissingSession> {
+    if (this.ctx.sessions.get(sessionId) === undefined
+      && await this.ctx.sessionPersistence.stat(sessionId) === undefined
+      && this.ctx.sessions.get(sessionId) === undefined) {
+      return rejected({ code: 'session-not-found', sessionId })
+    }
+    const live = this.ctx.sessions.get(sessionId)
+    if (live !== undefined) {
+      return operation(live.header, live.snapshotEvents(), async (event) => {
+        if (event !== undefined) {
+          live.append(event.type, event.data)
+        }
+        const last = live.snapshotEvents().at(-1)
+        if (!(await this.ctx.sessions.flush(live))) {
+          throw new Error(
+            `message-feedback: no durability listener participated for live session '${sessionId}'`,
+          )
+        }
+        // Listener participation alone does not prove this Session has a persistence writer.
+        const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
+        try {
+          const { events: stored } = await handle.read(last?.seq ?? 0, 1)
+          if (!isDeepStrictEqual(
+            [handle.header.id, handle.header.createdAt, handle.header.cwd],
+            [live.header.id, live.header.createdAt, live.header.cwd],
+          )
+            || (last !== undefined && !isDeepStrictEqual(stored[0], last))) {
+            throw new Error(`message-feedback: feedback prefix is not durable for live session '${sessionId}'`)
+          }
+        } finally {
+          await handle.close()
+        }
+      })
+    }
+    const handle = await this.ctx.sessionPersistence.open(sessionId, write ? 'write' : 'read')
+    try {
+      const { events } = await handle.read()
+      return await operation(handle.header, events, async (event) => {
+        const entry: FeedbackEvent | undefined = event === undefined ? undefined
+          : { ...event, seq: SessionSeq(events.length), time: Date.now() }
+        if (entry !== undefined) await handle.append([entry])
+        await handle.flush()
+        if (entry !== undefined) {
+          try {
+            await this.ctx.parallel('feedback/committed', {
+              meta: handle.header,
+              inheritedEventCount: handle.inheritedEventCount,
+              events: [...events, entry],
+            })
+          } catch (error) {
+            this.ctx.logger.warn('message-feedback: committed feedback observer failed', error)
+          }
+        }
+      })
+    } finally {
+      await handle.close()
+    }
+  }
+
   private resolveNote(note: string | undefined): ResolvedNote {
     if (note === undefined) return success(undefined)
     if (note.trim().length === 0) return rejected({ code: 'note-blank' })
@@ -361,19 +346,13 @@ export class MessageFeedbackService extends TypertRemoteService {
     return success(note)
   }
 
-  /** Return the authoritative item needed to reconcile one failed comparison. */
   private versionConflict(current: MessageFeedbackItem | null): MessageFeedbackVersionConflict {
-    return {
-      code: 'version-conflict',
-      current: current === null ? null : snapshotItem(current),
-    }
+    return { code: 'version-conflict', current: current === null ? null : snapshotItem(current) }
   }
 
-  /** Queue a complete read/compare/write mutation behind this Session's prior mutation. */
+  /** Serialize complete operations and drain their handles before disposal. */
   private enqueue<T>(sessionId: SessionId, operation: () => Promise<T>): Promise<T> {
-    if (!this.mutationAdmissionOpen) {
-      return Promise.reject(new Error('message-feedback: service is disposing'))
-    }
+    if (!this.mutationAdmissionOpen) return Promise.reject(new Error('message-feedback: service is disposing'))
     const previous = this.operationTails.get(sessionId) ?? Promise.resolve()
     const result = previous.then(operation)
     const tail = result.then(() => undefined, () => undefined)
@@ -381,14 +360,6 @@ export class MessageFeedbackService extends TypertRemoteService {
     return result.finally(() => {
       if (this.operationTails.get(sessionId) === tail) this.operationTails.delete(sessionId)
     })
-  }
-
-  /** Resolve the initialized durable table or fail a broken service lifecycle. */
-  private requireTable(): KvTable<SessionId, MessageFeedbackRow> {
-    if (this.table === undefined) {
-      throw new Error('message-feedback: durable domain is not initialized')
-    }
-    return this.table
   }
 }
 

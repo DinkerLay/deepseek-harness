@@ -310,6 +310,7 @@ describe('subagent catalogs', () => {
         address: {
           kind: 'subagent', parentSessionId: S1, childSessionId: S2, mode: 'continuable',
         },
+        assistantStream: true,
         maxMessages: 50,
       },
     ])
@@ -319,6 +320,7 @@ describe('subagent catalogs', () => {
         requestId: expect.any(String) as unknown as string,
         parentSessionId: S1, childSessionId: S2,
         mode: 'continuable',
+        delivery: 'queue',
         content: [{ type: 'text', text: 'continue' }],
         clientTimeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
       },
@@ -693,6 +695,8 @@ describe('remaining branches', () => {
     ])
     manager.handleSessionAdded(summary(S1, { blank: true, cwd: '/w/one' }))
     expect(manager.getListSnapshot().items).toHaveLength(1)
+    manager.handleSessionAdded(summary(S1, { blank: true, cwd: '/branches/two' }))
+    expect(manager.getListSnapshot().items[0]).toMatchObject({ sessionId: S1, cwd: '/branches/two' })
   })
 
   it('subscribe notifies on list changes and stops after unsubscribe', async () => {

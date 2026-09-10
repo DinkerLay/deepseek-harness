@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tool-bash-persistent` gives the agent a `bash` tool whose shell state persists across calls for the owning agent: cwd, exported variables, functions, and background jobs survive between commands. Each agent gets its own shell backed by an owner-scoped PTY session from the terminal service, and commands for the same agent run one at a time. Configuration selects the PTY backend and the wall-clock limit for one command; a timeout or an explicit `exit` closes the shell, and the next call starts fresh. It complements the one-shot `dsh-tool-bash` tool — choose it when work needs cross-call state. Mount it together with a terminal backend such as `dsh-terminal-bash` and the `ctx.terminals` service.
-
-This consumer resolves the calling Session through `resolveSessionCwd()`: a committed execution-directory binding takes precedence over creation cwd. Agentless calls retain their documented backend defaults; a fork does not inherit its parent's directory-binding event as its own.
+Agents can run sequential Bash commands in an isolated shell whose directory, variables, functions, and background jobs persist across calls. Choose it for workflows that need cross-call state; use one-shot Bash for clean commands. Timeout, cancellation, or `exit` resets the shell. Its initial directory follows the recorded Session execution directory, while agentless calls keep backend defaults.
 
 ## Table of Contents
 
@@ -54,7 +52,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### What the agent can rely on
 
-Commands share one shell per agent, so state persists until an `exit`, a timeout, or a reset — each of which closes the shell and tells the agent the next call starts from the workspace with a fresh directory and environment. Results exclude the private completion markers; a non-zero wrapped command appends `[exit code: N]`, and a shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]`, then resets. Long output keeps the earliest retained prefix plus a clipping notice; if the terminal has already dropped that prefix, the result says so explicitly rather than presenting a tail as complete output.
+Commands share one shell per agent, so state persists until an `exit`, a timeout, or a reset — each of which closes the shell and tells the agent the next call starts from the workspace with a fresh directory and environment. Results exclude the private completion markers; every settled command appends `[Command finished with exit code N]`, and a shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]`, then resets. Long output keeps the earliest retained prefix plus a clipping notice; if the terminal has already dropped that prefix, the result says so explicitly rather than presenting a tail as complete output.
 
 ### What can go wrong
 
@@ -128,7 +126,7 @@ Prefix-stable while the configured description and schema remain unchanged.
 
 #### What the model sees
 
-Commands share one shell per Agent, so cwd, exported variables, activated environments, functions, and background jobs persist across calls. Results exclude private completion markers. When the shell reads stdin again without having printed the completion marker — after `exec`, an interrupt, or an interactive foreground child whose stdin wait the provider proves — the call returns the captured partial output, which can end with the backend's own prompt text. A nonzero wrapped command appends `[exit code: N]`; a shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]` when the backend supplies neither, then resets and tells the model that the next call starts fresh. Long output keeps the earliest retained prefix plus a clipping notice. If the PTY has already dropped that prefix, the result says so explicitly instead of presenting a tail as complete output. Timeout returns bounded partial output, closes the uncertain shell, and reports the reset.
+Commands share one shell per Agent, so cwd, exported variables, activated environments, functions, and background jobs persist across calls. Results exclude private completion markers. When the shell reads stdin again without having printed the completion marker — after `exec`, an interrupt, or an interactive foreground child whose stdin wait the provider proves — the call returns the captured partial output, which can end with the backend's own prompt text. Every settled command appends `[Command finished with exit code N]`; a shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]` when the backend supplies neither, then resets and tells the model that the next call starts fresh. Long output keeps the earliest retained prefix plus a clipping notice. If the PTY has already dropped that prefix, the result says so explicitly instead of presenting a tail as complete output. Timeout returns bounded partial output followed by `[Command timed out or OOM]`, closes the uncertain shell, and reports the reset.
 
 #### Token effect
 

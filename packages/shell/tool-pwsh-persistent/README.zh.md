@@ -9,9 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-tool-pwsh-persistent` 为 agent 提供 `pwsh` 工具，其 PowerShell 状态对拥有它的 agent 跨调用保留：cwd、`$env:` 变量、函数与后台任务都会在命令之间存活。它是 `dsh-tool-bash-persistent` 的 Windows 对应物——相同的持久状态契约，PowerShell 方言。每个 agent 都有自己由按所有者隔离、带 pwsh 方言后端的 PTY 会话支撑的 shell，同一 agent 的命令逐个串行执行。配置选择后端与单条命令的墙钟上限；超时或显式 `exit` 会关闭 shell，下一次调用从全新状态开始。请与 pwsh 方言 terminal 后端（Windows ConPTY 或 POSIX pwsh）以及 `ctx.terminals` 服务一起挂载。
-
-本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+Agent 可以在隔离 shell 中顺序运行 PowerShell 命令，其目录、环境、函数与后台任务会跨调用保留。需要多步 PowerShell 状态时选择它；需要干净命令时使用一次性 PowerShell，需要交互式 stdin 时使用 terminal。超时或 `exit` 会重置 shell。初始目录跟随记录的 Session 执行目录；无 Agent 的调用保留后端默认值。
 
 ## 目录
 
@@ -74,7 +72,7 @@ kind: "package-reference"
 
 ### 设计理念
 
-- **`dsh-tool-bash-persistent` 的刻意孪生。** 会话注册表、轮询循环与重置约定按设计镜像持久 bash 工具（[pwsh 持久 PTY Agent Note](../../../.agents/notes/implemented/architecture/2026-08-11-pwsh-persistent-pty.zh.md)）。
+- **`dsh-tool-bash-persistent` 的刻意孪生。** 会话注册表、轮询循环与重置约定按设计镜像持久 bash 工具（[pwsh 持久 PTY Agent Note](../../../.agents/notes/archived/architecture/2026-08-11-pwsh-persistent-pty.md)）。
 - **prompt 函数就绪。** 工具安装自己的 `prompt` 函数，打印 BEL 结尾的 OSC 标记加可打印提示词；OSC 标记携带最后的退出码，可打印提示词让每条命令都能结算，因此模型重定义 `prompt` 会把就绪降级到静默层级。
 - **PSReadLine 回显靠锚定剥离。** PowerShell 会把提交的输入渲染回流中；标记锚定提取与包装源码剥离移除回显，而跨终端宽度换行的包装可能在部分输出结果中留下部分回显。
 - **重置，而非修复。** 任何不确定状态——显式 `exit`、超时、发送失败、中止——都会关闭 shell 并让下一次调用从全新状态开始。
@@ -102,7 +100,7 @@ kind: "package-reference"
 - [terminal 包映射](../../terminal/README.zh.md)——持久 PTY 能力家族。
 - [terminal seam](../../terminal/terminal/README.zh.md)——工具背后的 `ctx.terminals` 服务。
 - [terminal-bash 后端](../../terminal/terminal-bash/README.zh.md)——默认后端，配置 `shellDialect: pwsh`。
-- [pwsh 持久 PTY Agent Note](../../../.agents/notes/implemented/architecture/2026-08-11-pwsh-persistent-pty.zh.md)——pwsh 侧会话设计及其理由。
+- [pwsh 持久 PTY Agent Note](../../../.agents/notes/archived/architecture/2026-08-11-pwsh-persistent-pty.md)——pwsh 侧会话设计及其理由。
 - [持久 PTY 会话 Agent Note](../../../.agents/notes/implemented/feature/2026-07-16-persistent-pty-sessions.zh.md)——按所有者会话的设计及其理由。
 - [生成的工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-pwsh-persistent)——`pwsh` 参数 schema 的确切内容。
 - [生成的配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-pwsh-persistent)——每个受支持配置字段及其源声明。

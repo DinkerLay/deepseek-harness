@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents and their host UIs get ranked path candidates for `@file` mentions, scoped to each agent's workspace and bounded so even large repositories stay responsive. `dsh-file-reference-local` implements `ctx.fileReferences` for the local filesystem: it keeps one reusable search index per agent, rebuilds it in the background after tool results so completion reflects workspace changes without stalling, and never follows directory symlinks. When the addressed agent can call `read`, it also installs a stable one-sentence guidance into the system prompt. Choose it when the agent's `read` tool operates on the Harness host filesystem; remote or virtual namespaces need a provider whose discovery matches the tool.
-
-This consumer resolves the calling Session through `resolveSessionCwd()`: a committed execution-directory binding takes precedence over creation cwd. Agentless calls retain their documented backend defaults; a fork does not inherit its parent's directory-binding event as its own.
+Agents and Host UIs can complete `@file` mentions with ranked paths from the current local workspace. Discovery stays bounded in large repositories, refreshes after tool activity, and never follows directory symlinks. When `read` is available, the model receives stable path guidance. Results follow the Session's recorded execution directory; remote or virtual filesystems need a matching provider.
 
 ## Table of Contents
 

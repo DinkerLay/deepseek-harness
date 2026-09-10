@@ -9,9 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-workspace` 为宿主提供一组持久 workspace：命名用户目录，每个目录带有在其中运行的会话，并在重启之间保持稳定顺序。借助它，UI 可以显示项目侧边栏、把会话附加到正确的项目、把会话从分组中隐藏而不丢失它，以及移除项目——移除绝不会删除文件夹或会话历史，它们变成 Ungrouped。在需要持久项目分组的 GUI 或宿主组合中使用它；headless 与最小运行可以完全省略它。此包只面向宿主侧：模型、工具与 agent loop 永远不会看到它，因此不会增加任何 token、提示词或请求上下文。它需要会话存储与持久化后端一并挂载；设置只需几行组合配置。
-
-提交后的 `session-persistence/deleted` 通知清理归 Session 所有的派生记录。它不删除 Session 日志或外部项目目录；这些操作仍由各自生命周期归属方负责。
+Host 可以维护有序持久的项目目录列表，以及与每个目录关联的 Session。Sidebar 可以从分组中隐藏 Session 而不删除其历史；移除项目绝不删除文件或 Session。重新加入目录会创建新项目；无效目录保持未分组。该功能对模型不可见，需要 Session persistence 与 storage。已提交的 Session 删除只移除匹配的派生成员关系。
 
 ## 目录
 
@@ -52,7 +50,7 @@ kind: "package-reference"
 
 ### 创建与排序项目
 
-从任何存在的目录创建项目：给出路径和可选标题，项目即出现在列表中，新到旧排列。不存在的路径或文件而非目录会被拒绝，且不会有任何变化；为已有项目的目录再次创建会原样返回现有项目。你可以随时重命名项目，并把它移动到列表中的任意位置：
+从任何存在且完整限定的目录创建项目：`C:\` 等文件系统根目录和普通目录都有效。相对路径、`C:work` 等 Windows 盘符相对路径、不存在的路径和文件都会被拒绝，且不会创建项目；为已有项目的目录再次创建会原样返回现有项目。你可以随时重命名项目，并把它移动到列表中的任意位置：
 
 ```text
 // Host consumer code, after the composition above is loaded:
@@ -130,7 +128,7 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 - [Workspace 子系统](../../../docs/subsystems/workspace.zh.md)——项目及其会话的功能约定，以及 workspace 服务的生成 API。
 - [Workspace 包映射](../README.zh.md)——本组唯一的包及其仓库位置。
 - [领域 KV 存储 Agent Note](../../../.agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.zh.md)——为什么项目记录使用领域数据形式。
-- [Workspace UI 产品流 Agent Note](../../../.agents/notes/implemented/feature/2026-07-25-workspace-ui-product-flow.zh.md)——首次启动如何从会话历史构建项目，以及 GUI 如何排序。
+- [Workspace UI 产品流 Agent Note](../../../.agents/notes/archived/feature/2026-07-25-workspace-ui-product-flow.md)——首次启动如何从会话历史构建项目，以及 GUI 如何排序。
 - [删除 Workspace 注册记录决策](../../../.agents/notes/implemented/feature/2026-07-27-workspace-registration-deletion.zh.md)——为什么移除项目绝不会删除其文件夹或会话。
 
 -----
@@ -175,6 +173,6 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 
 #### 开放：`create(path, title?)` 的 title 参数
 
-网关的按名称创建分支移除后，`title` 参数已无生产调用方；代码中的 TODO 提议把该参数与其 `@param` 子句一并移除（参见[笔记](../../../.agents/notes/implemented/simplification/2026-07-31-one-route-to-add-a-workspace.zh.md)）。
+网关的按名称创建分支移除后，`title` 参数已无生产调用方；代码中的 TODO 提议把该参数与其 `@param` 子句一并移除（参见[笔记](../../../.agents/notes/archived/simplification/2026-07-31-one-route-to-add-a-workspace.md)）。
 
 </details>

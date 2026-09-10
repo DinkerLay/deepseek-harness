@@ -16,7 +16,7 @@ File and search tools, shell and persistent-shell creation, LSP, skills, instruc
 
 Trusted hosts own directory allocation, active-consumer coordination, input-version selection and cleanup. They append and flush the binding before starting effects. Existing processes keep their captured directory until they stop; this capability does not relocate a live shell. Workspace-relative tool resolution changes with the binding, while explicit paths still follow each tool's existing path and sandbox rules. File-reference caches are rebuilt when the directory changes.
 
-This extends [per-Session filesystem resolution](2026-07-02-fs-per-session-cwd.md), preserving caller-owned path resolution, provider independence and canonical filesystem identity. It does not add Git or Product policy to DSH. The [Session contract](../../../../packages/core/session/README.md) owns public usage.
+This extends [per-Session filesystem resolution](../../archived/architecture/2026-07-02-fs-per-session-cwd.md), preserving caller-owned path resolution, provider independence and canonical filesystem identity. It does not add Git or Product policy to DSH. The [Session contract](../../../../packages/core/session/README.md) owns public usage.
 
 ## Alternatives considered
 

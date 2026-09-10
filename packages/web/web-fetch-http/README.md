@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-With `dsh-web-fetch-http`, the harness can fetch public HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it when a composition needs safe retrieval with URL validation, public-address resolution, connection pinning, same-origin redirects, byte and character caps, and an explicit product `User-Agent`. It returns non-2xx responses as results rather than errors, and rejects non-public destinations, binary data, and unsupported content types. The model-facing `web_fetch` tool lives in `dsh-tool-web`, which renders this provider's bodies.
+With `dsh-web-fetch-http`, the harness can fetch public HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it for URL validation, native proxy routing, public-address pinning, same-origin redirects, response caps, and direct recovery from configured synthetic DNS ranges. It returns non-2xx responses as results and rejects non-public destinations, binary data, and unsupported content types. The model-facing `web_fetch` tool lives in `dsh-tool-web`.
 
 ## Table of Contents
 
@@ -42,6 +42,11 @@ Load the web service and the provider; configurable limits have safe defaults an
 
 | Field | Default | Meaning |
 |---|---|---|
+| `fakeIpDnsEnabled` | `true` | Recover configured synthetic answers on direct origin routes |
+| `fakeIpDnsEndpoint` | `https://cloudflare-dns.com/dns-query` | HTTPS RFC 8484 resolver used only for synthetic recovery |
+| `fakeIpDnsBootstrapAddresses` | `1.1.1.1`, `1.0.0.1` | Public pinned resolver addresses when its own native route is direct |
+| `fakeIpRanges` | `198.18.0.0/15` | Synthetic answer ranges eligible for recovery |
+| `fakeIpDnsTimeoutMs` | `5,000` | Shared recovery deadline for A and AAAA queries |
 | `maxResponseBytes` | `5,000,000` | Maximum response body size in bytes |
 | `maxBodyChars` | `100,000` | Maximum decoded body length in characters |
 | `timeoutMs` | `30,000` | Fetch timeout — a resource backstop, not the model-facing tool budget |
@@ -61,11 +66,11 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### Transport behavior
 
-The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. It resolves each hostname once, rejects the complete result if any IPv4 or IPv6 address is not public unicast, and pins the connection to that validated set. IPv6 checks discover the active DNS64 prefix and reject translations to non-public IPv4. Each same-origin redirect repeats resolution and pinning; cross-origin redirects fail and require a fresh call. The provider also enforces byte, character, hop, and time caps, rejects unsupported content types, and sends an explicit product `User-Agent`.
+The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. Native proxy policy selects each hop first. A proxied origin lets the proxy resolve it; a direct origin resolves locally, validates the complete address set, and pins the connection. If that direct lookup returns a configured synthetic address, the provider queries the configured HTTPS DNS resolver and validates and pins its replacement addresses through the ordinary public-address path. The resolver URL makes its own native routing decision: a proxied route uses the native proxy dispatcher, while a direct route uses the configured public bootstrap addresses to avoid synthetic-DNS recursion. IPv6 checks discover the active DNS64 prefix and reject translations to non-public IPv4. Each same-origin redirect repeats the policy; cross-origin redirects fail and require a fresh call.
 
 ### Failures and recovery
 
-Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
+Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_ABORTED`, `WEB_DNS_RESOLUTION_FAILED`, or `WEB_PROVIDER_ERROR`. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
 
 -----
 
@@ -91,12 +96,13 @@ The package is built on one separation and one layered timeout:
 | [`src/index.ts`](src/index.ts) | Plugin entry: config schema, limit validation, provider registration |
 | [`src/provider.ts`](src/provider.ts) | The `HttpFetchProvider`: pinned transport, redirect following, capped reads, charset decoding |
 | [`src/network.ts`](src/network.ts) | Public-address resolution, DNS64 discovery, and connection pinning |
+| [`src/dns-fallback.ts`](src/dns-fallback.ts) | Synthetic-answer detection and bounded HTTPS DNS recovery |
 | [`src/policy.ts`](src/policy.ts) | URL validation, same-origin checks, content-type classification, charset parsing |
 | — | No runtime invariant companion is published; this package exposes no independent event sequence or mutable data relation beyond contracts enforced at its owning seam. |
 
 ### Read path
 
-A fetch validates the URL, resolves the hostname once, rejects the complete answer set when any address is not public, and pins the connection to the accepted addresses. It repeats that check for each same-origin redirect; a cross-origin redirect or non-public target fails before response bytes are accepted. The final response is classified by `Content-Type`, decoded from its declared charset, and read under the byte cap; the decoded text is then truncated to the character cap.
+A fetch validates the URL and asks native proxy policy for the route. Direct hops resolve and pin public addresses; configured synthetic answers trigger one bounded HTTPS DNS recovery whose resolver route independently follows the same proxy policy. Every recovered answer passes the ordinary public-address and DNS64 checks before the origin connection. The provider repeats this process for each same-origin redirect; a cross-origin redirect or non-public target fails before response bytes are accepted. The final response is classified by `Content-Type`, decoded from its declared charset, and read under the byte cap; the decoded text is then truncated to the character cap.
 
 </details>
 
@@ -134,6 +140,7 @@ These limits define when the provider is unsafe or a poor fit. They are current 
 
 - **Only textual content decodes** — html/xhtml and `text/*` plus JSON/XML families; a missing `Content-Type` or any binary type throws `WEB_UNSUPPORTED_CONTENT_TYPE`, and text-extractable PDF decoding is named deferred work.
 - **Charset comes only from the `Content-Type` header** (UTF-8 default) — an HTML `<meta charset>` declaration is ignored, and a declared-but-unrecognized charset label throws rather than falling back.
+- **Synthetic recovery discloses the queried hostname to its configured resolver** — the default is Cloudflare; disable `fakeIpDnsEnabled` or configure another HTTPS endpoint when that disclosure is unsuitable.
 
 <a id="dev-note"></a>
 ### Dev Note

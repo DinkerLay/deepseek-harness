@@ -2,53 +2,65 @@
 
 [English](FORK.md) | 中文
 
-此仓库分支是 SuperCode 使用的 DSH Runtime fork。[`fork-manifest.json`](fork-manifest.json) 是机器可读清单，本文解释其所有权与更新规则。fork 基于官方 `dsh-v0.1.2-rc.1`，对应提交 `a66e4702047846cdaa10c66c9d3df3951f5ea70d`。
+此分支是 SuperCode 使用的 DSH Runtime fork，基于官方 `dsh-v0.1.5-rc.1`，对应提交 `183f08e9c6dde7e36cd2318eaee70b0da08fb35e`。本候选中的所有 Runtime package（包括 fork 专有 package）版本均为 `0.1.5-rc.1`。
 
-## Bundle 与 package 清单
+[`fork-manifest.json`](fork-manifest.json) 是相对该官方提交存在生产源码或 package manifest 差异的机器可读 package 清单。其 `runtimePatchPackages` 数组是下游 Runtime 必须整体安装的精确覆盖集合。
 
-此 fork **没有新增 DSH bundle**，也没有修改 `packages/bundle/` 下的任何 package。Product 组合仍位于 SuperCode 的 `@ainvest-team/supercode-*` package 与封闭的 `supercode-web` patch 中。
+## Package 与 bundle 清单
 
-此 fork 新增两个通用 DSH package：
+此 fork 不新增 DSH bundle，也不修改 `packages/bundle/` 下的 package。Product 组合位于本仓库之外。
+
+它新增两个通用 DSH package：
 
 | Package | 职责 |
 |---|---|
-| [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.zh.md) | 仅供 Host 使用，在 live 状态、持久化、projection、查询索引、workspace 和 sidecar 中递归删除 Session 谱系。 |
-| [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.zh.md) | 可选注册表，在 Bash 或 Pwsh 执行前解析可信且不向模型公开的环境值。 |
+| [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.zh.md) | 仅供 Host 使用，在 live 状态、持久化、projection、索引、workspace 与已注册派生状态中递归删除 Session 家族。 |
+| [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.zh.md) | 可选可信环境 registry，在创建 Bash 或 PowerShell 进程前立即收集。 |
 
-Session 删除能力修改以下官方 package：`dsh-agent`、`dsh-agent-loop`、`dsh-session`、`dsh-session-persistence`、JSONL persistence provider、`dsh-session-projection-cache`、`dsh-session-query-sqlite`、`dsh-workspace`、`dsh-message-feedback`、`dsh-api-session-controller` 和 `dsh-tool-cordis`。这些改动共同完成 live Agent 预留、完整 Session 谱系发现、持久记录删除和派生状态清理，不在 Product 代码中模拟删除。
+Manifest 包含 43 个修改 package 和这 2 个新增 package。生成文档、测试、翻译记录、仓库脚本与构建输出属于受审查的 Git 差异，但不是 Runtime package 覆盖。
 
-可信 shell 执行能力修改 `dsh-tool-bash` 与 `dsh-tool-pwsh`。两个 Consumer 都会在创建前台或后台进程之前可选地收集新 registry；Product 专用鉴权仍位于此 fork 之外。
+## 原生基础
 
-[`fork-manifest.json`](fork-manifest.json) 是所有修改 package、变更生产源码文件和 `runtimePatchPackages` 条目的精确清单，下游 Runtime 必须整体覆盖这些 package。生成文档、测试、翻译记录和仓库脚本不是 Runtime package，因此不在该列表中重复记录。
+Fork 以官方 0.1.5 机制作为各自领域的权威：
 
-Gateway 调用策略与 Connection 通道来源限制保留通用准入边界。`dsh-client-modules` 接受显式 `libraryPackages`，提供公开浏览器导出而不激活默认插件；其 Host 与 Client 协议必须一起覆盖。
+| 领域 | 原生机制 |
+|---|---|
+| Session 恢复 | 第三版日志、`SessionFormatRestore`、迁移坐标、持久化 handle 与发布检查。 |
+| Agent 生命周期 | 异步 `ctx.agents.create`、继承前缀、原生 Activation 所有权与原生 continuation 调度。 |
+| Session 发现 | `SessionQuery`、live 与 cold Session 记录、SQLite 索引和原生 API workspace-file 服务。 |
+| 浏览器模块 | 公共 Client module registry 与生成的 Remote 产物。只有组合声明 `libraryPackages` 时才加载 library 导出；声明 library 不会激活其默认插件。 |
+| 网络路由 | 原生出站代理选择与 dispatcher。DNS fallback 对自身 HTTPS resolver 请求独立应用同一策略。 |
+
+此分支通过公共 package API 扩展这些机制，不会在 adapter 中复制其内部实现。
+
+## 保留的通用能力
+
+Fork 仅保留官方版本尚未提供的可复用 Runtime 能力：
+
+- Session 删除会预留 live 所有权，发现完整后代家族，删除 provider 记录，并在持久化提交后使派生状态失效。
+- 记录式执行目录保留 `SessionHeader.cwd` 作为不可变创建与存储身份。公共解析器和查询记录向文件、hook、skill、LSP、subagent、workspace-file、摘要与 open-in-app 消费方提供有效目录。
+- 精确可恢复 fork 保留请求的目标。Subagent continuation 使用原生生命周期所有权，同时保留逐消息父 Turn 归属与部署方控制的静默父会话投递。
+- Gateway 调用策略与逐通道 loopback 权限提供通用准入边界。Client 公共 library 只有在组合显式声明时才加载。
+- Sandbox policy 对解析后的执行策略施加部署访问上限。Bash 与 PowerShell 可选地收集模型可见工具输入之外的可信环境值。
+- 历史 Session 恢复会保留允许的 delegation 字段与精确迁移坐标。坐标的 source revision 使用跨副本稳定的前代内容身份。JSONL exporter 可读取已发布的 SQLite Session 而不修改源数据库，并且只在新 artifact 中重建可证明的 rc2 chunk provenance。
+- 消息反馈把新修改写入权威 Session 事件，并通过严格、有界、只读的兼容层读取已发布的零版本 sidecar 行。权威 put 与 delete 优先，重启后亦如此。[sidecar 透读决策](.agents/notes/implemented/bug-fix/2026-09-10-message-feedback-sidecar-read-through.zh.md)归属该合同。
+- DIRECT HTTP fetch 可在 DNS 返回保留 Fake-IP 时通过已配置的 HTTPS DNS 恢复。Resolver 流量遵循原生路由策略；直接解析使用固定的公共 bootstrap，代理解析使用原生 dispatcher，源站连接只接受经过校验的公共地址。
+- Session 自动标题保留分支所有权与持久化生成状态，LLM 标题 provider 保留精确摘录与 token 上限。
+
+[执行目录决策](.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.zh.md)归属物理目录合同。其他保留合同由各 package 参考与活跃 Agent Note 链接。
 
 ## 所有权边界
 
-此 fork 只包含可复用的 DSH 能力与缺失的扩展点，不包含 SuperCode UI、AIME 鉴权、Product 策略、Product bundle 或 `@ainvest-team/*` 代码。外部 Product 插件可以消费已发布 API，但 DSH 不得导入该插件。
+此 fork 包含通用 DSH 能力与公共扩展点，不包含 SuperCode UI、鉴权、Product 策略、Product bundle 或 `@ainvest-team/*` import。外部 Product 插件消费已发布 DSH API；DSH 不导入它们。
 
-DSH 改动应在独立维护 checkout 中完成：
-
-```sh
-git clone --branch codex/supercode-rc1-runtime https://github.com/DinkerLay/deepseek-harness.git
-cd deepseek-harness
-git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
-```
-
-SuperCode 中检出的 Submodule 是只读的。应在这个独立 fork 中开发改动并运行 DSH 检查，发布 fork 提交后，再同时移动 SuperCode 的 Submodule 提交、`upstream.json` fork 绑定、Runtime package 覆盖与架构文档。
+SuperCode 检出的 Submodule 是只读的。应在独立 fork checkout 中开发 DSH 改动并运行检查，发布通过审查的 fork 提交后，再同时移动 SuperCode 的 Submodule 绑定、Runtime 覆盖列表、package 版本与架构记录。
 
 ## 更新 fork
 
-1. 有意识地移动上游基线，并审查 `git diff <upstream-commit>...HEAD`。
-2. 将每项 fork 改动与新的官方实现核对；上游提供完整行为后删除对应 fork 差异。
-3. 新增或修改生产 package 时更新 `fork-manifest.json`。`runtimePatchPackages` 是新增和修改 Runtime package 的精确并集。
-4. 保持 package README、子系统参考、中英文 Agent Note、测试与生成目录和代码一致。
-5. SuperCode 接受新提交前，要求其 `upstream.json.runtimePatchPackages` 与本 manifest 匹配。
+1. 有意识地移动官方基线，并将候选与精确官方提交比较。
+2. 将每项保留能力与新的原生实现核对。原生行为满足完整合同时，删除对应 fork 差异。
+3. 根据生产 `src/**` 与 `package.json` 差异重新计算 `fork-manifest.json`。`runtimePatchPackages` 是新增和修改 Runtime package 的排序并集。
+4. 保持 package 参考、子系统参考、中英文 Agent Note、测试与生成目录和生产源码一致。
+5. 接受 fork 提交前，要求下游 Runtime 覆盖集合与 manifest 一致。
 
-Git 仍是完整文件差异的权威来源。manifest 在 package 与 Runtime 组装层面对差异分类，使下游升级无需依赖提交消息还原历史。
-
-## Session execution coordination
-
-Fork 还提供精确 fork 目标、由 effect 管理的 Agent 创建准备、sandbox policy 限制、逐条子任务输入归属和分支自动命名。Git 所有权与 ChatFlow 策略仍由 Product 插件负责。
-
-记录式 Session 执行目录将物理执行与不可变创建 cwd 分离。[执行目录决策](.agents/notes/implemented/architecture/2026-09-07-session-execution-directory.zh.md)定义公共事件和解析器，按需 worktree 分配与回收由 Product 负责。
+Git 是完整的文件级记录。Manifest 对下游组装中必须保持原子性的 Runtime package 进行分类。

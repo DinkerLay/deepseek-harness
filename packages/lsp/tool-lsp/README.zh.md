@@ -9,9 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-tool-lsp` 通过 LSP seam 为模型提供单一的只读 `lsp` 工具，用于精确代码导航：转到符号的定义、查找其引用、跳转到其实现，或阅读悬停文档。该工具拥有模型看到的一切——名称、schema、提示词指引、结果格式化与 UI 呈现——并且绝不依赖哪个语言服务器应答查询。位置是从 1 开始的 UTF-16 光标坐标，工具会将其转换为 seam 从零开始的约定。结果是有边界的位置列表或规范化悬停文本，带有明确的空结果与截断标记。与 `dsh-lsp-stdio` 之类的提供方及 `dsh-lsp` seam 组合，即可启用导航。
-
-本消费方通过 `resolveSessionCwd()` 解析调用 Session：已提交的执行目录绑定优先于创建 cwd。无 Agent 调用保留已记录的后端默认行为；fork 不会把父 Session 的目录绑定事件当作自身绑定。
+模型可以通过一个只读 `lsp` 工具导航定义、引用、实现与 hover 文档。请求使用从一开始的 UTF-16 位置；有界结果按文件分组位置，并区分省略、截断、缺失与错误。需要配置 LSP provider；普通发现仍应使用文本搜索。语言服务器路径跟随记录的 Session 执行目录。
 
 ## 目录
 
@@ -86,10 +84,9 @@ kind: "package-reference"
 <a id="further-exploration"></a>
 ## 进一步探索
 
-当包级约定不够用时阅读以下页面。它们从面向模型的表层逐步进入 seam、提供方与决策证据。
+当包级约定不够用时阅读以下页面。它们从面向模型的表层逐步进入 seam 与提供方。
 
 - [LSP 导航子系统](../../../docs/subsystems/lsp.zh.md)——操作、坐标、请求与结果，以及 `LspError` code。
-- [LSP 能力 seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.zh.md)——设计原理、备选方案与刻意推迟的 API。
 - [dsh-lsp](../lsp/README.zh.md)——本工具查询的 seam。
 - [dsh-lsp-stdio](../lsp-stdio/README.zh.md)——应答这些查询的 stdio 提供方。
 - [lsp 组地图](../README.zh.md)——三个包的家族及其相关文档。
@@ -168,7 +165,7 @@ Use search/read for ordinary navigation. Use lsp when textual matches are ambigu
 
 这些限制说明该工具何时不太合适。它们是当前包约束，不是任务积压。
 
-- **UTF-16 光标坐标**——列坐标与协议精确一致，但模型难以在非 BMP 字符周围计数；未落在符号上的位置可能返回空结果，因此提示词解释了该约定，但不鼓励广泛使用 LSP（见 [seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.zh.md)）。
+- **UTF-16 光标坐标**——列坐标与协议精确一致，但模型难以在非 BMP 字符周围计数；未落在符号上的位置可能返回空结果，因此提示词解释了该约定，但不鼓励广泛使用 LSP。
 - **不承诺跨服务器完整性**——受支持的服务器仍可能根据索引就绪情况返回空或部分结果；该工具不承诺跨语言或服务器的完整性。
 
 <a id="dev-note"></a>

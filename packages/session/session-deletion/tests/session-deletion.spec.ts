@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import AgentRegistry, { Inbox, type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { type Agent, type Inbox } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionSeq, type Session, type SessionHeader } from '@deepseek-ai/dsh-session'
@@ -35,11 +35,12 @@ function header(id: string, cwd: string, parentSession?: ReturnType<typeof Sessi
 
 /** Materialize one closed durable Session. */
 async function persist(ctx: Context, meta: SessionHeader): Promise<void> {
-  await ctx.sessionPersistence.create(meta)
-  await ctx.sessionPersistence.append(meta.id, [
+  const handle = await ctx.sessionPersistence.create(meta)
+  await handle.append([
     { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
     { type: 'turn/end', seq: SessionSeq(1), time: 2, data: { turn: 1, reason: { kind: 'completed' } } },
   ])
+  await handle.close()
 }
 
 /** Mount one real persistence provider and the Host-only deletion service. */
@@ -60,11 +61,23 @@ async function mounted(): Promise<{ readonly ctx: Context; readonly cwd: string 
 
 /** Register one minimal idle Agent over an already-live Session. */
 function registerIdleAgent(ctx: Context, session: Session): { readonly agent: Agent; readonly detach: () => void } {
+  const nextTurn: Inbox['nextTurn'] = []
+  const nextStep: Inbox['nextStep'] = []
+  const inbox: Inbox = {
+    nextTurn,
+    nextStep,
+    clear: () => {},
+    append: () => {},
+    prepend: () => {},
+    replace: () => false,
+    remove: () => false,
+    splice: () => [],
+  }
   const agent = {
     id: session.id,
     options: {},
     session,
-    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    inbox,
     status: 'idle',
     ctx,
     send: () => {},
@@ -106,46 +119,35 @@ describe('SessionDeletion (JSONL)', () => {
     })
   })
 
-  it('deletes a lazy Session identity and notifies derived consumers', async () => {
+  it('refuses a lazy identity while its native write handle owns it', async () => {
     const { ctx, cwd } = await mounted()
     const root = header('jsonl-lazy-root', cwd)
-    await ctx.sessionPersistence.create(root)
-    const deletedEvents: string[] = []
-    ctx.on('session-persistence/deleted', meta => void deletedEvents.push(meta.id))
-
-    await expect(ctx.sessionDeletion.deleteTree(root.id)).resolves.toEqual({
-      rootSessionId: root.id,
-      sessionIds: [root.id],
-      deletedSessionIds: [root.id],
-    })
-    expect(deletedEvents).toEqual([root.id])
+    const owner = await ctx.sessionPersistence.create(root)
+    await expect(ctx.sessionDeletion.deleteTree(root.id)).rejects.toMatchObject({ sessionId: root.id })
+    await owner.close()
     expect(await ctx.sessionPersistence.listDeletionHeaders()).toEqual([])
   })
 
   it('rejects an unretained live Session before deleting durable state', async () => {
     const { ctx, cwd } = await mounted()
     const meta = header('jsonl-unretained', cwd)
-    const session = ctx.sessions.create(meta.id, { meta: { cwd } })
-    session.append('turn/start', { turn: 1 })
-    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    await ctx.sessions.flush(session)
+    await persist(ctx, meta)
+    ctx.sessions.create(meta.id, { meta: { cwd } })
 
     await expect(ctx.sessionDeletion.deleteTree(meta.id)).rejects.toMatchObject({
       code: 'SESSION_HANDLE_NOT_RETAINED',
       sessionId: meta.id,
     } satisfies Partial<SessionDeletionError>)
-    expect((await ctx.sessionPersistence.list()).map(item => item.id)).toContain(meta.id)
+    expect((await ctx.sessionPersistence.list()).map(item => item.header.id)).toContain(meta.id)
   })
 
   it('claims a retained idle lifecycle and then deletes its durable record', async () => {
     const { ctx, cwd } = await mounted()
     const meta = header('jsonl-tracked', cwd)
+    await persist(ctx, meta)
     const session = ctx.sessions.prepare(meta.id, { meta: { cwd } })
     const detachSession = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
-    session.append('turn/start', { turn: 1 })
-    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    await ctx.sessions.flush(session)
     const { agent, detach: detachAgent } = registerIdleAgent(ctx, session)
     const dispose = vi.fn(async () => {
       detachAgent()
@@ -173,14 +175,11 @@ describe('SessionDeletion (JSONL)', () => {
     const { ctx, cwd } = await mounted()
     const rootMeta = header('jsonl-atomic-root', cwd)
     const childMeta = header('jsonl-atomic-child', cwd, rootMeta.id)
+    await persist(ctx, rootMeta)
+    await persist(ctx, childMeta)
     const root = ctx.sessions.create(rootMeta.id, { meta: { cwd } })
     const child = ctx.sessions.create(childMeta.id, { meta: { cwd, parentSession: rootMeta.id } })
-    for (const session of [root, child]) {
-      session.append('turn/start', { turn: 1 })
-      session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-      await ctx.sessions.flush(session)
-      registerIdleAgent(ctx, session)
-    }
+    for (const session of [root, child]) registerIdleAgent(ctx, session)
     const release = vi.fn()
     const dispose = vi.fn(async () => {})
     vi.spyOn(ctx.agents, 'reserveIdleDisposal').mockImplementation(id => id === child.id
@@ -193,7 +192,7 @@ describe('SessionDeletion (JSONL)', () => {
     })
     expect(release).toHaveBeenCalledOnce()
     expect(dispose).not.toHaveBeenCalled()
-    expect((await ctx.sessionPersistence.list()).map(item => item.id).sort())
+    expect((await ctx.sessionPersistence.list()).map(item => item.header.id).sort())
       .toEqual([child.id, root.id].sort())
   })
 })
@@ -220,7 +219,7 @@ describe('SessionDeletion recovery and lineage validation', () => {
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionProjectionRegistry)
-    await ctx.plugin(SystemPrompt, { persona: 'Deletion lifecycle test.' })
+    await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
@@ -262,7 +261,7 @@ describe('SessionDeletion recovery and lineage validation', () => {
     })
 
     await expect(ctx.sessionDeletion.deleteTree(root.id)).rejects.toThrow('root deletion failed')
-    expect((await ctx.sessionPersistence.list()).map(item => item.id)).toEqual([root.id])
+    expect((await ctx.sessionPersistence.list()).map(item => item.header.id)).toEqual([root.id])
     await expect(ctx.sessionDeletion.deleteTree(root.id)).resolves.toEqual({
       rootSessionId: root.id,
       sessionIds: [root.id],

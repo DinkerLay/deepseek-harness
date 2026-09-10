@@ -16,7 +16,7 @@ Host 可以保留同一段对话，同时将执行转移到托管目录。创建
 
 受信任 Host 负责目录分配、活跃使用者协调、输入版本选择和清理，启动文件效果前追加并刷写绑定。既有进程在停止前保持已捕获目录，本能力不会迁移正在运行的 Shell。工具的工作区相对路径随绑定变化，明确路径继续遵循各工具原有的路径和沙箱规则。目录变化时重建文件引用缓存。
 
-这扩展了[逐 Session 文件系统解析](2026-07-02-fs-per-session-cwd.zh.md)，保留调用方拥有路径解析、Provider 独立以及规范文件系统身份的规则，不向 DSH 引入 Git 或 Product 策略。公共用法由 [Session 契约](../../../../packages/core/session/README.zh.md)负责。
+这扩展了[逐 Session 文件系统解析](../../archived/architecture/2026-07-02-fs-per-session-cwd.md)，保留调用方拥有路径解析、Provider 独立以及规范文件系统身份的规则，不向 DSH 引入 Git 或 Product 策略。公共用法由 [Session 契约](../../../../packages/core/session/README.zh.md)负责。
 
 ## Alternatives considered
 

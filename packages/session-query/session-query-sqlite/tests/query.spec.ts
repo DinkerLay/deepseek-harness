@@ -129,12 +129,12 @@ describe('SQLite search predicate compilation', () => {
       predicateCount: 1,
     })
     expect(buildSessionWhere([{ kind: 'cwd', values: [null] }])).toEqual({
-      sql: '(cwd IS NULL)',
+      sql: '(execution_cwd IS NULL)',
       params: [],
       predicateCount: 1,
     })
     expect(buildSessionWhere([{ kind: 'cwd', values: ['/a'] }])).toEqual({
-      sql: '(cwd IN (?))',
+      sql: '(execution_cwd IN (?))',
       params: ['/a'],
       predicateCount: 1,
     })

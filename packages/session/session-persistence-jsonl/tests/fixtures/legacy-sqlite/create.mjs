@@ -23,11 +23,12 @@ try {
     parent.append('turn/start', { turn: 1 })
     parent.append('step/start', { turn: 1, step: 1 })
     parent.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Legacy question' }] }), { surfaceOp: 'append' })
+    const streamed = '历史资料'.repeat(1500)
     for (let index = 0; index < 4; index += 1) {
-      parent.append('assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '历史资料'.repeat(1500) } })
+      parent.append('assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: streamed } })
     }
     parent.append('assistant/message', { turn: 1, step: 1, message: createMessage({
-      role: 'assistant', content: [{ type: 'text', text: 'Legacy answer' }], source: { kind: 'model', provider: 'mock', model: 'mock' },
+      role: 'assistant', content: [{ type: 'text', text: streamed.repeat(4) }], source: { kind: 'model', provider: 'mock', model: 'mock' },
     }) }, { surfaceOp: 'append' })
     parent.append('step/end', { turn: 1, step: 1 })
     parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })

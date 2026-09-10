@@ -84,7 +84,7 @@ interface CatalogInflight {
 }
 
 type SessionListMutation =
-  | { kind: 'upsert'; summary: SessionSummary }
+  | { kind: 'upsert'; summary: SessionSummary; authoritativeCwd?: boolean }
   | { kind: 'remove'; sessionId: SessionId }
   | { kind: 'status'; sessionId: SessionId; running: boolean }
   | { kind: 'activity'; sessionId: SessionId; updatedAt: number }
@@ -615,13 +615,12 @@ export class SessionManager {
   }
 
   /**
-   * Insert-or-enrich a locally synthesized summary: a new id prepends; an
-   * existing entry only gains fields it lacks (the session-added frame and the
-   * create() echo race — whichever lands second must fill the placeholder's
-   * missing cwd/parentSessionId, never overwrite list-refresh data).
+   * Insert or update a Host Session summary. The Host cwd is authoritative so
+   * execution-directory changes replace an earlier list or local-echo value.
+   * @param summary - current Host summary.
    */
   private mergeSummary(summary: SessionSummary): void {
-    this.recordMutation({ kind: 'upsert', summary })
+    this.recordMutation({ kind: 'upsert', summary, authoritativeCwd: true })
   }
 
   /** Apply immediately and retain for replay when a list response is in flight. */
@@ -968,7 +967,10 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
         // Blank only lowers: a stale true (session-added racing the local
         // first send) never re-hides an already-surfaced session.
         blank: existing.blank && mutation.summary.blank,
-        ...(existing.cwd === undefined && mutation.summary.cwd !== undefined ? { cwd: mutation.summary.cwd } : {}),
+        ...(mutation.summary.cwd !== undefined
+          && (mutation.authoritativeCwd === true || existing.cwd === undefined)
+          ? { cwd: mutation.summary.cwd }
+          : {}),
         ...(existing.parentSessionId === undefined && mutation.summary.parentSessionId !== undefined
           ? { parentSessionId: mutation.summary.parentSessionId } : {}),
         ...(existing.origin === undefined && mutation.summary.origin !== undefined

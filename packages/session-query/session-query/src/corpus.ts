@@ -1,16 +1,13 @@
 /** Live/persisted logical-corpus resolution for session-query. */
 
 import type { Context, Fiber } from '@deepseek-ai/cordis'
-import type {
-  Session,
-  SessionEvent,
-  SessionHeader,
-  SessionId,
-  SessionLogOffset,
-} from '@deepseek-ai/dsh-session'
+import { executionDirectoryFromEvents, resolveSessionCwd } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionHeader, SessionId , SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type SessionPersistence from '@deepseek-ai/dsh-session-persistence'
+import type { SessionPersistenceRevision, SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionRecord } from './types.ts'
 import { SessionQueryError } from './config.ts'
+import { readColdSessionLog, type ColdSessionLog } from './cold-read.ts'
 import { assertSessionHeadersCompatible } from './sources.ts'
 
 /** Detached source selected for one exact read. */
@@ -27,8 +24,6 @@ export interface LogicalSession {
 export interface LogicalSessionSource {
   /** Header selected with `events`; callers must clone retained output. */
   readonly header: SessionHeader
-  /** Exact fork-inherited event count paired with {@link header}. */
-  readonly inheritedEventCount: SessionLogOffset
   /** Raw events selected with `header`; valid only for the projection call. */
   readonly events: readonly SessionEvent[]
 }
@@ -38,21 +33,34 @@ export type LogicalProjectionResult<Value> =
   | { sessionId: SessionId; status: 'fulfilled'; value: Value }
   | { sessionId: SessionId; status: 'rejected'; reason: unknown }
 
+/** One revision-keyed effective-directory observation; the Promise coalesces concurrent listings. */
+interface PersistedDirectoryObservation {
+  readonly revision: SessionPersistenceRevision
+  readonly headerIdentity: string
+  readonly controller: AbortController
+  readonly promise: Promise<string | undefined>
+}
+
 /** Resolves a live-preferred corpus against the persistence service mounted now. */
 export class SessionCorpus {
   private _persistence: SessionPersistence | undefined
   private readonly _optionalPersistenceFiber: Fiber
+  private readonly _persistedDirectories = new Map<SessionId, PersistedDirectoryObservation>()
 
   constructor(
     private readonly _ctx: Context,
-    private readonly _persistedInspectConcurrency: number,
+    private readonly _persistedReadConcurrency: number,
   ) {
     this._optionalPersistenceFiber = _ctx.inject(['sessionPersistence'], (childCtx: Context) => {
       const service = childCtx.sessionPersistence
+      this.clearPersistedDirectories()
       this._persistence = service
       childCtx.effect(() => () => {
         /* v8 ignore next -- a stale optional-service disposer cannot clear a replacement */
-        if (this._persistence === service) this._persistence = undefined
+        if (this._persistence === service) {
+          this._persistence = undefined
+          this.clearPersistedDirectories()
+        }
       }, 'sessionQuery.persistenceBinding')
     })
     _ctx.effect(() => {
@@ -68,22 +76,97 @@ export class SessionCorpus {
   async listSessions(signal?: AbortSignal): Promise<SessionRecord[]> {
     signal?.throwIfAborted()
     const persistence = this._persistence
-    const persisted = persistence === undefined ? [] : await listPersisted(persistence, signal)
+    const persisted = persistence === undefined ? [] : await listPersistedSnapshots(persistence, signal)
     signal?.throwIfAborted()
     const records = new Map<SessionId, SessionRecord>()
-    for (const header of persisted) {
-      records.set(header.id, { header: structuredClone(header), live: false, persisted: true })
+    for (const { header } of persisted) {
+      records.set(header.id, {
+        header: structuredClone(header),
+        ...header.cwd === undefined ? {} : { executionDirectory: header.cwd },
+        live: false,
+        persisted: true,
+      })
     }
+    if (persistence !== undefined && persisted.length > 0) {
+      let cursor = 0
+      const resolveDirectory = async (): Promise<void> => {
+        for (;;) {
+          signal?.throwIfAborted()
+          const index = cursor++
+          const snapshot = persisted[index]
+          if (snapshot === undefined) return
+          const directory = await this.persistedDirectory(persistence, snapshot, signal)
+          const record = records.get(snapshot.header.id)
+          if (record === undefined) continue
+          if (directory === undefined) delete record.executionDirectory
+          else record.executionDirectory = directory
+        }
+      }
+      await Promise.all(Array.from(
+        { length: Math.min(this._persistedReadConcurrency, persisted.length) },
+        () => resolveDirectory(),
+      ))
+    }
+    this.prunePersistedDirectories(new Set(persisted.map(snapshot => snapshot.header.id)))
     for (const session of this._ctx.sessions.list()) {
       const durable = records.get(session.id)
       if (durable !== undefined) assertSessionHeadersCompatible(session.header, durable.header)
+      const executionDirectory = resolveSessionCwd(session)
       records.set(session.id, {
         header: structuredClone(session.header),
+        ...(executionDirectory === undefined ? {} : { executionDirectory }),
         live: true,
         persisted: durable !== undefined,
       })
     }
     return [...records.values()].sort(compareSessions)
+  }
+
+  /** Resolve one cold directory once per immutable persistence revision. */
+  private persistedDirectory(
+    persistence: SessionPersistence,
+    snapshot: SessionPersistenceSnapshot,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    signal?.throwIfAborted()
+    const headerIdentity = sessionHeaderIdentity(snapshot.header)
+    let observation = this._persistedDirectories.get(snapshot.header.id)
+    if (observation?.revision !== snapshot.revision || observation.headerIdentity !== headerIdentity) {
+      observation?.controller.abort(new Error('session-query: persisted Session revision changed'))
+      const controller = new AbortController()
+      const entry: PersistedDirectoryObservation = {
+        revision: snapshot.revision,
+        headerIdentity,
+        controller,
+        promise: inspectPersisted(persistence, snapshot.header.id, controller.signal).then((loaded) => {
+          assertSessionHeadersCompatible(loaded.header, snapshot.header)
+          return executionDirectoryFromEvents(loaded.header, loaded.events)
+        }),
+      }
+      observation = entry
+      this._persistedDirectories.set(snapshot.header.id, entry)
+      void entry.promise.catch(() => {
+        if (this._persistedDirectories.get(snapshot.header.id) === entry) {
+          this._persistedDirectories.delete(snapshot.header.id)
+        }
+      })
+    }
+    return waitForObservation(observation.promise, signal)
+  }
+
+  private prunePersistedDirectories(retained: ReadonlySet<SessionId>): void {
+    for (const [sessionId, observation] of this._persistedDirectories) {
+      if (retained.has(sessionId)) continue
+      observation.controller.abort(new Error('session-query: persisted Session was removed'))
+      this._persistedDirectories.delete(sessionId)
+    }
+  }
+
+  private clearPersistedDirectories(): void {
+    for (const observation of this._persistedDirectories.values()) {
+      observation.controller.abort(new Error('session-query: persistence binding changed'))
+    }
+    this._persistedDirectories.clear()
   }
 
   /**
@@ -116,9 +199,9 @@ export class SessionCorpus {
       signal?.throwIfAborted()
       return snapshot
     }
-    assertSessionHeadersCompatible(loaded.meta, listed)
+    assertSessionHeadersCompatible(loaded.header, listed)
     const snapshot = {
-      header: structuredClone(loaded.meta),
+      header: structuredClone(loaded.header),
       inheritedEventCount: loaded.inheritedEventCount,
       events: loaded.events.map(event => structuredClone(event)),
     }
@@ -193,10 +276,9 @@ export class SessionCorpus {
           resolved.set(sessionId, projectSource(sessionId, sourceLive(attached), project, signal))
           return
         }
-        assertSessionHeadersCompatible(loaded.meta, listed)
+        assertSessionHeadersCompatible(loaded.header, listed)
         resolved.set(sessionId, projectSource(sessionId, {
-          header: loaded.meta,
-          inheritedEventCount: loaded.inheritedEventCount,
+          header: loaded.header,
           events: loaded.events,
         }, project, signal))
       } catch (error: unknown) {
@@ -214,7 +296,7 @@ export class SessionCorpus {
         await resolvePersisted(unresolved[index] as SessionId)
       }
     }
-    const workerCount = Math.min(this._persistedInspectConcurrency, unresolved.length)
+    const workerCount = Math.min(this._persistedReadConcurrency, unresolved.length)
     const settlements = await Promise.allSettled(
       Array.from({ length: workerCount }, () => worker()),
     )
@@ -251,11 +333,7 @@ function projectSource<Value>(
 }
 
 function sourceLive(session: Session): LogicalSessionSource {
-  return {
-    header: session.header,
-    inheritedEventCount: session.inheritedEventCount,
-    events: session.snapshotEvents(),
-  }
+  return { header: session.header, events: session.snapshotEvents() }
 }
 
 function orderedResults<Value>(
@@ -269,8 +347,15 @@ async function listPersisted(
   persistence: SessionPersistence,
   signal?: AbortSignal,
 ): Promise<SessionHeader[]> {
+  return (await listPersistedSnapshots(persistence, signal)).map(snapshot => snapshot.header)
+}
+
+async function listPersistedSnapshots(
+  persistence: SessionPersistence,
+  signal?: AbortSignal,
+): Promise<readonly SessionPersistenceSnapshot[]> {
   try {
-    return await persistence.list(signal)
+    return await persistence.list(signal === undefined ? undefined : { signal })
   } catch (error: unknown) {
     if (signal?.aborted) signal.throwIfAborted()
     throw new SessionQueryError(
@@ -281,13 +366,52 @@ async function listPersisted(
   }
 }
 
+/** Prevent a provider's reused revision token from crossing a different listed header identity. */
+function sessionHeaderIdentity(header: SessionHeader): string {
+  return JSON.stringify([
+    header.version,
+    header.id,
+    header.createdAt,
+    header.cwd ?? null,
+    header.parentSession ?? null,
+    header.isSeeded,
+    header.delegationDepth ?? 0,
+  ])
+}
+
+/** Let one listing cancel its wait without cancelling a coalesced read needed by another listing. */
+function waitForObservation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return operation
+  signal.throwIfAborted()
+  return new Promise<T>((resolve, reject) => {
+    const aborted = (): void => {
+      try {
+        signal.throwIfAborted()
+      } catch (error: unknown) {
+        reject(error)
+      }
+    }
+    signal.addEventListener('abort', aborted, { once: true })
+    void operation.then(
+      (value) => {
+        signal.removeEventListener('abort', aborted)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', aborted)
+        reject(error)
+      },
+    )
+  })
+}
+
 async function inspectPersisted(
   persistence: SessionPersistence,
   sessionId: SessionId,
   signal?: AbortSignal,
-): Promise<Awaited<ReturnType<SessionPersistence['inspect']>>> {
+): Promise<ColdSessionLog> {
   try {
-    return await persistence.inspect(sessionId, signal)
+    return await readColdSessionLog(persistence, sessionId, signal)
   } catch (error: unknown) {
     if (signal?.aborted) signal.throwIfAborted()
     if (error instanceof Error && error.name === 'SessionPersistenceCorruptionError') {
@@ -298,7 +422,7 @@ async function inspectPersisted(
       )
     }
     throw new SessionQueryError(
-      `failed to inspect session "${sessionId}": ${errorMessage(error)}`,
+      `failed to read stored session "${sessionId}": ${errorMessage(error)}`,
       'SESSION_QUERY_PERSISTENCE_FAILED',
       { cause: error },
     )

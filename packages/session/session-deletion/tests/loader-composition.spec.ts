@@ -77,11 +77,12 @@ describe('Session deletion through a real Loader composition', () => {
       isSeeded: false,
       cwd: root,
     }
-    await ctx.sessionPersistence.create(header)
-    await ctx.sessionPersistence.append(header.id, [
+    const handle = await ctx.sessionPersistence.create(header)
+    await handle.append([
       { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
       { type: 'turn/end', seq: SessionSeq(1), time: 2, data: { turn: 1, reason: { kind: 'completed' } } },
     ])
+    await handle.close()
 
     await expect(ctx.sessionDeletion.deleteTree(header.id)).resolves.toMatchObject({
       deletedSessionIds: [header.id],
