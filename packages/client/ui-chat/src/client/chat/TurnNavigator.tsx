@@ -177,7 +177,7 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, t }: TurnN
                     className={classes.join(' ')}
                     aria-label={t(
                       item.anchor.kind === 'loaded' ? 'chat.turnNavigation.jump' : 'chat.turnNavigation.jumpLoad',
-                      { turn: item.turn },
+                      { turn: item.displayTurn ?? item.turn },
                     )}
                     aria-current={active ? 'true' : undefined}
                     aria-busy={item.turn === busyTurn ? 'true' : undefined}
@@ -197,7 +197,7 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, t }: TurnN
         {preview !== undefined && previewPosition !== undefined && (
           <div id={previewId} role="tooltip" className={css.preview} style={previewPosition}>
             <div className={css.previewPrompt}>
-              {preview.prompt || t('chat.turnNavigation.turn', { turn: preview.turn })}
+              {preview.prompt || t('chat.turnNavigation.turn', { turn: preview.displayTurn ?? preview.turn })}
             </div>
             {preview.response !== '' && <div className={css.previewResponse}>{preview.response}</div>}
           </div>

@@ -12,6 +12,8 @@ Status: implemented
 
 Conversation View Registry 提供由效果作用域管理的构建器装饰器，以目标及唯一注册 ID 定位。每个 Session 独立实例化包装；注册及撤回会重建活动目标。原有定义、节点身份、持久化与执行仍由原来的模块负责。
 
+装饰后的 Chat 快照可以通过 `excludedTurns` 声明仅用于展示的轮次移除。即使完整日志大纲仍包含这些轮次，原生导航条也不会重新显示它们。轮次数量反映可见选择，已执行步骤和 token 统计保持不变。
+
 ## Alternatives considered
 
 替换原生 Chat 目标会复制其投影和分页行为。修改 DOM 会破坏渲染器所有权。仅负责展示的策略不需要这两种方式。

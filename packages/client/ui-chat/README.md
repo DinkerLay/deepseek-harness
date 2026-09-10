@@ -12,6 +12,7 @@ Use this package to render a browser chat from recorded Session conversations, i
 
 File-mention providers receive the viewed Session ID with the closing-turn owner, so links into inherited history can address the fork itself.
 
+
 ## Table of Contents
 
 - [System prompt row](#system-prompt-row)
@@ -60,6 +61,8 @@ None, as this package renders logged conversation state in the browser and regis
 None; Chat presentation does not assemble or mutate provider requests.
 
 ## Known Limitations and Deferred Work
+
+A decorated Chat snapshot may publish `excludedTurns` for presentation-only retirement. The native navigation rail omits those Turns even when the whole-log outline still contains them. Turn counts reflect this visible selection; executed-step and token accounting remain unchanged.
 
 <a id="known-limitations-and-deferred-work"></a>
 

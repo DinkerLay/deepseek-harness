@@ -95,6 +95,18 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-client-ui-chat",
+      "path": "packages/client/ui-chat",
+      "purpose": "Keep presentation-excluded Turns out of whole-log navigation and logical counts",
+      "source": [
+        "src/client/chat/ChatView.tsx",
+        "src/client/chat/StatsPills.tsx",
+        "src/client/chat/TurnNavigator.tsx",
+        "src/client/chat/turn-rail-items.ts",
+        "src/client/contract/snapshot.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-client-ui-conversation",
       "path": "packages/client/ui-conversation",
       "purpose": "Effect-owned decorators for native per-Session view builders",
@@ -417,6 +429,7 @@
     "@deepseek-ai/dsh-api-workspace-files",
     "@deepseek-ai/dsh-client-connection",
     "@deepseek-ai/dsh-client-modules",
+    "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",

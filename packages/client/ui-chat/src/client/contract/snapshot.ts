@@ -90,6 +90,8 @@ export interface LegacyConversationSlice {
 
 /** Incremental Chat publication with immutable order and stable live keyed readers. */
 export interface ChatSnapshot {
+  /** Presentation-only exclusions; whole-log navigation must not revive these Turns. */
+  readonly excludedTurns?: ReadonlySet<number>
   readonly order: readonly string[]
   readonly nodes: ChatNodeStore
   readonly locations: ChatLocationNodeIndex

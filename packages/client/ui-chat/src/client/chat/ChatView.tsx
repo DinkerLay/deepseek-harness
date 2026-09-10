@@ -225,12 +225,13 @@ export function ChatView({
   // both the data and its change signal: the array identity moves only when a
   // Turn enters, leaves, or changes its preview.
   const turnNavigationItems = useChat(s => s.navigation.items())
+  const excludedTurns = useChat(s => s.excludedTurns)
   // Host-computed whole-log outline; the merge is view-layer only (the
   // conversation snapshot never carries projection values).
   const turnOutline = useProjection('turnOutline')
   const railItems = useMemo(
-    () => mergeTurnRailItems(turnNavigationItems, turnOutline),
-    [turnNavigationItems, turnOutline],
+    () => mergeTurnRailItems(turnNavigationItems, turnOutline, excludedTurns),
+    [turnNavigationItems, turnOutline, excludedTurns],
   )
   const timeline = useChat(s => s.timeline)
   const inbox = useSession(s => s.queue)

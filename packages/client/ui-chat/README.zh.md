@@ -12,6 +12,7 @@ kind: "package-reference"
 
 文件引用提供方同时接收当前查看的 Session ID 与收尾 turn 的属主信息，因此继承历史中的链接可以指向 fork 自身。
 
+
 ## 目录
 
 - [系统提示词行](#system-prompt-row)
@@ -62,6 +63,8 @@ Chat 会在历史前插与 renderer 重新挂载时恢复语义锚点。没有�
 无；Chat 呈现不会组装或修改提供方请求。
 
 ## 已知限制与暂缓事项
+
+装饰后的 Chat 快照可以通过 `excludedTurns` 声明仅用于展示的轮次移除。即使完整日志大纲仍包含这些轮次，原生导航条也不会重新显示它们。轮次数量反映可见选择，已执行步骤和 token 统计保持不变。
 
 <a id="known-limitations-and-deferred-work"></a>
 

@@ -9,6 +9,15 @@ function loadedItem(turn: number, prompt = `p${String(turn)}`, response = `r${St
 }
 
 describe('mergeTurnRailItems', () => {
+  it('does not revive presentation-hidden turns from the whole-log outline', () => {
+    expect(mergeTurnRailItems([loadedItem(2)], [
+      { turn: 1, seq: 0, prompt: 'old attempt', response: 'old answer' },
+      { turn: 2, seq: 8, prompt: 'current attempt', response: 'current answer' },
+    ], new Set([1])).map(item => item.turn)).toEqual([2])
+    expect(mergeTurnRailItems([loadedItem(3)], undefined, new Set([2]))[0]).toMatchObject({ turn: 3, displayTurn: 2, anchor: { kind: 'loaded', key: 'anchor-3' } })
+    expect(mergeTurnRailItems([loadedItem(1)], undefined, new Set([1]))).toEqual([])
+  })
+
   it('returns a stable empty array when both sides are empty', () => {
     expect(mergeTurnRailItems([], undefined)).toBe(mergeTurnRailItems([], []))
   })

@@ -17,7 +17,7 @@
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.zh.md) | 仅供 Host 使用，在 live 状态、持久化、projection、索引、workspace 与已注册派生状态中递归删除 Session 家族。 |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.zh.md) | 可选可信环境 registry，在创建 Bash 或 PowerShell 进程前立即收集。 |
 
-Manifest 包含 44 个修改 package 和这 2 个新增 package。生成文档、测试、翻译记录、仓库脚本与构建输出属于受审查的 Git 差异，但不是 Runtime package 覆盖。
+Manifest 包含 45 个修改 package 和这 2 个新增 package。生成文档、测试、翻译记录、仓库脚本与构建输出属于受审查的 Git 差异，但不是 Runtime package 覆盖。
 
 ## 原生基础
 

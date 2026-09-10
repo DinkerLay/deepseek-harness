@@ -158,6 +158,16 @@ describe('StatsPills', () => {
     timing: { stepStartTime: 1_000, firstTokenTime: 1_800, completedTime: 4_800 },
   })
 
+  it('counts displayed turns while preserving executed steps and token accounting', () => {
+    const { source } = makeSource()
+    const snapshot = { ...source.getSnapshot(), excludedTurns: new Set([1]) }
+    const view = render(<StatsPills {...props({ ...source, getSnapshot: () => snapshot }, {
+      sessionStats: sessionStats({ turns: 2, steps: 8 }), tokenUsage: USAGE,
+    })} />)
+    expect(view.getByText('1 turns 8 steps')).toBeTruthy()
+    expect(view.getByRole('button', { name: '105 tok · Cache hit 90%' })).toBeTruthy()
+  })
+
   it('renders the counts reading and usage pill and hides a brand-new empty session', () => {
     const { source } = makeSource({ nodes: [assistant(1, 1)] })
     const view = render(<StatsPills {...props(source)} />)

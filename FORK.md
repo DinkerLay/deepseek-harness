@@ -17,7 +17,7 @@ It adds two general DSH packages:
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.md) | Host-only recursive Session-family deletion across live state, persistence, projections, indexes, workspaces, and registered derived state. |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.md) | Optional trusted environment registry collected immediately before Bash or PowerShell process creation. |
 
-The manifest contains 44 modified packages and these 2 added packages. Generated documentation, tests, translation records, repository scripts, and build output are part of the reviewed Git diff but are not Runtime package overrides.
+The manifest contains 45 modified packages and these 2 added packages. Generated documentation, tests, translation records, repository scripts, and build output are part of the reviewed Git diff but are not Runtime package overrides.
 
 ## Native foundations
 

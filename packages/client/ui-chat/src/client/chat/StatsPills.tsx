@@ -324,7 +324,11 @@ export const StatsPills = memo(function StatsPills({ useChat, useProjection, t }
   // back to the window-scoped fold wholesale (same field names), paid only
   // while no projection value is served.
   const projected = useProjection('sessionStats')
-  const stats = useMemo(() => projected ?? deriveStats(settledNodes), [projected, settledNodes])
+  const excludedTurns = useChat(snapshot => snapshot.excludedTurns)
+  const stats = useMemo(() => {
+    const totals = projected ?? deriveStats(settledNodes)
+    return excludedTurns === undefined ? totals : { ...totals, turns: Math.max(0, totals.turns - excludedTurns.size) }
+  }, [projected, settledNodes, excludedTurns])
   // Gated on actual token activity: a session whose steps all settled without
   // billing (e.g. every request failed) shows its counts without a usage pill.
   const hasTokens = usage !== undefined

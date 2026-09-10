@@ -4,7 +4,7 @@ import { ConversationDefinitionRegistry } from './definition-registry.ts'
 /** Runtime registry of per-target Conversation snapshot builders. */
 export class ConversationViewRegistry extends ConversationDefinitionRegistry<ConversationViewDefinition> {
   /** Public builder-decoration capability; decorators do not replace Definitions. */
-  readonly builderDecoratorsVersion = 1 as const
+  get builderDecoratorsVersion(): 1 { return 1 }
   private readonly decorators = new Map<string, { target: string; wrap: (builder: ConversationViewBuilder) => ConversationViewBuilder }>()
   private decorated: readonly ConversationViewDefinition[] | undefined
 

@@ -12,6 +12,8 @@ Downstream transcript presentation can require hiding superseded attempts withou
 
 Conversation View Registry owns effect-scoped builder decorators, keyed by target and unique registration ID. Wrappers are instantiated per Session; registration and withdrawal rebuild active targets. Ordinary Definitions, node identity, persistence and execution stay with their existing owners.
 
+A decorated Chat snapshot may publish `excludedTurns` for presentation-only retirement. The native navigation rail omits those Turns even when the whole-log outline still contains them. Turn counts reflect this visible selection; executed-step and token accounting remain unchanged.
+
 ## Alternatives considered
 
 Replacing the native Chat target duplicates its projection and paging behavior. DOM rewriting breaks renderer ownership. Neither is needed for a presentation-only policy.
