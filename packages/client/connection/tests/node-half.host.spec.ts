@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
-import type { IndexInjection, WebServer, WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
+import { WebServer, type IndexInjection, type WebRoute, type WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH, RpcId, apply, inject, type ClientRequest, type ConnectionConfig, type HostConnectionHandle } from '../src/index.ts'
 import { DEFAULT_MAX_REQUEST_BODY_BYTES } from '../src/http-bridge.ts'
 import { provideBrowserCredentials } from './browser-credentials.ts'
@@ -135,6 +135,27 @@ describe('connection node half', () => {
     await vi.waitFor(() => { expect(routes.some(route => route.path === '/scoped')).toBe(true) })
     await consumer.dispose()
     expect(routes.some(route => route.path === '/scoped')).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
+  it('registers scoped RPC against the real Web server service', async () => {
+    const ctx = new Context()
+    provideBrowserCredentials(ctx)
+    const server = ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    await server.await()
+    const transport = ctx.plugin({ inject: [...inject], apply })
+    await transport.await()
+    const consumer = ctx.plugin({
+      inject: ['connection'],
+      apply(owner: Context) {
+        owner.connection.rpc.handle('/scoped', async () => ({ ok: true, value: null }))
+      },
+    })
+    await consumer.await()
+    const port = ctx.get('webServer')!.port
+    const response = await fetch(`http://127.0.0.1:${port}/scoped/status`, { method: 'POST' })
+    for (const runtime of ctx.registry.values()) { for (const fiber of runtime.fibers) await fiber.await() }
+    expect(response.status).toBe(401)
     await ctx.fiber.dispose()
   })
 

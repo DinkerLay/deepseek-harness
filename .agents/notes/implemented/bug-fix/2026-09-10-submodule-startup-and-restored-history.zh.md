@@ -14,7 +14,7 @@ Status: implemented
 
 Session Query 对独立持有的完整日志使用原生 `Session.fromRestore`，保留父子关系、继承数量和本地事件。目录发现仅在明确的历史格式不支持错误下，回退到可读头信息中的创建目录；直接历史读取、一般 I/O 错误和冲突头信息仍正常报错，回退结果按版本缓存。
 
-Connection RPC 注册通过自有注入作用域取得可选的 Web server。通道名同步预留，HTTP 路由随服务器可用性挂载；调用方释放时同时回收通道名与路由。消费者只需依赖 Connection 服务。
+Connection RPC 注册通过自有注入作用域取得可选的 Web server。通道名同步预留，HTTP 路由随服务器可用性挂载；调用方释放时同时回收通道名与路由。消费者只需依赖 Connection 服务。在该注入中，作用域查询保留调用方的隔离关系，避免 Cordis 属性访问保留服务来源作用域的影响。真实 WebServer 测试验证 HTTP 分发；根级假服务不能覆盖受限作用域内的服务读取。
 
 ## Alternatives considered
 

@@ -185,7 +185,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
       () => {
         this.rpcChannels.add(channel)
         const registration = owner.inject(['webServer'], (ctx) => {
-          ctx.effect(() => ctx.webServer.register(route), `client-connection: ${channel} HTTP route`)
+          // Service-call scopes retain the Connection origin for property reads.
+          // The injection guarantees availability; get preserves the caller's isolation.
+          const server = ctx.get('webServer')
+          if (server === undefined) throw new Error('connection: injected Web server is unavailable')
+          ctx.effect(() => server.register(route), `client-connection: ${channel} HTTP route`)
         })
         return async () => {
           this.rpcChannels.delete(channel)

@@ -14,7 +14,7 @@ The installer moves the existing worktree setting into the main worktree configu
 
 Session Query uses the native `Session.fromRestore` path for its independently owned full log, preserving ancestry, inherited count and local events. Directory discovery may fall back to a readable creation-directory header only for an explicitly unsupported historical-format error; explicit history reads, ordinary I/O errors and conflicting headers still fail normally. The fallback is revision-cached.
 
-Connection RPC registrations acquire the optional Web server through an owned injection scope. Channel names are reserved synchronously, HTTP routes follow server availability, and caller disposal releases both the reservation and route. A consumer needs only the Connection service.
+Connection RPC registrations acquire the optional Web server through an owned injection scope. Channel names are reserved synchronously, HTTP routes follow server availability, and caller disposal releases both the reservation and route. A consumer needs only the Connection service. Within this injection, scoped lookup preserves caller isolation despite Cordis retaining the service origin for property access. A real WebServer test verifies HTTP dispatch, since a root-level fake does not enforce scoped service reads.
 
 ## Alternatives considered
 
