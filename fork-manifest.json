@@ -99,10 +99,12 @@
       "path": "packages/client/ui-chat",
       "purpose": "Keep presentation-excluded Turns out of whole-log navigation and logical counts",
       "source": [
+        "src/client/apply.ts",
         "src/client/chat/ChatView.tsx",
         "src/client/chat/StatsPills.tsx",
         "src/client/chat/TurnNavigator.tsx",
         "src/client/chat/turn-rail-items.ts",
+        "src/client/contract/slots.ts",
         "src/client/contract/snapshot.ts"
       ]
     },

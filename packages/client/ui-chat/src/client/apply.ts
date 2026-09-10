@@ -24,7 +24,7 @@ import type {
 import type { ChatSnapshot } from './contract/snapshot.ts'
 import { EMPTY_CHAT_SNAPSHOT } from './contract/snapshot.ts'
 import { ApprovalCommand } from './chat/ApprovalCommand.tsx'
-import { ChatView } from './chat/ChatView.tsx'
+import { ChatView, TurnStatus } from './chat/ChatView.tsx'
 import { registerChatNodeRenderers } from './chat/register-node-renderers.ts'
 import { StatsPills } from './chat/StatsPills.tsx'
 import { registerConversationNodes } from './conversation-nodes/register.ts'
@@ -67,6 +67,9 @@ export function apply(ctx: Context): void {
     }
     return source
   }
+  ctx.slots.inject('conversation.chat.activity', () => ctx.slots.register({
+    name: 'conversation.chat.activity', locale: NS,
+  }, TurnStatus))
   registerConversationNodes(ctx)
   registerChatNodeRenderers(ctx)
   ctx.uiSession.provide({
@@ -102,6 +105,7 @@ export function apply(ctx: Context): void {
       locale: NS,
       children: {
         'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: CHAT_NODE_INJECT },
+        'conversation.chat.activity': { kind: 'single', scope: 'session' },
         'conversation.message.images': { kind: 'single', scope: 'session' },
       },
       store: chatStore,

@@ -53,6 +53,8 @@ Chat 会在历史前插与 renderer 重新挂载时恢复语义锚点。没有�
 
 -----
 
+Session 作用域的 `conversation.chat.activity` 槽允许替换运行指示器，同时由原生 Chat 负责轮次计时与可见性。
+
 <a id="model-experience"></a>
 ## 模型体验
 

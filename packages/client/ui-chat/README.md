@@ -51,6 +51,8 @@ Chat restores semantic anchors across history prepend and renderer remounts. Pin
 
 -----
 
+The Session-scoped `conversation.chat.activity` slot permits an alternate running indicator while native Chat owns Turn timing and visibility.
+
 <a id="model-experience"></a>
 ## Model Experience
 

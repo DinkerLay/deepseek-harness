@@ -164,8 +164,12 @@ function runningTurnStartTime(timeline: ConversationTimelineSnapshot): number | 
   return latest
 }
 
-/** Turn-level model activity label retained across first-token, tool, and streaming phases. */
-function TurnStatus({ startTime, t }: {
+/**
+ * Turn-level activity retained across first-token, tool, and streaming phases.
+ * @param props - native Turn start time and localized display copy.
+ * @returns the default running indicator.
+ */
+export function TurnStatus({ startTime, t }: {
   /** The running turn's logged `turn/start` time; null falls back to mount
    *  time when that boundary is outside the window. */
   startTime: number | null
@@ -805,7 +809,7 @@ export function ChatView({
               double-render the same wait. */}
           {/* Turn-level loading signal: rides the whole running turn (first-token
               wait, tool execution, streaming) so it never flickers per step. */}
-          {running && <TurnStatus startTime={runningTurnStart} t={t} />}
+          {running && renderSlot('conversation.chat.activity', { startTime: runningTurnStart })}
           {pendingSteering.map(item => (
             <PendingSteeringBubble
               key={item.id}
