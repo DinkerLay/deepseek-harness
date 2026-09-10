@@ -44,12 +44,11 @@ function eventLog(text = 'hello'): SessionEvent[] {
 }
 
 class TestHandle implements SessionHandle {
-  readonly inheritedEventCount = SessionLogOffset(0)
-
   constructor(
     readonly id: SessionIdType,
     readonly header: SessionHeader,
     readonly access: SessionAccess,
+    readonly inheritedEventCount = SessionLogOffset(0),
   ) {}
 
   read(offset = 0, length?: number, options?: SessionHandleReadOptions): Promise<SessionHandleReadResult> {
@@ -100,7 +99,7 @@ function entryRevision(entry: { events: SessionEvent[] }): SessionPersistenceRev
 }
 
 class TestPersistence extends SessionPersistence {
-  static entries = new Map<SessionIdType, { meta: SessionHeader; events: SessionEvent[] }>()
+  static entries = new Map<SessionIdType, { meta: SessionHeader; events: SessionEvent[]; inheritedEventCount?: SessionLogOffset }>()
   static listFailure: unknown
   static listOverride: ((signal?: AbortSignal) => Promise<SessionPersistenceSnapshot[]>) | undefined
   static readFailure: unknown
@@ -115,7 +114,7 @@ class TestPersistence extends SessionPersistence {
   static listSignals: Array<AbortSignal | undefined> = []
   static readSignals: Array<AbortSignal | undefined> = []
 
-  static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[] }[] = []): void {
+  static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[]; inheritedEventCount?: SessionLogOffset }[] = []): void {
     this.entries = new Map(entries.map(entry => [entry.meta.id, structuredClone(entry)]))
     this.listFailure = undefined
     this.listOverride = undefined
@@ -140,7 +139,7 @@ class TestPersistence extends SessionPersistence {
   open(id: SessionIdType, access: SessionAccess): Promise<SessionHandle> {
     const entry = TestPersistence.entries.get(id)
     if (entry === undefined) return Promise.reject(new SessionPersistenceNotFoundError(id))
-    return Promise.resolve(new TestHandle(id, structuredClone(entry.meta), access))
+    return Promise.resolve(new TestHandle(id, structuredClone(entry.meta), access, entry.inheritedEventCount))
   }
 
   stat(id: SessionIdType): Promise<SessionPersistenceSnapshot | undefined> {
@@ -462,6 +461,56 @@ describe.each(cancellableExactReads.filter(read => read.inspects))(
 )
 
 describe('session-query exact reads', () => {
+  it('lists unsupported historical headers without accepting their event bodies', async () => {
+    const stored = header('unsupported-history', 1, { cwd: '/recorded' })
+    TestPersistence.reset([{ meta: stored, events: eventLog() }])
+    const refusal = Object.assign(new Error('unsupported old extension'), { name: 'SessionFormatUnsupportedMigrationError' })
+    TestPersistence.readFailure = new Error('cannot restore old generation', { cause: refusal })
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+    try {
+      await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([
+        { header: stored, executionDirectory: '/recorded' },
+      ])
+      await ctx.sessionQuery.listSessions()
+      expect(TestPersistence.readCalls).toEqual([stored.id])
+      await expect(ctx.sessionQuery.readSession(stored.id)).rejects.toThrow('unsupported')
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it.each(['live', 'persisted'] as const)('reads a continued %s fork without treating its local history as seed', async (source) => {
+    TestPersistence.reset()
+    const owner = await liveContext()
+    const parent = owner.sessions.create(SessionId(`parent-${source}`))
+    parent.append('turn/start', { turn: 1 })
+    parent.append('user/message', createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'inherited request' }] }), { surfaceOp: 'append' })
+    parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const child = owner.sessions.fork(parent, undefined, SessionId(`child-${source}`))
+    child.append('turn/start', { turn: 2 })
+    child.append('user/message', createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'local continuation' }] }), { surfaceOp: 'append' })
+    child.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    const events = child.snapshotEvents()
+    const reader = source === 'live' ? owner : await liveContext()
+    try {
+      if (source === 'persisted') {
+        TestPersistence.reset([{ meta: child.header, events: structuredClone([...events]),
+          inheritedEventCount: child.inheritedEventCount }])
+        await reader.plugin(TestPersistence)
+      }
+      const snapshot = await reader.sessionQuery.readSession(child.id)
+      expect(snapshot.session).toEqual(child.header)
+      expect(snapshot.session.parentSession).toBe(parent.id)
+      expect(snapshot.inheritedEventCount).toBe(parent.snapshotEvents().length)
+      expect(snapshot.events).toEqual(events)
+      expect(snapshot.events.length).toBeGreaterThan(snapshot.inheritedEventCount)
+    } finally {
+      if (reader !== owner) await reader.fiber.dispose()
+      await owner.fiber.dispose()
+    }
+  })
+
   it('returns a detached replay-valid full log and rejects a corrupt persisted seed', async () => {
     const valid = header('valid-log', 2)
     const corrupt = header('corrupt-log', 1)

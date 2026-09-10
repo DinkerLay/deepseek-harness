@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { createServer, request as httpRequest } from 'node:http'
 import { Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -118,6 +118,26 @@ function browserCookie(connection: HostConnectionHandle, authority: string): str
 }
 
 describe('connection node half', () => {
+  it('owns dedicated routes through a scoped consumer and a late Web server', async () => {
+    const ctx = new Context()
+    provideBrowserCredentials(ctx)
+    const transport = ctx.plugin({ inject: [...inject], apply })
+    await transport.await()
+    const consumer = ctx.plugin({
+      inject: ['connection'],
+      apply(owner: Context) {
+        owner.connection.rpc.handle('/scoped', async () => ({ ok: true, value: null }))
+      },
+    })
+    await consumer.await()
+    const routes: WebRoute[] = []
+    ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
+    await vi.waitFor(() => { expect(routes.some(route => route.path === '/scoped')).toBe(true) })
+    await consumer.dispose()
+    expect(routes.some(route => route.path === '/scoped')).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
   it('keeps administrative channel authority narrower than authenticated trusted-host access', async () => {
     const { routes, connection, dispose } = await mounted({ trustedHosts: ['harness.example'] })
     try {
@@ -127,6 +147,7 @@ describe('connection node half', () => {
         calls += 1
         return { ok: true, value: 'managed' }
       }, { authority: 'loopback' })
+      await vi.waitFor(() => { expect(routes.some(route => route.path === '/management')).toBe(true) })
       const route = routes.find(route => route.path === '/management')!
       for (const [host, authenticated, status] of [
         ['localhost:3080', false, 401],
@@ -320,6 +341,7 @@ describe('connection node half', () => {
       calls.push({ endpoint, payload })
       return { ok: true, value: { accepted: true } }
     })
+    await vi.waitFor(() => { expect(routes.some(candidate => candidate.path === '/rpc')).toBe(true) })
     const route = routes.find(candidate => candidate.path === '/rpc')
     expect(route).toBeDefined()
 
@@ -449,6 +471,7 @@ describe('connection node half', () => {
       if (endpoint === 'fail') throw new Error('handler broke')
       return { ok: true, value: null }
     })
+    await vi.waitFor(() => { expect(routes.some(candidate => candidate.path === '/rpc')).toBe(true) })
     const route = routes.find(candidate => candidate.path === '/rpc')!
     const harnessHeaders = {
       host: 'harness.example',

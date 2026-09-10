@@ -266,18 +266,17 @@ function planWorktreeConfigMigration(root, commonConfigPath) {
     }
   }
 
-  const extensionEnabled = worktreeConfigExtensionEnabled(root, commonConfigPath)
+  const extensionText = assertSingle(
+    directFileConfigValues(root, commonConfigPath, 'extensions.worktreeConfig'),
+    'extensions.worktreeConfig',
+  )
+  const extensionEnabled = extensionText === undefined
+    ? false
+    : parseGitBoolean(extensionText, 'extensions.worktreeConfig')
   const worktreeText = assertSingle(
     directFileConfigValues(root, commonConfigPath, 'core.worktree'),
     'core.worktree',
   )
-  if (worktreeText !== undefined) {
-    throw new Error(
-      `cannot enable extensions.worktreeConfig while core.worktree is in the common config `
-      + `(file:${commonConfigPath}: ${JSON.stringify(worktreeText)}); `
-      + 'move it to the main worktree config first',
-    )
-  }
 
   const directBareText = assertSingle(directFileConfigValues(root, commonConfigPath, 'core.bare'), 'core.bare')
   const directBare = directBareText === undefined ? undefined : parseGitBoolean(directBareText, 'core.bare')
@@ -288,20 +287,83 @@ function planWorktreeConfigMigration(root, commonConfigPath) {
     )
   }
 
-  return { directBare, extensionEnabled, version }
+  return { directBareText, extensionEnabled, extensionText, version, versionText, worktreeText }
 }
 
-function applyWorktreeConfigMigration(root, commonConfigPath, migration) {
-  const { directBare, extensionEnabled, version } = migration
-  if (version === 0) {
-    git(['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', '1'], root)
+function applyWorktreeConfigMigration(root, commonConfigPath, mainWorktreeConfigPath, migration) {
+  const { directBareText, extensionEnabled, extensionText, version, versionText, worktreeText } = migration
+  const mainConfigExisted = existsSync(mainWorktreeConfigPath)
+  const rollbackSteps = []
+  const change = (args, rollback) => {
+    git(args, root)
+    rollbackSteps.unshift(rollback)
   }
-  if (!extensionEnabled) {
-    git(['config', '--file', commonConfigPath, 'extensions.worktreeConfig', 'true'], root)
+  const rollback = () => {
+    const errors = []
+    for (const step of rollbackSteps) {
+      try {
+        step()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, `worktree config migration rollback failed: ${errors.map(String).join('; ')}`)
+    }
   }
-  if (directBare === false) {
-    git(['config', '--file', commonConfigPath, '--unset-all', 'core.bare'], root)
+
+  try {
+    if (worktreeText !== undefined) {
+      change(
+        ['config', '--file', mainWorktreeConfigPath, 'core.worktree', worktreeText],
+        () => {
+          git(['config', '--file', mainWorktreeConfigPath, '--unset-all', 'core.worktree'], root)
+          if (!mainConfigExisted && !hasDirectConfigEntries(root, mainWorktreeConfigPath)) {
+            unlinkSync(mainWorktreeConfigPath)
+          }
+        },
+      )
+      change(
+        ['config', '--file', commonConfigPath, '--unset-all', 'core.worktree'],
+        () => git(['config', '--file', commonConfigPath, 'core.worktree', worktreeText], root),
+      )
+    }
+    if (version === 0) {
+      change(
+        ['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', '1'],
+        () => git(['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', versionText], root),
+      )
+    }
+    if (!extensionEnabled) {
+      change(
+        ['config', '--file', commonConfigPath, 'extensions.worktreeConfig', 'true'],
+        () => {
+          if (extensionText === undefined) {
+            git(['config', '--file', commonConfigPath, '--unset-all', 'extensions.worktreeConfig'], root)
+          } else {
+            git(['config', '--file', commonConfigPath, 'extensions.worktreeConfig', extensionText], root)
+          }
+        },
+      )
+    }
+    if (directBareText !== undefined) {
+      change(
+        ['config', '--file', commonConfigPath, '--unset-all', 'core.bare'],
+        () => git(['config', '--file', commonConfigPath, 'core.bare', directBareText], root),
+      )
+    }
+  } catch (error) {
+    try {
+      rollback()
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        `worktree config migration failed: ${String(error)}; ${String(rollbackError)}`,
+      )
+    }
+    throw error
   }
+  return rollback
 }
 
 function readInstallLock(lockPath) {
@@ -703,6 +765,7 @@ async function main() {
   const commonOutput = stripGitLineTerminator(git(['rev-parse', '--git-common-dir'], root).stdout)
   const commonDirectory = isAbsolute(commonOutput) ? commonOutput : resolve(root, commonOutput)
   const commonConfigPath = join(commonDirectory, 'config')
+  const mainWorktreeConfigPath = join(commonDirectory, 'config.worktree')
   const worktreeConfigPath = join(gitDirectory, 'config.worktree')
   const hooksPath = join(gitDirectory, HOOKS_DIRECTORY)
   const releaseLock = await acquireInstallLock(commonDirectory)
@@ -772,7 +835,12 @@ async function main() {
     ) {
       throw new Error(`hooks directory ownership changed while relocating ${JSON.stringify(worktreePath)}`)
     }
-    applyWorktreeConfigMigration(root, commonConfigPath, migration)
+    const rollbackMigration = applyWorktreeConfigMigration(
+      root,
+      commonConfigPath,
+      mainWorktreeConfigPath,
+      migration,
+    )
 
     let pathChanged = false
     let rollbackPairingMergeDriver = () => {}
@@ -807,6 +875,11 @@ async function main() {
       }
       try {
         rollbackPairingMergeDriver()
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError)
+      }
+      try {
+        rollbackMigration()
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }

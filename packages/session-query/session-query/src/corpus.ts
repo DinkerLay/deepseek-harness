@@ -141,6 +141,19 @@ export class SessionCorpus {
         promise: inspectPersisted(persistence, snapshot.header.id, controller.signal).then((loaded) => {
           assertSessionHeadersCompatible(loaded.header, snapshot.header)
           return executionDirectoryFromEvents(loaded.header, loaded.events)
+        }, (error: unknown) => {
+          if (controller.signal.aborted) throw error
+          let cause: unknown = error
+          while (cause instanceof Error) {
+            if (cause.name === 'SessionFormatUnsupportedMigrationError') {
+              // Listing a readable header does not require accepting its old body.
+              // Explicit history reads still report the unsupported format.
+              this._ctx.logger.warn(`Session ${snapshot.header.id} has unsupported historical data; displaying its recorded creation directory.`)
+              return snapshot.header.cwd
+            }
+            cause = cause.cause
+          }
+          throw error
         }),
       }
       observation = entry

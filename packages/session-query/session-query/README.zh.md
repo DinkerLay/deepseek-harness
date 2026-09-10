@@ -112,7 +112,7 @@ Session 记录公开 `SessionHeader.isSeeded`，以及从观察日志折叠出�
 
 ### 读取与追踪
 
-`readSession` 通过 `Session.create` 回放日志，复用恢复的校验。`readSurface`、`listEvents` 与 `traceEvent` 共用一次 `foldSurface` 遍历，把事件分类为 `current`、`shadowed` 或 `log-only`，并校验从零开始且连续的 seq、表层标记的适用性以及替换或引用完整性；任何违规都以 `SESSION_QUERY_INVALID_SURFACE` 失败。追踪是一次性的：会话血缘只读取一次语料库并确定性遍历父级与后代树；事件追踪沿位置替换者跟进到最终节点，同时保持被引用源事件链接不传递。
+`readSession` 通过 `Session.fromRestore` 回放日志，复用恢复的校验。`readSurface`、`listEvents` 与 `traceEvent` 共用一次 `foldSurface` 遍历，把事件分类为 `current`、`shadowed` 或 `log-only`，并校验从零开始且连续的 seq、表层标记的适用性以及替换或引用完整性；任何违规都以 `SESSION_QUERY_INVALID_SURFACE` 失败。追踪是一次性的：会话血缘只读取一次语料库并确定性遍历父级与后代树；事件追踪沿位置替换者跟进到最终节点，同时保持被引用源事件链接不传递。
 
 </details>
 
@@ -149,7 +149,7 @@ Session 记录公开 `SessionHeader.isSeeded`，以及从观察日志折叠出�
 
 - **无调用方授权**——这是上下文范围内的可信基础设施；模型工具或 UI 必须限制调用方可检查的会话。
 - **无提供方协调器或回退**——服务在搜索上是抽象的，组合必须挂载具体后端；没有搜索提供方注册表或回退实现。
-- **有效目录 cold start 会检查日志**——`listSessions` 首次观察某个持久化 revision 时读取其逻辑日志；未变 revision 会复用仅含目录的缓存。`readSession`、`readSurface`、`filterEvents` 与事件追踪仍按需加载逻辑日志。持久化 SQLite 索引在搜索过滤器中复用同一派生目录。
+- **有效目录 cold start 会检查日志**——`listSessions` 首次观察某个持久化 revision 时读取其逻辑日志；未变 revision 会复用仅含目录的缓存。历史迁移明确不受支持时，列表保留可读 header 中的创建目录；打开该历史仍会失败，直到其格式得到支持。`readSession`、`readSurface`、`filterEvents` 与事件追踪仍按需加载逻辑日志。持久化 SQLite 索引在搜索过滤器中复用同一派生目录。
 - **字面文本扫描，而非全文搜索**——`text` 过滤器用正则表达式扫描提取出的文档且不排序；排序搜索需要挂载后端。
 
 <a id="dev-note"></a>

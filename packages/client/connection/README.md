@@ -27,6 +27,8 @@ Browser clients can issue Remote calls, receive exact Fetch responses, observe c
 
 The browser uses HTTP POST for Remote unary calls. API Gateway owns the `/api/remote.mux` WebSocket and its logical streams; shell-owned compositions provide equivalent Remote streams through `connection.rpc.open` without opening a WebSocket. The Host half always provides the carrier-neutral RPC and exact `GET`/`HEAD`/`POST` route registries. When a Web carrier is present it also owns the sole `/api` route, Fetch bridge, browser authentication, and Host/Origin checks; a shell-owned carrier dispatches the shared Fetch handler directly. Each exact route declares buffered or streaming request-body handling before the bridge reads any bytes. Typert Gateway claims generated Remote endpoints, feature packages register non-JSON responses such as Session-log downloads and raw file uploads, and unclaimed requests return 404. Loopback hostname classification remains package-internal to the browser-facing Client state. Browser raw-body transfer is provided by [`dsh-client-file-upload`](../file-upload/README.md).
 
+Dedicated `connection.rpc.handle` channels reserve their names immediately and mount their HTTP routes when `webServer` is available. Consumers inject only `connection`; disposing a consumer removes its route and reservation. Duplicate channel names reject synchronously.
+
 -----
 
 <a id="browser-authentication-and-request-trust"></a>

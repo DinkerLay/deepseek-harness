@@ -61,6 +61,7 @@ declare module '@deepseek-ai/cordis' {
 export class HostConnectionService extends Service implements HostConnectionHandle {
   private readonly interceptors = new Map<string, ConnectionRpcInterceptor>()
   private readonly fetchRoutes = new Map<string, RegisteredFetchRoute>()
+  private readonly rpcChannels = new Set<string>()
 
   /**
    * Provide the Host half over the active HTTP server.
@@ -164,6 +165,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     options?: ConnectionRpcHandlerOptions,
   ): () => Promise<void> {
     assertChannel(channel)
+    if (this.rpcChannels.has(channel)) throw new Error(`connection: duplicate route ${channel}`)
     const fetchHandler = rpcFetchHandler(channel, handler)
     const route: WebRoute = {
       kind: 'prefix',
@@ -180,7 +182,16 @@ export class HostConnectionService extends Service implements HostConnectionHand
       },
     }
     return owner.effect(
-      () => owner.webServer.register(route),
+      () => {
+        this.rpcChannels.add(channel)
+        const registration = owner.inject(['webServer'], (ctx) => {
+          ctx.effect(() => ctx.webServer.register(route), `client-connection: ${channel} HTTP route`)
+        })
+        return async () => {
+          this.rpcChannels.delete(channel)
+          await registration.dispose()
+        }
+      },
       `client-connection: ${channel} rpc channel`,
     )
   }

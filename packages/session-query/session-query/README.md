@@ -112,7 +112,7 @@ The decision history lives in the [unified service decision](../../../.agents/no
 
 ### Reads and traces
 
-`readSession` replays the log through `Session.create` to reuse resume's validation. `readSurface`, `listEvents`, and `traceEvent` share one `foldSurface` pass that classifies events as `current`, `shadowed`, or `log-only` and validates zero-based contiguous seqs, surface-marker eligibility, and replacement or citation integrity; any violation fails with `SESSION_QUERY_INVALID_SURFACE`. Traces are one-shot: session lineage reads the corpus once and walks parents and descendant trees deterministically, and event traces follow positional replacers to the final node while keeping cited-source links non-transitive.
+`readSession` replays the log through `Session.fromRestore` to reuse resume's validation. `readSurface`, `listEvents`, and `traceEvent` share one `foldSurface` pass that classifies events as `current`, `shadowed`, or `log-only` and validates zero-based contiguous seqs, surface-marker eligibility, and replacement or citation integrity; any violation fails with `SESSION_QUERY_INVALID_SURFACE`. Traces are one-shot: session lineage reads the corpus once and walks parents and descendant trees deterministically, and event traces follow positional replacers to the final node while keeping cited-source links non-transitive.
 
 </details>
 
@@ -149,7 +149,7 @@ These limits define when this package is a poor fit or needs special operational
 
 - **No caller authorization** — this is trusted context-wide infrastructure; a model tool or UI must constrain which sessions its caller may inspect.
 - **No provider coordinator or fallback** — the service is abstract over search, so a composition must mount a concrete backend; there is no search-provider registry or fallback implementation.
-- **Effective-directory cold starts inspect logs** — the first `listSessions` observation of a persisted revision reads that logical log; unchanged revisions reuse the directory-only cache. `readSession`, `readSurface`, `filterEvents`, and event traces still load logical logs as needed. The persisted SQLite index reuses the same derived directory for search filters.
+- **Effective-directory cold starts inspect logs** — the first `listSessions` observation of a persisted revision reads that logical log; unchanged revisions reuse the directory-only cache. An explicitly unsupported historical migration retains its readable creation-directory header in listings; opening that history still fails until its format is supported. `readSession`, `readSurface`, `filterEvents`, and event traces still load logical logs as needed. The persisted SQLite index reuses the same derived directory for search filters.
 - **Literal text scan, not full-text search** — the `text` filter scans extracted documents with a regular expression and does not rank; ranked search requires the mounted backend.
 
 <a id="dev-note"></a>

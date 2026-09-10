@@ -37,6 +37,14 @@ interface CommandResult {
   stdout: string
 }
 
+interface SubmoduleFixture {
+  fixture: Fixture
+  commonConfig: string
+  mainWorktreeConfig: string
+  originalWorktree: string
+  submodule: string
+}
+
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) removeFixtureSafely(fixture)
 })
@@ -131,12 +139,8 @@ function installPairingProbeFixture(root: string): void {
   symlinkSync(tsxPackageDirectory, join(root, 'node_modules/tsx'), linkType)
 }
 
-function createFixture(names: { main?: string; linked?: string } = {}): Fixture {
-  const container = mkdtempSync(join(tmpdir(), 'dsh-lefthook-'))
-  fixtures.push(container)
-  const main = join(container, names.main ?? 'main')
-  const linked = join(container, names.linked ?? 'linked')
-  const env: NodeJS.ProcessEnv = {
+function fixtureEnvironment(container: string): NodeJS.ProcessEnv {
+  return {
     ...process.env,
     CI: 'false',
     GITHUB_ACTIONS: 'false',
@@ -149,6 +153,14 @@ function createFixture(names: { main?: string; linked?: string } = {}): Fixture 
     HOME: container,
     XDG_CONFIG_HOME: join(container, '.config'),
   }
+}
+
+function createFixture(names: { main?: string; linked?: string } = {}): Fixture {
+  const container = mkdtempSync(join(tmpdir(), 'dsh-lefthook-'))
+  fixtures.push(container)
+  const main = join(container, names.main ?? 'main')
+  const linked = join(container, names.linked ?? 'linked')
+  const env = fixtureEnvironment(container)
   const fixture = { container, env, linked, main }
   mkdirSync(main)
   git(fixture, container, ['init', main])
@@ -163,6 +175,44 @@ function createFixture(names: { main?: string; linked?: string } = {}): Fixture 
   installPairingProbeFixture(main)
   installPairingProbeFixture(linked)
   return fixture
+}
+
+function createSubmoduleFixture(): SubmoduleFixture {
+  const container = mkdtempSync(join(tmpdir(), 'dsh-lefthook-submodule-'))
+  fixtures.push(container)
+  const env = fixtureEnvironment(container)
+  const source = join(container, 'source')
+  const superproject = join(container, 'superproject')
+  const linkedSuperproject = join(container, 'linked-superproject')
+  mkdirSync(source)
+  git({ container, env, linked: source, main: source }, container, ['init', source])
+  write(join(source, 'README.md'), '# submodule fixture\n')
+  write(join(source, 'lefthook.yml'), 'submodule-worktree-config\n')
+  git({ container, env, linked: source, main: source }, source, ['add', 'README.md', 'lefthook.yml'])
+  git({ container, env, linked: source, main: source }, source, ['commit', '-m', 'submodule fixture'])
+
+  mkdirSync(superproject)
+  const superprojectFixture = { container, env, linked: linkedSuperproject, main: superproject }
+  git(superprojectFixture, container, ['init', superproject])
+  write(join(superproject, 'README.md'), '# superproject fixture\n')
+  git(superprojectFixture, superproject, ['add', 'README.md'])
+  git(superprojectFixture, superproject, ['commit', '-m', 'superproject fixture'])
+  git(superprojectFixture, superproject, ['worktree', 'add', '-b', 'linked-superproject', linkedSuperproject])
+  git(superprojectFixture, linkedSuperproject, [
+    '-c', 'protocol.file.allow=always', 'submodule', 'add', source, 'deepseek-harness',
+  ])
+
+  const submodule = join(linkedSuperproject, 'deepseek-harness')
+  installFakeLefthook(submodule)
+  installPairingProbeFixture(submodule)
+  const fixture = { container, env, linked: submodule, main: submodule }
+  const common = commonDirectory(fixture)
+  const commonConfig = join(common, 'config')
+  const mainWorktreeConfig = join(common, 'config.worktree')
+  const originalWorktree = git(fixture, submodule, [
+    'config', '--file', commonConfig, '--no-includes', '--get', 'core.worktree',
+  ])
+  return { fixture, commonConfig, mainWorktreeConfig, originalWorktree, submodule }
 }
 
 function gitDirectory(fixture: Fixture, root: string): string {
@@ -462,17 +512,87 @@ describe('worktree-local Lefthook installer', { timeout: 90_000 }, () => {
     expect(existsSync(hooksPath(fixture, fixture.main))).toBe(false)
   })
 
-  it('refuses direct core.worktree before enabling worktree config', async () => {
+  it('moves common core.worktree to the main config when installing from a linked worktree', async () => {
     const fixture = createFixture()
     const commonConfig = join(commonDirectory(fixture), 'config')
-    git(fixture, fixture.main, ['config', '--file', commonConfig, 'core.worktree', fixture.main])
+    const mainWorktreeConfig = join(commonDirectory(fixture), 'config.worktree')
+    const originalWorktree = '..'
+    git(fixture, fixture.main, ['config', '--file', commonConfig, 'core.worktree', originalWorktree])
+    const topLevel = git(fixture, fixture.linked, ['rev-parse', '--show-toplevel'])
 
     const result = await runInstaller(fixture, fixture.linked)
 
+    expect(result.status, result.stderr).toBe(0)
+    expect(gitResult(fixture, fixture.main, [
+      'config', '--file', commonConfig, '--no-includes', '--get', 'core.worktree',
+    ]).status).toBe(1)
+    expect(git(fixture, fixture.main, [
+      'config', '--file', mainWorktreeConfig, '--no-includes', '--get', 'core.worktree',
+    ])).toBe(originalWorktree)
+    expect(git(fixture, fixture.linked, ['rev-parse', '--show-toplevel'])).toBe(topLevel)
+    expect(git(fixture, fixture.linked, ['config', '--worktree', '--get', 'core.hooksPath'])).toBe(
+      hooksPath(fixture, fixture.linked),
+    )
+  })
+
+  it('installs in a submodule initialized from a linked superproject and preserves repository config', async () => {
+    const setup = createSubmoduleFixture()
+    const includedConfig = join(setup.fixture.container, 'included.gitconfig')
+    write(includedConfig, '[user]\n\temail = included@example.test\n')
+    git(setup.fixture, setup.submodule, [
+      'config', '--file', setup.commonConfig, 'include.path', includedConfig,
+    ])
+    git(setup.fixture, setup.submodule, [
+      'config', '--file', setup.commonConfig, 'dsh.install-sentinel', 'preserved',
+    ])
+    const topLevel = git(setup.fixture, setup.submodule, ['rev-parse', '--show-toplevel'])
+
+    const first = await runInstaller(setup.fixture, setup.submodule)
+    const second = await runInstaller(setup.fixture, setup.submodule)
+
+    expect(first.status, first.stderr).toBe(0)
+    expect(second.status, second.stderr).toBe(0)
+    expect(gitResult(setup.fixture, setup.submodule, [
+      'config', '--file', setup.commonConfig, '--no-includes', '--get', 'core.worktree',
+    ]).status).toBe(1)
+    expect(git(setup.fixture, setup.submodule, [
+      'config', '--file', setup.mainWorktreeConfig, '--no-includes', '--get-all', 'core.worktree',
+    ])).toBe(setup.originalWorktree)
+    expect(git(setup.fixture, setup.submodule, ['rev-parse', '--show-toplevel'])).toBe(topLevel)
+    expect(git(setup.fixture, setup.submodule, ['config', '--get', 'user.email'])).toBe('included@example.test')
+    expect(git(setup.fixture, setup.submodule, ['config', '--get', 'dsh.install-sentinel'])).toBe('preserved')
+    expect(git(setup.fixture, setup.submodule, ['config', '--worktree', '--get', 'core.hooksPath'])).toBe(
+      hooksPath(setup.fixture, setup.submodule),
+    )
+    expect(existsSync(join(hooksPath(setup.fixture, setup.submodule), 'pre-commit'))).toBe(true)
+  })
+
+  it('restores common core.worktree and repository config when hook installation fails', async () => {
+    const fixture = createFixture()
+    const commonConfig = join(commonDirectory(fixture), 'config')
+    const mainWorktreeConfig = join(commonDirectory(fixture), 'config.worktree')
+    const originalWorktree = '..'
+    git(fixture, fixture.main, ['config', '--file', commonConfig, 'core.worktree', originalWorktree])
+    git(fixture, fixture.main, ['config', '--file', commonConfig, 'dsh.install-sentinel', 'preserved'])
+
+    const result = await runInstaller(fixture, fixture.linked, { DSH_TEST_LEFTHOOK_FAIL: '1' })
+
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain('core.worktree is in the common config')
-    expect(gitResult(fixture, fixture.main, ['config', '--get', 'extensions.worktreeConfig']).status).toBe(1)
-    expect(existsSync(hooksPath(fixture, fixture.main))).toBe(false)
+    expect(result.stderr).toContain('exit status 77')
+    expect(git(fixture, fixture.main, [
+      'config', '--file', commonConfig, '--no-includes', '--get', 'core.worktree',
+    ])).toBe(originalWorktree)
+    expect(git(fixture, fixture.main, [
+      'config', '--file', commonConfig, '--no-includes', '--get', 'core.repositoryFormatVersion',
+    ])).toBe('0')
+    expect(git(fixture, fixture.main, [
+      'config', '--file', commonConfig, '--no-includes', '--get', 'core.bare',
+    ])).toBe('false')
+    expect(gitResult(fixture, fixture.main, [
+      'config', '--file', commonConfig, '--no-includes', '--get', 'extensions.worktreeConfig',
+    ]).status).toBe(1)
+    expect(git(fixture, fixture.main, ['config', '--get', 'dsh.install-sentinel'])).toBe('preserved')
+    expect(existsSync(mainWorktreeConfig)).toBe(false)
   })
 
   it.skipIf(process.platform === 'win32')('refuses a symlinked common repository config before writing through it', async () => {
@@ -748,9 +868,9 @@ describe('worktree-local Lefthook installer', { timeout: 90_000 }, () => {
     expect(git(fixture, fixture.main, [
       'config', '--local', '--get', 'merge.dsh-translation-pairing.driver',
     ])).toBe('inherited-driver %A')
-    expect(gitResult(fixture, fixture.main, [
-      'config', '--worktree', '--get', 'merge.dsh-translation-pairing.driver',
-    ]).status).toBe(1)
+    expect(git(fixture, fixture.main, [
+      'config', '--file', join(commonDirectory(fixture), 'config.worktree'), '--no-includes', '--list',
+    ])).toBe('')
     expect(gitResult(fixture, fixture.main, ['config', '--get', 'core.hooksPath']).status).toBe(1)
   })
 
@@ -801,14 +921,11 @@ describe('worktree-local Lefthook installer', { timeout: 90_000 }, () => {
     const result = await runInstaller(fixture, fixture.main, { DSH_TEST_LEFTHOOK_FAIL: '1' })
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('exit status 77')
-    expect(gitResult(fixture, fixture.main, ['config', '--worktree', '--get', 'core.hooksPath']).status).toBe(1)
+    expect(git(fixture, fixture.main, [
+      'config', '--file', join(common, 'config.worktree'), '--no-includes', '--list',
+    ])).toBe('')
     expect(gitResult(fixture, fixture.main, ['config', '--get', 'core.hooksPath']).status).toBe(1)
-    expect(gitResult(fixture, fixture.main, [
-      'config', '--worktree', '--get', 'merge.dsh-translation-pairing.name',
-    ]).status).toBe(1)
-    expect(gitResult(fixture, fixture.main, [
-      'config', '--worktree', '--get', 'merge.dsh-translation-pairing.driver',
-    ]).status).toBe(1)
+    expect(gitResult(fixture, fixture.main, ['config', '--get', 'extensions.worktreeConfig']).status).toBe(1)
     expect(readFileSync(legacyHook, 'utf8')).toBe('#!/bin/sh\n# legacy pre-push\n')
   })
 
