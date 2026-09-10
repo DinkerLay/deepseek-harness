@@ -138,6 +138,8 @@ Read these pages when the package-level contract is not enough. They move from t
 
 -----
 
+Coordinate preflight and ordinary reads expose the same public persistence error for unsupported historical formats.
+
 <a id="model-experience"></a>
 ## Model Experience
 

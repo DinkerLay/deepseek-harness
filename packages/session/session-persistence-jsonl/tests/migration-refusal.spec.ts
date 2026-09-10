@@ -158,6 +158,7 @@ describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compres
     const message = diagnostic + '; source v2 artifact remains unchanged (raw log: ' + path + ')'
     const ctx = await mount(compression)
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(ctx.sessionPersistence.migrationCoordinates(id)).rejects.toBeInstanceOf(SessionFormatUnsupportedError)
       await expectRefusal(ctx, access, path, message)
       expect(await observe(path)).toEqual(original)
       await expectOnlyGenerations([path])

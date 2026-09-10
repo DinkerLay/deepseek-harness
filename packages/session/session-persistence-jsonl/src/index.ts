@@ -497,6 +497,7 @@ class JsonlSessionPersistence extends SessionPersistence {
    * Recover exact event coordinates from the newest retained historical
    * generation. The source is never rewritten; an existing current successor
    * must decode to the same logical artifact before its revision is returned.
+   * Unsupported preflight sources use the same public persistence error as an ordinary read.
    * @param id - Session identity whose migration is inspected.
    * @param options - optional cancellation for source and target reads.
    * @returns durable migration coordinates, or `undefined` without a retained predecessor.
@@ -524,7 +525,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         signal,
       ),
       ...(signal === undefined ? {} : { signal }),
-    })
+    }).catch((error: unknown) => { throw this.generationFailure(id, selected, error) })
     signal?.throwIfAborted()
     let targetRevision: PersistenceRevision | undefined
     if (await this.exists(selected.currentPath)) {

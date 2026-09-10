@@ -138,6 +138,8 @@ rc2 SQLite writer 可以在最终 Assistant 消息前直接保存一个精确 ch
 
 -----
 
+坐标预检与普通读取对不支持的历史格式暴露同一种公开持久化错误。
+
 <a id="model-experience"></a>
 ## 模型体验
 
