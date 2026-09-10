@@ -7,6 +7,9 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+
+View builder decorators register through `uiConversation.views.decorate(target, id, wrap)`. Each Session receives a separate wrapper around the native builder. Registration and disposal invalidate active snapshots; duplicate IDs reject synchronously. Decorators own presentation policy and must preserve the native incremental update semantics and Session data.
+
 ## Summary
 
 `ui-conversation` owns target-neutral Conversation assembly and the shared browser shell. It consumes Session Controller `SessionEventLikeEntry` feeds, exposes React-free registries and per-Session bindings through `ctx.uiConversation`, and contributes the `useConversation`, `useInput`, and `inputActions` standard props through `ctx.uiSession`. It also owns the per-session durable image URL cache: `ctx.uiConversation.imageUrl(sessionId, attachment)` resolves one session-authorized browser URL per attachment and revokes it with the Session binding, so every Conversation target shares one `session.attachment` read. Concrete targets such as Chat are separate packages that register their own Definitions, snapshot builders, Views, and renderers.
