@@ -2,7 +2,7 @@
 
 English | [中文](FORK.zh.md)
 
-This branch is the DSH Runtime fork used by SuperCode. It is based on official `dsh-v0.1.5-rc.1` at `183f08e9c6dde7e36cd2318eaee70b0da08fb35e`. Every Runtime package in this candidate, including the fork-only packages, has version `0.1.5-rc.1`.
+This branch is the DSH Runtime fork used by SuperCode. It is based on official `dsh-v0.1.5-rc.2` at `fb2c4b9e698e30edb738bca4cf0618587db7d203`. Every Runtime package in this candidate, including the fork-only packages, has version `0.1.5-rc.2`.
 
 [`fork-manifest.json`](fork-manifest.json) is the machine-readable inventory of packages whose production source or package manifest differs from that official commit. Its `runtimePatchPackages` array is the exact override set a downstream Runtime must install together.
 
@@ -17,7 +17,7 @@ It adds two general DSH packages:
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.md) | Host-only recursive Session-family deletion across live state, persistence, projections, indexes, workspaces, and registered derived state. |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.md) | Optional trusted environment registry collected immediately before Bash or PowerShell process creation. |
 
-The manifest contains 49 modified packages and these 2 added packages. Generated documentation, tests, translation records, repository scripts, and build output are part of the reviewed Git diff but are not Runtime package overrides.
+The manifest contains 50 modified packages and these 2 added packages. Generated documentation, tests, translation records, repository scripts, and build output are part of the reviewed Git diff but are not Runtime package overrides.
 
 ## Native foundations
 

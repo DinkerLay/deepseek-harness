@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "upstream": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
-    "tag": "dsh-v0.1.5-rc.1",
-    "commit": "183f08e9c6dde7e36cd2318eaee70b0da08fb35e"
+    "tag": "dsh-v0.1.5-rc.2",
+    "commit": "fb2c4b9e698e30edb738bca4cf0618587db7d203"
   },
   "addedBundles": [],
   "addedPackages": [
@@ -122,6 +122,14 @@
       "purpose": "Explicit caller-owned Markdown file-link navigation",
       "source": [
         "src/markdown/render.tsx"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-cordis-client-runner",
+      "path": "packages/extensions/cordis-client-runner",
+      "purpose": "Publish the retained Chat activity slot in the native client extension catalog",
+      "source": [
+        "src/client/slot-catalog.ts"
       ]
     },
     {
@@ -468,6 +476,7 @@
     "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
     "@deepseek-ai/dsh-client-ui-primitives",
+    "@deepseek-ai/dsh-cordis-client-runner",
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",
     "@deepseek-ai/dsh-hooks-codex",

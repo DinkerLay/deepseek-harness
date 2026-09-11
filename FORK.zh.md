@@ -2,7 +2,7 @@
 
 [English](FORK.md) | 中文
 
-此分支是 SuperCode 使用的 DSH Runtime fork，基于官方 `dsh-v0.1.5-rc.1`，对应提交 `183f08e9c6dde7e36cd2318eaee70b0da08fb35e`。本候选中的所有 Runtime package（包括 fork 专有 package）版本均为 `0.1.5-rc.1`。
+此分支是 SuperCode 使用的 DSH Runtime fork，基于官方 `dsh-v0.1.5-rc.2`，对应提交 `fb2c4b9e698e30edb738bca4cf0618587db7d203`。本候选中的所有 Runtime package（包括 fork 专有 package）版本均为 `0.1.5-rc.2`。
 
 [`fork-manifest.json`](fork-manifest.json) 是相对该官方提交存在生产源码或 package manifest 差异的机器可读 package 清单。其 `runtimePatchPackages` 数组是下游 Runtime 必须整体安装的精确覆盖集合。
 
@@ -17,7 +17,7 @@
 | [`@deepseek-ai/dsh-session-deletion`](packages/session/session-deletion/README.zh.md) | 仅供 Host 使用，在 live 状态、持久化、projection、索引、workspace 与已注册派生状态中递归删除 Session 家族。 |
 | [`@deepseek-ai/dsh-shell-exec-env`](packages/shell/shell-exec-env/README.zh.md) | 可选可信环境 registry，在创建 Bash 或 PowerShell 进程前立即收集。 |
 
-Manifest 包含 49 个修改 package 和这 2 个新增 package。生成文档、测试、翻译记录、仓库脚本与构建输出属于受审查的 Git 差异，但不是 Runtime package 覆盖。
+Manifest 包含 50 个修改 package 和这 2 个新增 package。生成文档、测试、翻译记录、仓库脚本与构建输出属于受审查的 Git 差异，但不是 Runtime package 覆盖。
 
 ## 原生基础
 
