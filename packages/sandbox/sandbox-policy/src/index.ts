@@ -39,14 +39,14 @@ function resolveWorkspaceRoot(path: string): string {
 }
 
 /** Render the policy without claiming which capabilities are mounted. */
-function renderPolicyContext(policy: SandboxExecutionPolicy): string {
+function renderPolicyContext(policy: SandboxExecutionPolicy, runtimeName: string): string {
   switch (policy.mode) {
     case 'read-only':
-      return 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
+      return `Current ${runtimeName} file policy: read-only. Any available operation enforced by the ${runtimeName} file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.`
     case 'workspace-write':
-      return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
+      return `Current ${runtimeName} file policy: workspace-write. Any available operation enforced by the ${runtimeName} file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
     case 'danger-full-access':
-      return 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.'
+      return `Current ${runtimeName} file policy: danger-full-access. The ${runtimeName} file sandbox does not restrict file modifications by available operations.`
     /* v8 ignore next 4 -- SandboxMode is a typed same-process closed union; this branch is only the static exhaustiveness guard. */
     default: {
       const mode: never = policy.mode
@@ -69,6 +69,8 @@ declare module '@deepseek-ai/cordis' {
  * is any per-family knob: this is the one shared policy home.
  */
 export interface Config {
+  /** Deployment name used in model-facing policy guidance; defaults to DSH and does not affect enforcement. */
+  runtimeName?: string
   /** File-sandbox mode a session starts from (default: `read-only`). */
   mode?: SandboxMode
   /**
@@ -125,6 +127,7 @@ export class SandboxPolicyService extends Service {
   }
   // Inline schema call: the config catalog walks `static Config` statically.
   static Config: z<Config> = z.object({
+    runtimeName: z.string().min(1).pattern(/^[^\r\n]+$/u).default('DSH'),
     mode: z.union(['read-only', 'workspace-write', 'danger-full-access'] as const).default('read-only'),
     // No schema default: process.cwd() is resolved in the constructor so the
     // stored root is always absolute regardless of how it was supplied.
@@ -139,6 +142,7 @@ export class SandboxPolicyService extends Service {
   readonly workspaceRoot: string
   constructor(ctx: Context, config: Config) {
     super(ctx, 'sandboxPolicy')
+    const runtimeName = config.runtimeName ?? 'DSH'
     // schemastery (static Config) already filled `mode`; the cast records that
     // runtime fact. `workspaceRoot` has NO schema default, so its fallback to
     // the process cwd is real branching, resolved absolute either way.
@@ -161,7 +165,7 @@ export class SandboxPolicyService extends Service {
           const session = context.agent?.session
           return session === undefined
             ? ''
-            : renderPolicyContext(this.resolve({ session }))
+            : renderPolicyContext(this.resolve({ session }), runtimeName)
         },
       })
     })

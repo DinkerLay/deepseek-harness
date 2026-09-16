@@ -108,8 +108,9 @@ export class ReactLoopAgent implements Agent {
     /* v8 ignore next -- the loop registers its own turnBoundary unit, so the key is always present */
     const lastTurn = this.loopCtx.sessionProjections.stateOf(session, 'turnBoundary')?.lastTurn ?? 0
     this.phase = { kind: 'idle', lastTurn }
-    this.runtimeContext = new RuntimeContextProjection(this.ctx, session)
-    this.systemPrompt = new SystemPromptProjection(session)
+    this.runtimeContext = new RuntimeContextProjection(this.ctx, session,
+      this.loopCtx.systemPrompt.sourcePlugin, this.loopCtx.systemPrompt.legacySourcePlugins)
+    this.systemPrompt = new SystemPromptProjection(session, this.loopCtx.systemPrompt.sourcePlugin)
   }
 
   get status(): AgentStatus {

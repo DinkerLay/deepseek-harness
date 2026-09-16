@@ -6,7 +6,7 @@ import LlmRuntime, { createUserMessage, LlmError, type GenerateOptions } from '@
 import { toPiContext } from '@deepseek-ai/dsh-llm-pi-ai/src/context.ts'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import SystemPrompt, { type Config as PromptConfig } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, textResponse } from './mock-adapter.ts'
 
@@ -15,13 +15,13 @@ afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
 })
 
-async function harness(capable = new MockAdapter(Array.from({ length: 8 }, () => textResponse('ok')))) {
+async function harness(capable = new MockAdapter(Array.from({ length: 8 }, () => textResponse('ok'))), promptConfig: PromptConfig = {}) {
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
-  await ctx.plugin(SystemPrompt, { personaPrefix: '', personaSuffix: '' })
+  await ctx.plugin(SystemPrompt, { personaPrefix: '', personaSuffix: '', ...promptConfig })
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
@@ -305,4 +305,18 @@ describe('prepared-route prompt admission', () => {
     expect(systemTexts(h.capable.requests[1]!)).toHaveLength(2)
     expect(h.agent.session.snapshotEvents().filter(event => event.type === 'user/message')).toHaveLength(2)
   })
+})
+
+
+it('records the selected provider identity on real loop system and context messages', async () => {
+  const sourcePlugin = '@example/product-prompt'
+  const h = await harness(undefined, { sourcePlugin, legacySourcePlugins: ['@deepseek-ai/dsh-system-prompt'] })
+  h.ctx.systemPrompt.context({ name: 'deployment', order: 1, text: 'Runtime context.' })
+  await send(h.agent, 'first')
+  const events = h.agent.session.snapshotEvents()
+  const systems = events.filter(event => event.type === 'system/message')
+  expect(systems.length).toBeGreaterThan(0)
+  expect(systems.every(event => event.data.message.source.kind === 'plugin' && event.data.message.source.plugin === sourcePlugin)).toBe(true)
+  const context = events.find(event => event.type === 'user/message' && event.data.source.kind === 'plugin')
+  expect(context?.data).toMatchObject({ source: { kind: 'plugin', plugin: sourcePlugin, form: 'snapshot' } })
 })

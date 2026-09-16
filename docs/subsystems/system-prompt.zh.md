@@ -2,6 +2,8 @@
 
 [English](system-prompt.md) | 中文
 
+该服务通过 `sourceIdentityVersion`、`sourcePlugin` 和 `legacySourcePlugins` 声明循环拥有的持久来源。[提供方身份决策](../../.agents/notes/implemented/architecture/2026-09-16-provider-owned-prompt-provenance.zh.md)约束当前来源写入与历史来源识别。
+
 [system-prompt 包](../../packages/core/system-prompt)负责管理提示词贡献者与一次组装调用之间交换的数据。该包的 [README](../../packages/core/system-prompt/README.zh.md) 记录注册、排序、作用域与渲染行为；本页记录各插件实现或传递的确切跨包类型。
 
 源码：[`packages/core/system-prompt/src/index.ts`](../../packages/core/system-prompt/src/index.ts)。

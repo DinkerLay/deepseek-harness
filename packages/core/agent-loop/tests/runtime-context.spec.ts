@@ -28,7 +28,7 @@ describe('RuntimeContextProjection', () => {
       sourceEventSeqs: [shadowed.seq],
     })
 
-    const projection = new RuntimeContextProjection(ctx, session)
+    const projection = new RuntimeContextProjection(ctx, session, SOURCE, [])
     expect(session.surface.nodes).toContain(retained.seq)
     expect(projection.project('retained', [])).toBeUndefined()
     expect(projection.project('next', [{ name: 'sandbox:policy', text: 'policy' }])?.source).toEqual({
@@ -42,4 +42,34 @@ describe('RuntimeContextProjection', () => {
     other.append('user/message', contextMessage('other'), { surfaceOp: 'append' })
     expect(projection.project('retained', [])).toBeUndefined()
   })
+})
+
+
+it('restores a previous provider snapshot and records the new identity even when its text is unchanged', async () => {
+  const ctx = new Context()
+  try {
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create(SessionId('provider-replacement'))
+    const old = session.append('user/message', contextMessage('same'), { surfaceOp: 'append' })
+    const source = '@example/product-prompt'
+    const projection = new RuntimeContextProjection(ctx, session, source, [SOURCE])
+    const next = projection.project('same', [{ name: 'policy', text: 'same' }])!
+    expect(next.source).toMatchObject({ kind: 'plugin', plugin: source })
+    session.append('user/message', next, { surfaceOp: 'append' })
+    expect(projection.project('same', [])).toBeUndefined()
+    expect(old.data.source).toMatchObject({ plugin: SOURCE })
+    const restored = new RuntimeContextProjection(ctx, session, source, [SOURCE])
+    expect(restored.project('same', [])).toBeUndefined()
+  } finally { await ctx.fiber.dispose() }
+})
+
+it('does not claim a foreign provider when clearing an empty current context', async () => {
+  const ctx = new Context()
+  try {
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create(SessionId('foreign-provider'))
+    session.append('user/message', contextMessage('foreign'), { surfaceOp: 'append' })
+    const projection = new RuntimeContextProjection(ctx, session, '@example/other-prompt', [])
+    expect(projection.project('', [])).toBeUndefined()
+  } finally { await ctx.fiber.dispose() }
 })

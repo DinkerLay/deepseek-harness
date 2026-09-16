@@ -45,7 +45,8 @@
       "purpose": "Coordinate Agent lifecycle, deletion reservations, and recorded execution directories",
       "source": [
         "src/agent.ts",
-        "src/index.ts"
+        "src/index.ts",
+        "src/runtime-context.ts"
       ]
     },
     {
@@ -391,6 +392,14 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-system-prompt",
+      "path": "packages/core/system-prompt",
+      "purpose": "Provider-owned durable prompt provenance and legacy source declarations",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-tool-bash",
       "path": "packages/shell/tool-bash",
       "purpose": "Consume the optional trusted per-execution environment registry",
@@ -540,6 +549,7 @@
     "@deepseek-ai/dsh-subprocess",
     "@deepseek-ai/dsh-subprocess-e2b",
     "@deepseek-ai/dsh-subprocess-local",
+    "@deepseek-ai/dsh-system-prompt",
     "@deepseek-ai/dsh-tool-bash",
     "@deepseek-ai/dsh-tool-bash-persistent",
     "@deepseek-ai/dsh-tool-cordis",

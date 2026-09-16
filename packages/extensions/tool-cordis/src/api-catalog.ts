@@ -2527,6 +2527,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Registry service for the prompt inputs assembled before each model step.',
     methods: [
       {
+        signature: 'readonly sourceIdentityVersion: number = 1',
+        description: 'Version of the provider-owned durable source identity API.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly sourcePlugin: string',
+        description: 'Package identity attached by the loop to this provider\'s new messages.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly legacySourcePlugins: readonly string[]',
+        description: 'Historical package identities accepted during runtime-context restoration.',
+        parameters: [],
+      },
+      {
         signature: 'section(section: PromptSection): () => void',
         description: 'Register an ordered prompt section in the calling context\'s scope. A scoped section shadows a global section with the same name; duplicates within one layer and non-finite orders throw. Registration and disposal emit `system-prompt/change`.',
         parameters: [{ name: 'section', description: 'the section to register.' }],
@@ -6057,7 +6072,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SystemPrompt',
-    declaration: 'export class SystemPrompt extends Service {\n    static Config: z<Config>;\n    constructor(ctx: Context, config: Config);\n    section(section: PromptSection): () => void;\n    getSectionOrder(name: PromptSectionOrderName): number;\n    getContextOrder(name: PromptContextOrderName): number;\n    context(context: PromptContext): () => void;\n    suppressRuntimeContext(): () => void;\n    tools(provider: (context: AssembleContext) => ToolProviderResult): () => void;\n    variable(name: string, provider: (context: AssembleContext) => string | undefined): () => void;\n    async assemble(context: AssembleContext = {}): Promise<PromptAssembly>;\n}',
+    declaration: 'export class SystemPrompt extends Service {\n    readonly sourceIdentityVersion: number;\n    readonly sourcePlugin: string;\n    readonly legacySourcePlugins: readonly string[];\n    static Config: z<Config>;\n    constructor(ctx: Context, config: Config);\n    section(section: PromptSection): () => void;\n    getSectionOrder(name: PromptSectionOrderName): number;\n    getContextOrder(name: PromptContextOrderName): number;\n    context(context: PromptContext): () => void;\n    suppressRuntimeContext(): () => void;\n    tools(provider: (context: AssembleContext) => ToolProviderResult): () => void;\n    variable(name: string, provider: (context: AssembleContext) => string | undefined): () => void;\n    async assemble(context: AssembleContext = {}): Promise<PromptAssembly>;\n}',
   },
   {
     name: 'SystemPromptUpdate',

@@ -240,6 +240,10 @@ function compareToolNames(a: ToolSchema, b: ToolSchema): number {
 
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
 export interface Config {
+  /** Package identity recorded on system prompts and runtime-context snapshots. */
+  sourcePlugin?: string
+  /** Previous provider identities whose runtime-context snapshots remain owned on resume. */
+  legacySourcePlugins?: string[]
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
@@ -397,7 +401,16 @@ class PromptLayer implements ScopeLayer {
 
 /** Registry service for the prompt inputs assembled before each model step. */
 export class SystemPrompt extends Service {
+  /** Version of the provider-owned durable source identity API. */
+  readonly sourceIdentityVersion: number = 1
+  /** Package identity attached by the loop to this provider's new messages. */
+  readonly sourcePlugin: string
+  /** Historical package identities accepted during runtime-context restoration. */
+  readonly legacySourcePlugins: readonly string[]
+
   static Config: z<Config> = z.object({
+    sourcePlugin: z.string().pattern(/^\S+$/u).default('@deepseek-ai/dsh-system-prompt'),
+    legacySourcePlugins: z.array(z.string().pattern(/^\S+$/u)).default([]),
     includeHarnessIdentity: z.boolean().default(true),
     includeRuntimeContext: z.boolean().default(true),
     personaPrefix: z.string().default(''),
@@ -414,6 +427,8 @@ export class SystemPrompt extends Service {
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'systemPrompt')
+    this.sourcePlugin = config.sourcePlugin ?? '@deepseek-ai/dsh-system-prompt'
+    this.legacySourcePlugins = Object.freeze([...(config.legacySourcePlugins ?? [])])
     this.toolOrder = validateToolOrder(config.toolOrder)
     // Keep harness-owned openers independent of the selected loop plugin.
     if (config.includeHarnessIdentity ?? true) {

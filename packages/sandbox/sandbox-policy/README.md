@@ -7,6 +7,8 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+`runtimeName` controls the deployment name in model-facing policy guidance and defaults to `DSH`. It does not change the resolved mode, writable roots, or escalation rules.
+
 ## Summary
 
 Deployments can apply one file-effect policy to every confined shell, filesystem, and terminal call. A default mode and fallback root apply until a Session selects another durable mode. Every consumer receives the same resolved mode and workspace for a call, and the model sees that effective policy before requests. Registered constraints can only narrow the approved policy and cannot relocate its trusted execution root.

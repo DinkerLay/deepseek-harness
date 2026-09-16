@@ -7,6 +7,8 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+System and runtime-context messages record the selected SystemPrompt provider identity. A provider change publishes new surface operations without rewriting existing events; configured legacy runtime-context sources remain recognizable on resume.
+
 ## Summary
 
 Applications can create fresh agents or resume persisted Sessions and drive each turn through model requests, streamed responses, tools, and durable history. Declarative entries start agents at boot, while `ctx.agents` supports programmatic creation and resume. Parallel-safe tools honor a configured concurrency limit; exclusive calls keep order. Cancellation preserves delivered text. The loop uses the recorded execution directory and supports exclusive idle-disposal claims.

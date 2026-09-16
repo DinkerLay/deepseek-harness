@@ -7,6 +7,8 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+`sourcePlugin` selects the package identity the Agent Loop records on new system and runtime-context messages. It defaults to `@deepseek-ai/dsh-system-prompt`. `legacySourcePlugins` defaults to an empty array and identifies previous runtime-context owners accepted on resume. `sourceIdentityVersion` is `1`. The provider copies the aliases at construction; these fields do not alter prompt text.
+
 ## Summary
 
 `dsh-system-prompt` lets agents receive one ordered system prompt and the available tool schemas for each model step. Use it to add prompt sections, dynamic runtime facts, reusable variables, or tool schemas, or to control the fixed harness identity, deployment persona, runtime context, and model-facing tool order. Agent-scoped contributions override same-named global defaults without affecting other agents. Invalid complete-prompt combinations and unresolved variables fail assembly instead of sending a malformed prompt.

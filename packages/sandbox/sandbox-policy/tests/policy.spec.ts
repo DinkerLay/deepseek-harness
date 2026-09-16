@@ -270,3 +270,17 @@ describe('the sandbox/mode session kit', () => {
     expect(modeEvents[0]?.data).toEqual({ mode: 'danger-full-access' })
   })
 })
+
+
+it('uses deployment-owned policy wording without changing the resolved enforcement policy', async () => {
+  const ctx = new Context()
+  try {
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', runtimeName: 'Product' })
+    const active = session('product-policy', '/project')
+    expect(await policyContext(ctx, active)).toContain('Current Product file policy: workspace-write.')
+    expect(await policyContext(ctx, active)).toContain('the Product file sandbox')
+    expect(ctx.sandboxPolicy.resolve({ session: active }).mode).toBe('workspace-write')
+  } finally { await ctx.fiber.dispose() }
+})

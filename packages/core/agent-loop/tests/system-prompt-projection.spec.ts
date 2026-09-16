@@ -47,7 +47,7 @@ describe('SystemPromptProjection', () => {
       session.append('system/message', { turn: 1, step: 1, message: {
         ...createSystemMessage('tail', SOURCE), content: [{ type: 'reasoning', text: 'retained content' }],
       } }, { surfaceOp: 'append' })
-      const projection = new SystemPromptProjection(session)
+      const projection = new SystemPromptProjection(session, SOURCE)
       for (const update of projection.project('', CONTINUING)) commit(session, 2, update)
       expect(session.deriveMessages().map(message => message.role)).toEqual(['user'])
       expect(projection.project('', CONTINUING)).toEqual([])
@@ -59,7 +59,7 @@ describe('SystemPromptProjection', () => {
   it('appends the first rendered prompt, skips an unchanged one, and replaces the retained node on change', async () => {
     const ctx = await sessionStore()
     const session = ctx.sessions.create(SessionId('system-prompt-fresh'))
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
 
     const first = projection.project('v1', REPLACING)[0]
     expect(first?.intent).toEqual({ surfaceOp: 'append' })
@@ -88,7 +88,7 @@ describe('SystemPromptProjection', () => {
     const ctx = await sessionStore()
     try {
       const session = ctx.sessions.create(SessionId('system-prompt-empty-head'))
-      const projection = new SystemPromptProjection(session)
+      const projection = new SystemPromptProjection(session, SOURCE)
       const first = projection.project('', REPLACING)[0]
       expect(first?.intent).toEqual({ surfaceOp: 'append' })
       expect(first?.message.content).toEqual([])
@@ -118,14 +118,14 @@ describe('SystemPromptProjection', () => {
     appendUser(session, 'hello')
     const current = session.append('system/message', { turn: 2, step: 1, message: createSystemMessage('current', SOURCE) }, replaceOf(stale.seq))
 
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
     expect(projection.project('current', REPLACING)[0]).toBeUndefined()
     expect(projection.project('next', REPLACING)[0]?.intent).toEqual(replaceOf(current.seq))
 
     const emptySession = ctx.sessions.create(SessionId('system-prompt-empty-replay'))
     const empty = emptySession.append('system/message', { turn: 1, step: 1, message: createSystemMessage('', SOURCE) }, { surfaceOp: 'append' })
     appendUser(emptySession, 'hello')
-    const emptyProjection = new SystemPromptProjection(emptySession)
+    const emptyProjection = new SystemPromptProjection(emptySession, SOURCE)
     expect(emptyProjection.project('', REPLACING)[0]).toBeUndefined()
     expect(emptyProjection.project('now present', REPLACING)[0]?.intent).toEqual(replaceOf(empty.seq))
   })
@@ -133,7 +133,7 @@ describe('SystemPromptProjection', () => {
   it('appends again after a replacement shadowed a system node that was not the head', async () => {
     const ctx = await sessionStore()
     const session = ctx.sessions.create(SessionId('system-prompt-shadowed'))
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
     appendUser(session, 'before any prompt')
     const late = projection.project('late prompt', REPLACING)[0]
     expect(late?.intent).toEqual({ surfaceOp: 'append' })
@@ -151,7 +151,7 @@ describe('SystemPromptProjection', () => {
   it('appends a changed prompt after cached history on an in-history route while the series continues', async () => {
     const ctx = await sessionStore()
     const session = ctx.sessions.create(SessionId('system-prompt-in-history'))
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
     const head = commit(session, 1, projection.project('v1', CONTINUING)[0])
     appendUser(session, 'hello')
 
@@ -175,7 +175,7 @@ describe('SystemPromptProjection', () => {
   it('re-baselines node 0 and empties later active nodes at a series start', async () => {
     const ctx = await sessionStore()
     const session = ctx.sessions.create(SessionId('system-prompt-series-start'))
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
     const head = commit(session, 1, projection.project('v1', CONTINUING)[0])
     appendUser(session, 'hello')
 
@@ -198,7 +198,7 @@ describe('SystemPromptProjection', () => {
   it('empties all active nodes when clearing an in-history prompt', async () => {
     const ctx = await sessionStore()
     const session = ctx.sessions.create(SessionId('system-prompt-in-history-clear'))
-    const projection = new SystemPromptProjection(session)
+    const projection = new SystemPromptProjection(session, SOURCE)
     commit(session, 1, projection.project('v1', CONTINUING)[0])
     appendUser(session, 'hello')
     const update = commit(session, 2, projection.project('v2', CONTINUING)[0])
@@ -214,4 +214,21 @@ describe('SystemPromptProjection', () => {
     expect(projection.project('', CONTINUING)).toEqual([])
     expect(projection.project('v3', REPLACING).map(commit => commit.message.content)).toEqual([[{ type: 'text', text: 'v3' }]])
   })
+})
+
+
+it('reconciles a provider change through a new surface operation without rewriting the original event', async () => {
+  const ctx = await sessionStore()
+  try {
+    const session = ctx.sessions.create(SessionId('system-provider-change'))
+    const old = session.append('system/message', { turn: 1, step: 1, message: createSystemMessage('same', SOURCE) }, { surfaceOp: 'append' })
+    const projection = new SystemPromptProjection(session, '@example/product-prompt')
+    const updates = projection.project('same', CONTINUING)
+    expect(updates).toHaveLength(1)
+    expect(updates[0]!.message.source).toEqual({ kind: 'plugin', plugin: '@example/product-prompt' })
+    expect(updates[0]!.intent).toEqual(replaceOf(old.seq))
+    commit(session, 2, updates[0])
+    expect(projection.project('same', CONTINUING)).toEqual([])
+    expect(old.data.message.source).toEqual({ kind: 'plugin', plugin: SOURCE })
+  } finally { await ctx.fiber.dispose() }
 })

@@ -7,6 +7,8 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+`runtimeName` 控制模型可见策略指导中的部署名称，默认为 `DSH`。它不改变解析后的模式、可写根目录或升级规则。
+
 ## 概述
 
 部署方可以对所有受限 shell、文件系统与 terminal 调用应用统一的文件影响策略。默认模式与 fallback 根目录持续生效，直到 Session 选择另一种持久模式。每个消费方在一次调用中获得相同的解析后模式与 workspace，模型也会在请求前看到该有效策略。注册的 constraint 只能收窄获批策略，不能移动其可信执行根目录。

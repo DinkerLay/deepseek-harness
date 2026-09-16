@@ -674,3 +674,18 @@ describe('SystemPrompt', () => {
     })
   })
 })
+
+
+it('validates durable provider identities and copies historical aliases', async () => {
+  const ctx = new Context()
+  try {
+    const aliases = ['@example/previous-prompt']
+    await ctx.plugin(SystemPrompt, { sourcePlugin: '@example/prompt', legacySourcePlugins: aliases })
+    aliases.push('later')
+    expect(ctx.systemPrompt.sourceIdentityVersion).toBe(1)
+    expect(ctx.systemPrompt.sourcePlugin).toBe('@example/prompt')
+    expect(ctx.systemPrompt.legacySourcePlugins).toEqual(['@example/previous-prompt'])
+    expect(() => SystemPrompt.Config({ sourcePlugin: ' ' })).toThrow()
+    expect(() => SystemPrompt.Config({ legacySourcePlugins: [''] })).toThrow()
+  } finally { await ctx.fiber.dispose() }
+})

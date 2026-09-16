@@ -7,6 +7,8 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+系统提示与运行时上下文消息记录选中的 SystemPrompt 提供方身份。提供方变化时发布新的 surface 操作，不重写已有事件；配置中的旧运行时上下文来源在恢复时仍可识别。
+
 ## 概述
 
 应用可以创建新 Agent 或恢复持久化 Session，并让每个 Turn 依次经过模型请求、流式响应、工具与持久历史。声明式条目在启动时创建 Agent，`ctx.agents` 支持程序化创建和恢复。可并行工具遵守配置的并发上限；独占调用保持顺序。取消会保留已投递文本。循环使用记录的执行目录，并支持独占的 idle-disposal 预留。

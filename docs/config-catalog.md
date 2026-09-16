@@ -1867,6 +1867,8 @@ Requires: `sessionProjections`
  * is any per-family knob: this is the one shared policy home.
  */
 export interface Config {
+  /** Deployment name used in model-facing policy guidance; defaults to DSH and does not affect enforcement. */
+  runtimeName?: string
   /** File-sandbox mode a session starts from (default: `read-only`). */
   mode?: SandboxMode
   /**
@@ -2623,6 +2625,10 @@ Source: [`packages/e2b/subprocess-e2b/src/index.ts:26`](../packages/e2b/subproce
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
 export interface Config {
+  /** Package identity recorded on system prompts and runtime-context snapshots. */
+  sourcePlugin?: string
+  /** Previous provider identities whose runtime-context snapshots remain owned on resume. */
+  legacySourcePlugins?: string[]
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */

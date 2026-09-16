@@ -7,6 +7,8 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+`sourcePlugin` 选择 Agent Loop 在新系统提示和运行时上下文消息上记录的包身份，默认为 `@deepseek-ai/dsh-system-prompt`。`legacySourcePlugins` 默认为空数组，声明恢复时接受的旧运行时上下文所有者。`sourceIdentityVersion` 为 `1`。提供方在构造时复制别名；这些字段不改变提示文本。
+
 ## 概述
 
 `dsh-system-prompt` 让 agent 在每个模型步骤收到一份有序系统提示词与可用工具 schema。需要添加提示词段、动态 runtime 事实、可复用变量或工具 schema，或者控制固定 harness 身份、部署 persona、runtime 上下文和面向模型的工具顺序时，请使用本包。Agent 作用域的贡献会覆盖同名全局默认值，而不影响其他 agent。无效的完整提示词组合与未解析变量会使组装失败，不会向模型发送格式错误的提示词。
