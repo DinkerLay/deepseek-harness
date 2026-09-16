@@ -140,6 +140,7 @@ export function apply(ctx: Context, config: Config): void {
       const instructions = await loadBaselineInstructionSet({
         cwd,
         dshHome: resolved.dshHome,
+        ...resolved.userGlobalDisplayPath === undefined ? {} : { userGlobalDisplayPath: resolved.userGlobalDisplayPath },
         projectRootMarkers: resolved.projectRootMarkers,
         maxBytes: resolved.maxBytes,
         maxSourceBytes: resolved.maxSourceBytes,

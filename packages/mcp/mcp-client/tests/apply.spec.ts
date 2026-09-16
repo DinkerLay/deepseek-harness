@@ -459,3 +459,10 @@ describe('apply (plugin lifecycle)', () => {
     expect(ctx.tools.get('mcp__web__remote')).toBeDefined()
   })
 })
+
+
+it('rejects incomplete or empty configured client identities', () => {
+  for (const clientInfo of [{ name: '', version: '1' }, { name: 'client', version: '' }, { name: 'client' }]) {
+    expect(() => (ConfigSchema as (input: unknown) => unknown)({ transport: 'stdio', serverName: 'srv', command: 'echo', clientInfo })).toThrow()
+  }
+})

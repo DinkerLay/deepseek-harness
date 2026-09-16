@@ -70,6 +70,13 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Client identity sent to the server on every connection; omission uses the Harness identity. */
+  clientInfo?: {
+    /** Product name advertised in the MCP initialize handshake. */
+    name: string
+    /** Product version advertised in the MCP initialize handshake. */
+    version: string
+  }
 }
 
 /** Config for connecting to an MCP server over Streamable HTTP (SSE). */
@@ -92,6 +99,13 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Client identity sent to the server on every connection; omission uses the Harness identity. */
+  clientInfo?: {
+    /** Product name advertised in the MCP initialize handshake. */
+    name: string
+    /** Product version advertised in the MCP initialize handshake. */
+    version: string
+  }
 }
 
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -121,6 +135,8 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    clientInfo: z.object({ name: z.string().min(1).required(), version: z.string().min(1).required() })
+      .default({ name: 'dsh-mcp-client', version: '0.0.1' }),
   }),
   z.object({
     transport: z.const('streamable-http'),
@@ -130,6 +146,8 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    clientInfo: z.object({ name: z.string().min(1).required(), version: z.string().min(1).required() })
+      .default({ name: 'dsh-mcp-client', version: '0.0.1' }),
   }),
 ]) as unknown as z<ConfigInput, Config>
 

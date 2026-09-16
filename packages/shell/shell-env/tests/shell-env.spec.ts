@@ -213,3 +213,18 @@ describe('ShellEnvRegistry', () => {
     expect(ctx.shellEnv.list()).toEqual([])
   })
 })
+
+
+it('can omit built-in identities while preserving explicit contributor ownership and disposal', async () => {
+  const ctx = new Context()
+  try {
+    await ctx.plugin(BashEnvPlugin, { includeBuiltins: false })
+    expect(ctx.shellEnv.collect(execution('s1'))).toEqual({})
+    const dispose = ctx.shellEnv.register({ name: 'explicit',
+      variables: { DSH_TEST_FACT: { description: 'Explicit fact.' } },
+      resolve: () => ({ DSH_TEST_FACT: 'yes' }) })
+    expect(ctx.shellEnv.collect(execution())).toEqual({ DSH_TEST_FACT: 'yes' })
+    dispose()
+    expect(ctx.shellEnv.collect(execution())).toEqual({})
+  } finally { await ctx.fiber.dispose() }
+})

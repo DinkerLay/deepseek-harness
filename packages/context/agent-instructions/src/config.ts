@@ -18,6 +18,8 @@ const RESERVED_PATH_SEGMENTS = new Set(['', '.', '..'])
 export interface Config {
   /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
+  /** Model-facing path of the user-global AGENTS.md; does not change its physical location. */
+  userGlobalDisplayPath?: string
   /** Directory entries that identify the project root while walking upward from the session cwd. */
   projectRootMarkers?: string[]
   /** UTF-8 byte cap for one rendered baseline or dynamic batch; non-positive or non-finite disables loading. */
@@ -38,6 +40,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   dshHome: z.string(),
+  userGlobalDisplayPath: z.string().pattern(/^[^\r\n]+\/AGENTS\.md$/u),
   projectRootMarkers: z.array(z.string()).default([...DEFAULT_PROJECT_ROOT_MARKERS]),
   maxBytes: z.number().required(),
   maxSourceBytes: z.number().step(1).min(1).default(DEFAULT_MAX_SOURCE_BYTES),
@@ -48,6 +51,7 @@ export const Config: z<Config> = z.object({
 /** Normalized instruction discovery configuration. */
 export interface ResolvedDiscoveryConfig {
   dshHome: string
+  userGlobalDisplayPath?: string
   projectRootMarkers: string[]
   instructionFileCandidates: string[]
   localInstructionFileCandidates: string[]
@@ -73,6 +77,7 @@ export function workspaceBaselineIdentity(
 ): string {
   return JSON.stringify({
     projectRoot: relative(cwd, projectRoot),
+    ...config.userGlobalDisplayPath === undefined ? {} : { userGlobalDisplayPath: config.userGlobalDisplayPath },
     projectRootMarkers: config.projectRootMarkers,
     maxBytes: config.maxBytes,
     maxSourceBytes: config.maxSourceBytes,
@@ -100,10 +105,11 @@ export function resolveConfig(config: Config): ResolvedConfig {
  * @returns normalized home, root markers, and instruction candidates.
  */
 export function resolveDiscoveryConfig(
-  config: Pick<Config, 'dshHome' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>,
+  config: Pick<Config, 'dshHome' | 'userGlobalDisplayPath' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>,
 ): ResolvedDiscoveryConfig {
   return {
     dshHome: resolveDshHome(config.dshHome),
+    ...config.userGlobalDisplayPath === undefined ? {} : { userGlobalDisplayPath: config.userGlobalDisplayPath },
     projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
     instructionFileCandidates: resolveInstructionFileCandidates(
       config.instructionFileCandidates,

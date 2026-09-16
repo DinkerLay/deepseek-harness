@@ -40,6 +40,7 @@ import {
   reconcileInstructionContext,
   type InstructionVersionCache,
 } from '../src/state.ts'
+import { loadBaselineInstructionSet } from '../src/files.ts'
 import { resolveConfig } from '../src/config.ts'
 import { candidateScopeKey, renderInstructionChanges, renderWorkspaceInstructionSet, USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE } from '../src/render.ts'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
@@ -649,7 +650,7 @@ describe('workspace context instruction discovery', () => {
 
       const files = await discoverBaselineInstructionFiles({ cwd: root })
 
-      expect(files).toEqual([{ absolutePath: join(envHome, 'AGENTS.md'), displayPath: '$DSH_HOME/AGENTS.md' }])
+      expect(files).toEqual([{ absolutePath: join(envHome, 'AGENTS.md'), displayPath: '$DSH_HOME/AGENTS.md', scopeDirectory: 'user-global' }])
     } finally {
       vi.unstubAllEnvs()
       await rm(root, { recursive: true, force: true })
@@ -691,7 +692,7 @@ describe('workspace context instruction discovery', () => {
       const isolated = await import('@deepseek-ai/dsh-agent-instructions')
       const files = await isolated.discoverBaselineInstructionFiles({ cwd: root, dshHome: '~/.dsh' })
 
-      expect(files).toEqual([{ absolutePath: join(home, '.dsh/AGENTS.md'), displayPath: '~/.dsh/AGENTS.md' }])
+      expect(files).toEqual([{ absolutePath: join(home, '.dsh/AGENTS.md'), displayPath: '~/.dsh/AGENTS.md', scopeDirectory: 'user-global' }])
     } finally {
       vi.doUnmock('node:os')
       vi.resetModules()
@@ -708,7 +709,7 @@ describe('workspace context instruction discovery', () => {
 
       const files = await discoverBaselineInstructionFiles({ cwd: root, dshHome: root })
 
-      expect(files).toEqual([{ absolutePath: join(root, 'AGENTS.md'), displayPath: '$DSH_HOME/AGENTS.md' }])
+      expect(files).toEqual([{ absolutePath: join(root, 'AGENTS.md'), displayPath: '$DSH_HOME/AGENTS.md', scopeDirectory: 'user-global' }])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -4766,5 +4767,29 @@ describe('workspace context plugin export shape', () => {
     expect(unwrapped.name).toBe('agent-instructions')
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
+  })
+})
+
+
+describe('deployment instruction display', () => {
+  it('keeps the global scope when the display path changes and renders updates in that scope', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await write(join(home, 'AGENTS.md'), 'global rule')
+      const result = await loadBaselineInstructionSet({ cwd: root, dshHome: home,
+        userGlobalDisplayPath: '$PRODUCT_HOME/AGENTS.md', maxBytes: 10000 })
+      const state = baselineInstructionState(result!.included)
+      expect([...state.changes.keys()]).toEqual([sk('user-global', 'AGENTS.md')])
+      expect(result!.rendered.text).toContain('Instructions from: $PRODUCT_HOME/AGENTS.md')
+      expect(result!.rendered.text).not.toContain('DSH_HOME')
+      const file = result!.included[0]!
+      const rendered = renderInstructionChanges([{ file,
+        change: { action: 'set', scope: sk('user-global', 'AGENTS.md'), path: file.displayPath } }], 10000)
+      expect(rendered.text).toContain('`user-global`')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
   })
 })

@@ -7,6 +7,8 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+`userGlobalDisplayPath` optionally replaces the model-facing label of the global file and must end in `/AGENTS.md`. It does not change the physical `dshHome` lookup or the `user-global` reconciliation scope. Changing the label replaces the baseline on resume.
+
 ## Summary
 
 Agents receive workspace guidance from applicable user-global and project `AGENTS.md` files before their first request. Successful filesystem operations discover relevant nested files, and resume reconciles the baseline. A byte budget omits broader files before truncating the most specific one. Guidance follows the Session's recorded execution directory, while agentless calls keep backend defaults.
@@ -48,6 +50,7 @@ The accepted fields, at a glance:
 ```ts
 export interface Config {
   dshHome?: string
+  userGlobalDisplayPath?: string
   projectRootMarkers?: string[]
   maxBytes: number
   maxSourceBytes?: number

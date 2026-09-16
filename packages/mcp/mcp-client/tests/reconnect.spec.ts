@@ -38,7 +38,7 @@ const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotification
     close = mockClose
     request = mockRequest
     setNotificationHandler = mockSetNotificationHandler
-    constructor() { instances.push(this) }
+    constructor(readonly identity: { name: string; version: string }) { instances.push(this) }
   }
   const instances: MockClient[] = []
   return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances }
@@ -135,6 +135,17 @@ describe('reconnect supervisor', () => {
     mockListTools.mockResolvedValue(listing('remote'))
     mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
     ctx = await mountRegistry()
+  })
+
+  it('uses the deployment client identity again after reconnecting', async () => {
+    const clientInfo = { name: 'product-client', version: '1.2.3' }
+    try {
+      await apply(ctx, { ...stdioConfig({ initialDelayMs: 1 }), clientInfo })
+      expect(instances[0]!.identity).toEqual(clientInfo)
+      instances[0]!.onclose?.()
+      await vi.waitFor(() => { expect(instances).toHaveLength(2) })
+      expect(instances[1]!.identity).toEqual(clientInfo)
+    } finally { await ctx.fiber.dispose() }
   })
 
   it('reconnects after a transport close, re-syncs tools through the new generation, and serves calls', async () => {

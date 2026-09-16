@@ -7,6 +7,8 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
+`userGlobalDisplayPath` 可替换全局文件的模型可见标签，且必须以 `/AGENTS.md` 结尾。它不改变实际 `dshHome` 查找路径或 `user-global` 协调作用域。改变标签会在恢复时替换基线。
+
 ## 概述
 
 Agent 在首次请求前接收适用的用户全局与项目 `AGENTS.md` 文件中的 workspace 指引。成功的文件系统操作会发现相关嵌套文件，恢复时会校准基线。字节预算会先省略较宽泛的文件，再截断最具体的文件。指引跟随 Session 记录的执行目录；无 Agent 的调用保留后端默认值。
@@ -48,6 +50,7 @@ Agent 在首次请求前接收适用的用户全局与项目 `AGENTS.md` 文件�
 ```ts
 export interface Config {
   dshHome?: string
+  userGlobalDisplayPath?: string
   projectRootMarkers?: string[]
   maxBytes: number
   maxSourceBytes?: number

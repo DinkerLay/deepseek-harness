@@ -28,11 +28,14 @@ export const inject: string[] = []
 export interface Config {
   /** DeepSeek Harness home directory exposed as `DSH_HOME`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
+  /** Inject the built-in home, shell marker, and session id; defaults to true. */
+  includeBuiltins?: boolean
 }
 
 /** Runtime configuration schema for the shell-env plugin. */
 export const Config: z<Config> = z.object({
   dshHome: z.string(),
+  includeBuiltins: z.boolean().default(true),
 })
 
 /** Model-visible metadata for one managed `DSH_*` environment variable. */
@@ -88,6 +91,7 @@ export class ShellEnvRegistry extends Service {
   private readonly contributors = new Map<string, BashEnvContributor>()
   private readonly keyOwners = new Map<DshEnvironmentKey, string>()
   private readonly dshHome: string
+  private readonly includeBuiltins: boolean
 
   /**
    * Create and install the `ctx.shellEnv` service.
@@ -97,6 +101,7 @@ export class ShellEnvRegistry extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'shellEnv')
     this.dshHome = resolveDshHome(config.dshHome)
+    this.includeBuiltins = config.includeBuiltins ?? true
   }
 
   /**
@@ -148,11 +153,11 @@ export class ShellEnvRegistry extends Service {
    * @returns an immutable environment overlay containing built-ins and current contributions.
    */
   collect(execution: ToolExecution): DshEnvironment {
-    const values: Record<DshEnvironmentKey, string> = {
+    const values: Record<DshEnvironmentKey, string> = this.includeBuiltins ? {
       [DSH_HOME_ENV]: this.dshHome,
       [DSH_SHELL_KEY]: '1',
-    }
-    if (execution.agent !== undefined) {
+    } : {}
+    if (this.includeBuiltins && execution.agent !== undefined) {
       values[DSH_SESSION_ID_KEY] = execution.agent.session.header.id
     }
 

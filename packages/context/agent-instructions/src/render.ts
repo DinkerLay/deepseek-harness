@@ -127,10 +127,11 @@ export function candidateScopeKey(directory: string, candidateName: string): str
 /**
  * Derive the per-candidate scope key for a loaded instruction file.
  * @param displayPath - project-relative or user-global instruction path.
+ * @param scopeDirectory - explicit logical directory for discovered files; omission accepts historical paths.
  * @returns the scope key pairing the file's directory with its name.
  */
-export function instructionScopeKey(displayPath: string): string {
-  return candidateScopeKey(scopeForDisplayPath(displayPath), basename(displayPath))
+export function instructionScopeKey(displayPath: string, scopeDirectory?: string): string {
+  return candidateScopeKey(scopeDirectory ?? scopeForDisplayPath(displayPath), basename(displayPath))
 }
 
 /**
@@ -146,7 +147,7 @@ export function decodeScopeKey(scope: string): { directory: string; candidateNam
 }
 
 function additionalSectionText(file: LoadedInstructionFile): string {
-  const scope = scopeForDisplayPath(file.displayPath)
+  const scope = file.scopeDirectory ?? scopeForDisplayPath(file.displayPath)
   return [
     `Additional instructions from: ${file.displayPath}`,
     '',

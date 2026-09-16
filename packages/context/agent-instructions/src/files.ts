@@ -24,6 +24,8 @@ import {
 export interface InstructionFile {
   absolutePath: string
   displayPath: string
+  /** Logical directory independent of presentation; omitted for project-relative paths. */
+  scopeDirectory?: string
 }
 
 /** An instruction file whose UTF-8 content was read successfully. */
@@ -49,6 +51,7 @@ export interface ProbedInstructionFile extends InstructionFile {
 interface DiscoverOptions {
   cwd: string
   dshHome?: string
+  userGlobalDisplayPath?: string
   projectRootMarkers?: string[]
   instructionFileCandidates?: string[]
   localInstructionFileCandidates?: string[]
@@ -288,7 +291,8 @@ async function discoverInstructionFiles(
     case 'present':
       addFile({
         absolutePath: userGlobal,
-        displayPath: userGlobalDisplayPath(config.dshHome),
+        displayPath: config.userGlobalDisplayPath ?? userGlobalDisplayPath(config.dshHome),
+        scopeDirectory: USER_GLOBAL_DIRECTORY,
         ...userGlobalProbe.info,
       })
       break
@@ -323,7 +327,8 @@ async function discoverInstructionFiles(
  * discovery cannot identify the project root.
  */
 export async function discoverBaselineInstructionFiles(options: DiscoverOptions): Promise<InstructionFile[]> {
-  return (await discoverInstructionFiles(options)).map(({ absolutePath, displayPath }) => ({ absolutePath, displayPath }))
+  return (await discoverInstructionFiles(options)).map(({ absolutePath, displayPath, scopeDirectory }) => ({ absolutePath, displayPath,
+    ...scopeDirectory === undefined ? {} : { scopeDirectory } }))
 }
 
 async function* nodeTextChunks(path: string, signal?: AbortSignal): AsyncIterable<string> {
@@ -376,7 +381,7 @@ export function dedupInstructionFilesByDirectory(files: LoadedInstructionFile[])
   const keptDigestsByDir = new Map<string, Set<string>>()
   const kept: LoadedInstructionFile[] = []
   for (const file of files) {
-    const dir = dirname(file.displayPath)
+    const dir = file.scopeDirectory ?? dirname(file.displayPath)
     let digests = keptDigestsByDir.get(dir)
     if (digests === undefined) {
       digests = new Set()
@@ -426,6 +431,7 @@ export async function loadBaselineInstructionSet(
       loaded.push({
         absolutePath: file.absolutePath,
         displayPath: file.displayPath,
+        ...file.scopeDirectory === undefined ? {} : { scopeDirectory: file.scopeDirectory },
         content,
         ...file.version === undefined ? {} : { version: file.version },
       })
@@ -493,7 +499,10 @@ export async function probeScopeInstruction(
   if (info?.type !== 'file') return { kind: 'absent' }
   const file: ProbedInstructionFile = {
     absolutePath,
-    displayPath: directory === USER_GLOBAL_DIRECTORY ? userGlobalDisplayPath(resolved.dshHome) : relativeDisplay(projectRoot, absolutePath),
+    displayPath: directory === USER_GLOBAL_DIRECTORY
+      ? (resolved.userGlobalDisplayPath ?? userGlobalDisplayPath(resolved.dshHome))
+      : relativeDisplay(projectRoot, absolutePath),
+    scopeDirectory: directory,
     target,
     version: info.version,
     ...info.size === undefined ? {} : { size: info.size },
@@ -520,6 +529,7 @@ export async function readScopeInstruction(
   return {
     absolutePath: file.absolutePath,
     displayPath: file.displayPath,
+    ...file.scopeDirectory === undefined ? {} : { scopeDirectory: file.scopeDirectory },
     content,
     version: file.version,
   }

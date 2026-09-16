@@ -60,6 +60,8 @@ Requires: `sessionProjections`
 export interface Config {
   /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
+  /** Model-facing path of the user-global AGENTS.md; does not change its physical location. */
+  userGlobalDisplayPath?: string
   /** Directory entries that identify the project root while walking upward from the session cwd. */
   projectRootMarkers?: string[]
   /** UTF-8 byte cap for one rendered baseline or dynamic batch; non-positive or non-finite disables loading. */
@@ -1555,6 +1557,13 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Client identity sent to the server on every connection; omission uses the Harness identity. */
+  clientInfo?: {
+    /** Product name advertised in the MCP initialize handshake. */
+    name: string
+    /** Product version advertised in the MCP initialize handshake. */
+    version: string
+  }
 }
 
 /** Config for connecting to an MCP server over Streamable HTTP (SSE). */
@@ -1577,6 +1586,13 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /** Client identity sent to the server on every connection; omission uses the Harness identity. */
+  clientInfo?: {
+    /** Product name advertised in the MCP initialize handshake. */
+    name: string
+    /** Product version advertised in the MCP initialize handshake. */
+    version: string
+  }
 }
 
 /** Automatic reconnect policy for one MCP server connection. */
@@ -1592,7 +1608,7 @@ export interface ReconnectConfig {
 }
 ```
 
-Source: [`packages/mcp/mcp-client/src/index.ts:98`](../packages/mcp/mcp-client/src/index.ts)
+Source: [`packages/mcp/mcp-client/src/index.ts:112`](../packages/mcp/mcp-client/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 
@@ -2183,6 +2199,8 @@ Source: [`packages/settings/settings-file/src/index.ts:22`](../packages/settings
 export interface Config {
   /** DeepSeek Harness home directory exposed as `DSH_HOME`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
+  /** Inject the built-in home, shell marker, and session id; defaults to true. */
+  includeBuiltins?: boolean
 }
 ```
 
@@ -2741,7 +2759,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/shell/tool-bash/src/index.ts:35`](../packages/shell/tool-bash/src/index.ts)
+Source: [`packages/shell/tool-bash/src/index.ts:34`](../packages/shell/tool-bash/src/index.ts)
 
 <a id="deepseek-aidsh-tool-bash-persistent"></a>
 

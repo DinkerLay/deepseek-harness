@@ -7,9 +7,11 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+`includeBuiltins` defaults to true. Set it to false to omit `DSH_HOME`, `DSH_SHELL`, and `DSH_SESSION_ID` from collected environments. Explicit contributors remain active and reserved-key ownership stays unchanged.
+
 ## Summary
 
-`dsh-shell-env` provides the trusted `DSH_*` environment that every model shell call — bash or pwsh — runs with: built-in facts such as `DSH_HOME`, `DSH_SHELL=1`, and the agent's `DSH_SESSION_ID`. Plugin authors can register their own facts with declared keys, collected per execution and disposed with their plugin; duplicate ownership or undeclared runtime keys fail loudly instead of silently overwriting. The registry changes nothing else the model sees — the shell tools own their own schemas and prompts. Choose it in any composition that mounts a model shell tool; configuration only picks the Harness home directory.
+`dsh-shell-env` provides the trusted `DSH_*` environment that every model shell call — bash or pwsh — runs with: built-in facts such as `DSH_HOME`, `DSH_SHELL=1`, and the agent's `DSH_SESSION_ID`. Plugin authors can register their own facts with declared keys, collected per execution and disposed with their plugin; duplicate ownership or undeclared runtime keys fail loudly instead of silently overwriting. The registry changes nothing else the model sees — the shell tools own their own schemas and prompts. Choose it in any composition that mounts a model shell tool; configuration selects the home and whether built-in facts are included.
 
 ## Table of Contents
 
@@ -29,7 +31,7 @@ Load this plugin in any composition that mounts a model shell tool (`dsh-tool-ba
 
 ### What every shell call receives
 
-Every call receives `DSH_HOME` (the absolute Harness home), `DSH_SHELL=1`, and, for agent calls, `DSH_SESSION_ID` (the calling session's id).
+By default, every call receives `DSH_HOME` (the absolute Harness home), `DSH_SHELL=1`, and, for agent calls, `DSH_SESSION_ID` (the calling session's id).
 
 ### Adding your own environment facts
 
@@ -54,7 +56,7 @@ Contributors must declare every key they return; returning an undeclared or non-
 
 ### Choosing the Harness home
 
-The single config field picks the home directory exposed as `DSH_HOME`; the default resolution order is the `dshHome` config, then ambient `$DSH_HOME`, then `~/.dsh`.
+The `dshHome` config field picks the home directory exposed as `DSH_HOME`; the default resolution order is the `dshHome` config, then ambient `$DSH_HOME`, then `~/.dsh`.
 
 | Field | Default | Meaning |
 |---|---|---|

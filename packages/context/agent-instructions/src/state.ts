@@ -171,7 +171,7 @@ export function baselineInstructionState(files: LoadedInstructionFile[]): {
     const digest = instructionContentSha1(file.content)
     const change: AgentInstructionChange = {
       action: 'set',
-      scope: instructionScopeKey(file.displayPath),
+      scope: instructionScopeKey(file.displayPath, file.scopeDirectory),
       path: file.displayPath,
       digest,
     }

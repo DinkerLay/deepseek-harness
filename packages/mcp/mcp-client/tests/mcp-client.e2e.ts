@@ -463,6 +463,7 @@ describe('streamable-http — in-process MCP server', () => {
   let baseUrl: string
   /** Authorization header values observed by the HTTP server, in arrival order. */
   const seenAuth: Array<string | undefined> = []
+  const seenIdentity: Array<{ name: string; version: string }> = []
 
   /**
    * Stateless Streamable HTTP endpoint: a fresh McpServer + server transport
@@ -497,6 +498,8 @@ describe('streamable-http — in-process MCP server', () => {
     // `| undefined`. The SDK constructed the object; the cast is safe.
     await server.connect(transport as Transport)
     await transport.handleRequest(req, res)
+    const identity = server.server.getClientVersion()
+    if (identity !== undefined) seenIdentity.push(identity)
   }
 
   beforeAll(async () => {
@@ -518,6 +521,7 @@ describe('streamable-http — in-process MCP server', () => {
       serverName: 'web',
       url: baseUrl,
       headers: { Authorization: 'Bearer e2e-test-token' },
+      clientInfo: { name: 'deployment-client', version: '1.2.3' },
       toolCallTimeoutMs: 15_000,
       failOnStartupError: false,
     }
@@ -554,6 +558,10 @@ describe('streamable-http — in-process MCP server', () => {
     })
     expect(result.isError).toBe(false)
     expect(result.content[0]).toEqual({ type: 'text', text: 'QUIET' })
+  })
+
+  it('advertises the configured identity through the real initialize handshake', () => {
+    expect(seenIdentity).toContainEqual({ name: 'deployment-client', version: '1.2.3' })
   })
 
   it('sends configured headers on every HTTP request', () => {
