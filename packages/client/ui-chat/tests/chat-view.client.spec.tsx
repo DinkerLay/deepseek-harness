@@ -1051,6 +1051,13 @@ describe('ChatView', () => {
     const view = render(<h.ChatView {...h.props} />)
     expect(view.getByText('即发即显').closest('[data-submission-echo]')).not.toBeNull()
 
+    act(() => { h.setSession({ queue: [{ id: 'queued-first', placement: 'queued', rpcId: 'req-1',
+      content: [{ type: 'text', text: '即发即显' }], time: 5_000 }] as never }) })
+    expect(view.getAllByText('即发即显')).toHaveLength(1)
+    expect(view.getByText('即发即显').closest('[data-submission-echo]')).not.toBeNull()
+    act(() => { h.setSession({ queue: [], running: true }) })
+    expect(view.getAllByText('即发即显')).toHaveLength(1)
+
     // The durable node arrives while the echo is STILL in the session
     // snapshot: the render-time rpcId dedupe keeps exactly one bubble.
     act(() => {

@@ -738,9 +738,11 @@ export class Session implements SessionFace {
   private observeSubmissionQueue(items: readonly SessionQueuedItem[]): void {
     if (this.submissionSettlements.size === 0) return
     for (const item of items) {
-      if (item.rpcId !== undefined) {
-        this.scheduleObservedRetirement(item.rpcId, attachmentRefsIn(item.message.content))
-      }
+      if (item.rpcId === undefined) continue
+      const echo = this.pendingSubmissions.find(submission => submission.requestId === item.rpcId)
+      // Idle sends pass through the inbox before preparation writes their transcript input.
+      if (echo?.placement === 'transcript') continue
+      this.scheduleObservedRetirement(item.rpcId, attachmentRefsIn(item.message.content))
     }
   }
 

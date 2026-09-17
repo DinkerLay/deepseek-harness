@@ -185,6 +185,27 @@ describe('observed retirement', () => {
     expect(retirements).toEqual([{ reason: 'observed', attachments: refs }])
   })
 
+  it('keeps an idle-send transcript echo through inbox admission and preparation until the durable input arrives', async () => {
+    const { api, session } = makeSession()
+    api.onHistory = () => Promise.resolve(ok(historyValue([])))
+    await session.open()
+    const retired = vi.fn()
+    const handle = session.beginSubmission({ mode: 'queue', text: 'First prompt', attachments: [], onRetire: retired })
+    session.handleControlFrame({ type: 'queue', sessionId: SID, items: [queuedItem(handle.requestId)] })
+    await settleFrames()
+    expect(session.getSnapshot().pendingSubmissions).toMatchObject([{ requestId: handle.requestId, placement: 'transcript' }])
+    session.handleControlFrame({ type: 'queue', sessionId: SID, items: [] })
+    session.handleRunning(true)
+    await settleFrames()
+    expect(session.getSnapshot().pendingSubmissions).toHaveLength(1)
+    expect(retired).not.toHaveBeenCalled()
+    await api.pushFollow(SID, { type: 'event', event: promptEvent(SessionSeq(0), handle.requestId) as never })
+    await settleFrames()
+    expect(session.getSnapshot().pendingSubmissions).toEqual([])
+    expect(retired).toHaveBeenCalledExactlyOnceWith({ reason: 'observed', attachments: [] })
+    await session.dispose()
+  })
+
   it('a queue occurrence carrying the rpcId retires the echo (running-turn submissions)', async () => {
     const { session } = makeSession()
     const retirements: PendingSubmissionRetirement[] = []

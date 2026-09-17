@@ -131,7 +131,7 @@ function openFailureMessage(error: unknown, fallback: string): string {
 
 /**
  * Prompt-RPC identities already rendered by durable material: user/steering
- * node sources plus queue occurrences. A submission echo whose identity
+ * node sources. A submission echo whose identity
  * appears here is hidden in the same render, so the echo→durable swap is
  * atomic — no duplicate, no gap — regardless of when the echo leaves the
  * session snapshot.
@@ -139,7 +139,6 @@ function openFailureMessage(error: unknown, fallback: string): string {
 function observedRpcIds(
   order: readonly string[],
   nodes: ChatSnapshot['nodes'],
-  queue: readonly { readonly rpcId?: string }[],
 ): ReadonlySet<string> {
   const observed = new Set<string>()
   for (const key of order) {
@@ -149,9 +148,6 @@ function observedRpcIds(
       | { readonly kind?: unknown; readonly rpcId?: unknown }
       | undefined
     if (source?.kind === 'user' && typeof source.rpcId === 'string') observed.add(source.rpcId)
-  }
-  for (const item of queue) {
-    if (item.rpcId !== undefined) observed.add(item.rpcId)
   }
   return observed
 }
@@ -295,9 +291,10 @@ export function ChatView({
   // every append replaces the order array.
   const visibleSubmissions = useMemo(() => {
     if (pendingSubmissions.length === 0) return pendingSubmissions
-    const observed = observedRpcIds(order, nodeStore, inbox)
+    const observed = observedRpcIds(order, nodeStore)
     return pendingSubmissions.filter(submission => (
       submission.placement !== 'queued' && !observed.has(submission.requestId)
+      && (submission.placement === 'transcript' || !inbox.some(item => item.rpcId === submission.requestId))
     ))
   }, [pendingSubmissions, order, nodeStore, inbox])
   const renderMessageImages = useCallback<RenderMessageImages>(
