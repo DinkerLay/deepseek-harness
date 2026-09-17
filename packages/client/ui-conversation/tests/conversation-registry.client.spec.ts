@@ -80,6 +80,8 @@ function fakeSessions(ctx: Context): { sessions: ISessions; binding: SessionBind
   const sessions = {
     list,
     searchResultLimit: 50,
+    creationReceiptVersion: 1,
+    acceptCreated: () => { throw new Error('unused fake Sessions operation') },
     create: () => Promise.reject(new Error('unused fake Sessions operation')),
     open: () => {},
     openSubagent: () => {},

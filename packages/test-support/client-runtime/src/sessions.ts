@@ -191,6 +191,19 @@ interface SessionRecord {
  * behavior/calls/stubs) are bench-only surface.
  */
 export class TestSessions implements ISessions {
+  readonly creationReceiptVersion = 1 as const
+
+  /** @param receipt - confirmed Host creation; duplicate delivery preserves the fixture state. */
+  acceptCreated(receipt: { sessionId: SessionId; createdAt: number; cwd?: string }): void {
+    const id = receipt.sessionId
+    if (this.records.has(id)) return
+    const summary: SessionSummary = { id, displayTitle: id, running: false, blank: true, updatedAt: receipt.createdAt,
+      ...(receipt.cwd === undefined ? {} : { cwd: receipt.cwd }) }
+    const snapshot = createSnapshotStore<SessionFixtureSnapshot>(sessionSnapshot(id))
+    this.records.set(id, { summary, snapshot, session: new FixtureSession(id, snapshot, {}),
+      scope: undefined, scopeFiber: undefined, binding: undefined })
+    this.list.update((draft) => { draft.ids.push(id); draft.byId[id] = summary })
+  }
   /** The useSessions standard feed (list rows + current selection). */
   readonly list: SnapshotStore<SessionListState>
   private readonly records = new Map<SessionId, SessionRecord>()

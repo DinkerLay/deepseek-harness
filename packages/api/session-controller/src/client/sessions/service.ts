@@ -410,6 +410,18 @@ export class ClientSessions implements ISessions {
     return result.value.sessionId
   }
 
+  /** Public external-creation receipt capability. */
+  readonly creationReceiptVersion = 1 as const
+
+  /**
+   * Accept a validated Host creation receipt without issuing a create or list request.
+   * @param receipt - confirmed creation; existing local state is preserved on repeated delivery.
+   */
+  acceptCreated(receipt: { sessionId: SessionId; createdAt: number; cwd?: string }): void {
+    this.manager.acceptCreated(receipt)
+    this.projectList()
+  }
+
   /**
    * Fork a session from a completed-turn prefix of the source (same
    * synchronous-addressability guarantee as {@link ClientSessions.create}:

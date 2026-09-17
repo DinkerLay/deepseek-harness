@@ -585,6 +585,18 @@ export class SessionManager {
   }
 
   /**
+   * Adopt a confirmed external creation and retain it across in-flight list baselines.
+   * @param receipt - validated Host creation receipt; repeated receipts preserve existing state.
+   */
+  acceptCreated(receipt: { sessionId: SessionId; createdAt: number; cwd?: string }): void {
+    if (this.summaries.some(summary => summary.sessionId === receipt.sessionId)) return
+    this.recordMutation({ kind: 'upsert', summary: {
+      sessionId: receipt.sessionId, updatedAt: receipt.createdAt, running: false, blank: true,
+      ...(receipt.cwd === undefined ? {} : { cwd: receipt.cwd }),
+    } })
+  }
+
+  /**
    * Contract session.fork; on success merge the child into summaries
    * immediately (same synchronous-addressability guarantee as create). The
    * child carries the source's history, so it is never blank; lineage rides

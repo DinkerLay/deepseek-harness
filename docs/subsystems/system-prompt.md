@@ -221,4 +221,24 @@ Emitted when any prompt provider changes. This registry notification is unfilter
 ```
 
 Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-prompt/src/index.ts)
+
+<a id="system-promptprepare--serial"></a>
+
+#### `system-prompt/prepare` — serial
+
+Prepare lazy inputs before any prompt provider or Tool schema is read. Scope-filtered dispatch uses the assembly scope. Failure rejects this assembly.
+
+```ts cordis-catalog
+/**
+ * Prepare lazy inputs before any prompt provider or Tool schema is read.
+ * Scope-filtered dispatch uses the assembly scope. Failure rejects this assembly.
+ * @param context - assembly identity and cancellation signal; do not retain its signal for later turns.
+ * @mode serial
+ */
+'system-prompt/prepare'(this: Scoped<SystemPrompt>, context: AssembleContext): Promise<void>
+```
+
+Types: [Scoped](scope.md)
+
+Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-prompt/src/index.ts)
 <!-- END GENERATED cordis-surface -->

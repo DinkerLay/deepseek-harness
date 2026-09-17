@@ -27,6 +27,8 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
+`preparationVersion: 1` exposes the scope-aware, awaited `system-prompt/prepare` event before any section, variable or Tool provider is read. Lazy capability providers prepare their inputs there and observe the assembly signal. Failure rejects the assembly; disposal removes the preparation listener. The later `system-prompt/assemble` waterfall transforms already collected inputs and cannot substitute for preparation.
+
 Mount `dsh-system-prompt` wherever agents run: it provides `ctx.systemPrompt`, the registry every prompt contribution lands in. Contributions are scoped — registering through `agent.ctx` affects that agent alone and shadows a same-named global.
 
 <a id="configure-the-prompt"></a>

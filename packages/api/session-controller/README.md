@@ -24,6 +24,8 @@ Clients can create, resume, fork, list, inspect, interrupt, and delete Sessions 
 <a id="use-this-package"></a>
 ## Use this package
 
+The Client's `creationReceiptVersion: 1` capability exposes `sessions.acceptCreated({ sessionId, createdAt, cwd? })` for a validated, confirmed Host creation performed by another controller. It makes the Session synchronously addressable without another create or list request and without selecting it. Repeated receipts preserve existing local state; mutations survive a list response already in flight. The caller validates its wire response and must not use the receipt to invent an unconfirmed Session.
+
 History pages and follow opening snapshots carry one `{ type: 'event', event: SessionWireEvent }` record per durable Session event. The Client retains each accepted record as one durable `SessionEventLikeEntry`; Assistant token boundaries remain inside the compact stream on `assistant/message` or `assistant/attempt`. Tool arguments, result content, failures, and `tool/result.data.meta` pass through unchanged; the controller does not resolve a Tool definition, run a presenter, or attach UI data.
 
 The Client journal validates exact V3 event envelopes before publishing follow snapshots, live entries, or history pages. It reuses the browser-safe Session validators for required surface markers, exact replacement endpoints, earlier unique source seqs, embedded Assistant provenance, request-header omissions, and tool-error consistency. Invalid records fail without field stripping or normalization; range membership and source existence remain durable-log checks on the Host.

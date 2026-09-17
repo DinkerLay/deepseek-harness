@@ -61,9 +61,11 @@
     {
       "name": "@deepseek-ai/dsh-api-session-controller",
       "path": "packages/api/session-controller",
-      "purpose": "Exact recoverable fork destinations, deletion publication checks, and removed-Session notifications",
+      "purpose": "Exact recoverable forks, external creation receipts, deletion publication checks, and removed-Session notifications",
       "source": [
+        "src/client/contract/sessions.ts",
         "src/client/sessions/manager.ts",
+        "src/client/sessions/service.ts",
         "src/commands.ts",
         "src/index.ts",
         "src/list.ts",
@@ -99,6 +101,12 @@
         "src/client/manifest.ts",
         "src/index.ts"
       ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-test-runtime",
+      "path": "packages/test-support/client-runtime",
+      "purpose": "Project confirmed external Session creation in the public Client test runtime",
+      "source": ["src/sessions.ts"]
     },
     {
       "name": "@deepseek-ai/dsh-client-ui-chat",
@@ -189,6 +197,12 @@
       "source": [
         "src/index.ts"
       ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-scope",
+      "path": "packages/core/scope",
+      "purpose": "Route lazy prompt preparation to its exact assembly scope",
+      "source": ["src/scoped-events.generated.ts"]
     },
     {
       "name": "@deepseek-ai/dsh-session",
@@ -394,7 +408,7 @@
     {
       "name": "@deepseek-ai/dsh-system-prompt",
       "path": "packages/core/system-prompt",
-      "purpose": "Provider-owned durable prompt provenance and legacy source declarations",
+      "purpose": "Provider-owned durable prompt provenance, legacy source declarations, and awaited lazy input preparation",
       "source": [
         "src/index.ts"
       ]
@@ -515,6 +529,7 @@
     "@deepseek-ai/dsh-api-workspace-files",
     "@deepseek-ai/dsh-client-connection",
     "@deepseek-ai/dsh-client-modules",
+    "@deepseek-ai/dsh-client-test-runtime",
     "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
     "@deepseek-ai/dsh-client-ui-primitives",
@@ -525,6 +540,7 @@
     "@deepseek-ai/dsh-mcp-client",
     "@deepseek-ai/dsh-message-feedback",
     "@deepseek-ai/dsh-sandbox-policy",
+    "@deepseek-ai/dsh-scope",
     "@deepseek-ai/dsh-session",
     "@deepseek-ai/dsh-session-deletion",
     "@deepseek-ai/dsh-session-format",

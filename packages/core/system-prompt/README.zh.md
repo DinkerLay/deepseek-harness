@@ -27,6 +27,8 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
+`preparationVersion: 1` 提供按作用域分发并等待完成的 `system-prompt/prepare` 事件，在读取任何 section、变量或 Tool 提供方之前执行。延迟加载能力的提供方在此准备输入，并响应本次组装的 signal。失败会拒绝本次组装，释放所有者会移除准备监听器。后续 `system-prompt/assemble` waterfall 变换已收集的输入，不能替代准备阶段。
+
 在任何运行 agent 的地方挂载 `dsh-system-prompt`：它提供 `ctx.systemPrompt`，即每个提示词贡献所落入的注册表。贡献带作用域——通过 `agent.ctx` 注册只影响该 agent，并遮蔽同名全局项。
 
 <a id="configure-the-prompt"></a>

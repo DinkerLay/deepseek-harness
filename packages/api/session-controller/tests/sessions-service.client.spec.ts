@@ -888,6 +888,30 @@ describe('catalog-addressed navigation', () => {
 })
 
 describe('create', () => {
+  it('retains a creation receipt across an older list response', async () => {
+    const b = bench()
+    const response = Promise.withResolvers<Awaited<ReturnType<typeof b.api.onList>>>()
+    b.api.onList = () => response.promise
+    const refresh = b.svc.refresh()
+    b.svc.acceptCreated({ sessionId: sid('receipt'), createdAt: 10 })
+    response.resolve(ok({ items: [] }))
+    await refresh
+    expect(b.svc.binding(sid('receipt'))).toBeDefined()
+    await feedList(b, [{ id: 'receipt', running: true, blank: false, cwd: '/current' }])
+    b.svc.acceptCreated({ sessionId: sid('receipt'), createdAt: 1, cwd: '/stale' })
+    expect(b.svc.list.getSnapshot().byId[sid('receipt')]).toMatchObject({ running: true, blank: false, cwd: '/current' })
+  })
+  it('adopts an external creation synchronously without another Host create or list request', () => {
+    const b = bench()
+    b.svc.acceptCreated({ sessionId: sid('receipt'), createdAt: 10, cwd: '/receipt' })
+    expect(b.svc.binding(sid('receipt'))).toBeDefined()
+    b.svc.open(sid('receipt'))
+    expect(b.svc.list.getSnapshot().current).toBe('receipt')
+    expect(b.api.callsOf('session.create')).toEqual([])
+    expect(b.api.callsOf('session.list')).toEqual([])
+    b.svc.acceptCreated({ sessionId: sid('receipt'), createdAt: 1, cwd: '/stale' })
+    expect(b.svc.list.getSnapshot().byId[sid('receipt')]?.cwd).toBe('/receipt')
+  })
   it('passes a preallocated id and preserves it on ordinary failure', async () => {
     const b = bench()
     b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('fresh') }))

@@ -31,6 +31,33 @@ function contributed(assembly: PromptAssembly): PromptAssembly['sections'] {
 }
 
 describe('SystemPrompt', () => {
+  it('awaits preparation before reading providers and removes preparation with its owner', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    const ready = Promise.withResolvers<undefined>()
+    let reads = 0
+    ctx.systemPrompt.tools(() => {
+      reads++
+      return { schemas: [{ name: 'lazy', description: '', parameters: {} }] }
+    })
+    const owner = ctx.plugin((inner: Context) => {
+      inner.on('system-prompt/prepare', () => ready.promise)
+    })
+    await owner
+    const assembly = ctx.systemPrompt.assemble()
+    await Promise.resolve()
+    expect(reads).toBe(0)
+    ready.resolve(undefined)
+    expect((await assembly).tools.map(tool => tool.name)).toEqual(['lazy'])
+    await owner.dispose()
+    await ctx.systemPrompt.assemble()
+    expect(reads).toBe(2)
+    const abort = new AbortController()
+    abort.abort(new Error('cancelled'))
+    await expect(ctx.systemPrompt.assemble({ signal: abort.signal })).rejects.toThrow('cancelled')
+    expect(reads).toBe(2)
+    await ctx.fiber.dispose()
+  })
   it('keeps repository section placements unique, integral, and at least ten apart', async () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, {})

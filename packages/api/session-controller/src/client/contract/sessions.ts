@@ -19,6 +19,14 @@ export type { AgentContext } from '../scope.ts'
 
 /** The sessions-service face injected as `ctx.sessions`. */
 export interface ISessions {
+  /** Public support for adopting a confirmed external creation without another Host request. */
+  readonly creationReceiptVersion: 1
+  /**
+   * Make a confirmed, newly created Host Session synchronously addressable without selecting it.
+   * Existing local state wins over a repeated receipt; this method never creates a Host Session.
+   * @param receipt - validated Host creation identity, creation time, and optional working directory.
+   */
+  acceptCreated(receipt: { sessionId: SessionId; createdAt: number; cwd?: string }): void
   /** The useSessions standard feed (list rows + current selection; read face — writes stay inside the domain). */
   readonly list: ObservableSnapshot<SessionListState>
   /**

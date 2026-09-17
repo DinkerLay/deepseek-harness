@@ -40,6 +40,7 @@ Connection 拥有 request correlation、`/api` carrier、trust check、精确 Fe
 [`api/session-controller`](../../packages/api/session-controller/README.zh.md)公开 Session list、search、creation、selection data、prompt、queue、cancellation、pagination 及 follow/control stream 等 Host command。其 Client 侧按 `ClientSessions → SessionManager → Session` 组织：
 
 - `ClientSessions` 提供 `ctx.sessions`，拥有 Session scope 与稳定的 `SessionBinding` object，并投影选中的 list state。
+- 其第一版 `acceptCreated` 入口接收经过校验的 Host 创建回执，使新 Session 可同步寻址，重复送达时保留已有状态，不再次请求 Host。
 - `SessionManager` 拥有 list baseline、实时 list/control update、惰性 Session instance、queue、projection store、subagent catalog，以及 pull 与后到 update 之间的冲突顺序。
 - 每个 `Session` 拥有一段由 `SessionEventLikeEntry` value 表示的连续逻辑 event window、pagination、follow、prompt/control state 与供 adapter 消费的 observable snapshot。
 

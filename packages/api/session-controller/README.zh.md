@@ -24,6 +24,8 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
+Client 的 `creationReceiptVersion: 1` 能力提供 `sessions.acceptCreated({ sessionId, createdAt, cwd? })`，用于接收由其他控制器完成、经过校验且已由 Host 确认的创建回执。该方法使 Session 可同步寻址，不再次请求创建或列表，也不选择该 Session。重复回执保留已有本地状态；变更能跨越正在进行的列表请求。调用方负责校验协议响应，不得用回执虚构尚未确认的 Session。
+
 历史页与 follow opening snapshot 为每个持久 Session event 携带一条 `{ type: 'event', event: SessionWireEvent }` record。Client 把每条已接受 record 保留为一个持久 `SessionEventLikeEntry`；Assistant token 边界保留在 `assistant/message` 或 `assistant/attempt` 的紧凑 stream 内。工具参数、结果内容、失败信息和 `tool/result.data.meta` 原样通过；controller 不解析 Tool definition、不运行 presenter，也不附加 UI 数据。
 
 Client journal 在发布 follow snapshot、live entry 或历史页之前验证精确的 V3 event envelope。它复用浏览器安全的 Session validator，检查必需的 surface marker、精确的 replacement endpoint、更早且唯一的 source seq、内嵌 Assistant 来源、request header 可选字段的省略规则以及 tool error 一致性。无效 record 直接失败，不删除字段或归一化；范围成员与来源存在性仍由 Host 的持久日志检查。

@@ -40,6 +40,7 @@ Each API controller package owns a paired Host and Client face. The Host side ow
 [`api/session-controller`](../../packages/api/session-controller/README.md) exposes Host commands for list, search, creation, selection data, prompt, queue, cancellation, pagination, and follow/control streams. Its Client side is organized as `ClientSessions → SessionManager → Session`:
 
 - `ClientSessions` provides `ctx.sessions`, owns Session scopes and stable `SessionBinding` objects, and projects the selected list state.
+- Its version-one `acceptCreated` entry accepts a validated Host creation receipt, makes the new Session synchronously addressable and preserves existing state on repeated delivery without another Host request.
 - `SessionManager` owns the list baseline, live list/control updates, lazy Session instances, queues, projection stores, subagent catalogs, and conflict ordering between pulls and later updates.
 - Each `Session` owns one contiguous logical-event window represented by `SessionEventLikeEntry` values, paging, follow, prompt/control state, and the observable snapshot consumed by adapters.
 
