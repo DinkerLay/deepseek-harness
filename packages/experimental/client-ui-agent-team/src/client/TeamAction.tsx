@@ -7,7 +7,7 @@ import type {
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import {
-  IconChevronDownOutlineRegular,
+  IconChevronDownOutlineRegular, IconCloseOutlineRegular,
   IconUserOutlineRegular, IconUsersOutlineRegular, StateDot, Tag, Tooltip,
   useAnchoredPosition, useDismissOnOutsidePointer, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -85,6 +85,7 @@ function TeamMemberRow({
   member, memberCount, sessionId, useSessions, useSessionStatus, openTeammate, onError, t,
 }: TeamMemberRowProps) {
   const model = useSessions(state => state.projectionsBySession[member.id]?.values.modelSelection?.next?.model)
+  const preset = useSessions(state => state.byId[member.id]?.projectionValues?.agentPreset)
   const running = useSessionStatus(state => state.get(member.id)?.running)
   const summaryRunning = useSessions(state => state.byId[member.id]?.running)
   const status: MemberStatus = member.phase === 'active'
@@ -94,6 +95,9 @@ function TeamMemberRow({
   const highlightCurrent = isCurrent && memberCount > 1
   const inert = isCurrent || status === 'failed' || status === 'provisioning'
     || status === 'retiring' || status === 'retired'
+  const name = member.role === 'lead' && typeof preset === 'string'
+    ? preset === 'standard' ? t('standard') : preset
+    : member.name
 
   return (
     <Tooltip label={t('open')} side="bottom" gap={4} disabled={inert}>
@@ -116,7 +120,7 @@ function TeamMemberRow({
         </span>
         <span className={css.memberText}>
           <span className={css.memberName}>
-            <span className={css.memberNameText}>{member.name}</span>
+            <span className={css.memberNameText}>{name}</span>
             {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
           </span>
           <small>
@@ -311,6 +315,11 @@ export function TeamAction({
           onMouseEnter={cancelHoverChange}
           onMouseLeave={scheduleHoverClose}
         >
+          <div className={css.panelHeader}>
+            <strong>{t('trigger')}</strong>
+            <button type="button" className={css.closeButton} aria-label={t('close')}
+              onClick={() => { changeOpen(false) }}><IconCloseOutlineRegular size={16} /></button>
+          </div>
           <div className={css.body}>
             {error !== null && (
               <div className={css.error} role="alert"><StateDot state="error" />{error}</div>
@@ -326,7 +335,7 @@ export function TeamAction({
                 {team.failure !== undefined && (
                   <div className={css.error} role="alert"><StateDot state="error" />{t('failure', { message: team.failure })}</div>
                 )}
-                <section>
+                <section className={css.membersPane}>
                   <h3>
                     {t('roster')}
                     {team.members.length > 1 && <span className={css.count}>{team.members.length}</span>}
@@ -347,7 +356,7 @@ export function TeamAction({
                     ))}
                   </div>
                 </section>
-                <section>
+                <section className={css.tasksPane}>
                   {team.tasks.length === 0
                     ? <p className={css.emptyNotice}>{t('empty')}</p>
                     : (

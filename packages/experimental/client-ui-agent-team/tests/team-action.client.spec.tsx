@@ -129,6 +129,23 @@ function setProjection(sessions: ReturnType<typeof bench>['sessions'], sessionId
 }
 
 describe('TeamAction', () => {
+  it('shows the current Lead preset and closes the Team panel explicitly', () => {
+    const b = bench({ running: { [SESSION]: false } })
+    const snapshot = b.sessions.getSnapshot()
+    b.sessions.set({
+      ...snapshot,
+      byId: {
+        ...snapshot.byId,
+        [SESSION]: { ...snapshot.byId[SESSION]!, projectionValues: { agentPreset: 'standard' } },
+      },
+    })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByRole('button', { name: /标准模式/u })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: zh.close }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('mounts an external Task graph without replacing the native Board', () => {
     const slot: TeamActionProps['renderSlot'] = (key, owner) => {
       if (key === 'agent-team.panel.tasks.action' && hasGraphAction(owner)) {
