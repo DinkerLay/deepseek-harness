@@ -40,7 +40,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent` | `list_subagent_models`, `subagent` | `ctx.tools`, `ctx.subagents`, `ctx.systemPrompt`, `ctx.llm for model discovery and selected-route validation` | `tool/call`, `tool/result`, `child session events through the chosen provider` | `subagent`, `subagent_fork` | The registered delegation name is the load-time `toolName` config (default `subagent`); the default schema above has model selection off, while the discovery schema is shown as the fixed companion available in an enabled Session. Web presets sample the Plugins preference for each new top-level Session and preserve that decision for its child Sessions; `subagent_fork` remains fixed-route. Each instance independently controls whether it reads model-selection settings and its background behavior through `modelSelectionSettings`, `backgroundMode`, and `enableRunInBackground`. |
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`, `list_agents`, `send_message` | `ctx.tools`, `ctx.subagents`, `ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`, `tool/result`, `child session events through ctx.subagents` | - | The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries). |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
-| `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `send_message`, `spawn_teammate`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/message/queued`, `team/message/delivered`, `team/task`, `tool/result` | - | All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
+| `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `retire_teammate`, `send_message`, `spawn_teammate`, `team_message_list`, `team_task_accept`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_rework`, `team_task_submit_result`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/member/configured`, `team/message/queued`, `team/message/queued-task`, `team/message/delivered`, `team/task`, `team/task/managed`, `tool/result` | - | All fourteen tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2035,12 +2035,33 @@ Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/exper
 
 ### `list_agents`
 
-List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.
+List the Lead and every durable teammate with its target and current availability. Only running or inactive members are addressable; retiring and retired rows remain for history.
 
 ```json
 {
   "type": "object",
   "properties": {}
+}
+```
+
+Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
+
+### `retire_teammate`
+
+Remove a teammate from Team admission while retaining its Session history. Team Lead only; first resolve unfinished owned tasks and pending Team messages.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "target": {
+      "type": "string",
+      "description": "Teammate target returned by list_agents."
+    }
+  },
+  "required": [
+    "target"
+  ]
 }
 ```
 
@@ -2061,6 +2082,10 @@ Send one durable message to another Team member. A running target receives it at
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Optional existing Task ID whose owner is the sender or recipient; the Lead may link any Team Task."
     }
   },
   "required": [
@@ -2099,12 +2124,69 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
         "fresh",
         "fork"
       ]
+    },
+    "preset_id": {
+      "type": "string",
+      "description": "Optional declared Agent Preset for this teammate; omit to inherit the Lead composition."
     }
   },
   "required": [
     "name",
     "description",
     "prompt"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
+
+### `team_message_list`
+
+Read complete Team peer messages, newest first. Team Lead only; use nextCursor to read older messages without relaying them through the Lead.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "before": {
+      "type": "string",
+      "description": "Optional nextCursor from the previous page."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Page size from 1 through 100; defaults to 50."
+    }
+  }
+}
+```
+
+Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
+
+### `team_task_accept`
+
+Accept the exact submitted Attempt after reviewing its result and still-valid prerequisites. Team Lead only.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Submitted Task ID."
+    },
+    "expected_revision": {
+      "type": "integer",
+      "description": "Latest Task revision."
+    },
+    "attempt_id": {
+      "type": "string",
+      "description": "Submitted Attempt ID from team_task_get."
+    }
+  },
+  "required": [
+    "task_id",
+    "expected_revision",
+    "attempt_id"
   ]
 }
 ```
@@ -2211,9 +2293,91 @@ List shared tasks, including readiness, owner, revision, blockers, and write-sco
 
 Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
+### `team_task_rework`
+
+Reject quality work into a new Task ID, retain the old result, and mark accepted descendants stale. Team Lead only; stop active descendants first and choose prerequisites explicitly.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Submitted or accepted Task to replace."
+    },
+    "expected_revision": {
+      "type": "integer",
+      "description": "Latest old Task revision."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the old result is insufficient."
+    },
+    "blocked_by": {
+      "type": "array",
+      "description": "Explicit prerequisite Task IDs for the new replacement, possibly empty.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "task_id",
+    "expected_revision",
+    "reason",
+    "blocked_by"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
+
+### `team_task_submit_result`
+
+Submit the exact running Attempt result for Lead review. This does not complete the Task or release its dependent Tasks.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Task ID owned by the calling member."
+    },
+    "expected_revision": {
+      "type": "integer",
+      "description": "Latest Task revision."
+    },
+    "attempt_id": {
+      "type": "string",
+      "description": "Current running Attempt ID from team_task_get."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Complete result summary for Lead review."
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Optional artifact paths or references.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "task_id",
+    "expected_revision",
+    "attempt_id",
+    "summary"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
+
 ### `team_task_update`
 
-Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.
+Compare-and-set Task ownership, text, prerequisites, or deletion. Submit and accept results with the dedicated tools; quality rework creates a new Task.
 
 ```json
 {
@@ -2235,8 +2399,6 @@ Compare-and-set a shared task action using the latest revision from team_task_ge
         "release",
         "edit",
         "set_dependencies",
-        "complete",
-        "reopen",
         "reassign",
         "delete"
       ]
@@ -2296,7 +2458,7 @@ Wait for the next teammate status, mailbox, or shared-task change after this cal
 
 Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
-All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.
+All fourteen tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

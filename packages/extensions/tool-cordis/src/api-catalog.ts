@@ -106,6 +106,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Concrete agent factory and driver service.',
     methods: [
       {
+        signature: 'wakePending(agent: Agent): void',
+        description: 'Wake previously accepted input without inserting another inbox item.',
+        parameters: [{ name: 'agent', description: 'exact live execution supplied by the Agent registry.' }],
+      },
+      {
         signature: 'readonly config: Config',
         description: 'Validated configuration owned by the agent-loop service.',
         parameters: [],
@@ -178,6 +183,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Its preset id, if bound.',
       },
       {
+        signature: 'compositionRevision(ctx: Context): string | undefined',
+        description: 'Read the captured declaration digest of a live Agent\'s retained composition.',
+        parameters: [{ name: 'ctx', description: 'bound Agent context.' }],
+        returns: 'its declaration digest, or undefined when unbound or not serializable.',
+      },
+      {
         signature: 'serviceFor<K extends string & keyof Context>(agent: { ctx: Context }, name: K): Context[K] | undefined',
         description: 'Read a service supplied inside an Agent\'s isolated preset group.',
         parameters: [{ name: 'agent', description: 'Agent whose composition is queried.' }, { name: 'name', description: 'Cordis service name.' }],
@@ -200,6 +211,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read current registrations for cold transcript presentation.',
         parameters: [{ name: 'id', description: 'Preset identity or the default.' }],
         returns: 'A revision lease; dispose it after the scoped read completes.',
+      },
+      {
+        signature: 'async acquireComposition(id?: string): Promise<PresetCompositionLease>',
+        description: 'Retain the selected composition for asynchronous Agent preparation without re-resolving its id. Definition replacement/removal does not change this lease; releasing it prevents future mounts. A successful mount owns its own binding reference after the caller releases the lease. The lease does not serialize configuration or retain revisions across process restarts.',
+        parameters: [{ name: 'id', description: 'preset identity or the current default.' }],
+        returns: 'a caller-owned composition lease; dispose it after creation succeeds or fails.',
       },
       {
         signature: 'compositionInventory(): Promise<AgentPresetComposition[]>',
@@ -259,6 +276,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Load a persisted session and resume an agent on it through the registered factory. Rejects if no factory is registered; the factory rejects if session persistence is not configured or persistence/setup fails.',
         parameters: [{ name: 'options', description: 'persisted identity, optional live parent, configuration, and setup.' }],
         returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
+      },
+      {
+        signature: 'wakePending(agent: Agent): void',
+        description: 'Wake an admitted execution\'s existing inbox without replaying input. Empty inboxes remain idle.',
+        parameters: [{ name: 'agent', description: 'exact live Agent; callers retain responsibility for execution admission.' }],
+        throws: ['when the Agent is stale or the factory does not support inbox recovery.'],
       },
       {
         signature: 'register(agent: Agent): ReturnType<Context[\'effect\']>',
@@ -329,10 +352,28 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active roster row.',
       },
       {
+        signature: 'async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>',
+        description: 'Retire one teammate after its unfinished tasks and pending Team mail have been resolved. The member name and Session history remain durable; in-flight Team commands lose admission.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'targetName', description: 'member name from the roster.' }],
+        returns: 'the retired roster row after execution teardown.',
+      },
+      {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
         description: 'Queue one durable peer message, then attempt immediate delivery.',
         parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, and pre-queue cancellation.' }],
         returns: 'durable message identity and immediate-delivery observation.',
+      },
+      {
+        signature: 'listLeadMessages(caller: Agent, before?: TeamMessageId, limit: number = 50): TeamMessagePage',
+        description: 'Read complete peer-message bodies from the authoritative Lead Session, newest first. This is a Lead-only observation; teammates cannot inspect third-party messages.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead used for authorization.' }, { name: 'before', description: 'oldest id from a prior page, excluded from this older page.' }, { name: 'limit', description: 'bounded page size from 1 through 100; defaults to 50.' }],
+        returns: 'a stable message-id cursor and detached message content.',
+      },
+      {
+        signature: '@Remote(\'messages\') remoteMessages(agent: Agent, before?: TeamMessageId): TeamMessagePage',
+        description: 'Read a Lead-only browser page of the same mailbox records used by delivery and recovery.',
+        parameters: [{ name: 'agent', description: 'exact live Lead used for authorization.' }, { name: 'before', description: 'oldest message id from a prior page, excluded from this page.' }],
+        returns: 'newest-first messages and an optional older-page cursor.',
       },
       {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',
@@ -357,6 +398,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Compare-and-set one authorized task transition.',
         parameters: [{ name: 'caller', description: 'exact live Team member authorizing the mutation.' }, { name: 'request', description: 'task identity, expected revision, action, and action fields.' }],
         returns: 'the committed next task revision.',
+      },
+      {
+        signature: 'async submitTaskResult(caller: Agent, request: SubmitTeamTaskResultRequest): Promise<TeamTaskView>',
+        description: 'Submit the caller-owned current Attempt for Lead review without satisfying Task blockers.',
+        parameters: [{ name: 'caller', description: 'exact live Task owner.' }, { name: 'request', description: 'Task/Attempt CAS identities and separate result content.' }],
+        returns: 'the submitted Task view.',
+      },
+      {
+        signature: 'async acceptTaskResult(caller: Agent, request: AcceptTeamTaskResultRequest): Promise<TeamTaskView>',
+        description: 'Mark the exact submitted Attempt accepted and release its dependent Tasks.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'request', description: 'Task revision and submitted Attempt identity.' }],
+        returns: 'the completed Task view.',
+      },
+      {
+        signature: 'async reworkTask(caller: Agent, request: ReworkTeamTaskRequest): Promise<TeamTaskView>',
+        description: 'Reject quality work into a new Task ID while retaining the old result and marking dependent results stale.',
+        parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'request', description: 'old Task revision, reason, and explicit replacement prerequisites.' }],
+        returns: 'the new pending Task view; it is not automatically dispatched.',
       },
       {
         signature: 'async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal): Promise<TeamWaitResult>',
@@ -1218,6 +1277,42 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'hostDelegatedAgents',
+    summary: 'Real Agent handles owned by a Host plugin, never by a disposable Lead Agent.',
+    description: 'Real Agent handles owned by a Host plugin, never by a disposable Lead Agent.',
+    methods: [
+      {
+        signature: 'create(request: CreateHostDelegatedAgent): Promise<Agent>',
+        description: 'Create a delegated execution, or recover the same reserved identity after an uncertain creation.',
+        parameters: [{ name: 'request', description: 'admitted owner, source Agent and explicit preset.' }],
+        returns: 'the real Agent after its ownership and delegation policy are durably recorded.',
+      },
+      {
+        signature: 'resume(ownerId: DelegationOwnerId, sessionId: SessionId, signal?: AbortSignal): Promise<Agent>',
+        description: 'Recover an execution without a live parent; owner, preset revision and retirement are checked before publication.',
+        parameters: [{ name: 'ownerId', description: 'admitted durable controller identity.' }, { name: 'sessionId', description: 'reserved execution session.' }, { name: 'signal', description: 'cancellation before publication.' }],
+        returns: 'the live delegated Agent.',
+      },
+      {
+        signature: 'send( ownerId: DelegationOwnerId, sessionId: SessionId, requestId: DelegationRequestId, text: string, senderSessionId: SessionId, ): Promise<MessageId>',
+        description: 'Durably deliver once through the real inbox. A duplicate returns its original message identity, even after recovery.',
+        parameters: [{ name: 'ownerId', description: 'admitted controller identity.' }, { name: 'sessionId', description: 'recipient execution.' }, { name: 'requestId', description: 'stable outbox delivery identity.' }, { name: 'text', description: 'exact model-visible input.' }, { name: 'senderSessionId', description: 'actual originating Agent execution.' }],
+        returns: 'accepted message identity; this does not mean the model completed the task.',
+      },
+      {
+        signature: 'interrupt(ownerId: DelegationOwnerId, sessionId: SessionId): Promise<void>',
+        description: 'Cancel queued/running work and await quiescence without retiring the reusable execution.',
+        parameters: [{ name: 'ownerId', description: 'admitted controller identity.' }, { name: 'sessionId', description: 'execution whose current work is stopped.' }],
+      },
+      {
+        signature: 'retire(ownerId: DelegationOwnerId, sessionId: SessionId): Promise<boolean>',
+        description: 'Permanently close delivery after quiescence, retain history and release the actual Agent handle.',
+        parameters: [{ name: 'ownerId', description: 'admitted controller identity.' }, { name: 'sessionId', description: 'execution to retire.' }],
+        returns: 'whether a durable execution existed; false confirms an unused reservation.',
+      },
+    ],
+  },
+  {
     key: 'inspector',
     summary: 'Shared Host/Client service façade over the realm\'s source publisher.',
     description: 'Shared Host/Client service façade over the realm\'s source publisher.',
@@ -1769,6 +1864,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     summary: 'Host service backing the generated `ctx.remote.session` namespace.',
     description: 'Host service backing the generated `ctx.remote.session` namespace.',
     methods: [
+      {
+        signature: 'registerDelegatedOwner(owner: DelegatedSessionOwner): () => void',
+        description: 'Register an execution owner without transferring its Agent handles to ordinary Session routing.',
+        parameters: [{ name: 'owner', description: 'explicit physical-Session claims and lifecycle admission.' }],
+        returns: 'disposer; the registering plugin must own it through a Context effect.',
+      },
       {
         signature: 'resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>',
         description: 'Resolve or resume one ordinary Session for another Host API domain.',
@@ -4208,6 +4309,10 @@ export const EVENT_API: readonly EventApiEntry[] = [
 /** Shapes of every exported type the Service and Event signatures reference (transitively), sorted by name. */
 export const TYPE_API: readonly TypeApiEntry[] = [
   {
+    name: 'AcceptTeamTaskResultRequest',
+    declaration: 'export interface AcceptTeamTaskResultRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly attemptId: TeamTaskAttemptId;\n}',
+  },
+  {
     name: 'AccountDetails',
     declaration: 'export interface AccountDetails {\n    readonly profile: {\n        readonly status: \'ready\';\n        readonly value: AccountProfile;\n    } | {\n        readonly status: \'failed\';\n    };\n    readonly balance: {\n        readonly status: \'ready\';\n        readonly value: readonly AccountWallet[];\n        readonly bonusWallets: readonly AccountWallet[];\n    } | {\n        readonly status: \'failed\';\n    };\n}',
   },
@@ -4249,7 +4354,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentFactory',
-    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
+    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n    wakePending?(agent: Agent): void;\n}',
   },
   {
     name: 'AgentHandle',
@@ -4484,6 +4589,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ChangeResult {\n    changed: boolean;\n    application: \'applied\' | \'restart-required\' | \'overridden\' | \'failed\' | \'cancelled\';\n    stage: \'install\' | \'enable\' | \'remove\';\n    target: string;\n    enabled?: boolean;\n    error?: ManagementError;\n    warnings?: string[];\n    packageResult?: PackageResult;\n    bundle?: string;\n    pendingBuilds?: string[];\n    approvedBuilds?: string[];\n    registries?: Registry[];\n    failedAt?: \'registry\' | \'spec-host\';\n}',
   },
   {
+    name: 'ChildComposition',
+    declaration: 'export interface ChildComposition {\n    readonly persona?: string | undefined;\n    readonly toolFilter?: ToolRestriction | undefined;\n}',
+  },
+  {
     name: 'ClientArtifactBaseline',
     declaration: 'export interface ClientArtifactBaseline {\n    readonly path: string;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n    readonly size: number;\n}',
   },
@@ -4636,12 +4745,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ContinuableCreateSpec {\n    readonly seed?: readonly SessionEvent[];\n}',
   },
   {
+    name: 'ContinuablePresetBinding',
+    declaration: 'export interface ContinuablePresetBinding {\n    readonly id: string;\n    readonly revision: string;\n}',
+  },
+  {
     name: 'ContinuableStart',
     declaration: 'export interface ContinuableStart {\n    readonly childId: SessionId;\n    readonly messageId: MessageId;\n}',
   },
   {
     name: 'ContinuableStartSpec',
-    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'ContinuableSubagentDescriptorData',
@@ -4728,6 +4841,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CreateGoalResult {\n    readonly ref: GoalRef;\n}',
   },
   {
+    name: 'CreateHostDelegatedAgent',
+    declaration: 'export interface CreateHostDelegatedAgent {\n    readonly ownerId: DelegationOwnerId;\n    readonly sessionId: SessionId;\n    readonly source: Agent;\n    readonly presetId: string;\n    readonly presetRevision?: string;\n    readonly agentOptions?: AgentOptions;\n    readonly composition: ChildComposition;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'CreateSessionOptions',
     declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly inheritedEventCount?: SessionLogOffset;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly isSeeded?: boolean;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
@@ -4774,6 +4891,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'DeepSeekLlmApiJson',
     declaration: 'export type DeepSeekLlmApiJson = null | boolean | number | string | DeepSeekLlmApiJson[] | {\n    [key: string]: DeepSeekLlmApiJson;\n};',
+  },
+  {
+    name: 'DelegatedSessionOwner',
+    declaration: 'export interface DelegatedSessionOwner {\n    readonly name: string;\n    access(sessionId: SessionId): \'active\' | \'readonly\' | undefined;\n    resolve(sessionId: SessionId): Promise<Agent>;\n    assertWritable(agent: Agent, operation: \'lookup\' | \'prompt\'): void;\n}',
+  },
+  {
+    name: 'DelegationOwnerId',
+    declaration: 'export type DelegationOwnerId = Branded<\'delegation-owner\'>;',
+  },
+  {
+    name: 'DelegationRequestId',
+    declaration: 'export type DelegationRequestId = Branded<\'delegation-request\'>;',
   },
   {
     name: 'DeveloperMessage',
@@ -5688,6 +5817,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PrepareSessionOptions = (CreateSessionOptions & {\n    readonly eventState?: undefined;\n}) | RestoredSessionOptions;',
   },
   {
+    name: 'PresetCompositionLease',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
+  },
+  {
     name: 'PresetDefinition',
     declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
   },
@@ -5936,6 +6069,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ResumeAgentOptions {\n    readonly resumeSessionId: SessionId;\n    readonly parentAgent?: Agent;\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
+    name: 'ReworkTeamTaskRequest',
+    declaration: 'export interface ReworkTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly reason: string;\n    readonly blockedBy: readonly TeamTaskId[];\n}',
+  },
+  {
     name: 'RpcId',
     declaration: 'export type RpcId = Branded<\'rpc-id\'>;',
   },
@@ -6017,7 +6154,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SendTeamMessageRequest',
-    declaration: 'export interface SendTeamMessageRequest {\n    readonly target: string;\n    readonly content: ContentBlock[];\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SendTeamMessageRequest {\n    readonly target: string;\n    readonly content: ContentBlock[];\n    readonly taskId?: TeamTaskId;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SendTeamMessageResult',
@@ -6701,7 +6838,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -6900,6 +7037,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SubagentStopReasonMap {\n    completed: \'completed\';\n    aborted: \'aborted\';\n    error: \'error\';\n    \'max-tokens\': \'max-tokens\';\n    refusal: \'refusal\';\n}',
   },
   {
+    name: 'SubmitTeamTaskResultRequest',
+    declaration: 'export interface SubmitTeamTaskResultRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly attemptId: TeamTaskAttemptId;\n    readonly result: TeamTaskResult;\n}',
+  },
+  {
     name: 'SubprocessCollect',
     declaration: 'export interface SubprocessCollect {\n    maxBytes: number;\n    spill?: {\n        maxBytes: number;\n    };\n}',
   },
@@ -7008,24 +7149,60 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeamManagedTaskState',
+    declaration: 'export interface TeamManagedTaskState {\n    readonly attempts: TeamTaskAttemptSnapshot[];\n    readonly validity: \'none\' | \'valid\' | \'stale\';\n    readonly origin?: {\n        readonly kind: \'rework\';\n        readonly taskId: TeamTaskId;\n        readonly reason: string;\n    };\n    readonly replacedByTaskId?: TeamTaskId;\n}',
+  },
+  {
     name: 'TeamMembership',
     declaration: 'export interface TeamMembership {\n    readonly root: Agent;\n    readonly id: TeamId;\n    readonly role: \'lead\' | \'teammate\';\n    readonly name: string;\n}',
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly preset?: ContinuablePresetBinding;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageId',
     declaration: 'export type TeamMessageId = Branded<\'TeamMessageId\'>;',
   },
   {
+    name: 'TeamMessagePage',
+    declaration: 'export interface TeamMessagePage {\n    readonly messages: TeamMessageView[];\n    readonly total: number;\n    readonly nextCursor?: TeamMessageId;\n}',
+  },
+  {
+    name: 'TeamMessageView',
+    declaration: 'export interface TeamMessageView {\n    readonly id: TeamMessageId;\n    readonly senderName: string;\n    readonly targetName: string;\n    readonly text: string;\n    readonly contentJson: string;\n    readonly hasNonText: boolean;\n    readonly time: number;\n    readonly status: \'queued\' | \'delivered\';\n    readonly taskId?: TeamTaskId;\n}',
+  },
+  {
     name: 'TeamTaskAction',
     declaration: 'export type TeamTaskAction = \'claim\' | \'release\' | \'edit\' | \'set_dependencies\' | \'complete\' | \'reopen\' | \'reassign\' | \'delete\';',
   },
   {
+    name: 'TeamTaskAttemptId',
+    declaration: 'export type TeamTaskAttemptId = Branded<\'TeamTaskAttemptId\'>;',
+  },
+  {
+    name: 'TeamTaskAttemptSnapshot',
+    declaration: 'export interface TeamTaskAttemptSnapshot {\n    readonly id: TeamTaskAttemptId;\n    readonly ownerId: SessionId;\n    readonly status: \'running\' | \'submitted\' | \'accepted\' | \'rejected\' | \'cancelled\';\n    readonly inputs: TeamTaskInputRevision[];\n    readonly result?: TeamTaskResult;\n    readonly reason?: string;\n}',
+  },
+  {
+    name: 'TeamTaskAttemptView',
+    declaration: 'export interface TeamTaskAttemptView {\n    readonly id: TeamTaskAttemptId;\n    readonly ownerName?: string;\n    readonly status: TeamTaskAttemptSnapshot[\'status\'];\n    readonly inputs: TeamTaskInputRevision[];\n    readonly result?: TeamTaskResult;\n    readonly reason?: string;\n}',
+  },
+  {
     name: 'TeamTaskId',
     declaration: 'export type TeamTaskId = Branded<\'TeamTaskId\'>;',
+  },
+  {
+    name: 'TeamTaskInputRevision',
+    declaration: 'export interface TeamTaskInputRevision {\n    readonly taskId: TeamTaskId;\n    readonly revision: number;\n}',
+  },
+  {
+    name: 'TeamTaskResult',
+    declaration: 'export interface TeamTaskResult {\n    readonly summary: string;\n    readonly artifacts: string[];\n}',
+  },
+  {
+    name: 'TeamTaskReviewView',
+    declaration: 'export interface TeamTaskReviewView {\n    readonly attempts: TeamTaskAttemptView[];\n    readonly validity: TeamManagedTaskState[\'validity\'];\n    readonly origin?: NonNullable<TeamManagedTaskState[\'origin\']>;\n    readonly replacedByTaskId?: TeamTaskId;\n}',
   },
   {
     name: 'TeamTaskStatus',
@@ -7033,7 +7210,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskView',
-    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly writeScopeWarnings: string[];\n}',
+    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly writeScopeWarnings: string[];\n    readonly review?: TeamTaskReviewView;\n}',
   },
   {
     name: 'TeamView',

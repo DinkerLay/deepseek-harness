@@ -475,6 +475,55 @@ The spawn and fork backends create an ordinary one-shot agent through `parent.ct
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxhostdelegatedagents--hostdelegatedagents"></a>
+
+### `ctx.hostDelegatedAgents` — `HostDelegatedAgents`
+
+Real Agent handles owned by a Host plugin, never by a disposable Lead Agent.
+
+```ts cordis-catalog
+/** Create a delegated execution, or recover the same reserved identity after an uncertain creation.
+ * @param request - admitted owner, source Agent and explicit preset.
+ * @returns the real Agent after its ownership and delegation policy are durably recorded.
+ */
+create(request: CreateHostDelegatedAgent): Promise<Agent>
+
+/** Recover an execution without a live parent; owner, preset revision and retirement are checked before publication.
+ * @param ownerId - admitted durable controller identity.
+ * @param sessionId - reserved execution session.
+ * @param signal - cancellation before publication.
+ * @returns the live delegated Agent.
+ */
+resume(ownerId: DelegationOwnerId, sessionId: SessionId, signal?: AbortSignal): Promise<Agent>
+
+/** Durably deliver once through the real inbox. A duplicate returns its original message identity, even after recovery.
+ * @param ownerId - admitted controller identity.
+ * @param sessionId - recipient execution.
+ * @param requestId - stable outbox delivery identity.
+ * @param text - exact model-visible input.
+ * @param senderSessionId - actual originating Agent execution.
+ * @returns accepted message identity; this does not mean the model completed the task.
+ */
+send( ownerId: DelegationOwnerId, sessionId: SessionId, requestId: DelegationRequestId, text: string, senderSessionId: SessionId, ): Promise<MessageId>
+
+/** Cancel queued/running work and await quiescence without retiring the reusable execution.
+ * @param ownerId - admitted controller identity.
+ * @param sessionId - execution whose current work is stopped.
+ */
+interrupt(ownerId: DelegationOwnerId, sessionId: SessionId): Promise<void>
+
+/** Permanently close delivery after quiescence, retain history and release the actual Agent handle.
+ * @param ownerId - admitted controller identity.
+ * @param sessionId - execution to retire.
+ * @returns whether a durable execution existed; false confirms an unused reservation.
+ */
+retire(ownerId: DelegationOwnerId, sessionId: SessionId): Promise<boolean>
+```
+
+Types: [Agent](core.md) · [MessageId](llm-streaming.md) · [SessionId](core.md)
+
+Source: [`packages/subagent/subagent/src/host-owned.ts`](../../packages/subagent/subagent/src/host-owned.ts)
+
 <a id="ctxsubagentmodelselection--subagentmodelselectionconfig"></a>
 
 ### `ctx.subagentModelSelection` — `SubagentModelSelectionConfig`

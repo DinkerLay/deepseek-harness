@@ -9,23 +9,27 @@ Types shared by the experimental implicit-root Team domain, model tools, and hos
 `TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
 
 ```ts type-equiv
-/** Whole durable value written on every teammate lifecycle change. */
+/** Whole durable value reconstructed from either member event generation. */
 interface TeamMemberSnapshot {
   readonly id: SessionId
   readonly name: string
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Explicit child composition; absent when the member inherits the Lead preset. */
+  readonly preset?: ContinuablePresetBinding
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and becomes `active` or `failed`. An active member may then move through `retiring` to `retired`; pending assignments and undelivered Team messages block that transition. Version-two `team/member` records retain the original fields, while `team/member/configured` carries Preset bindings and retirement without rewriting them. Roster `running`/`inactive` status is derived separately and never rewrites a member record.
 
 ## Durable mailbox
 
 The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox.
+
+The released `team/message/queued` event remains unlinked. A new `team/message/queued-task` event can name one existing Task without changing delivery; the sender or recipient must own that Task unless the sender is the Lead. `listLeadMessages` and the Lead-only Remote return complete text plus the stored content JSON in newest-first pages. Teammates cannot read messages exchanged by others.
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -71,7 +75,9 @@ interface TeamTaskSnapshot {
 }
 ```
 
-`pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
+`pending` is unstarted or released, `in_progress` carries an owner, and `deleted` is a retained tombstone. For newly created managed Tasks, `completed` satisfies blockers only after Lead acceptance of a separate result. `team/task/managed` stores a Task snapshot together with its Attempt history and result validity; a single event can mark accepted descendants stale when a quality rework creates a new Task ID. It does not invent dependency edges or replace the Task DAG with a Session graph. Released version-two `team/task` events remain readable with their original completion rule. Views add owner name, readiness, write-scope warnings, and optional review detail without changing the durable snapshot.
+
+The service accepts `SubmitTeamTaskResultRequest` from the exact owner with `taskId`, `expectedRevision`, `attemptId`, and a `TeamTaskResult` (`summary` plus artifact references). `AcceptTeamTaskResultRequest` carries the same Task/Attempt CAS identities and requires the Lead. `ReworkTeamTaskRequest` requires the Lead, the old Task revision, a reason, and an explicit `blockedBy` list for the new Task. The old Task and accepted descendants retain their history; no replacement dependency is silently inferred.
 
 ## Replay
 
@@ -115,12 +121,39 @@ listMembers(agent: Agent): TeamMemberView[]
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 
 /**
+ * Retire one teammate after its unfinished tasks and pending Team mail have been resolved.
+ * The member name and Session history remain durable; in-flight Team commands lose admission.
+ * @param caller - exact live Team Lead.
+ * @param targetName - member name from the roster.
+ * @returns the retired roster row after execution teardown.
+ */
+async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>
+
+/**
  * Queue one durable peer message, then attempt immediate delivery.
  * @param caller - exact live sending Team member.
  * @param request - target name, content, and pre-queue cancellation.
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Read complete peer-message bodies from the authoritative Lead Session, newest first.
+ * This is a Lead-only observation; teammates cannot inspect third-party messages.
+ * @param caller - exact live Team Lead used for authorization.
+ * @param before - oldest id from a prior page, excluded from this older page.
+ * @param limit - bounded page size from 1 through 100; defaults to 50.
+ * @returns a stable message-id cursor and detached message content.
+ */
+listLeadMessages(caller: Agent, before?: TeamMessageId, limit: number = 50): TeamMessagePage
+
+/**
+ * Read a Lead-only browser page of the same mailbox records used by delivery and recovery.
+ * @param agent - exact live Lead used for authorization.
+ * @param before - oldest message id from a prior page, excluded from this page.
+ * @returns newest-first messages and an optional older-page cursor.
+ */
+@Remote('messages') remoteMessages(agent: Agent, before?: TeamMessageId): TeamMessagePage
 
 /**
  * Create one unowned pending task in the Team Lead log.
@@ -152,6 +185,30 @@ listTasks(caller: Agent): TeamTaskView[]
  * @returns the committed next task revision.
  */
 async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskView>
+
+/**
+ * Submit the caller-owned current Attempt for Lead review without satisfying Task blockers.
+ * @param caller - exact live Task owner.
+ * @param request - Task/Attempt CAS identities and separate result content.
+ * @returns the submitted Task view.
+ */
+async submitTaskResult(caller: Agent, request: SubmitTeamTaskResultRequest): Promise<TeamTaskView>
+
+/**
+ * Mark the exact submitted Attempt accepted and release its dependent Tasks.
+ * @param caller - exact live Team Lead.
+ * @param request - Task revision and submitted Attempt identity.
+ * @returns the completed Task view.
+ */
+async acceptTaskResult(caller: Agent, request: AcceptTeamTaskResultRequest): Promise<TeamTaskView>
+
+/**
+ * Reject quality work into a new Task ID while retaining the old result and marking dependent results stale.
+ * @param caller - exact live Team Lead.
+ * @param request - old Task revision, reason, and explicit replacement prerequisites.
+ * @returns the new pending Task view; it is not automatically dispatched.
+ */
+async reworkTask(caller: Agent, request: ReworkTeamTaskRequest): Promise<TeamTaskView>
 
 /**
  * Wait for the next Team-domain or member-status change.

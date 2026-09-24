@@ -775,6 +775,12 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 Host service backing the generated `ctx.remote.session` namespace.
 
 ```ts cordis-catalog
+/** Register an execution owner without transferring its Agent handles to ordinary Session routing.
+ * @param owner - explicit physical-Session claims and lifecycle admission.
+ * @returns disposer; the registering plugin must own it through a Context effect.
+ */
+registerDelegatedOwner(owner: DelegatedSessionOwner): () => void
+
 /**
  * Resolve or resume one ordinary Session for another Host API domain.
  * @param sessionId - Session identity whose Agent owns the operation.

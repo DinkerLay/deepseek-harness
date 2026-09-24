@@ -156,6 +156,9 @@ root
 │     │  └─ conversation.session.header
 │     │     ├─ conversation.session.header.lineage
 │     │     ├─ conversation.session.header.actions
+│     │     │  └─ [experimental Agent Team action]
+│     │     │     ├─ agent-team.panel.tasks.action
+│     │     │     └─ agent-team.panel.tasks.graph
 │     │     ├─ conversation.session.header.utilities
 │     │     └─ conversation.session.header.corner
 │     ├─ conversation.composer

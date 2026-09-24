@@ -695,6 +695,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Providers implement transports; the service also owns optional Activation-based continuation orchestration, tool-subagent selects one-shot or continuable delegation, tool-subagent-control delivers follow-ups, and tool-ralph requires one fresh structured-output route.',
   },
   {
+    key: 'hostDelegatedAgents',
+    pkg: 'subagent',
+    title: 'Host-owned delegated execution',
+    mode: 'service',
+    note: 'Trusted external Host controllers create explicit-Preset executions, recover by durable owner and declaration digest, deduplicate inbox deliveries, and await interruption or retirement; the service owns no Team policy.',
+  },
+  {
     key: 'speechToText',
     pkg: 'experimental-speech-to-text',
     title: 'Experimental speech recognition providers',

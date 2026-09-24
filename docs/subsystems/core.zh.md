@@ -458,6 +458,11 @@ Source: [`packages/core/agent-default-model/src/index.ts`](../../packages/core/a
 Concrete agent factory and driver service.
 
 ```ts cordis-catalog
+/** Wake previously accepted input without inserting another inbox item.
+ * @param agent - exact live execution supplied by the Agent registry.
+ */
+wakePending(agent: Agent): void
+
 /**
  * Create an agent and session under one caller-supplied identity, owned by
  * the accessing fiber. Constructor-driven config calls mint a fresh combined
@@ -540,6 +545,12 @@ composeFrom(ctx: Context, parent: Context): string | undefined
  */
 composedPreset(ctx: Context): string | undefined
 
+/** Read the captured declaration digest of a live Agent's retained composition.
+ * @param ctx - bound Agent context.
+ * @returns its declaration digest, or undefined when unbound or not serializable.
+ */
+compositionRevision(ctx: Context): string | undefined
+
 /** Read a service supplied inside an Agent's isolated preset group.
  * @param agent Agent whose composition is queried.
  * @param name Cordis service name.
@@ -566,6 +577,16 @@ async recompose(ctx: Context, id: string): Promise<AgentPreset>
  * @returns A revision lease; dispose it after the scoped read completes.
  */
 async acquireScope(id?: string): Promise<{ key: ScopeKey } & AsyncDisposable>
+
+/**
+ * Retain the selected composition for asynchronous Agent preparation without re-resolving its id.
+ * Definition replacement/removal does not change this lease; releasing it prevents future mounts.
+ * A successful mount owns its own binding reference after the caller releases the lease.
+ * The lease does not serialize configuration or retain revisions across process restarts.
+ * @param id - preset identity or the current default.
+ * @returns a caller-owned composition lease; dispose it after creation succeeds or fails.
+ */
+async acquireComposition(id?: string): Promise<PresetCompositionLease>
 
 /** Read plugin rows without creating an Agent.
  * @returns Current declaration metadata and activation states.
@@ -669,6 +690,13 @@ async create(options: CreateAgentOptions): Promise<AgentHandle>
  * @returns the handle after setup, rollback-covered publication, and loop start complete.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Wake an admitted execution's existing inbox without replaying input. Empty inboxes remain idle.
+ * @param agent - exact live Agent; callers retain responsibility for execution admission.
+ * @throws when the Agent is stale or the factory does not support inbox recovery.
+ */
+wakePending(agent: Agent): void
 
 /**
  * Register a live agent with source `startup`. Rejects if the id is already registered or a
