@@ -44,6 +44,8 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 ### 驱动 agent 的对话
 
+`ctx.agents.wakePending(agent)` 唤醒已接收输入，不插入新消息。它要求传入当前真实存活的 Agent，且工厂实现待处理 inbox 恢复；否则抛错。空 inbox 保持空闲。调用的 Host 控制器必须先准许该执行运行。
+
 句柄的方法把带标识的 user 角色消息路由进 agent 的收件箱。`followup()` 排队一条普通的下一个轮次提示词并唤醒驱动器；`steer()` 提交下一步输入并唤醒它；`inject()` 添加面向模型的上下文但不唤醒驱动器，因此它落在下一个被接纳的步骤中。`cancel(cause)` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；`whenIdle()` 会在整个 agent 达到完全停稳后完成。
 
 ```text

@@ -60,6 +60,8 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'subagent/catalog',
   'subagent/continuable-preset',
   'subagent/descriptor',
+  'subagent/host-owned',
+  'subagent/host-retired',
   'subagent/model-selection-policy',
   'system/message',
   'team/member',

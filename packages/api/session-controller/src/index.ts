@@ -28,6 +28,7 @@ import { installModelSelectionProjection } from './model-selection-projection.ts
 import { SessionSkillCatalog } from './skill-catalog.ts'
 import { SessionMediaReferences } from './media-references.ts'
 import { ArchivedSessionGate } from './archived-session-gate.ts'
+import { DelegatedSessionOwners, type DelegatedSessionOwner } from './delegated-owners.ts'
 import type {
   ModelCatalog,
   SessionWorkspacePathApplication,
@@ -67,6 +68,7 @@ export type * from './types.ts'
 export { ApiSessionNotFound } from './agent.ts'
 export { SessionFileReferences } from './file-references.ts'
 export { SessionSkillCatalog } from './skill-catalog.ts'
+export type { DelegatedSessionOwner } from './delegated-owners.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -116,6 +118,7 @@ export class SessionController extends TypertRemoteService {
   })
 
   private readonly agents: ApiSessionAgentController
+  private readonly delegated: DelegatedSessionOwners
   private readonly commands: SessionCommandController
   private readonly controlState: SessionControlController
   private readonly history: SessionHistoryController
@@ -135,7 +138,8 @@ export class SessionController extends TypertRemoteService {
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
     installModelSelectionProjection(ctx)
-    this.agents = new ApiSessionAgentController(ctx)
+    this.delegated = new DelegatedSessionOwners(ctx)
+    this.agents = new ApiSessionAgentController(ctx, this.delegated)
     this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
     ctx.effect(() => ctx.fileUploads.registerAgentResolver(async (sessionId) => {
       const result = await this.agents.resolveAgent(sessionId)
@@ -148,7 +152,7 @@ export class SessionController extends TypertRemoteService {
     ctx.effect(() => async () => {
       await Promise.allSettled([...this.promotions])
     }, 'session-controller.promotions')
-    this.history = new SessionHistoryController(ctx, (observation) => { this.promote(observation) })
+    this.history = new SessionHistoryController(ctx, (observation) => { this.promote(observation) }, this.delegated)
     this.listState = new ApiSessionList(ctx)
     this.fileApplications = internals.fileApplications ?? nativeFileApplications
     this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication
@@ -196,6 +200,14 @@ export class SessionController extends TypertRemoteService {
       if (event.type !== 'user/message' || event.data.source.kind !== 'user') return
       ctx.emit('api-session/activity', session.id, event.time)
     })
+  }
+
+  /** Register an execution owner without transferring its Agent handles to ordinary Session routing.
+   * @param owner - explicit physical-Session claims and lifecycle admission.
+   * @returns disposer; the registering plugin must own it through a Context effect.
+   */
+  registerDelegatedOwner(owner: DelegatedSessionOwner): () => void {
+    return this.delegated.register(owner)
   }
 
   private promote(observation: SessionObservation): void {

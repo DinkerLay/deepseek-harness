@@ -27,6 +27,8 @@ Choose an Agent’s tools, prompt sections and skills through declarative preset
 
 ### Minimal configuration
 
+Composition leases expose a `revision` digest of the captured JSON declaration and resolver base URL. `compositionRevision(agent.ctx)` reads the live Agent's retained digest, not the current same-named declaration. Non-JSON declarations have no digest. These digests identify declarations only, not plugin binaries or evaluated environment values; recovery controllers must reject an unavailable or changed digest rather than silently substitute another declaration.
+
 ```yaml
 - id: agent-preset-registry
   name: '@deepseek-ai/dsh-agent-preset-registry'

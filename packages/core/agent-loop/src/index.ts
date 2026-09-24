@@ -330,6 +330,14 @@ function validateConfiguredAgents(agents: Config['agents']): void {
 export class AgentLoop extends Service implements AgentFactory {
   static inject = ['agents', 'sessions', 'llm', 'tools', 'systemPrompt', 'sessionProjections']
 
+  /** Wake previously accepted input without inserting another inbox item.
+   * @param agent - exact live execution supplied by the Agent registry.
+   */
+  wakePending(agent: Agent): void {
+    if (!(agent instanceof ReactLoopAgent)) throw new Error('Agent does not belong to this loop implementation')
+    agent.wakePending()
+  }
+
   /** Runtime schema for declarative agents. */
   static Config: z<{ agents?: Config['agents']; maxParallelToolCalls?: number }, Config> = z.object({
     maxParallelToolCalls: z.number().step(1).min(1).default(DEFAULT_MAX_PARALLEL_TOOL_CALLS).volatile(),

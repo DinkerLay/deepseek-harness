@@ -200,6 +200,11 @@ export interface AgentFactory {
    * @returns the owned handle after setup, both announcements, and loop start complete.
    */
   resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+  /**
+   * Wake already accepted work without adding another message. Providers without recoverable inboxes may omit this capability.
+   * @param agent - exact registered Agent whose pending work may run.
+   */
+  wakePending?(agent: Agent): void
 }
 
 /** Thrown when create/resume is called before an agent factory is registered. */
@@ -413,6 +418,18 @@ export class AgentRegistry extends Service {
     const receiver = getTraceable(ownerCtx, target)
     // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
     return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+  }
+
+  /**
+   * Wake an admitted execution's existing inbox without replaying input. Empty inboxes remain idle.
+   * @param agent - exact live Agent; callers retain responsibility for execution admission.
+   * @throws when the Agent is stale or the factory does not support inbox recovery.
+   */
+  wakePending(agent: Agent): void {
+    if (this.get(agent.id) !== agent) throw new Error('Cannot wake an unregistered Agent')
+    const { target } = this.requireFactory()
+    if (target.wakePending === undefined) throw new Error('Agent factory does not support pending-inbox recovery')
+    target.wakePending(agent)
   }
 
   /**

@@ -63,7 +63,7 @@ function providePersistence(ctx: Context, persistence: Record<string, unknown>):
 
 function agent(ctx: Context, meta: SessionHeader): Agent {
   const session = ctx.sessions.create(meta.id, { meta })
-  return { id: meta.id, session, status: 'idle', ctx } as Agent
+  return { id: meta.id, session, status: 'idle', ctx, options: { provider: 'fixture', model: 'fixture-model' } } as Agent
 }
 
 function unpublishedAgent(ctx: Context, meta: SessionHeader): Agent {
@@ -140,6 +140,45 @@ describe('ApiSession identity failures', () => {
 })
 
 describe('ApiSession Agent lookup and recovery', () => {
+  it('routes an explicitly owned delegated identity without allowing ordinary create to adopt it', async () => {
+    const { ctx, agents } = await harness()
+    const child = agent(ctx, { ...header('host-owned'), origin: 'subagent', parentSession: SessionId('lead') })
+    await ctx.agents.register(child)
+    let access: 'active' | 'readonly' = 'active'
+    const resolve = vi.fn(async () => child)
+    const assertWritable = vi.fn()
+    const dispose = agents.delegated.register({ name: 'test-owner', access: id => id === child.id ? access : undefined,
+      resolve, assertWritable })
+    expect(await agents.resolveAgent(child.id)).toEqual({ agent: child })
+    expect(resolve).toHaveBeenCalledOnce(); expect(assertWritable).toHaveBeenCalledOnce()
+    await expect(agents.ensureSession(child.id, '/workspace', true)).rejects.toBeInstanceOf(ApiSessionSubagentOwnership)
+    access = 'readonly'
+    expect(() => agents.delegated.assertWritable(child)).toThrow('no longer writable')
+    expect(await agents.resolveAgent(child.id)).toMatchObject({ error: { code: 'session/agent-busy' } })
+    expect(resolve).toHaveBeenCalledOnce()
+    dispose()
+    expect(await agents.resolveAgent(child.id)).toMatchObject({ error: { code: 'session/agent-busy' } })
+  })
+
+  it('rejects a delegated resume whose registering owner unloaded, even if the same object registers again', async () => {
+    const { ctx, agents } = await harness()
+    const child = agent(ctx, { ...header('owner-generation'), origin: 'subagent', parentSession: SessionId('lead') })
+    await ctx.agents.register(child)
+    const pending = Promise.withResolvers<Agent>()
+    const owner = { name: 'test-owner', access: (id: SessionId) => id === child.id ? 'active' as const : undefined,
+      resolve: () => pending.promise, assertWritable: vi.fn() }
+    const dispose = agents.delegated.register(owner)
+    const resolving = agents.resolveAgent(child.id)
+    dispose(); agents.delegated.register(owner)
+    pending.resolve(child)
+    expect(await resolving).toMatchObject({ error: { code: 'session/agent-busy' } })
+    expect(owner.assertWritable).not.toHaveBeenCalled()
+    const duplicate = agents.delegated.register({ ...owner, name: 'competing-owner' })
+    expect(() => agents.delegated.access(child.id)).toThrow('Multiple controllers')
+    duplicate()
+    expect(agents.delegated.access(child.id)).toBe('active')
+  })
+
   it('resumes directly from a retained observation and rejects an invalid observed header', async () => {
     const { ctx, agents } = await harness()
     const meta = header('observed-resume')

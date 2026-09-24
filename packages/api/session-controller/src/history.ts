@@ -34,6 +34,7 @@ import type {
   SessionWireEvent,
 } from './types.ts'
 import { SessionAssistantStreamAccumulator } from './assistant-stream.ts'
+import { DelegatedSessionOwners } from './delegated-owners.ts'
 
 const DEFAULT_MAX_MESSAGES = 50
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
@@ -46,10 +47,12 @@ export class SessionHistoryController {
   /**
    * @param ctx - Host context carrying Session query and projection services.
    * @param promote - starts ordinary Session activation after snapshot delivery.
+   * @param delegated - explicit Host execution ownership for delegated identities.
    */
   constructor(
     private readonly ctx: Context,
     private readonly promote: (observation: SessionObservation) => void,
+    private readonly delegated = new DelegatedSessionOwners(ctx),
   ) {
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       let stream = this.assistantStreams.get(agent.session.id)
@@ -200,7 +203,8 @@ export class SessionHistoryController {
           : projectionBlock(source.projections),
         ...assistantStream === undefined ? {} : { assistantStream },
       }
-      if (address.kind === 'session' && source.source === 'prepared') {
+      if (address.kind === 'session' && source.source === 'prepared'
+        && this.delegated.access(target) !== 'readonly') {
         const promotion = source.retain()
         try {
           this.promote(promotion)
@@ -260,6 +264,7 @@ export class SessionHistoryController {
           observation.header,
           observation.inheritedEventCount,
           observation.projections,
+          this.delegated.access(sessionId) !== undefined,
         )
       } catch (error: unknown) {
         observation[Symbol.dispose]()
@@ -335,9 +340,10 @@ function validateAddress(
   header: SessionHeader,
   inheritedEventCount: SessionLogOffsetType,
   projections: SessionObservation['projections'],
+  delegated: boolean,
 ): void {
   if (address.kind === 'session') {
-    if (header.origin === 'subagent') {
+    if (header.origin === 'subagent' && !delegated) {
       throw new RemoteError('session/agent-busy', 'subagent Sessions require their durable parent address', {
         reason: 'use subagent delivery for this child session',
       })

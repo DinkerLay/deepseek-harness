@@ -282,6 +282,15 @@ export class AgentPresetRegistry extends TypertRemoteService {
    */
   composedPreset(ctx: Context): string | undefined { return standingMountFor(ctx)?.presetId }
 
+  /** Read the captured declaration digest of a live Agent's retained composition.
+   * @param ctx - bound Agent context.
+   * @returns its declaration digest, or undefined when unbound or not serializable.
+   */
+  compositionRevision(ctx: Context): string | undefined {
+    const mounted = standingMountFor(ctx)
+    return mounted === undefined ? undefined : this.generations.get(mounted.key)?.revision
+  }
+
   /** Read a service supplied inside an Agent's isolated preset group.
    * @param agent Agent whose composition is queried.
    * @param name Cordis service name.

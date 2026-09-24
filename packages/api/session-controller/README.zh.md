@@ -14,6 +14,7 @@ kind: "package-reference"
 
 - [使用本包](#use-this-package)
 - [Client 引用](#client-references)
+- [Host 拥有的委派 Session](#host-owned-delegated-sessions)
 - [会话媒体引用](#session-media-references)
 - [配置](#configuration)
 - [模型体验](#model-experience)
@@ -63,6 +64,15 @@ Fork 复制 `atSeq` 所选的精确事件前缀，包含切点事件，允许在
 附件授权读取内置 Session 事件声明的内容字段与已完成的 assistant 流块，包括扁平的 V4 tool 角色消息。未知事件载荷与无关字段不能授权附件读取。
 
 本控制器通过 `ctx.plugin` 组合 `ArchivedSessionGate`：在 Agent 注册表、Session store 与 Workspace 注册表就绪后加载，随控制器一起释放。它的 `agent/pre-step` 监听器会拒绝为已归档会话或其子代理子孙——从 Session header 的血缘字段读出，从不包括 fork——提出的步骤，因此迟到的唤醒投递会让该回合以 `blocked` 收口而不发出模型请求；取消归档即为整条血缘解除门禁。已归档会话仍在跑的工作由各自的 owner 通过 Workspace 注册表的归档准入（[接缝](../../workspace/workspace/README.zh.md)）报告与停止：运行中的回合由 [Agent 注册表](../../core/agent/README.zh.md)负责，所属任务由[任务注册表接缝](../../jobs/jobs/README.zh.md)负责，子代理子孙由 [Subagent](../../subagent/subagent/README.zh.md) runtime 负责，提醒由 [Schedule](../../schedule/schedule/README.zh.md) 插件负责；本控制器自己不报告任何内容。
+
+<a id="host-owned-delegated-sessions"></a>
+## Host 拥有的委派 Session
+
+Host 插件可以通过 Context effect 注册 `DelegatedSessionOwner`。同步访问查询将精确的物理 Session ID 声明为活动或只读；多个控制器同时认领时拒绝访问。对于已认领的 child，控制器允许通过普通 Session 地址读取历史，不要求伪造 one-shot 或 continuable Subagent descriptor。只读历史不会激活执行。
+
+owner 的准入回调区分 `lookup` 与 `prompt`。任务控制器可以允许 Session 控制与历史恢复，同时要求用户工作必须从自身的任务登记 API 进入。附件准备完成后、写入 inbox 之前会再次检查直接 prompt 准入；被拒绝的请求不会标为已接受。
+
+活动 owner 通过自身保留的 Agent handle 恢复执行。控制器在 await 之后检查同一注册代次、物理身份和当前活动 Agent，再在 prompt 投递前立即复核写入准入。卸载、退队或替换不能让待投递 prompt 改走普通 Session 收养。显式 `session.create` 仍拒绝委派身份。委派执行的首次请求之前，模型选择保留其显式创建路由；后续请求使用已记录 header 或用户选择。这个扩展不会把 Session ID 重定向到另一执行，也不合并多个历史。
 
 <a id="client-references"></a>
 ## Client 引用

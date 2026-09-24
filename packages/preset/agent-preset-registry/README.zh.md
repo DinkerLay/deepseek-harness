@@ -27,6 +27,8 @@ kind: "package-reference"
 
 ### 最小配置
 
+组合租约通过 `revision` 暴露捕获的 JSON 声明与 resolver base URL 的摘要。`compositionRevision(agent.ctx)` 读取存活 Agent 保留的摘要，不读取当前同名声明。非 JSON 声明没有摘要。摘要仅标识声明，不标识插件二进制或求值后的环境值；恢复控制器必须拒绝不可用或已变更的摘要，不能静默替换为另一份声明。
+
 ```yaml
 - id: agent-preset-registry
   name: '@deepseek-ai/dsh-agent-preset-registry'

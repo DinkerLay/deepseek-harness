@@ -16,6 +16,7 @@ import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/ty
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiSessionAgentController } from '../src/agent.ts'
 import { SessionCommandController } from '../src/commands.ts'
+import { DelegatedSessionOwners } from '../src/delegated-owners.ts'
 import type { SessionRequestId } from '../src/types.ts'
 
 const SESSION = SessionId('upload-session')
@@ -23,6 +24,7 @@ const SESSION = SessionId('upload-session')
 async function uploadHarness(origin?: 'subagent'): Promise<{
   ctx: Context
   controller: SessionCommandController
+  delegated: DelegatedSessionOwners
   uploads: FileUploads
   agent: Agent
   followup: ReturnType<typeof vi.fn>
@@ -90,7 +92,9 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
     current: { provider: 'fixture', model: 'fixture-model' },
     assembled: undefined,
   }
+  const delegated = new DelegatedSessionOwners(ctx)
   const agents = {
+    delegated,
     resolveAgent: () => Promise.resolve({ agent }),
     selectionFor: () => selection,
     serializeImageAdmission: <Value>(_agent: Agent, operation: () => Promise<Value>) => operation(),
@@ -100,6 +104,7 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
   return {
     ctx,
     controller: new SessionCommandController(ctx, agents, '/workspace'),
+    delegated,
     uploads,
     agent,
     followup,
@@ -121,6 +126,31 @@ function promptRequest(content: Parameters<SessionCommandController['prompt']>[0
 }
 
 describe('Session file uploads', () => {
+  it('lets an owner allow control lookup while refusing a direct prompt outside its task admission', async () => {
+    const { ctx, controller, delegated, agent, followup } = await uploadHarness('subagent')
+    delegated.register({ name: 'task-owned', access: () => 'active', resolve: async () => agent,
+      assertWritable: (_agent, operation) => { if (operation === 'prompt') throw new Error('Register a task first') } })
+    await expect(delegated.resolve(agent.id)).resolves.toBe(agent)
+    await expect(controller.prompt(promptRequest([{ type: 'text', text: 'Untracked work' }]))).rejects.toMatchObject({ code: 'session/agent-busy' })
+    expect(followup).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+  it('rejects new input when the delegated owner retires the execution during attachment admission', async () => {
+    const { ctx, controller, delegated, agent, followup, saveImages } = await uploadHarness('subagent')
+    let access: 'active' | 'readonly' = 'active'
+    delegated.register({ name: 'host-owned', access: () => access, resolve: async () => agent, assertWritable: () => {} })
+    const storing = Promise.withResolvers<undefined>()
+    const saved = Promise.withResolvers<readonly ImageAttachmentRef[]>()
+    saveImages.mockImplementationOnce(() => { storing.resolve(undefined); return saved.promise })
+    const prompting = controller.prompt(promptRequest([{ type: 'image', mediaType: 'image/png', data: 'AAAA' }]))
+    await storing.promise
+    access = 'readonly'
+    saved.resolve([{ attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1 }])
+    await expect(prompting).rejects.toMatchObject({ code: 'session/agent-busy' })
+    expect(followup).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('registers an HTTP route bound to the upload service', async () => {
     const { uploadRoute } = await uploadHarness()
     await expect(uploadRoute(new Request('http://host/upload')))

@@ -15,6 +15,7 @@ import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-ses
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
 import type { ModelSelection } from './types.ts'
+import { DelegatedSessionOwners } from './delegated-owners.ts'
 
 /** Cold Session identity absent from persistence. */
 export class ApiSessionNotFound extends Error {}
@@ -144,7 +145,7 @@ export class ApiSessionAgentController {
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
 
   /** @param ctx - Host context carrying Agent, model, persistence, and Typert services. */
-  constructor(private readonly ctx: Context) {
+  constructor(private readonly ctx: Context, readonly delegated = new DelegatedSessionOwners(ctx)) {
     ctx.typert.lookups.configure('agent', async (sessionId: SessionId) => {
       const found = await this.resolveAgent(sessionId)
       if ('error' in found) throw found.error
@@ -184,6 +185,18 @@ export class ApiSessionAgentController {
     sessionId: SessionId,
     observation?: SessionObservation,
   ): Promise<ApiSessionAgentResult> {
+    try {
+      const delegated = this.delegated.resolve(sessionId)
+      if (delegated) {
+        const agent = await delegated
+        this.selectionFor(agent)
+        return { agent }
+      }
+    } catch (error) {
+      return { error: new RemoteError('session/agent-busy', `delegated execution unavailable: ${String(error)}`, {
+        reason: 'use the current execution admitted by its registered owner',
+      }) }
+    }
     const live = this.liveAgent(sessionId)
     if (live !== undefined) return live
     const attached = this.ctx.sessions.get(sessionId)
@@ -295,6 +308,11 @@ export class ApiSessionAgentController {
       get current(): AgentModelSelection {
         if (picked !== undefined) return picked
         const loggedHeader = agent.session.requestHeader()
+        if (loggedHeader === undefined && agent.session.header.origin === 'subagent'
+          && agent.options.provider !== undefined && agent.options.model !== undefined) {
+          return { provider: agent.options.provider, model: agent.options.model,
+            ...(agent.options.reasoningEffort === undefined ? {} : { reasoningEffort: agent.options.reasoningEffort }) }
+        }
         if (loggedHeader === undefined) return defaultModel.currentSelection()
         const logged = loggedHeader.config
         return {

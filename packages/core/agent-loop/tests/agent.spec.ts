@@ -37,6 +37,26 @@ function send(agent: Agent, text: string): void {
 }
 
 describe('Agent', () => {
+  it('wakes an accepted inbox item without adding a second message and refuses a disposed Agent', async () => {
+    const adapter = new MockAdapter([textResponse('recovered')])
+    const ctx = await harness(adapter)
+    try {
+      const handle = await ctx.agents.create({ sessionId: SessionId('recover-inbox'), agentOptions: { provider: 'mock', model: 'mock' } })
+      ctx.agents.wakePending(handle.agent)
+      expect(adapter.requests).toHaveLength(0)
+      const message = createUserMessage({ content: [{ type: 'text', text: 'accepted work' }], source: { kind: 'user' } })
+      handle.agent.send(message, 'next-turn', false)
+      expect(handle.agent.status).toBe('idle')
+      ctx.agents.wakePending(handle.agent)
+      await handle.agent.whenIdle()
+      expect(adapter.requests).toHaveLength(1)
+      expect(handle.agent.inbox.nextTurn).toEqual([])
+      const messages = adapter.requests[0]?.messages.filter(item => item.role === 'user')
+      expect(messages).toHaveLength(1)
+      await handle.dispose()
+      expect(() => ctx.agents.wakePending(handle.agent)).toThrow('unregistered')
+    } finally { await ctx.fiber.dispose() }
+  })
   it('idle inject() durably stages context without opening a turn', async () => {
     const adapter = new MockAdapter([textResponse('ok')])
     const ctx = await harness(adapter)

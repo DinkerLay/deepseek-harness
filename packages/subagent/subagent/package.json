@@ -14,6 +14,10 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
+    "./host-owned": {
+      "types": "./lib/types/host-owned.d.ts",
+      "default": "./lib/types/host-owned.js"
+    },
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"

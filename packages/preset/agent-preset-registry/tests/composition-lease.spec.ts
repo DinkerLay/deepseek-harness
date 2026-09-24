@@ -42,6 +42,7 @@ describe('creation composition lease', () => {
     await selected[Symbol.asyncDispose]()
     expect(ctx.tools.schemas(handle.agent).map(row => row.name)).toEqual(['standard'])
     expect(handle.agent.session.header.agentPreset).toBe('standard')
+    expect(ctx.agentPresets.compositionRevision(handle.agent.ctx)).toBe(selected.revision)
     expect(livePresetMounts(ctx.fiber)).toHaveLength(2)
     await handle.dispose()
     expect(livePresetMounts(ctx.fiber)).toHaveLength(1)

@@ -14,6 +14,7 @@ English | [中文](README.zh.md)
 
 - [Use this package](#use-this-package)
 - [Client references](#client-references)
+- [Host-owned delegated Sessions](#host-owned-delegated-sessions)
 - [Session media references](#session-media-references)
 - [Configuration](#configuration)
 - [Model Experience](#model-experience)
@@ -63,6 +64,15 @@ Queue edits replace pending content with non-empty text only.
 Attachment authorization reads declared content fields of built-in Session events and completed assistant stream blocks, including flat V4 tool-role messages. Unknown event payloads and unrelated fields cannot authorize attachment reads.
 
 The controller composes `ArchivedSessionGate` through `ctx.plugin`: it loads once the Agent registry, Session store, and Workspace registry exist and unwinds with the controller. Its `agent/pre-step` listener rejects a step proposed for an archived Session or for a subagent descendant of one — read from the Session header's lineage fields, never a fork — so a late waking delivery ends its turn as `blocked` without a model request; unarchiving lifts the gate for the whole lineage. The work an archived Session still runs is reported and stopped by its owners through the Workspace registry's archive admission ([seam](../../workspace/workspace/README.md)): the running turn by the [Agent registry](../../core/agent/README.md), owned jobs by the [job registry seam](../../jobs/jobs/README.md), subagent descendants by the [Subagent](../../subagent/subagent/README.md) runtime, reminders by the [Schedule](../../schedule/schedule/README.md) plugin; this controller reports nothing itself.
+
+<a id="host-owned-delegated-sessions"></a>
+## Host-owned delegated Sessions
+
+Host plugins can register a `DelegatedSessionOwner` through a Context effect. Its synchronous access lookup claims exact physical Session IDs as active or read-only; multiple claims fail closed. The controller permits history at the ordinary Session address for a claimed child without requiring a one-shot or continuable Subagent descriptor. Read-only history does not activate the execution.
+
+The owner's admission callback distinguishes `lookup` from `prompt`. A task controller can allow Session controls and history recovery while requiring user work to enter through its own task-registration API. Direct prompt admission is checked again after attachment preparation and before the inbox write; rejection leaves the request unaccepted.
+
+An active owner resumes through its own retained Agent handle. The controller checks the same registration generation, physical identity and current live Agent after the await, then rechecks write admission immediately before prompt delivery. Unloading, retirement or replacement cannot turn a pending prompt into ordinary Session adoption. Explicit `session.create` still rejects delegated identities. Before a delegated execution's first request, model selection preserves its explicit creation route; subsequent requests use the recorded header or user selection. This extension does not redirect a Session ID to a different execution or combine multiple histories.
 
 <a id="client-references"></a>
 ## Client references

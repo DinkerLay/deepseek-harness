@@ -7,6 +7,7 @@ import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionHistoryController } from '../src/history.ts'
+import { DelegatedSessionOwners } from '../src/delegated-owners.ts'
 import { installSessionReadTestServices, testSessionPersistence } from './test-remote.ts'
 
 const signal = (): AbortSignal => new AbortController().signal
@@ -82,6 +83,28 @@ async function setup(): Promise<{ ctx: Context; transport: SessionHistoryControl
 }
 
 describe('SessionHistoryController', () => {
+  it('reads retained delegated history through its explicit owner without a fake Subagent descriptor or activation', async () => {
+    const { ctx } = await setup()
+    const id = SessionId('retired-host-owned')
+    cold(ctx, { version: SESSION_FORMAT_VERSION, id, cwd: '/workspace', createdAt: 1, isSeeded: false,
+      origin: 'subagent', parentSession: SessionId('lead') }, [])
+    const delegated = new DelegatedSessionOwners(ctx)
+    const resolve = vi.fn(() => Promise.reject(new Error('Retired execution must not resume')))
+    const dispose = delegated.register({ name: 'test-owner', access: value => value === id ? 'readonly' : undefined,
+      resolve, assertWritable: () => { throw new Error('read-only') } })
+    const promote = vi.fn()
+    const history = new SessionHistoryController(ctx, promote, delegated)
+    const abort = new AbortController()
+    const stream = history.follow({ address: { kind: 'session', sessionId: id } }, abort.signal)[Symbol.asyncIterator]()
+    expect(await stream.next()).toMatchObject({ value: { type: 'snapshot', header: { id } } })
+    const next = stream.next(); abort.abort(); await next
+    expect(promote).not.toHaveBeenCalled(); expect(resolve).not.toHaveBeenCalled()
+    dispose()
+    await expect(history.page({ address: { kind: 'session', sessionId: id }, throughSeq: -1 }, signal()))
+      .rejects.toMatchObject({ code: 'session/agent-busy' })
+    await ctx.fiber.dispose()
+  })
+
   it('opens at the current cursor and follows later events from an ordinary Session', async () => {
     const { ctx, transport } = await setup()
     const session = ctx.sessions.create(SessionId('ordinary'), { meta: { cwd: '/workspace' } })

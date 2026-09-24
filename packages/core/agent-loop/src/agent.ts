@@ -163,6 +163,11 @@ export class ReactLoopAgent implements Agent {
     this.send(input, 'next-turn', true)
   }
 
+  /** Wake an admitted nonempty inbox without adding another message. */
+  wakePending(): void {
+    if (this.inbox.hasPending) this.wakeDriver(this.phase.kind !== 'idle' && this.phase.abort.signal.aborted)
+  }
+
   steer(input: UserMessage): void {
     this.send(input, 'next-step', true)
   }

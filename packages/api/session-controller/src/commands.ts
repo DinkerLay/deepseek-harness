@@ -368,6 +368,7 @@ export class SessionCommandController {
             { sessionId: agent.id },
           )
         }
+        this.agents.delegated.assertWritable(agent, 'prompt')
         using binding = this.ctx.fileUploads.bindPrompt(agent, admission.receiptIds, request.requestId)
         if (request.mode === 'steer') agent.steer(message)
         else agent.followup(message)

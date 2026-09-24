@@ -44,6 +44,8 @@ await handle.dispose()   // stops the loop, unregisters, removes the session, un
 
 ### Drive an agent's conversation
 
+`ctx.agents.wakePending(agent)` wakes already accepted input without inserting another message. It requires the exact live Agent and a factory implementing pending-inbox recovery; otherwise it throws. An empty inbox remains idle. The calling Host controller must admit the execution before waking it.
+
 The handle's methods route identified user-role messages into the agent's inbox. `followup()` queues an ordinary next-turn prompt and wakes the driver; `steer()` submits next-step input and wakes it; `inject()` adds model-facing context without waking the driver, so it lands in the next admitted step. `cancel(cause)` aborts the active activity and, unless `keepInbox` is set, clears pending work; `whenIdle()` resolves after the whole agent reaches quiescence.
 
 ```text
