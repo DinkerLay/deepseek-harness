@@ -39,6 +39,8 @@ Roster 行展示持久名称与阶段。provisioning 和 running 成员使用共
 
 只读任务板展示任务标识、负责人、依赖、就绪状态、提示性写入范围与重叠警告。超过两行的描述提供展开按钮。分区标题显示成员与任务数量；空任务板显示简短描述，只有一名成员且无任务时采用单列面板。Team agent 通过工具创建和更新任务；面板不提供任务修改控件。当投影报告某条持久 Team 记录被拒绝时，面板在最后有效的 roster 与任务上方显示该失败。
 
+任务标题和内容提供可选的 Session 作用域 slot。外部插件可在标题旁增加操作，并用图替换原生任务列表；关闭图后恢复同一份原生列表。图收到当前 `agentTeam` 投影和打开任务负责人成员 Session 的回调。本包不计算图布局，也不保留第二份 Board 状态。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -47,7 +49,7 @@ Roster 行展示持久名称与阶段。provisioning 和 running 成员使用共
 <details>
 <summary>实现细节——点击展开</summary>
 
-Client export 通过 Cordis effect 注册 locale dictionary 与一个 conversation-header slot；它不挂载任何 Remote namespace。Dispose plugin fiber 会移除这两项 registration。
+Client export 通过 Cordis effect 注册 locale dictionary 和一个带两个可选任务子 slot 的 conversation-header slot；它不挂载任何 Remote namespace。Dispose plugin fiber 会移除这些 registration。
 
 面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。唯一的注入回调通过当前与目标 Session 的 id 打开 roster Session。切换会话会关闭面板并清除导航失败。
 
@@ -55,6 +57,7 @@ Client export 通过 Cordis effect 注册 locale dictionary 与一个 conversati
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | locale、导航与 slot registration |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | 由投影派生的 roster 与任务板及面板交互状态 |
+| [`src/client/task-view-slots.ts`](src/client/task-view-slots.ts) | 可选的外部任务操作与图 owner |
 | [`src/client/locales.ts`](src/client/locales.ts) | 中英文 panel 文案 |
 | [`src/index.ts`](src/index.ts) | 不执行行为的 Host entry |
 

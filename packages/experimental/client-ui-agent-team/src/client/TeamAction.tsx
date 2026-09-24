@@ -11,10 +11,11 @@ import {
   IconUserOutlineRegular, IconUsersOutlineRegular, StateDot, Tag, Tooltip,
   useAnchoredPosition, useDismissOnOutsidePointer, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS, type TeamKey } from './locales.ts'
+import type {} from './task-view-slots.ts'
 import css from './TeamAction.module.css'
 
 /** Business actions injected by the browser plugin. */
@@ -29,6 +30,7 @@ type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiri
 /** Full props of the Team conversation-header action. */
 export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
+  & PropsRenderSlots<'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'>
 
 function statusKey(status: TeamTask['status']): TeamKey {
   switch (status) {
@@ -185,9 +187,10 @@ function TaskCard({ task, t }: { task: TeamTask; t: TranslateNS<typeof NS> }) {
 
 /** Render the Team roster and read-only task board. */
 export function TeamAction({
-  sessionId, useSession, useSessions, useSessionStatus, openTeammate, t,
+  sessionId, useSession, useSessions, useSessionStatus, openTeammate, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
+  const [graphOpen, setGraphOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -213,6 +216,7 @@ export function TeamAction({
     cancelHoverChange()
     pinnedRef.current = false
     setOpen(false)
+    setGraphOpen(false)
     setError(null)
   }, [sessionId])
 
@@ -348,10 +352,25 @@ export function TeamAction({
                     ? <p className={css.emptyNotice}>{t('empty')}</p>
                     : (
                       <>
-                        <h3>{t('tasks')}<span className={css.count}>{team.tasks.length}</span></h3>
-                        <div className={css.tasks}>
-                          {team.tasks.map(task => <TaskCard key={task.id} task={task} t={t} />)}
-                        </div>
+                        <h3>
+                          {t('tasks')}<span className={css.count}>{team.tasks.length}</span>
+                          {renderSlot('agent-team.panel.tasks.action', {
+                            view: team,
+                            active: graphOpen,
+                            openGraph: () => { setGraphOpen(value => !value) },
+                          })}
+                        </h3>
+                        {graphOpen
+                          ? renderSlot('agent-team.panel.tasks.graph', {
+                            view: team,
+                            openMemberSession: (task) => {
+                              const owner = team.members.find(member => member.name === task.ownerName)
+                              if (owner !== undefined) openTeammate(sessionId, owner.id)
+                            },
+                          })
+                          : <div className={css.tasks}>
+                            {team.tasks.map(task => <TaskCard key={task.id} task={task} t={t} />)}
+                          </div>}
                       </>
                     )}
                 </section>

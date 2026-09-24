@@ -39,6 +39,8 @@ Ready pending tasks use idle, blocked pending tasks use warning, in-progress tas
 
 The read-only task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. Descriptions longer than two lines have an expand toggle. Section headings show member and task counts; an empty board shows a short description, and a lone member with no tasks uses a single-column panel. Team agents create and update tasks through their tools; the panel provides no task mutation controls. When the projection reports a rejected persisted Team record, the panel shows that failure above the last valid roster and tasks.
 
+The task heading and content expose optional session-scoped slots. An external plugin can add an action beside the heading and display a graph in place of the native task list; closing the graph restores the same native list. The graph receives the current `agentTeam` projection and a callback that opens a task owner's Session. This package does not lay out a graph or retain a second Board state.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -47,7 +49,7 @@ The read-only task board shows task identity, owner, blockers, readiness, adviso
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client export registers its locale dictionaries and one conversation-header slot through Cordis effects; it mounts no Remote namespace. Disposing the plugin fiber removes both registrations.
+The Client export registers its locale dictionaries and one conversation-header slot with two optional task child slots through Cordis effects; it mounts no Remote namespace. Disposing the plugin fiber removes the registrations.
 
 The panel renders outside the conversation container and stays within the viewport. Member cards use the shared elevation stroke for their outlines in resting, selected, and hover states. Hovering the trigger opens the panel after 150ms; leaving both trigger and panel closes it after a 120ms grace period. Clicking the trigger pins the panel and moves focus into it. Outside clicks and Escape dismiss the panel; Escape returns focus to the trigger only when focus was inside the panel. In a narrow header, the trigger becomes an icon and opens only on click. The component derives every row from the `useSessions`, `useSessionStatus`, and `useSession` seats: the Lead identity comes from the current Session's subagent address, the Team view from `projectionsBySession[lead].values.agentTeam`, member activity from Session status with the list summary as fallback, and the model from `projectionsBySession[member].values.modelSelection.next`. Each roster row selects its own running state. The only injected callback opens a roster Session using the current and target Session ids. Switching conversations closes the panel and clears a navigation failure.
 
@@ -55,6 +57,7 @@ The panel renders outside the conversation container and stays within the viewpo
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | Locale, navigation, and slot registrations |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Projection-derived roster and task board with panel interaction state |
+| [`src/client/task-view-slots.ts`](src/client/task-view-slots.ts) | Optional external task action and graph owners |
 | [`src/client/locales.ts`](src/client/locales.ts) | English and Chinese panel copy |
 | [`src/index.ts`](src/index.ts) | Inert Host entry |
 

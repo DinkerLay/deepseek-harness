@@ -58,6 +58,10 @@ export function registerAgentTeamUi(ctx: ClientContext): void {
       order: -20,
       locale: NS,
       inject: () => actions,
+      children: {
+        'agent-team.panel.tasks.action': { kind: 'list', scope: 'session' },
+        'agent-team.panel.tasks.graph': { kind: 'single', scope: 'session' },
+      },
     }, TeamAction),
   )
 }

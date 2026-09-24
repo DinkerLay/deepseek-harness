@@ -57,6 +57,7 @@ function bench(options: {
   openState?: SessionSnapshot['openState']
   statuses?: SessionStatusSnapshot
   running?: Record<SessionId, boolean>
+  renderSlot?: TeamActionProps['renderSlot']
 } = {}) {
   const sessionId = options.sessionId ?? SESSION
   const byId: Record<SessionId, SessionSummary> = {}
@@ -97,6 +98,7 @@ function bench(options: {
     }) as UseProjection,
     useSessions,
     useSessionStatus: bindSnapshotSelector(statuses),
+    renderSlot: options.renderSlot ?? (() => null),
     ...injected,
     t: makeTranslate(zh, commonZh),
   } as TeamActionProps
@@ -105,6 +107,10 @@ function bench(options: {
 
 function openPanel(): void {
   fireEvent.click(screen.getByRole('button', { name: /智能体团队/u }))
+}
+
+function hasGraphAction(value: object): value is { openGraph: () => void } {
+  return 'openGraph' in value && typeof value.openGraph === 'function'
 }
 
 function setProjectionSnapshot(
@@ -123,6 +129,26 @@ function setProjection(sessions: ReturnType<typeof bench>['sessions'], sessionId
 }
 
 describe('TeamAction', () => {
+  it('mounts an external Task graph without replacing the native Board', () => {
+    const slot: TeamActionProps['renderSlot'] = (key, owner) => {
+      if (key === 'agent-team.panel.tasks.action' && hasGraphAction(owner)) {
+        const openGraph = owner.openGraph
+        return <button type="button" onClick={() => { openGraph() }}>Graph plugin</button>
+      }
+      if (key === 'agent-team.panel.tasks.graph') return <p>External graph view</p>
+      return null
+    }
+    const b = bench({ renderSlot: slot })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Graph plugin' }))
+    expect(screen.getByText('External graph view')).toBeTruthy()
+    expect(screen.queryByText('Implement runtime')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Graph plugin' }))
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
+
   it('renders the Lead projection and applies later projection frames without any user action', async () => {
     const b = bench()
     render(<TeamAction {...b.props} />)
