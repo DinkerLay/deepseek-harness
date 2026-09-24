@@ -55,7 +55,7 @@ function props(actions: TeamActionInjected, sessionId: SessionId = SESSION, acti
     t: makeTranslate(zh, commonZh),
     renderSlot: () => null,
     useProjection: () => activity,
-  } as unknown as TeamActionProps
+  } as TeamActionProps
 }
 
 function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {

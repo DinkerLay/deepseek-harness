@@ -54,7 +54,7 @@ describe('Agent', () => {
       const messages = adapter.requests[0]?.messages.filter(item => item.role === 'user')
       expect(messages).toHaveLength(1)
       await handle.dispose()
-      expect(() => ctx.agents.wakePending(handle.agent)).toThrow('unregistered')
+      expect(() => { ctx.agents.wakePending(handle.agent) }).toThrow('unregistered')
     } finally { await ctx.fiber.dispose() }
   })
   it('idle inject() durably stages context without opening a turn', async () => {

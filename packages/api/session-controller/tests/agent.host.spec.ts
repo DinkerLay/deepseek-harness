@@ -153,7 +153,7 @@ describe('ApiSession Agent lookup and recovery', () => {
     expect(resolve).toHaveBeenCalledOnce(); expect(assertWritable).toHaveBeenCalledOnce()
     await expect(agents.ensureSession(child.id, '/workspace', true)).rejects.toBeInstanceOf(ApiSessionSubagentOwnership)
     access = 'readonly'
-    expect(() => agents.delegated.assertWritable(child)).toThrow('no longer writable')
+    expect(() => { agents.delegated.assertWritable(child) }).toThrow('no longer writable')
     expect(await agents.resolveAgent(child.id)).toMatchObject({ error: { code: 'session/agent-busy' } })
     expect(resolve).toHaveBeenCalledOnce()
     dispose()

@@ -1,5 +1,5 @@
 /** Declarative Agent capability sets, activation and session binding. */
-import { Context, FiberState } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import { createHash } from 'node:crypto'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import z from '@deepseek-ai/schemastery'
@@ -20,6 +20,10 @@ export { agentPresetProjectionDefinition } from './session.ts'
 export { entryListProblem, type PresetDefinition } from './definition.ts'
 export { auditRows, livePresetMounts, leakedServices, serviceForAgent, standingMountFor, type PresetMount, type RowAudit } from './mount.ts'
 export type { AgentPreset, Config, PresetCompositionLease } from './preset.ts'
+
+// Cordis declares FiberState as a const enum, so published packages cannot import it at runtime.
+// FAILED, DISPOSED, and UNLOADING are its three terminal values.
+const CLOSED_FIBER_STATES: ReadonlySet<number> = new Set([3, 4, 5])
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -368,12 +372,12 @@ export class AgentPresetRegistry extends TypertRemoteService {
       mount: async (ctx) => {
         if (disposed) throw new Error('Preset composition lease has been released')
         if (ctx.root.fiber !== this.owner.root.fiber) throw new Error('Preset composition lease belongs to another Host')
-        if ([FiberState.UNLOADING, FiberState.DISPOSED, FiberState.FAILED].includes(this.owner.fiber.state)) {
+        if (CLOSED_FIBER_STATES.has(this.owner.fiber.state)) {
           throw new Error('Preset composition registry has been closed')
         }
         const key = scopeOf(ctx)
         if (key === undefined) throw new Error('Preset composition lease requires a scoped context')
-        if ([FiberState.UNLOADING, FiberState.DISPOSED, FiberState.FAILED].includes(ctx.fiber.state)) {
+        if (CLOSED_FIBER_STATES.has(ctx.fiber.state)) {
           throw new Error('Preset composition lease cannot bind a closed scope')
         }
         if (this.bindings.has(key)) throw new Error('Preset composition lease cannot replace an existing binding')

@@ -12,9 +12,10 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import FileUploads from '@deepseek-ai/dsh-client-file-upload'
+import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/types'
 import { describe, expect, it, vi } from 'vitest'
-import type { ApiSessionAgentController } from '../src/agent.ts'
+import { ApiSessionAgentController } from '../src/agent.ts'
 import { SessionCommandController } from '../src/commands.ts'
 import { DelegatedSessionOwners } from '../src/delegated-owners.ts'
 import type { SessionRequestId } from '../src/types.ts'
@@ -35,6 +36,7 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
   uploadRoute: (request: Request) => Promise<Response>
 }> {
   const ctx = new Context()
+  await ctx.plugin(TypertRegistry)
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(CommandRuntime)
@@ -93,12 +95,9 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
     assembled: undefined,
   }
   const delegated = new DelegatedSessionOwners(ctx)
-  const agents = {
-    delegated,
-    resolveAgent: () => Promise.resolve({ agent }),
-    selectionFor: () => selection,
-    serializeImageAdmission: <Value>(_agent: Agent, operation: () => Promise<Value>) => operation(),
-  } as unknown as ApiSessionAgentController
+  const agents = new ApiSessionAgentController(ctx, delegated)
+  vi.spyOn(agents, 'resolveAgent').mockResolvedValue({ agent })
+  vi.spyOn(agents, 'selectionFor').mockReturnValue({ ...selection, current: selection.current!, consume: () => false })
   const uploads = new FileUploads(ctx)
   if (uploadRoute === undefined) throw new Error('file upload route was not registered')
   return {
@@ -139,11 +138,10 @@ describe('Session file uploads', () => {
     const { ctx, controller, delegated, agent, followup, saveImages } = await uploadHarness('subagent')
     let access: 'active' | 'readonly' = 'active'
     delegated.register({ name: 'host-owned', access: () => access, resolve: async () => agent, assertWritable: () => {} })
-    const storing = Promise.withResolvers<undefined>()
     const saved = Promise.withResolvers<readonly ImageAttachmentRef[]>()
-    saveImages.mockImplementationOnce(() => { storing.resolve(undefined); return saved.promise })
+    saveImages.mockReturnValueOnce(saved.promise)
     const prompting = controller.prompt(promptRequest([{ type: 'image', mediaType: 'image/png', data: 'AAAA' }]))
-    await storing.promise
+    await vi.waitFor(() => { expect(saveImages).toHaveBeenCalledOnce() })
     access = 'readonly'
     saved.resolve([{ attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1 }])
     await expect(prompting).rejects.toMatchObject({ code: 'session/agent-busy' })
