@@ -43,6 +43,8 @@ application combo 脚本在启动时注册插件 factory；模块主体仍保持
 
 在模块注册表插件上配置 `libraryPackages`，可提供精确包根的 Client factory，而不激活这些包的默认插件。消费方在 `dsh.client.external` 中声明导入，并从所选提供方获取服务。仅模块行保留正常的 bundle 哈希与 HMR，省略只用于激活的 `inject` 边，并报告 `libraryModulesVersion: 1`。显式激活行解析到同一个 factory 时优先；来源冲突则使组合失败。
 
+将 `comboTargetBytes` 设为非负的输入字节目标，可限制每个 bootstrap 或 application 脚本的分组。默认值 `0` 表示不按大小分批；3 KiB 的 combo URL 上限仍然生效。大于目标的单个 bundle 会保持完整，并维持图顺序。目标统计原始 bundle 字节，不代表压缩后的传输量或进程内存上限。
+
 ### 构建要求
 
 宿主提供的是已构建的客户端 bundle，因此启动前 `pnpm run build` 必须已产出每个 `lib/client.js`；缺失 bundle 会以一条构建说明加包／路径列表的方式让激活大声失败。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出。
@@ -69,7 +71,7 @@ application combo 脚本在启动时注册插件 factory；模块主体仍保持
 
 node 半侧逐包增量扫描——没有全量重扫路径。每次 `internal/plugin` 发出都会把该 fiber 的 entry 名标脏；一个微任务 flush 会把每个脏名与当前 loader 条目对账，激活 pass 播种同一脏集合并同步 flush，因此首次扫描与稳态共用同一实现。包元数据按 Loader specifier 与所属 tree base URL 缓存至重启，解析出的 manifest 包名作为浏览器模块身份。若不同的 active Loader source 解析到同一包名，组合会失败；移除冲突来源后，剩余来源无需重启 fiber 即可接替。bundle 内容变更只能通过 `rebuilt()`（HMR 钩子）进入图。
 
-node 半侧会在发布前快照每个客户端 bundle 及其现有 source map。它把资源分组到 `/plugins/??...&rev=...` combo URL：modules row 使用一个 bootstrap combo，其余 row 使用一个或多个 application combo；每个阶段都会在 URL 超过 3 KiB 之前分区。每个 combo map 都是 Indexed Source Map v3，并在可用时使用作者提供的 section，否则为已打包 bundle 生成 identity section。初始逐插件 revision 使用进程 nonce，所以启动时不哈希每个插件；HMR 只哈希被报告为已变化的产物。已公告响应不可变；未知组合或 revision 返回 404。
+node 半侧会在发布前快照每个客户端 bundle 及其现有 source map。它把资源分组到 `/plugins/??...&rev=...` combo URL：modules row 使用一个 bootstrap combo，其余 row 使用一个或多个 application combo；每个阶段同时受所配置的字节目标与 3 KiB URL 上限约束。脚本复用原始 bundle 字节切片，通过 Web 路由流式传输，或由 `fetchBundle()` 逐片复制。Indexed Source Map v3 仅在请求时生成：有效的作者 map 提供其 section；缺失或畸形的 map 则使用 identity section，畸形 map 只记录一次告警。初始逐插件 revision 使用进程 nonce，所以启动时不哈希每个插件；HMR 只哈希被报告为已变化的产物。已公告响应不可变；未知组合或 revision 返回 404。
 
 ### 启动清单注入
 
@@ -97,6 +99,7 @@ node 半侧会在发布前快照每个客户端 bundle 及其现有 source map�
 - [Web 启动内核](../web/README.zh.md)——创建模块系统并启动插件树的外壳。
 - [客户端 HMR 驱动器](../hmr/README.zh.md)——在重建 bundle 上驱动 `invalidate`/`prefetch` 的重载链路。
 - [客户端编写规则](../AGENTS.md#shared-modules-and-the-module-graph)——共享模块基座与 `dsh.client.external` 语义。
+- [客户端加载决策](../../../.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.zh.md)——combo 传输、map、HMR 与保留的快照。
 - [客户端组地图](../README.zh.md)——本包所属的浏览器半侧。
 
 -----
@@ -119,7 +122,7 @@ node 半侧会在发布前快照每个客户端 bundle 及其现有 source map�
 
 - **有意采用扁平模块图**——每个 bundle 是一个模块节点，其边只指向表中的叶节点；接口（`loadCache`/`edges`/`invalidate`）已经支持通用模块图，因此可以改变 externalization 粒度而不更改接口。
 - **自身不维护卸载记录**——样式移除与 fiber 拆卸顺序属于 HMR 驱动器（`@deepseek-ai/dsh-client-hmr`）；loader 只在每条记录中登记其拥有的样式标签 id。
-- **快照式提供会保留产物字节**——Host 在内存中保留每个 bundle、可选 source map、生成的单资源响应和当前启动 combo 响应；HMR 还会保留上一代启动响应。内存会随已组合客户端产物增长为数份副本，以换取不可变响应和一代竞态容忍。
+- **快照式提供会保留产物字节**——Host 保留每个 bundle 及可选的原始 source map，并保留当前单资源及启动 combo 响应的描述和上一代启动响应。请求 map 时仍会解析作者 map，并可能分配很大的 indexed map；重复请求会重新生成。字节目标限制脚本分组，不限制 Host 总内存或 Renderer 模块大小。
 
 <a id="dev-note"></a>
 ### 开发备注

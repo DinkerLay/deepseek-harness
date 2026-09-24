@@ -416,10 +416,12 @@ export interface Config {
 export interface Config {
   /** Exact package roots whose public Client exports are needed by another selected plugin. */
   libraryPackages?: string[]
+  /** Target input bytes per script batch; zero disables size partitioning, and a larger single module stays intact. */
+  comboTargetBytes?: number
 }
 ```
 
-来源： [`packages/client/modules/src/index.ts:530`](../packages/client/modules/src/index.ts)
+来源： [`packages/client/modules/src/index.ts:564`](../packages/client/modules/src/index.ts)
 
 <a id="deepseek-aidsh-code-runtime-worker-thread"></a>
 

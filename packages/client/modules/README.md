@@ -43,6 +43,8 @@ The shell seeds a frozen module table (`PLATFORM_MODULES`: React, Cordis, and st
 
 Set `libraryPackages` on the module-registry plugin to expose exact package-root Client factories without activating their default plugins. Consumers declare those imports in `dsh.client.external` and obtain services from their selected providers. Library rows keep normal bundle hashing and HMR, omit activation-only `inject` edges, and report `libraryModulesVersion: 1`. An explicitly active row takes precedence when it resolves to the same factory; conflicting sources fail composition.
 
+Set `comboTargetBytes` to a nonnegative input-byte target for each bootstrap or application script. The default `0` leaves size partitioning disabled; the 3 KiB combo URL limit still applies. A bundle larger than the target stays whole in graph order. The target counts original bundle bytes, not compressed transfer size or a process-memory ceiling.
+
 ### Build requirements
 
 The host serves built client bundles, so `pnpm run build` must have produced each `lib/client.js` before launch; a missing bundle fails activation loudly with one build instruction and a package/path list. Source launch maps host imports to TypeScript source but still consumes the built client export.
@@ -69,7 +71,7 @@ Executing a plugin bundle only registers its factory; every module-body side eff
 
 The node half scans incrementally per package — no full-rescan path. Every `internal/plugin` emission marks the fiber's entry name dirty; a microtask flush reconciles each dirty name against the live loader entries, and the activation pass seeds the same dirty set and flushes synchronously, so first scan and steady state share one implementation. Package metadata is cached per Loader specifier and owning-tree base URL until restart, while the resolved manifest package name identifies the browser module. Distinct active Loader sources resolving to one package name are rejected; removing the conflict promotes the remaining source without requiring its fiber to restart. Bundle content changes reach the graph only through `rebuilt()` (the HMR hook).
 
-The node half snapshots each client bundle and available source map before publication. It groups resources into `/plugins/??...&rev=...` combo URLs, with one bootstrap combo for the modules row and one or more application combos for the other rows; each phase is partitioned before a URL exceeds 3 KiB. Every combo map is Indexed Source Map v3 and uses an authored section when available or an identity section for the packaged bundle. Initial per-plugin revisions use process nonces, so startup does not hash every plugin; HMR hashes only an artifact reported as changed. Advertised responses are immutable, and an unknown combination or revision returns 404.
+The node half snapshots each client bundle and available source map before publication. It groups resources into `/plugins/??...&rev=...` combo URLs, with one bootstrap combo for the modules row and one or more application combos for the other rows; each phase is partitioned by the configured byte target and the 3 KiB URL limit. Scripts retain the original bundle byte slices and are streamed through the Web route or copied one slice at a time through `fetchBundle()`. An Indexed Source Map v3 is generated only when requested: a valid authored map supplies its section, while a missing or malformed map uses an identity section and malformed maps log a warning once. Initial per-plugin revisions use process nonces, so startup does not hash every plugin; HMR hashes only an artifact reported as changed. Advertised responses are immutable, and an unknown combination or revision returns 404.
 
 ### Boot manifest injection
 
@@ -97,6 +99,7 @@ Read these when the module contract is not enough: the subsystem reference, the 
 - [Web boot kernel](../web/README.md) — the shell that creates the module system and boots the plugin tree.
 - [Client HMR driver](../hmr/README.md) — the reload chain that drives `invalidate`/`prefetch` on rebuilt bundles.
 - [Client authoring rules](../AGENTS.md#shared-modules-and-the-module-graph) — the shared-module baseline and `dsh.client.external` semantics.
+- [Client loading decision](../../../.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md) — combo delivery, maps, HMR, and retained snapshots.
 - [Client group map](../README.md) — the browser half this package belongs to.
 
 -----
@@ -119,7 +122,7 @@ These limits define what the module system does not do. They are current package
 
 - **Flat module graph by design** — every bundle is one module node whose edges point only at table leaves; the interface (`loadCache`/`edges`/`invalidate`) already supports a general module graph, so the externalization granularity can change without an interface change.
 - **No unload bookkeeping of its own** — style removal and fiber teardown ordering live with the HMR driver (`@deepseek-ai/dsh-client-hmr`); the loader only inventories owned style tag ids per record.
-- **Snapshot delivery retains artifact bytes** — the Host holds each bundle, optional source map, generated one-resource response, and current startup combo responses in memory; HMR additionally retains one prior startup generation. Memory scales as several copies of the composed client artifacts in exchange for immutable responses and one-generation race tolerance.
+- **Snapshot delivery retains artifact bytes** — the Host holds each bundle and optional raw source map, plus descriptors for current one-resource and startup combo responses and one previous startup generation. A map request still parses authored maps and may allocate a large indexed map; repeated requests regenerate it. Byte targets limit script grouping, not total Host memory or Renderer module size.
 
 <a id="dev-note"></a>
 ### Dev Note

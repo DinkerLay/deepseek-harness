@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SourceMap } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
@@ -203,20 +204,18 @@ async function routeRequest(route: WebRoute, url: string, method = 'GET'): Promi
 }> {
   let status = 0
   let headers: Record<string, string> | undefined
-  let body = Buffer.alloc(0)
-  const response = {
+  const chunks: Buffer[] = []
+  const response = new PassThrough()
+  response.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+  const streamResponse = Object.assign(response, {
     writeHead(nextStatus: number, nextHeaders?: Record<string, string>) {
       status = nextStatus
       headers = nextHeaders
       return response
     },
-    end(chunk?: Uint8Array) {
-      body = chunk === undefined ? Buffer.alloc(0) : Buffer.from(chunk)
-      return response
-    },
-  } as unknown as ServerResponse
-  await route.handler({ method, url } as IncomingMessage, response)
-  return { status, headers, body }
+  })
+  await route.handler({ method, url } as IncomingMessage, streamResponse as unknown as ServerResponse)
+  return { status, headers, body: Buffer.concat(chunks) }
 }
 
 /** Execute the exact first inline script emitted by the Host boot rows. */
@@ -552,12 +551,18 @@ describe('client bundle activation', () => {
     writeFileSync(`${clientPath}.map`, '{')
     const torn = constructWithRoute([packageName])
     const tornRow = torn.service.graph().entries[0]!
+    const warn = vi.spyOn(torn.context.logger, 'warn')
+    expect((await routeRequest(torn.route, mapUrl(tornRow.url), 'HEAD')).status).toBe(200)
+    expect(warn).not.toHaveBeenCalled()
     expect((await routeRequest(torn.route, tornRow.url)).body.toString('utf8'))
       .toContain(`sourceMappingURL=${mapUrl(tornRow.url)}`)
     const fallback = await routeRequest(torn.route, mapUrl(torn.service.graph().batches[0]!.url))
     expect(JSON.parse(fallback.body.toString('utf8'))).toMatchObject({
       sections: [{ map: { sources: [`/plugins/${packageName}/client.js`] } }],
     })
+    expect((await routeRequest(torn.route, mapUrl(tornRow.url))).status).toBe(200)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]?.[0])).toContain(`${clientPath}.map is not valid JSON`)
 
     writeFileSync(`${clientPath}.map`, '{"version":3,"sources":[null]}\n')
     expect(() => construct([packageName])).not.toThrow()
@@ -685,6 +690,50 @@ describe('client bundle activation', () => {
       const entries = [...batches[index]!.entries, batches[index + 1]!.entries[0]!]
       expect(Buffer.byteLength(mapUrl(comboUrl(entries, '0'.repeat(12))))).toBeGreaterThan(3 * 1024)
     }
+  })
+
+  it('partitions by input bytes without splitting a module or changing graph order', async () => {
+    const names = ['@fixture/byte-first', '@fixture/byte-second', '@fixture/byte-large', '@fixture/byte-last']
+    for (const [index, name] of names.entries()) {
+      const path = writePackage(name)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, index === 2 ? `window.large = '${'x'.repeat(40)}'\n` : `window.item = ${String(index)}\n`)
+    }
+    const { service, route } = constructWithRoute(names, { config: { comboTargetBytes: 2 * Buffer.byteLength('window.item = 0\n') } })
+    const batches = service.graph().batches.filter(batch => batch.phase === 'application')
+    expect(batches.map(batch => batch.entries)).toEqual([[names[0], names[1]], [names[2]], [names[3]]])
+    for (const batch of batches) expect((await routeRequest(route, batch.url)).status).toBe(200)
+  })
+
+  it('streams the same executable bytes through Web and shell routes', async () => {
+    const names = ['@fixture/stream-first', '@fixture/stream-second']
+    const sources = [
+      "window.first = '汉字';\r\n//# sourceMappingURL=client.js.map\r\n",
+      "window.second = '//# sourceURL=internal.js';\n//# sourceURL=outer.js\n",
+    ]
+    for (const [index, name] of names.entries()) {
+      const path = writePackage(name)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, sources[index]!)
+    }
+    const { service, route } = constructWithRoute(names)
+    const batch = service.graph().batches.find(item => item.phase === 'application')!
+    const expected = `window.first = '汉字';\n;\nwindow.second = '//# sourceURL=internal.js';\n;\n//# sourceMappingURL=${mapUrl(batch.url)}\n`
+    expect((await routeRequest(route, batch.url)).body.toString('utf8')).toBe(expected)
+    const shell = service.fetchBundle(new Request(`dsh-app://app${batch.url}`))
+    expect(await shell.text()).toBe(expected)
+    const map = JSON.parse((await routeRequest(route, mapUrl(batch.url))).body.toString('utf8')) as {
+      sections: { offset: { line: number; column: number } }[]
+    }
+    expect(map.sections.map(section => section.offset)).toEqual([{ line: 0, column: 0 }, { line: 2, column: 0 }])
+
+    const first = service.fetchBundle(new Request(`dsh-app://app${batch.url}`))
+    const reader = first.body!.getReader()
+    const chunk = await reader.read()
+    expect(chunk.done).toBe(false)
+    chunk.value![0] = 0
+    await reader.cancel()
+    expect(await service.fetchBundle(new Request(`dsh-app://app${batch.url}`)).text()).toBe(expected)
   })
 
   it('serves the source map beside a registered client bundle', async () => {
