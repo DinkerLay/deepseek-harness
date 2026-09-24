@@ -86,12 +86,17 @@ describe('web e2e: Agent Teams panel', () => {
     const action = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     await action.getByText('No shared tasks yet').waitFor()
     await action.getByText('lead').waitFor()
+    await action.getByRole('button', { name: 'Messages' }).click()
+    await action.getByText('No Team messages yet').waitFor()
+    await action.getByRole('button', { name: 'Task list' }).click()
 
     expect(await action.getByRole('button', { name: 'New task' }).count()).toBe(0)
 
     const agent = scaffold.ctx.agents.list()[0]!
     const task = await scaffold.ctx.agentTeams.createTask(agent, {
-      subject: 'Agent task', description: 'Created by the Team Lead', writeScopes: ['src/web'],
+      subject: 'Agent task',
+      description: '# Created by the Team Lead\n\n| Task | Result |\n| --- | --- |\n| task-1 | accepted |',
+      writeScopes: ['src/web'],
     })
     await action.getByRole('button', { name: 'Refresh Team' }).click()
     await action.getByText('Agent task', { exact: true }).waitFor()
@@ -102,6 +107,13 @@ describe('web e2e: Agent Teams panel', () => {
     await action.getByRole('button', { name: 'Refresh Team' }).click()
     await action.getByText('In progress', { exact: true }).waitFor()
     await action.getByText('Owner: lead', { exact: true }).waitFor()
+    expect(await action.getByText('Created by the Team Lead', { exact: true }).count()).toBe(0)
+    await action.getByRole('button', { name: /^Agent task In progress/u }).click()
+    const detail = action.getByRole('region', { name: 'Task details' })
+    await detail.getByRole('heading', { name: 'Created by the Team Lead' }).waitFor()
+    await detail.getByRole('table').getByRole('cell', { name: 'accepted' }).waitFor()
+    expect(await detail.getByRole('button', { name: 'Open member conversation' }).count()).toBe(0)
+    await detail.getByRole('button', { name: 'Close task details' }).click()
     expect(await action.getByRole('button', { name: /^(New task|Edit|Complete|Reopen|Delete)$/u }).count()).toBe(0)
     expect(await action.locator('input, select, textarea').count()).toBe(0)
 
@@ -131,6 +143,10 @@ describe('web e2e: Agent Teams panel', () => {
               .every(([x, y]) => element.contains(document.elementFromPoint(x!, y!)))
         })).toBe(true)
       }
+      await panel.getByRole('button', { name: /^Agent task In progress/u }).click()
+      await panel.getByRole('region', { name: 'Task details' }).waitFor()
+      expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await panel.getByRole('button', { name: 'Close task details' }).click()
       await panel.getByText('Shared tasks', { exact: true }).click()
       expect(await panel.count()).toBe(1)
       await page.mouse.click(2, 2)

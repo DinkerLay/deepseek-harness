@@ -6,8 +6,10 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { ContinuableStart } from '@deepseek-ai/dsh-subagent'
+import type { ContinuablePresetBinding } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -18,6 +20,7 @@ import { TeamId } from './types.ts'
 import type {
   SpawnTeammateRequest,
   SpawnTeammateResult,
+  TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMemberView,
 } from './types.ts'
@@ -52,6 +55,18 @@ export function resolveActiveMember(
     throw new TeamError(`active teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
   }
   return { id: member.id, name }
+}
+
+/**
+ * Reject a teammate whose durable Team membership stopped while its command waited for the Team transaction.
+ * @param membership - exact caller role resolved before the transaction.
+ * @param state - committed Team state at admission.
+ */
+export function assertActiveTeamMember(membership: TeamMembership, state: TeamState): void {
+  if (membership.role === 'lead') return
+  if (state.members.find(member => member.name === membership.name)?.phase !== 'active') {
+    throw new TeamError(`teammate "${membership.name}" is no longer active`, 'TEAM_NOT_MEMBER')
+  }
 }
 
 /** Owns Team identities and the lifecycle of rostered continuable children. */
@@ -144,14 +159,19 @@ export class TeamRoster {
         id: member.id,
         name: member.name,
         role: 'teammate',
-        status: member.phase === 'failed'
-          ? 'failed'
-          : member.phase === 'provisioning'
-            ? 'provisioning'
-            : availability(live),
+        status: member.phase === 'retiring'
+          ? 'retiring'
+          : member.phase === 'retired'
+            ? 'retired'
+            : member.phase === 'failed'
+              ? 'failed'
+              : member.phase === 'provisioning'
+                ? 'provisioning'
+                : availability(live),
         description: member.description,
         provider: member.provider,
         context: member.context,
+        ...member.preset === undefined ? {} : { preset: member.preset },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -192,7 +212,52 @@ export class TeamRoster {
   async recoverFor(agent: Agent, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const membership = this.tryMembership(agent)
-    if (membership?.role === 'lead') await this.reconcileProvisioning(membership.root, signal)
+    if (membership?.role === 'lead') {
+      await this.reconcileProvisioning(membership.root, signal)
+      await this.reconcileRetiring(membership.root, signal)
+    }
+  }
+
+  /**
+   * Remove a member from Team admission without deleting its Session history.
+   * The caller must first release unfinished assignments and drain pending Team mail.
+   * A persisted retiring edge blocks new Team operations before execution teardown.
+   * @param caller - exact live Team Lead authorizing removal.
+   * @param targetName - durable teammate name; names remain reserved after retirement.
+   * @returns the retired roster row after its live activation is stopped.
+   */
+  async retire(caller: Agent, targetName: string): Promise<TeamMemberView> {
+    const membership = this.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead can retire teammates', 'TEAM_LEAD_REQUIRED')
+    const root = membership.root
+    const name = targetName.trim()
+    const member = await this.journal.transact(root.id, async () => {
+      if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
+      const state = this.journal.state(root)
+      const current = state.members.find(candidate => candidate.name === name)
+      if (current === undefined) throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+      if (current.phase === 'retired' || current.phase === 'retiring') return current
+      if (current.phase !== 'active') {
+        throw new TeamError(`teammate "${name}" is not active`, 'TEAM_MEMBER_NOT_ACTIVE')
+      }
+      const assignment = state.tasks.find(task => task.ownerId === current.id
+        && task.status !== 'completed' && task.status !== 'deleted')
+      if (assignment !== undefined) {
+        throw new TeamError(`release or reassign task "${assignment.id}" before retiring "${name}"`, 'TEAM_MEMBER_HAS_TASKS')
+      }
+      const pending = state.messages.find(message => message.targetId === current.id
+        && !state.delivered.includes(message.id))
+      if (pending !== undefined) {
+        throw new TeamError(`deliver Team message "${pending.id}" before retiring "${name}"`, 'TEAM_MEMBER_HAS_MESSAGES')
+      }
+      const retiring: TeamMemberSnapshot = { ...current, phase: 'retiring' }
+      await this.appendMember(root, retiring)
+      return retiring
+    })
+    if (member.phase !== 'retired') await this.finishRetirement(root, member.id)
+    const result = this.list(membership).find(row => row.id === member.id)
+    if (result === undefined) throw new TeamError(`retired teammate "${name}" disappeared`, 'TEAM_MEMBER_NOT_FOUND')
+    return result
   }
 
   /**
@@ -256,6 +321,16 @@ export class TeamRoster {
     const root = membership.root
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
+    let preset: ContinuablePresetBinding | undefined
+    if (request.presetId !== undefined) {
+      const registry = this.ctx.get('agentPresets')
+      if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
+      await using lease = await registry.acquireComposition(request.presetId)
+      if (lease.revision === undefined) {
+        throw new TeamError(`preset "${lease.id}" has no durable declaration revision`, 'TEAM_PRESET_UNAVAILABLE')
+      }
+      preset = { id: lease.id, revision: lease.revision }
+    }
     const childId = brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,
@@ -263,6 +338,7 @@ export class TeamRoster {
       description,
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
+      ...preset === undefined ? {} : { preset },
       phase: 'provisioning',
     }
 
@@ -274,7 +350,7 @@ export class TeamRoster {
       if (state.members.length >= this.maxMembers) {
         throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
       }
-      await this.journal.appendAndFlush(root, 'team/member', { version: 2, teamId: TeamId(root.id), member })
+      await this.appendMember(root, member)
     })
 
     let started: ContinuableStart
@@ -287,6 +363,7 @@ export class TeamRoster {
           prompt: request.prompt,
           parent: root,
         },
+        ...preset === undefined ? {} : { preset },
         signal,
       })
       await this.checkpointInitialPrompt(childId, started.messageId, signal)
@@ -402,10 +479,15 @@ export class TeamRoster {
         const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal)
         const suffix = loaded.events.slice(loaded.inheritedEventCount)
         const descriptor = foldSubagentDescriptor(suffix)
+        const actualPreset = foldContinuablePreset(suffix)
         const acceptedInitialPrompt = messageAccepted(suffix, message => message.source.kind === 'user')
         if (loaded.header.parentSession === root.id
           && descriptor?.mode === 'continuable'
           && descriptor.provider === member.provider
+          && ((member.preset === undefined && actualPreset === undefined)
+            || (member.preset !== undefined
+              && actualPreset?.id === member.preset.id
+              && actualPreset.revision === member.preset.revision))
           && acceptedInitialPrompt) {
           phase = 'active'
         } else {
@@ -424,13 +506,31 @@ export class TeamRoster {
           phase,
           ...phase === 'failed' ? { error: failure } : {},
         }
-        await this.journal.appendAndFlush(root, 'team/member', {
-          version: 2,
-          teamId: TeamId(root.id),
-          member: settled,
-        })
+        await this.appendMember(root, settled)
       })
     }
+  }
+
+  /** Complete a durable retirement left between its admission cutoff and activation teardown. */
+  private async reconcileRetiring(root: Agent, signal: AbortSignal): Promise<void> {
+    const members = this.journal.state(root).members.filter(member => member.phase === 'retiring')
+    for (const member of members) {
+      signal.throwIfAborted()
+      await this.finishRetirement(root, member.id)
+    }
+  }
+
+  /** Stop the real execution before publishing the final retired roster edge. */
+  private async finishRetirement(root: Agent, memberId: SessionId): Promise<void> {
+    await this.stopTeammates(root, [memberId])
+    await this.journal.transact(root.id, async () => {
+      const current = this.journal.state(root).members.find(member => member.id === memberId)
+      if (current?.phase === 'retired') return
+      if (current?.phase !== 'retiring') {
+        throw new TeamError(`teammate "${memberId}" is not retiring`, 'TEAM_MEMBER_NOT_ACTIVE')
+      }
+      await this.appendMember(root, { ...current, phase: 'retired' })
+    })
   }
 
   /** Build one runtime member row after successful creation. */
@@ -444,9 +544,33 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
+      ...member.preset === undefined ? {} : { preset: member.preset },
       ...live?.options.model === undefined ? {} : { model: live.options.model },
       diagnostics: [],
     }
+  }
+
+  /** Keep the released version-two event exact; write new member states to a separate event type. */
+  private async appendMember(root: Agent, member: TeamMemberSnapshot): Promise<void> {
+    if (member.preset === undefined
+      && (member.phase === 'provisioning' || member.phase === 'active' || member.phase === 'failed')) {
+      const legacy: TeamMemberLegacySnapshot = {
+        id: member.id,
+        name: member.name,
+        description: member.description,
+        provider: member.provider,
+        context: member.context,
+        phase: member.phase,
+        ...member.error === undefined ? {} : { error: member.error },
+      }
+      await this.journal.appendAndFlush(root, 'team/member', {
+        version: 2, teamId: TeamId(root.id), member: legacy,
+      })
+      return
+    }
+    await this.journal.appendAndFlush(root, 'team/member/configured', {
+      version: 3, teamId: TeamId(root.id), member,
+    })
   }
 
   /** Validate a never-reused model-facing teammate name. */
@@ -471,12 +595,11 @@ export class TeamRoster {
       if (current === undefined) {
         throw new TeamError(`provisioned teammate "${terminal.id}" disappeared`, 'TEAM_PROVISIONING_CONFLICT')
       }
+      if (current.phase === 'retiring' || current.phase === 'retired') {
+        throw new TeamError(`teammate "${current.name}" retired during provisioning`, 'TEAM_PROVISIONING_CONFLICT')
+      }
       if (current.phase !== 'provisioning') return current.phase
-      await this.journal.appendAndFlush(root, 'team/member', {
-        version: 2,
-        teamId: TeamId(root.id),
-        member: terminal,
-      })
+      await this.appendMember(root, terminal)
       return terminal.phase === 'active' ? 'active' : 'failed'
     })
   }

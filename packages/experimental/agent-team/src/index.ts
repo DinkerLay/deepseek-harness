@@ -6,6 +6,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamActivity } from './activity.ts'
+import { teamActivityProjectionDefinition } from './activity-projection.ts'
 import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -17,11 +18,17 @@ import { TeamTaskBoard } from './task-board.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   Config,
+  AcceptTeamTaskResultRequest,
   CreateTeamTaskRequest,
+  ReworkTeamTaskRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
+  TeamMessageId,
+  TeamMessagePage,
+  TeamMessageView,
   SpawnTeammateRequest,
   SpawnTeammateResult,
+  SubmitTeamTaskResultRequest,
   TeamMemberView,
   TeamTaskView,
   TeamView,
@@ -31,7 +38,7 @@ import type {
 
 export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
-export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
+export { TeamId, TeamMessageId, TeamTaskAttemptId, TeamTaskId } from './types.ts'
 export { TeamError } from './error.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -112,6 +119,10 @@ export class TeamService extends TypertRemoteService {
       const membership = this.roster.tryMembership(agent)
       if (membership !== undefined) this.activity.notify(membership.id)
     })
+    ctx.effect(
+      () => ctx.root.sessionProjections.register(teamActivityProjectionDefinition),
+      'agentTeams.activityProjection()',
+    )
     ctx.effect(() => {
       const disposeProjection = ctx.root.sessionProjections.register(teamProjectionDefinition)
       return async () => {
@@ -154,6 +165,17 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
+   * Retire one teammate after its unfinished tasks and pending Team mail have been resolved.
+   * The member name and Session history remain durable; in-flight Team commands lose admission.
+   * @param caller - exact live Team Lead.
+   * @param targetName - member name from the roster.
+   * @returns the retired roster row after execution teardown.
+   */
+  async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView> {
+    return await this.roster.retire(caller, targetName)
+  }
+
+  /**
    * Queue one durable peer message, then attempt immediate delivery.
    * @param caller - exact live sending Team member.
    * @param request - target name, content, and pre-queue cancellation.
@@ -161,6 +183,63 @@ export class TeamService extends TypertRemoteService {
    */
   async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult> {
     return await this.mailbox.send(caller, request)
+  }
+
+  /**
+   * Read complete peer-message bodies from the authoritative Lead Session, newest first.
+   * This is a Lead-only observation; teammates cannot inspect third-party messages.
+   * @param caller - exact live Team Lead used for authorization.
+   * @param before - oldest id from a prior page, excluded from this older page.
+   * @param limit - bounded page size from 1 through 100; defaults to 50.
+   * @returns a stable message-id cursor and detached message content.
+   */
+  listLeadMessages(caller: Agent, before?: TeamMessageId, limit: number = 50): TeamMessagePage {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead can read all peer messages', 'TEAM_LEAD_REQUIRED')
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TeamError('message page limit must be 1 through 100', 'TEAM_INVALID_ARGUMENT')
+    }
+    const state = this.journal.state(membership.root)
+    const end = before === undefined ? state.messages.length
+      : state.messages.findIndex(message => message.id === before)
+    if (end < 0) throw new TeamError(`message cursor "${before}" not found`, 'TEAM_MESSAGE_NOT_FOUND')
+    const start = Math.max(0, end - limit)
+    const messages: TeamMessageView[] = state.messages.slice(start, end).reverse().map((message) => {
+      const targetName = message.targetId === membership.root.id ? 'lead'
+        : state.members.find(member => member.id === message.targetId)?.name
+      const time = state.messageTimes[message.id]
+      if (targetName === undefined || time === undefined) {
+        throw new TeamError(`message "${message.id}" has incomplete Team history`, 'TEAM_INVALID_STATE')
+      }
+      return {
+        id: message.id,
+        senderName: message.senderName,
+        targetName,
+        text: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n'),
+        contentJson: JSON.stringify(message.content),
+        hasNonText: message.content.some(block => block.type !== 'text'),
+        time,
+        status: state.delivered.includes(message.id) ? 'delivered' : 'queued',
+        ...'taskId' in message ? { taskId: message.taskId } : {},
+      }
+    })
+    const nextCursor = start > 0 ? state.messages[start]?.id : undefined
+    return {
+      messages,
+      total: state.messages.length,
+      ...nextCursor === undefined ? {} : { nextCursor },
+    }
+  }
+
+  /**
+   * Read a Lead-only browser page of the same mailbox records used by delivery and recovery.
+   * @param agent - exact live Lead used for authorization.
+   * @param before - oldest message id from a prior page, excluded from this page.
+   * @returns newest-first messages and an optional older-page cursor.
+   */
+  @Remote('messages')
+  remoteMessages(agent: Agent, before?: TeamMessageId): TeamMessagePage {
+    return this.listLeadMessages(agent, before)
   }
 
   /**
@@ -200,6 +279,36 @@ export class TeamService extends TypertRemoteService {
    */
   async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskView> {
     return await this.tasks.update(caller, this.roster.membership(caller), request)
+  }
+
+  /**
+   * Submit the caller-owned current Attempt for Lead review without satisfying Task blockers.
+   * @param caller - exact live Task owner.
+   * @param request - Task/Attempt CAS identities and separate result content.
+   * @returns the submitted Task view.
+   */
+  async submitTaskResult(caller: Agent, request: SubmitTeamTaskResultRequest): Promise<TeamTaskView> {
+    return await this.tasks.submitResult(caller, this.roster.membership(caller), request)
+  }
+
+  /**
+   * Mark the exact submitted Attempt accepted and release its dependent Tasks.
+   * @param caller - exact live Team Lead.
+   * @param request - Task revision and submitted Attempt identity.
+   * @returns the completed Task view.
+   */
+  async acceptTaskResult(caller: Agent, request: AcceptTeamTaskResultRequest): Promise<TeamTaskView> {
+    return await this.tasks.acceptResult(caller, this.roster.membership(caller), request)
+  }
+
+  /**
+   * Reject quality work into a new Task ID while retaining the old result and marking dependent results stale.
+   * @param caller - exact live Team Lead.
+   * @param request - old Task revision, reason, and explicit replacement prerequisites.
+   * @returns the new pending Task view; it is not automatically dispatched.
+   */
+  async reworkTask(caller: Agent, request: ReworkTeamTaskRequest): Promise<TeamTaskView> {
+    return await this.tasks.rework(caller, this.roster.membership(caller), request)
   }
 
   /**

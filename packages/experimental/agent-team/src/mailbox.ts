@@ -14,12 +14,13 @@ import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
-import { resolveActiveMember } from './roster.ts'
+import { assertActiveTeamMember, resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
+  TeamLinkedMessageSnapshot,
   TeamMessageSnapshot,
 } from './types.ts'
 
@@ -117,7 +118,15 @@ export class TeamMailbox {
     const queued = await this.journal.transact(root.id, async () => {
       request.signal.throwIfAborted()
       const state = this.journal.state(root)
+      assertActiveTeamMember(membership, state)
       const target = resolveActiveMember(root, state, request.target)
+      if (request.taskId !== undefined) {
+        const task = state.tasks.find(candidate => candidate.id === request.taskId && candidate.status !== 'deleted')
+        if (task === undefined) throw new TeamError(`linked task "${request.taskId}" not found`, 'TEAM_TASK_NOT_FOUND')
+        if (membership.role !== 'lead' && task.ownerId !== caller.id && task.ownerId !== target.id) {
+          throw new TeamError('peer message task must belong to the sender or recipient', 'TEAM_MESSAGE_TASK_UNAUTHORIZED')
+        }
+      }
       if (target.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
       const pendingForTarget = state.messages.filter(candidate =>
         candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length
@@ -137,14 +146,21 @@ export class TeamMailbox {
       if (Buffer.byteLength(JSON.stringify(this.deliveryContent(queued)), 'utf8') > this.maxMessageBytes) {
         throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
-      await this.journal.appendAndFlush(root, 'team/message/queued', {
-        version: 2,
-        teamId: TeamId(root.id),
-        message: queued,
-      })
+      let recorded: TeamMessageSnapshot | TeamLinkedMessageSnapshot = queued
+      if (request.taskId === undefined) {
+        await this.journal.appendAndFlush(root, 'team/message/queued', {
+          version: 2, teamId: TeamId(root.id), message: queued,
+        })
+      } else {
+        const linked: TeamLinkedMessageSnapshot = { ...queued, taskId: request.taskId }
+        recorded = linked
+        await this.journal.appendAndFlush(root, 'team/message/queued-task', {
+          version: 3, teamId: TeamId(root.id), message: linked,
+        })
+      }
       // Register dispatch before releasing the root transaction so concurrent
       // senders enter the target-local queue in durable mailbox order.
-      return { message: queued, dispatch: this.tryDispatch(root, queued, request.signal) }
+      return { message: recorded, dispatch: this.tryDispatch(root, recorded, request.signal) }
     })
     const accepted = await queued.dispatch
     return { messageId: queued.message.id, status: accepted ? 'accepted' : 'queued' }

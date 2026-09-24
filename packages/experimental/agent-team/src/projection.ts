@@ -7,17 +7,22 @@ import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
   TeamId,
+  TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
+  TeamLinkedMessageSnapshot,
   TeamMessageId,
   TeamMessageSnapshot,
+  TeamManagedTaskState,
+  TeamManagedTaskUpdate,
   TeamTaskSnapshot,
 } from './types.ts'
 import {
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
+  TeamTaskAttemptId as toTeamTaskAttemptId,
   TeamTaskId as toTeamTaskId,
 } from './types.ts'
-import { assertTaskGraphCandidate } from './task-graph.ts'
+import { assertTaskGraph, assertTaskGraphCandidate } from './task-graph.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -60,14 +65,27 @@ const contentBlockSchema: z.ZodType<ContentBlock> = z.lazy(() => z.union([
   }),
 ])) as z.ZodType<ContentBlock>
 
-const teamMemberSnapshotSchema = z.object({
+const memberFields = {
   id: sessionIdSchema,
   name: z.string(),
   description: z.string(),
   provider: z.string(),
   context: z.enum(['fresh', 'fork']),
-  phase: z.enum(['provisioning', 'active', 'failed']),
   error: z.string().optional(),
+}
+
+const legacyTeamMemberSnapshotSchema = z.object({
+  ...memberFields,
+  phase: z.enum(['provisioning', 'active', 'failed']),
+}).strict() as z.ZodType<TeamMemberLegacySnapshot>
+
+const teamMemberSnapshotSchema = z.object({
+  ...memberFields,
+  phase: z.enum(['provisioning', 'active', 'failed', 'retiring', 'retired']),
+  preset: z.object({
+    id: z.string().min(1),
+    revision: z.string().regex(/^[a-f0-9]{64}$/u),
+  }).strict().optional(),
 }).strict() as z.ZodType<TeamMemberSnapshot>
 
 const teamTaskSnapshotSchema = z.object({
@@ -81,13 +99,40 @@ const teamTaskSnapshotSchema = z.object({
   writeScopes: z.array(z.string()),
 }).strict() as z.ZodType<TeamTaskSnapshot>
 
-const teamMessageSnapshotSchema = z.object({
+const teamTaskInputSchema = z.object({ taskId: teamTaskIdSchema, revision: positiveSafeInteger }).strict()
+const teamTaskResultSchema = z.object({ summary: z.string().min(1), artifacts: z.array(z.string().min(1)) }).strict()
+const teamTaskAttemptSchema = z.object({
+  id: z.string().min(1).transform(toTeamTaskAttemptId),
+  ownerId: sessionIdSchema,
+  status: z.enum(['running', 'submitted', 'accepted', 'rejected', 'cancelled']),
+  inputs: z.array(teamTaskInputSchema),
+  result: teamTaskResultSchema.optional(),
+  reason: z.string().optional(),
+}).strict()
+const teamManagedReviewSchema = z.object({
+  attempts: z.array(teamTaskAttemptSchema),
+  validity: z.enum(['none', 'valid', 'stale']),
+  origin: z.object({ kind: z.literal('rework'), taskId: teamTaskIdSchema, reason: z.string().min(1) }).strict().optional(),
+  replacedByTaskId: teamTaskIdSchema.optional(),
+}).strict() as z.ZodType<TeamManagedTaskState>
+const teamManagedUpdateSchema = z.object({
+  task: teamTaskSnapshotSchema,
+  review: teamManagedReviewSchema,
+}).strict() as z.ZodType<TeamManagedTaskUpdate>
+
+const messageFields = {
   id: teamMessageIdSchema,
   senderId: sessionIdSchema,
   senderName: z.string(),
   targetId: sessionIdSchema,
   content: z.array(contentBlockSchema),
-}).strict() as z.ZodType<TeamMessageSnapshot>
+}
+
+const teamMessageSnapshotSchema = z.object(messageFields).strict() as z.ZodType<TeamMessageSnapshot>
+const teamLinkedMessageSnapshotSchema = z.object({
+  ...messageFields,
+  taskId: teamTaskIdSchema,
+}).strict() as z.ZodType<TeamLinkedMessageSnapshot>
 
 const teamEventSelectorSchema = z.object({
   version: nonNegativeSafeInteger,
@@ -97,8 +142,14 @@ const teamEventSelectorSchema = z.object({
 const teamMemberEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
-  member: teamMemberSnapshotSchema,
+  member: legacyTeamMemberSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/member']>
+
+const teamMemberConfiguredEventSchema = z.object({
+  version: z.literal(3),
+  teamId: teamIdSchema,
+  member: teamMemberSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['team/member/configured']>
 
 const teamTaskEventSchema = z.object({
   version: z.literal(2),
@@ -106,11 +157,23 @@ const teamTaskEventSchema = z.object({
   task: teamTaskSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/task']>
 
+const teamTaskManagedEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  updates: z.array(teamManagedUpdateSchema).min(1),
+}).strict() as z.ZodType<SessionEventMap['team/task/managed']>
+
 const teamMessageQueuedEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
   message: teamMessageSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/queued']>
+
+const teamMessageQueuedTaskEventSchema = z.object({
+  version: z.literal(3),
+  teamId: teamIdSchema,
+  message: teamLinkedMessageSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['team/message/queued-task']>
 
 const teamMessageDeliveredEventSchema = z.object({
   version: z.literal(2),
@@ -124,7 +187,9 @@ export interface TeamState {
   readonly id: TeamId
   readonly members: TeamMemberSnapshot[]
   readonly tasks: TeamTaskSnapshot[]
-  readonly messages: TeamMessageSnapshot[]
+  readonly managed: Record<string, TeamManagedTaskState>
+  readonly messages: Array<TeamMessageSnapshot | TeamLinkedMessageSnapshot>
+  readonly messageTimes: Record<string, number>
   readonly delivered: TeamMessageId[]
   nextTaskNumber: number
 }
@@ -139,7 +204,9 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     id: toTeamId(rootId),
     members: [],
     tasks: [],
+    managed: {},
     messages: [],
+    messageTimes: {},
     delivered: [],
     nextTaskNumber: 1,
   }
@@ -160,17 +227,26 @@ const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
-  messages: z.array(teamMessageSnapshotSchema),
+  managed: z.record(z.string(), teamManagedReviewSchema),
+  messages: z.array(z.union([teamMessageSnapshotSchema, teamLinkedMessageSnapshotSchema])),
+  messageTimes: z.record(z.string(), nonNegativeSafeInteger),
   delivered: z.array(teamMessageIdSchema),
   nextTaskNumber: positiveSafeInteger,
   failure: z.string().optional(),
-}).strict() as z.ZodType<TeamProjectionState>
+}).strict().refine(value => value.messages.every(message => Object.hasOwn(value.messageTimes, message.id)), {
+  message: 'every queued Team message requires its original event time',
+}).refine(value => Object.keys(value.managed).every(id => value.tasks.some(task => task.id === id)), {
+  message: 'every managed Task state requires its Task record',
+}) as z.ZodType<TeamProjectionState>
 
 /** Whether one event belongs to the Team domain. */
 export type TeamEventType =
   | 'team/member'
+  | 'team/member/configured'
   | 'team/task'
+  | 'team/task/managed'
   | 'team/message/queued'
+  | 'team/message/queued-task'
   | 'team/message/delivered'
 
 /** One event owned by the Team domain. */
@@ -183,8 +259,11 @@ type TeamSessionEvent = SessionEvent<TeamEventType>
  */
 export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
   return event.type === 'team/member'
+    || event.type === 'team/member/configured'
     || event.type === 'team/task'
+    || event.type === 'team/task/managed'
     || event.type === 'team/message/queued'
+    || event.type === 'team/message/queued-task'
     || event.type === 'team/message/delivered'
 }
 
@@ -202,10 +281,16 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
   switch (event.type) {
     case 'team/member':
       return { ...event, data: parsePersisted(event.type, teamMemberEventSchema, event.data) }
+    case 'team/member/configured':
+      return { ...event, data: parsePersisted(event.type, teamMemberConfiguredEventSchema, event.data) }
     case 'team/task':
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
+    case 'team/task/managed':
+      return { ...event, data: parsePersisted(event.type, teamTaskManagedEventSchema, event.data) }
     case 'team/message/queued':
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
+    case 'team/message/queued-task':
+      return { ...event, data: parsePersisted(event.type, teamMessageQueuedTaskEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
@@ -220,7 +305,9 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return
-    if (selector.version !== 2) {
+    const expectedVersion = event.type === 'team/task/managed' ? 1
+      : event.type === 'team/member/configured' || event.type === 'team/message/queued-task' ? 3 : 2
+    if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
     applyCurrentTeamEvent(state, parseCurrentTeamEvent(event))
@@ -232,8 +319,9 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
 
 function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void {
   switch (event.type) {
-    case 'team/member': {
-      const member = event.data.member
+    case 'team/member':
+    case 'team/member/configured': {
+      const member: TeamMemberSnapshot = event.data.member
       const index = state.members.findIndex(candidate => candidate.id === member.id)
       const prior = state.members[index]
       const named = state.members.find(candidate => candidate.name === member.name)
@@ -243,10 +331,15 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       if (prior === undefined) {
         if (member.phase !== 'provisioning') throw new Error(`teammate "${member.name}" must begin provisioning`)
       } else {
-        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context) {
+        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context
+          || prior.preset?.id !== member.preset?.id || prior.preset?.revision !== member.preset?.revision) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
-        if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {
+        const provisioningExit = prior.phase === 'provisioning'
+          && (member.phase === 'active' || member.phase === 'failed')
+        const retirementStart = prior.phase === 'active' && member.phase === 'retiring'
+        const retirementEnd = prior.phase === 'retiring' && member.phase === 'retired'
+        if (!provisioningExit && !retirementStart && !retirementEnd) {
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
         }
       }
@@ -256,6 +349,9 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
     }
     case 'team/task': {
       const task = event.data.task
+      if (state.managed[task.id] !== undefined) {
+        throw new Error(`managed task "${task.id}" cannot be changed by a legacy task event`)
+      }
       const index = state.tasks.findIndex(candidate => candidate.id === task.id)
       const prior = state.tasks[index]
       if (prior === undefined && task.revision !== 1) {
@@ -277,12 +373,73 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       else state.tasks[index] = task
       break
     }
-    case 'team/message/queued': {
+    case 'team/task/managed': {
+      const tasks = [...state.tasks]
+      const managed = { ...state.managed }
+      const touched = new Set<string>()
+      let nextTaskNumber = state.nextTaskNumber
+      for (const { task, review } of event.data.updates) {
+        if (touched.has(task.id)) throw new Error(`managed task "${task.id}" occurs twice in one transaction`)
+        touched.add(task.id)
+        const index = tasks.findIndex(candidate => candidate.id === task.id)
+        const prior = tasks[index]
+        if (prior === undefined && task.revision !== 1) {
+          throw new Error(`managed task "${task.id}" must begin at revision 1`)
+        }
+        if (prior !== undefined && task.revision !== prior.revision + 1) {
+          throw new Error(`managed task "${task.id}" revision is not contiguous`)
+        }
+        if (prior !== undefined && managed[task.id] === undefined) {
+          throw new Error(`legacy task "${task.id}" cannot gain managed history`)
+        }
+        const attemptIds = review.attempts.map(attempt => attempt.id)
+        if (new Set(attemptIds).size !== attemptIds.length) {
+          throw new Error(`managed task "${task.id}" repeats an attempt identity`)
+        }
+        const latest = review.attempts.at(-1)
+        if (review.validity === 'valid' && (task.status !== 'completed'
+          || latest?.status !== 'accepted' || review.replacedByTaskId !== undefined)) {
+          throw new Error(`managed task "${task.id}" has no valid accepted result`)
+        }
+        if (task.status === 'in_progress' && latest?.status !== 'running' && latest?.status !== 'submitted') {
+          throw new Error(`managed task "${task.id}" has no active attempt`)
+        }
+        if (review.origin?.taskId === task.id || review.replacedByTaskId === task.id) {
+          throw new Error(`managed task "${task.id}" cannot replace itself`)
+        }
+        if (index < 0) tasks.push(task)
+        else tasks[index] = task
+        managed[task.id] = review
+        const match = numericTaskIdPattern.exec(task.id)
+        if (match !== null) {
+          const number = Number(match[1])
+          nextTaskNumber = Math.max(nextTaskNumber,
+            number === Number.MAX_SAFE_INTEGER ? number : number + 1)
+        }
+      }
+      assertTaskGraph(tasks)
+      for (const { task, review } of event.data.updates) {
+        if (review.origin !== undefined && !tasks.some(candidate => candidate.id === review.origin?.taskId)) {
+          throw new Error(`managed task "${task.id}" has no rework origin`)
+        }
+        if (review.replacedByTaskId !== undefined && !tasks.some(candidate => candidate.id === review.replacedByTaskId
+          && managed[candidate.id]?.origin?.taskId === task.id)) {
+          throw new Error(`managed task "${task.id}" has no matching replacement`)
+        }
+      }
+      state.tasks.splice(0, state.tasks.length, ...tasks)
+      Object.assign(state.managed, managed)
+      state.nextTaskNumber = nextTaskNumber
+      break
+    }
+    case 'team/message/queued':
+    case 'team/message/queued-task': {
       const message = event.data.message
       if (state.messages.some(candidate => candidate.id === message.id)) {
         throw new Error(`team message "${message.id}" was queued twice`)
       }
       state.messages.push(message)
+      state.messageTimes[message.id] = event.time
       break
     }
     case 'team/message/delivered': {
@@ -302,7 +459,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
 /** Host-only Team projection selected by the projected Session identity. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 4,
+  stateVersion: 7,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: (state, event) => {

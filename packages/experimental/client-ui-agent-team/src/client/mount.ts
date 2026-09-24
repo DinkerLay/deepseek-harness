@@ -2,12 +2,15 @@
 
 import type {
   TeamMemberView as TeamRosterMember,
+  TeamMessagePage,
+  TeamMessageId,
   TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type {} from '@deepseek-ai/dsh-experimental-agent-team/remote'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -31,7 +34,8 @@ export const inject = ['sessions', 'uiWorkspace', 'remote', 'slots', 'locale']
 
 function registerUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'client-ui-agent-team: dictionaries')
-  const sessions = ctx.sessions
+  // Both Host and Client augment Cordis `sessions`; this injection is the browser Client service.
+  const sessions = (ctx as ClientContext & { sessions: ISessions }).sessions
   const leadSessionId = (sessionId: SessionId): SessionId => {
     const address = sessions.binding(sessionId)?.session.getSnapshot().subagent?.address
     return address?.parentSessionId ?? sessionId
@@ -40,6 +44,9 @@ function registerUi(ctx: ClientContext): void {
   const actions: TeamActionInjected = {
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
+    },
+    async loadMessages(sessionId: SessionId, before?: TeamMessageId): Promise<TeamActionResult<TeamMessagePage>> {
+      return await ctx.remote.agentTeams.messages(sessionId, before)
     },
     openTeammate(sessionId: SessionId, member: TeamRosterMember): void {
       if (member.role !== 'teammate') return
@@ -61,6 +68,10 @@ function registerUi(ctx: ClientContext): void {
       order: 20,
       locale: NS,
       inject: () => actions,
+      children: {
+        'agent-team.panel.tasks.action': { kind: 'list', scope: 'session' },
+        'agent-team.panel.tasks.graph': { kind: 'single', scope: 'session' },
+      },
     }, TeamAction),
   )
 }

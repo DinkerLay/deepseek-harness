@@ -30,6 +30,17 @@ export function assertTaskGraphCandidate(
   const tasks = new Map(current.map(task => [task.id, task]))
   tasks.set(candidate.id, candidate)
 
+  assertTaskGraph([...tasks.values()])
+}
+
+/**
+ * Validate a complete post-transaction Task graph once, including records updated together.
+ * @param records - final Task snapshots after an atomic Team event.
+ * @throws {TeamTaskGraphError} when an active blocker is missing, duplicated, self-referential, or cyclic.
+ */
+export function assertTaskGraph(records: readonly TeamTaskSnapshot[]): void {
+  const tasks = new Map(records.map(task => [task.id, task]))
+
   for (const task of tasks.values()) {
     if (task.status === 'deleted') continue
     const seen = new Set<TeamTaskId>()

@@ -16,7 +16,7 @@ import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-a
 import TeamService, { TeamId, TeamMessageId } from '../src/index.ts'
 import type { TeamMailbox } from '../src/mailbox.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
-import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
+import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
 const SIGNAL = new AbortController().signal
@@ -122,7 +122,7 @@ async function stack(
   }
 }
 
-function provisioning(childId: SessionId, name: string): TeamMemberSnapshot {
+function provisioning(childId: SessionId, name: string): TeamMemberLegacySnapshot {
   return {
     id: childId,
     name,
@@ -165,6 +165,67 @@ async function persistedChild(
 
 for (const backend of backends) {
   describe(`${backend.name} Agent Teams recovery`, () => {
+    it('replays accepted results, replacement Tasks, and stale descendants without merging their identities', {
+      timeout: PERSISTENCE_TEST_TIMEOUT_MS,
+    }, async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), `dsh-team-managed-${backend.name.toLowerCase()}-`))
+      roots.push(storageRoot)
+      const rootId = SessionId(`${backend.name.toLowerCase()}-managed-root`)
+      const first = await stack(backend, storageRoot, [])
+      const lead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const rootTask = await first.ctx.agentTeams.createTask(lead, { subject: 'analysis', description: 'analyze' })
+      const childTask = await first.ctx.agentTeams.createTask(lead, {
+        subject: 'review', description: 'review', blockedBy: [rootTask.id],
+      })
+      const claimRoot = await first.ctx.agentTeams.updateTask(lead, {
+        taskId: rootTask.id, expectedRevision: rootTask.revision, action: 'claim',
+      })
+      const rootAttempt = claimRoot.review?.attempts.at(-1)?.id
+      if (rootAttempt === undefined) throw new Error('root Attempt was not created')
+      const submitRoot = await first.ctx.agentTeams.submitTaskResult(lead, {
+        taskId: rootTask.id, expectedRevision: claimRoot.revision, attemptId: rootAttempt,
+        result: { summary: 'verified root result', artifacts: [] },
+      })
+      const acceptedRoot = await first.ctx.agentTeams.acceptTaskResult(lead, {
+        taskId: rootTask.id, expectedRevision: submitRoot.revision, attemptId: rootAttempt,
+      })
+      const claimChild = await first.ctx.agentTeams.updateTask(lead, {
+        taskId: childTask.id, expectedRevision: childTask.revision, action: 'claim',
+      })
+      const childAttempt = claimChild.review?.attempts.at(-1)?.id
+      if (childAttempt === undefined) throw new Error('child Attempt was not created')
+      const submitChild = await first.ctx.agentTeams.submitTaskResult(lead, {
+        taskId: childTask.id, expectedRevision: claimChild.revision, attemptId: childAttempt,
+        result: { summary: 'reviewed child result', artifacts: [] },
+      })
+      await first.ctx.agentTeams.acceptTaskResult(lead, {
+        taskId: childTask.id, expectedRevision: submitChild.revision, attemptId: childAttempt,
+      })
+      const replacement = await first.ctx.agentTeams.reworkTask(lead, {
+        taskId: rootTask.id, expectedRevision: acceptedRoot.revision,
+        reason: 'redo analysis', blockedBy: [],
+      })
+      await first.dispose()
+
+      const second = await stack(backend, storageRoot, [])
+      const handle = await second.ctx.agents.resume({ resumeSessionId: rootId,
+        agentOptions: { provider: 'mock', model: 'mock' } })
+      const restoredRoot = second.ctx.agentTeams.getTask(handle.agent, rootTask.id)
+      const restoredChild = second.ctx.agentTeams.getTask(handle.agent, childTask.id)
+      const restoredReplacement = second.ctx.agentTeams.getTask(handle.agent, replacement.id)
+      expect(restoredRoot.review).toMatchObject({ validity: 'stale', replacedByTaskId: replacement.id })
+      expect(restoredChild).toMatchObject({ blockedBy: [rootTask.id], review: { validity: 'stale' } })
+      expect(restoredReplacement).toMatchObject({ review: {
+        origin: { kind: 'rework', taskId: rootTask.id, reason: 'redo analysis' },
+      } })
+      expect(restoredRoot.review?.attempts[0]?.result?.summary).toBe('verified root result')
+      expect(restoredChild.review?.attempts[0]?.result?.summary).toBe('reviewed child result')
+      const later = await second.ctx.agentTeams.createTask(handle.agent, { subject: 'later', description: 'later' })
+      expect(later.id).not.toBe(replacement.id)
+      await handle.dispose()
+      await second.dispose()
+    })
+
     it('reconciles a persisted child to active and a missing child to durable failed', {
       timeout: PERSISTENCE_TEST_TIMEOUT_MS,
     }, async () => {
@@ -308,6 +369,9 @@ for (const backend of backends) {
       })
       expect(queued.status).toBe('queued')
       expect(durable(firstLead).pendingMessages.map(message => message.id)).toEqual([queued.messageId])
+      expect(first.ctx.agentTeams.listLeadMessages(firstLead).messages[0]).toMatchObject({
+        id: queued.messageId, text: 'durable retry context', status: 'queued',
+      })
       await first.dispose()
 
       const second = await stack(backend, storageRoot, [textResponse('resumed teammate answer')])
@@ -317,6 +381,9 @@ for (const backend of backends) {
       })
       await vi.waitFor(() => { expect(second.ctx.agents.get(started.member.id)).toBeUndefined() }, { timeout: 5_000 })
       await vi.waitFor(() => { expect(durable(rootHandle.agent).pendingMessages).toEqual([]) })
+      expect(second.ctx.agentTeams.listLeadMessages(rootHandle.agent).messages[0]).toMatchObject({
+        id: queued.messageId, text: 'durable retry context', status: 'delivered',
+      })
 
       const child = await storedEvents(second.ctx, started.member.id)
       const peerIds = child.flatMap(event => event.type === 'user/message'
@@ -449,7 +516,7 @@ for (const backend of backends) {
       await Promise.resolve()
       await Promise.resolve()
       const provisioned = provisioning(childId, 'pending-mail-worker')
-      const active: TeamMemberSnapshot = {
+      const active: TeamMemberLegacySnapshot = {
         ...provisioned,
         phase: 'active',
       }

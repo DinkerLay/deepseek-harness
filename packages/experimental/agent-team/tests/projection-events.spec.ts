@@ -4,10 +4,11 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionEventMap, SessionEventType } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import { teamActivityProjectionDefinition } from '../src/activity-projection.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import { TeamId, TeamMessageId, TeamTaskId } from '../src/types.ts'
-import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
+import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
 
 const ROOT = SessionId('team-root')
 const TEAM = TeamId(ROOT)
@@ -48,7 +49,7 @@ function isEmptyState(state: TeamState): boolean {
     && state.messages.length === 0 && state.delivered.length === 0
 }
 
-function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
+function member(overrides: Partial<TeamMemberLegacySnapshot> = {}): TeamMemberLegacySnapshot {
   return {
     id: CHILD,
     name: 'worker-a',
@@ -58,6 +59,10 @@ function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot
     phase: 'provisioning',
     ...overrides,
   }
+}
+
+function configuredMember(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
+  return { ...member(), ...overrides }
 }
 
 function task(overrides: Partial<TeamTaskSnapshot> = {}): TeamTaskSnapshot {
@@ -85,6 +90,24 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it('publishes only a revision signal for durable Team changes', () => {
+    const initial = teamActivityProjectionDefinition.init()
+    expect(initial).toEqual({ revision: 0 })
+    const afterMessage = teamActivityProjectionDefinition.apply(initial, event('team/message/queued', {
+      version: 2, teamId: TEAM, message: message(),
+    }, SessionSeq(0)))
+    expect(afterMessage).toEqual({ revision: 1 })
+    const afterTask = teamActivityProjectionDefinition.apply(afterMessage, event('team/task', {
+      version: 2, teamId: TEAM, task: task(),
+    }, SessionSeq(1)))
+    const afterMember = teamActivityProjectionDefinition.apply(afterTask, event('team/member', {
+      version: 2, teamId: TEAM, member: member(),
+    }, SessionSeq(2)))
+    expect(afterMember).toEqual({ revision: 3 })
+    expect(teamActivityProjectionDefinition.wire.view(afterMember)).toEqual({ revision: 3 })
+    expect(teamActivityProjectionDefinition.wire.viewSchema.parse(afterMember)).toEqual({ revision: 3 })
+  })
+
   it('rejects retired tool-result content when restoring a native V4 Team checkpoint', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
@@ -95,7 +118,7 @@ describe('Agent Teams projection events', () => {
     const restore = (val: unknown) => ctx.sessionProjections.restore({
       agentTeam: { ver: teamProjectionDefinition.stateVersion, seq: -1, val },
     }, [], SessionLogOffset(0), session.header, SessionLogOffset(0))
-    const valid = { ...project(ROOT, []), messages: [message()] }
+    const valid = { ...project(ROOT, []), messages: [message()], messageTimes: { 'message-1': 0 } }
     expect(restore(JSON.parse(JSON.stringify(valid))).checkpoint['agentTeam']?.val).toEqual(valid)
     const retiredMessage = message({ content: [{
       type: 'tool-result', toolCallId: 'retired', content: [{ type: 'text', text: 'old result' }],
@@ -162,6 +185,36 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(1))])).toThrow(/name .* reused/)
   })
 
+  it('reads legacy members and validates version-three preset and retirement edges', () => {
+    const preset = { id: 'reviewer', revision: 'a'.repeat(64) }
+    const provisioning = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset }),
+    }, SessionSeq(0))
+    const active = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'active' }),
+    }, SessionSeq(1))
+    const retiring = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'retiring' }),
+    }, SessionSeq(2))
+    const retired = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'retired' }),
+    }, SessionSeq(3))
+    expect(projectTeam(ROOT, [provisioning, active, retiring, retired]).members[0])
+      .toMatchObject({ preset, phase: 'retired' })
+    expect(() => projectTeam(ROOT, [provisioning, active, retired]))
+      .toThrow(/invalid active -> retired/)
+    expect(() => projectTeam(ROOT, [provisioning, event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset: { ...preset, id: 'changed' }, phase: 'active' }),
+    }, SessionSeq(1))])).toThrow(/immutable identity/)
+    const invalidLegacy = { ...member(), preset }
+    expect(() => projectTeam(ROOT, [event('team/member', {
+      version: 2, teamId: TEAM, member: invalidLegacy,
+    }, SessionSeq(0))])).toThrow(/payload is invalid/)
+    expect(() => projectTeam(ROOT, [event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset: { ...preset, revision: 'bad' } }),
+    }, SessionSeq(0))])).toThrow(/payload is invalid/)
+  })
+
   it('enforces task revision continuity', () => {
     const first = event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(0))
     expect(() => projectTeam(ROOT, [event('team/task', {
@@ -174,6 +227,32 @@ describe('Agent Teams projection events', () => {
       teamId: TEAM,
       task: task({ revision: 3 }),
     }, SessionSeq(1))])).toThrow(/revision is not contiguous/)
+  })
+
+  it('keeps a managed Task transaction atomic and rejects legacy rewrites of its result state', () => {
+    const initial = event('team/task/managed', {
+      version: 1, teamId: TEAM,
+      updates: [{ task: task(), review: { attempts: [], validity: 'none' } }],
+    }, SessionSeq(0))
+    expect(projectTeam(ROOT, [initial]).managed[TeamTaskId('task-1')]).toEqual({ attempts: [], validity: 'none' })
+    const duplicate = event('team/task/managed', {
+      version: 1, teamId: TEAM,
+      updates: [
+        { task: task({ revision: 2 }), review: { attempts: [], validity: 'none' } },
+        { task: task({ revision: 2 }), review: { attempts: [], validity: 'none' } },
+      ],
+    }, SessionSeq(1))
+    const damaged = project(ROOT, [initial, duplicate])
+    expect(damaged.failure).toMatch(/occurs twice/)
+    expect(damaged.tasks[0]?.revision).toBe(1)
+    expect(() => projectTeam(ROOT, [initial, event('team/task/managed', {
+      version: 1, teamId: TEAM,
+      updates: [{ task: task({ revision: 2, status: 'completed' }),
+        review: { attempts: [], validity: 'valid' } }],
+    }, SessionSeq(1))])).toThrow(/no valid accepted result/)
+    expect(() => projectTeam(ROOT, [initial, event('team/task', {
+      version: 2, teamId: TEAM, task: task({ revision: 2 }),
+    }, SessionSeq(1))])).toThrow(/managed task .* legacy task event/)
   })
 
   it('rejects every invalid persisted task dependency relation', () => {

@@ -7,6 +7,7 @@ import { mountAgentTeamUi } from './mount.ts'
 export { inject } from './mount.ts'
 export type { TeamActionInjected, TeamActionProps, TeamActionResult } from './TeamAction.tsx'
 export type { TeamKey } from './locales.ts'
+export type { TeamTaskViewActionOwner, TeamTaskGraphOwner } from './task-view-slots.ts'
 
 /** Mount the generated Team Remote contribution and its browser UI. */
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {

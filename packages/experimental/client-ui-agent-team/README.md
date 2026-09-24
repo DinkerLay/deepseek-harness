@@ -29,13 +29,17 @@ Enable this package through [`@deepseek-ai/dsh-experimental-agent-team-profile`]
 
 ### Inspect and navigate the roster
 
-Opening the panel calls `agentTeams/view`. Roster rows show durable names, turn availability, model, and diagnostics. Provisioning and running members use the shared ongoing loader, inactive members use idle, and failed members use error. Selecting a healthy teammate opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address from its Lead and roster identity without refreshing or checking the parent catalog. The Host validates the parent, child, and mode when history opens. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
+Opening the panel calls `agentTeams/view`. Roster rows show durable names, turn availability, model, and diagnostics. Provisioning and running members use the shared ongoing loader, inactive and retired members use idle, retiring members use warning, and failed members use error. Selecting an active or inactive teammate opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address from its Lead and roster identity without refreshing or checking the parent catalog; retiring and retired rows stay visible but cannot be opened from the Team panel. The Host validates the parent, child, and mode when history opens. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
 
 ### Inspect the task board
 
 Ready pending tasks use idle, blocked pending tasks use warning, in-progress tasks use ongoing, and completed tasks use done.
 
-The read-only task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. Team agents create and update tasks through their tools; the panel provides no task mutation controls.
+The read-only task board places the roster beside a compact task list. Rows show task identity, owner, status, and blockers without expanding the request. Selecting a row opens its complete record, including a GFM-rendered Task description, each Attempt's separately submitted result and artifact references, review validity, advisory write scopes, and overlap warnings. Raw HTML and unsafe links do not execute. The existing panel marks submitted work awaiting Lead review, stale results, and rework replacements without treating a teammate Session as a Task. Historical version-two Tasks still show only their original description. A detail action opens the owner's conversation when that teammate is available, but it does not locate a task-specific Turn. Team agents create and update tasks through their tools; the panel provides no task mutation controls.
+
+The task heading exposes two optional, session-scoped child slots: `agent-team.panel.tasks.action` for a view switch and `agent-team.panel.tasks.graph` for one read-only alternate view. Both receive the current native `TeamView` projection; the action also receives `openGraph` and `active`, while the graph receives `openMemberSession` for an explicit owner-conversation action. If no graph extension is installed, the task list remains the default Task view. An extension must derive its edges from native `blockedBy` and must not maintain a second Team state.
+
+The Lead's Messages view pages through the original peer-message text, sender, recipient, delivery status, and optional Task link without inserting a relay message into the Lead conversation. Non-text blocks remain available as recorded JSON. Teammate Sessions do not show this view, and the Host rejects non-Lead reads. The Lead Session activity signal refreshes the open view after new queue or delivery records.
 
 -----
 
@@ -47,12 +51,13 @@ The read-only task board shows task identity, owner, blockers, readiness, adviso
 
 The Client export mounts the generated `ctx.remote.agentTeams` contribution from [`@deepseek-ai/dsh-experimental-agent-team/remote`](../agent-team/README.md), then registers its locale dictionaries and one conversation-header slot through Cordis effects. Disposing the plugin fiber removes both registrations.
 
-The panel renders outside the conversation container and stays within the viewport. Opening moves focus into the panel; Escape or Close returns focus to its trigger. Clicking outside or moving focus outside the panel and trigger closes it without moving focus back. Opening or refreshing the panel reads the complete Team view. Overlapping refreshes keep the newest response, and responses for a previous conversation are ignored.
+The panel renders outside the conversation container and stays within the viewport. Opening moves focus into the panel; Escape or Close returns focus to its trigger. Clicking outside or moving focus outside the panel and trigger closes it without moving focus back. Opening or refreshing the panel reads the complete Team view. While the Lead Session is open, its `agentTeamActivity` projection triggers a silent view reload after committed member or task changes, so the optional graph follows the Board. Overlapping refreshes keep the newest response, and responses for a previous conversation are ignored.
 
 | File | Role |
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | Generated Remote, locale, navigation, and slot registrations |
-| [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Roster and task-board interaction state |
+| [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Roster, task-board, and optional view-switch interaction state |
+| [`src/client/task-view-slots.ts`](src/client/task-view-slots.ts) | Typed child slots for optional task projections |
 | [`src/client/locales.ts`](src/client/locales.ts) | English and Chinese panel copy |
 | [`src/index.ts`](src/index.ts) | Inert Host entry |
 
@@ -83,8 +88,9 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh** — the panel refreshes on open and explicit refresh; it has no live event subscription or mailbox timeline.
+- **Lead-scoped activity** — automatic member, task, and mailbox refresh follows the open Lead Session projection; a teammate's own Session still needs explicit refresh to see changes made elsewhere. Private-message history is available only in the Lead view.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
+- **No task-specific conversation position** — task ownership identifies a member Session, not the Turn or Step that performed a particular task; the detail action opens that member's conversation without claiming an exact task location.
 - **No lifecycle or workspace controls** — the panel cannot spawn, rename, delete, or interrupt teammates, and write scopes remain advisory metadata.
 
 <a id="dev-note"></a>
@@ -97,4 +103,4 @@ None.
 
 </details>
 
-**Runtime invariant:** No companion is published. RPC is authoritative and the package owns only one disposable slot registration.
+**Runtime invariant:** No companion is published. RPC is authoritative; this package owns one disposable header registration and its task-view child declarations.

@@ -33,13 +33,18 @@ const SIGNAL = new AbortController().signal
 const TOOL_NAMES = [
   'spawn_teammate',
   'send_message',
+  'team_message_list',
   'list_agents',
   'wait_agent',
   'interrupt_agent',
+  'retire_teammate',
   'team_task_create',
   'team_task_list',
   'team_task_get',
   'team_task_update',
+  'team_task_submit_result',
+  'team_task_accept',
+  'team_task_rework',
 ].sort()
 
 const roots: string[] = []
@@ -163,7 +168,9 @@ describe('dsh-tool-team', () => {
         expect(schema?.properties).toHaveProperty('target')
         expect(schema?.properties).not.toHaveProperty('id')
         expect(schema?.properties).not.toHaveProperty('name')
-        expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed'])
+        expect(schema?.properties?.status?.enum).toEqual([
+          'running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired',
+        ])
       }
       expect(ctx.agentTeams.listMembers(lead)).toEqual([member])
     },
@@ -175,6 +182,50 @@ describe('dsh-tool-team', () => {
     const result = await execute(ctx, lead, 'interrupt_agent', { target: 'reviewer' })
     expect(JSON.parse(text(result))).toEqual({ previousStatus })
     expect(interrupt).toHaveBeenCalledWith(lead, 'reviewer')
+  })
+
+  it('retires a teammate through the native Team tool and keeps its history row', async () => {
+    const { ctx, lead } = await setup([textResponse('finished')])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'reviewer', description: 'review changes', prompt: 'review',
+    })
+    const childId = spawnedChildId(ctx, lead, spawned)
+    await waitNoAgent(ctx, childId)
+    const retired = await execute(ctx, lead, 'retire_teammate', { target: 'reviewer' })
+    expect(retired.isError).toBe(false)
+    expect(JSON.parse(text(retired))).toMatchObject({ target: 'reviewer', status: 'retired' })
+    expect(JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))))
+      .toContainEqual(expect.objectContaining({ target: 'reviewer', status: 'retired' }))
+    expect((await execute(ctx, lead, 'send_message', { target: 'reviewer', message: 'late' })).isError).toBe(true)
+  })
+
+  it('shows complete Task-linked private messages only to the Lead', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const alpha = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'alpha', description: 'first role', prompt: 'wait',
+    })
+    const beta = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'beta', description: 'second role', prompt: 'wait',
+    })
+    const alphaAgent = await waitRunning(ctx, spawnedChildId(ctx, lead, alpha))
+    const betaAgent = await waitRunning(ctx, spawnedChildId(ctx, lead, beta))
+    const task = await ctx.agentTeams.createTask(lead, { subject: 'review', description: 'review the result' })
+    await ctx.agentTeams.updateTask(alphaAgent, {
+      taskId: task.id, expectedRevision: task.revision, action: 'claim',
+    })
+    const sent = await execute(ctx, alphaAgent, 'send_message', {
+      target: 'beta', message: 'private full finding', task_id: task.id,
+    })
+    expect(sent.isError).toBe(false)
+    const inspected = await execute(ctx, lead, 'team_message_list', {})
+    expect(inspected.isError).toBe(false)
+    expect(JSON.parse(text(inspected))).toMatchObject({
+      messages: [{ senderName: 'alpha', targetName: 'beta', taskId: task.id, text: 'private full finding' }],
+    })
+    expect((await execute(ctx, betaAgent, 'team_message_list', {})).isError).toBe(true)
+    ctx.agentTeams.interrupt(lead, 'alpha')
+    ctx.agentTeams.interrupt(lead, 'beta')
+    await ctx.subagents.drainContinuableChildren(lead, [alphaAgent.id, betaAgent.id])
   })
 
   it('uses returned targets for messages, interruption, and task assignment', async () => {
@@ -504,6 +555,7 @@ describe('dsh-tool-team', () => {
       action: 'claim',
     })
     expect(JSON.parse(text(claimed))).toMatchObject({ status: 'in_progress', ownerName: 'json-worker' })
+    const attemptId = (JSON.parse(text(claimed)) as { review: { attempts: { id: string }[] } }).review.attempts[0]!.id
     const stale = await execute(ctx, lead, 'team_task_update', {
       task_id: task.id,
       expected_revision: task.revision,
@@ -515,20 +567,70 @@ describe('dsh-tool-team', () => {
     const wait = execute(ctx, lead, 'wait_agent', { timeout_ms: 10_000 })
     const completedCall = new Promise<Awaited<ReturnType<typeof execute>>>((resolve, reject) => {
       setTimeout(() => {
-        void execute(ctx, child, 'team_task_update', {
+        void execute(ctx, child, 'team_task_submit_result', {
           task_id: task.id,
           expected_revision: 2,
-          action: 'complete',
+          attempt_id: attemptId,
+          summary: 'The worker completed the requested work.',
         }).then(resolve, reject)
       }, 0)
     })
     await expect(wait).resolves.toMatchObject({ isError: false })
     expect((await completedCall).isError).toBe(false)
+    const accepted = await execute(ctx, lead, 'team_task_accept', {
+      task_id: task.id,
+      expected_revision: 3,
+      attempt_id: attemptId,
+    })
+    expect(JSON.parse(text(accepted))).toMatchObject({ status: 'completed', review: { validity: 'valid' } })
 
     const childInterrupt = await execute(ctx, child, 'interrupt_agent', { target: 'json-worker' })
     expect(childInterrupt.isError).toBe(true)
     await execute(ctx, lead, 'interrupt_agent', { target: 'json-worker' })
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
+  })
+
+  it('exposes owner submission and Lead-only acceptance and rework as separate Task tools', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'review-worker', description: 'review worker', prompt: 'wait',
+    })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, spawned))
+    const created = JSON.parse(text(await execute(ctx, lead, 'team_task_create', {
+      subject: 'reviewable task', description: 'Produce a reviewable result',
+    }))) as { id: string; revision: number }
+    const claimed = JSON.parse(text(await execute(ctx, child, 'team_task_update', {
+      task_id: created.id, expected_revision: created.revision, action: 'claim',
+    }))) as { revision: number; review: { attempts: { id: string }[] } }
+    const attemptId = claimed.review.attempts[0]!.id
+    expect((await execute(ctx, lead, 'team_task_submit_result', {
+      task_id: created.id, expected_revision: claimed.revision,
+      attempt_id: attemptId, summary: 'Lead cannot submit worker output',
+    })).isError).toBe(true)
+    const submitted = await execute(ctx, child, 'team_task_submit_result', {
+      task_id: created.id, expected_revision: claimed.revision,
+      attempt_id: attemptId, summary: 'Reviewed findings', artifacts: ['findings.md'],
+    })
+    expect(JSON.parse(text(submitted))).toMatchObject({
+      status: 'in_progress', review: { attempts: [{ status: 'submitted', result: { summary: 'Reviewed findings' } }] },
+    })
+    expect((await execute(ctx, child, 'team_task_accept', {
+      task_id: created.id, expected_revision: 3, attempt_id: attemptId,
+    })).isError).toBe(true)
+    const accepted = await execute(ctx, lead, 'team_task_accept', {
+      task_id: created.id, expected_revision: 3, attempt_id: attemptId,
+    })
+    expect(JSON.parse(text(accepted))).toMatchObject({ status: 'completed', review: { validity: 'valid' } })
+    expect((await execute(ctx, child, 'team_task_rework', {
+      task_id: created.id, expected_revision: 4, reason: 'Insufficient', blocked_by: [],
+    })).isError).toBe(true)
+    const rework = await execute(ctx, lead, 'team_task_rework', {
+      task_id: created.id, expected_revision: 4, reason: 'Needs stronger evidence', blocked_by: [],
+    })
+    expect(JSON.parse(text(rework))).toMatchObject({
+      status: 'pending', review: { origin: { taskId: created.id, reason: 'Needs stronger evidence' } },
+    })
+    await execute(ctx, lead, 'interrupt_agent', { target: 'review-worker' })
   })
 
   it('adapts optional task filters, mutations, pagination, and default waiting', async () => {
@@ -576,9 +678,15 @@ describe('dsh-tool-team', () => {
       write_scopes: ['src/team'],
     })
     const edit = JSON.parse(text(edited)) as { revision: number }
-    const dependencies = await execute(ctx, lead, 'team_task_update', {
+    const released = await execute(ctx, lead, 'team_task_update', {
       task_id: first.id,
       expected_revision: edit.revision,
+      action: 'release',
+    })
+    const release = JSON.parse(text(released)) as { revision: number }
+    const dependencies = await execute(ctx, lead, 'team_task_update', {
+      task_id: first.id,
+      expected_revision: release.revision,
       action: 'set_dependencies',
       blocked_by: [second.id],
     })

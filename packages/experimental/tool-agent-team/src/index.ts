@@ -3,7 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
+import { TeamMessageId, TeamTaskAttemptId, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
@@ -34,7 +34,7 @@ The Team Lead and all teammates share the same working directory and filesystem.
 
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
-Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Each new assignment, follow-up requiring work, or quality rework has a new Task ID; reuse a teammate Session for context, never a completed Task ID for new work. After claim, perform the work and call team_task_submit_result for the exact current Attempt; only the Lead calls team_task_accept after checking the result. Quality rejection uses team_task_rework, which creates a replacement Task without inventing dependency edges. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates and accept their required results before giving the final answer.`
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
@@ -50,10 +50,17 @@ const MEMBER_VIEW_SCHEMA = {
   properties: {
     target: { type: 'string', required: true },
     role: { type: 'string', required: true, enum: ['lead', 'teammate'] },
-    status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed'] },
+    status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired'] },
     description: { type: 'string' },
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
+    preset: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        id: { type: 'string', required: true },
+        revision: { type: 'string', required: true },
+      },
+    },
     model: { type: 'string' },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
@@ -64,6 +71,25 @@ function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHE
   const { id: _id, name, ...details } = member
   return { target: name, ...details }
 }
+
+/** One managed Task Attempt shown without its private Session id. */
+const TASK_ATTEMPT_VIEW_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    ownerName: { type: 'string' },
+    status: { type: 'string', required: true, enum: ['running', 'submitted', 'accepted', 'rejected', 'cancelled'] },
+    inputs: { type: 'array', required: true, items: {
+      type: 'object', additionalProperties: false,
+      properties: { taskId: { type: 'string', required: true }, revision: { type: 'integer', required: true } },
+    } },
+    result: { type: 'object', additionalProperties: false, properties: {
+      summary: { type: 'string', required: true },
+      artifacts: { type: 'array', required: true, items: { type: 'string' } },
+    } },
+    reason: { type: 'string' },
+  },
+} as const
 
 /** One shared task, matching the public `TeamTaskView`. */
 const TASK_VIEW_SCHEMA = {
@@ -80,6 +106,16 @@ const TASK_VIEW_SCHEMA = {
     writeScopes: { type: 'array', required: true, items: { type: 'string' } },
     ready: { type: 'boolean', required: true },
     writeScopeWarnings: { type: 'array', required: true, items: { type: 'string' } },
+    review: { type: 'object', additionalProperties: false, properties: {
+      attempts: { type: 'array', required: true, items: TASK_ATTEMPT_VIEW_SCHEMA },
+      validity: { type: 'string', required: true, enum: ['none', 'valid', 'stale'] },
+      origin: { type: 'object', additionalProperties: false, properties: {
+        kind: { type: 'string', required: true, const: 'rework' },
+        taskId: { type: 'string', required: true },
+        reason: { type: 'string', required: true },
+      } },
+      replacedByTaskId: { type: 'string' },
+    } },
   },
 } as const
 
@@ -184,6 +220,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           enum: ['fresh', 'fork'],
           description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
+        preset_id: { type: 'string', description: 'Optional declared Agent Preset for this teammate; omit to inherit the Lead composition.' },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
@@ -198,6 +235,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
+          ...args.preset_id === undefined ? {} : { presetId: args.preset_id },
           signal: exec.signal,
         })
         return { member: modelMember(result.member) }
@@ -210,20 +248,43 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       parameters: {
         target: { type: 'string', required: true, description: 'Member target returned by spawn_teammate or list_agents, including lead.' },
         message: { type: 'string', required: true, description: 'Self-contained message for the target.' },
+        task_id: { type: 'string', description: 'Optional existing Task ID whose owner is the sender or recipient; the Lead may link any Team Task.' },
       },
       output: jsonOutput(SEND_VALUE_SCHEMA),
       execute(args, exec) {
         return ctx.agentTeams.sendMessage(callingAgent(exec.agent, 'send_message'), {
           target: args.target,
           content: [{ type: 'text', text: args.message }],
+          ...args.task_id === undefined ? {} : { taskId: TeamTaskId(args.task_id) },
           signal: exec.signal,
         })
       },
     })))
 
     register(scoped.tools.register(defineTool({
+      name: 'team_message_list',
+      description: 'Read complete Team peer messages, newest first. Team Lead only; use nextCursor to read older messages without relaying them through the Lead.',
+      parameters: {
+        before: { type: 'string', description: 'Optional nextCursor from the previous page.' },
+        limit: { type: 'integer', description: 'Page size from 1 through 100; defaults to 50.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute(args, exec) {
+        const page = ctx.agentTeams.listLeadMessages(
+          callingAgent(exec.agent, 'team_message_list'),
+          args.before === undefined ? undefined : TeamMessageId(args.before),
+          args.limit ?? 50,
+        )
+        return Promise.resolve(JSON.stringify(page))
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
       name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+      description: 'List the Lead and every durable teammate with its target and current availability. Only running or inactive members are addressable; retiring and retired rows remain for history.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
       execute(_args, exec) {
@@ -275,6 +336,19 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       output: jsonOutput(INTERRUPT_VALUE_SCHEMA),
       execute(args, exec) {
         return Promise.resolve(ctx.agentTeams.interrupt(callingAgent(exec.agent, 'interrupt_agent'), args.target))
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'retire_teammate',
+      description: 'Remove a teammate from Team admission while retaining its Session history. Team Lead only; first resolve unfinished owned tasks and pending Team messages.',
+      parameters: {
+        target: { type: 'string', required: true, description: 'Teammate target returned by list_agents.' },
+      },
+      output: jsonOutput(MEMBER_VIEW_SCHEMA),
+      async execute(args, exec) {
+        const member = await ctx.agentTeams.retireTeammate(callingAgent(exec.agent, 'retire_teammate'), args.target)
+        return modelMember(member)
       },
     })))
 
@@ -351,14 +425,14 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
 
     register(scoped.tools.register(defineTool({
       name: 'team_task_update',
-      description: 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
+      description: 'Compare-and-set Task ownership, text, prerequisites, or deletion. Submit and accept results with the dedicated tools; quality rework creates a new Task.',
       parameters: {
         task_id: { type: 'string', required: true, description: 'Shared task id.' },
         expected_revision: { type: 'integer', required: true, description: 'Current task revision used as the CAS precondition.' },
         action: {
           type: 'string',
           required: true,
-          enum: ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'],
+          enum: ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'],
           description: 'Task transition to apply.',
         },
         subject: { type: 'string', description: 'Replacement title for edit.' },
@@ -378,6 +452,61 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           ...args.blocked_by === undefined ? {} : { blockedBy: args.blocked_by.map(TeamTaskId) },
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
           ...args.owner === undefined ? {} : { owner: args.owner },
+        })
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'team_task_submit_result',
+      description: 'Submit the exact running Attempt result for Lead review. This does not complete the Task or release its dependent Tasks.',
+      parameters: {
+        task_id: { type: 'string', required: true, description: 'Task ID owned by the calling member.' },
+        expected_revision: { type: 'integer', required: true, description: 'Latest Task revision.' },
+        attempt_id: { type: 'string', required: true, description: 'Current running Attempt ID from team_task_get.' },
+        summary: { type: 'string', required: true, description: 'Complete result summary for Lead review.' },
+        artifacts: { type: 'array', items: { type: 'string' }, description: 'Optional artifact paths or references.' },
+      },
+      output: jsonOutput(TASK_VIEW_SCHEMA),
+      execute(args, exec) {
+        return ctx.agentTeams.submitTaskResult(callingAgent(exec.agent, 'team_task_submit_result'), {
+          taskId: TeamTaskId(args.task_id), expectedRevision: args.expected_revision,
+          attemptId: TeamTaskAttemptId(args.attempt_id),
+          result: { summary: args.summary, artifacts: args.artifacts ?? [] },
+        })
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'team_task_accept',
+      description: 'Accept the exact submitted Attempt after reviewing its result and still-valid prerequisites. Team Lead only.',
+      parameters: {
+        task_id: { type: 'string', required: true, description: 'Submitted Task ID.' },
+        expected_revision: { type: 'integer', required: true, description: 'Latest Task revision.' },
+        attempt_id: { type: 'string', required: true, description: 'Submitted Attempt ID from team_task_get.' },
+      },
+      output: jsonOutput(TASK_VIEW_SCHEMA),
+      execute(args, exec) {
+        return ctx.agentTeams.acceptTaskResult(callingAgent(exec.agent, 'team_task_accept'), {
+          taskId: TeamTaskId(args.task_id), expectedRevision: args.expected_revision,
+          attemptId: TeamTaskAttemptId(args.attempt_id),
+        })
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'team_task_rework',
+      description: 'Reject quality work into a new Task ID, retain the old result, and mark accepted descendants stale. Team Lead only; stop active descendants first and choose prerequisites explicitly.',
+      parameters: {
+        task_id: { type: 'string', required: true, description: 'Submitted or accepted Task to replace.' },
+        expected_revision: { type: 'integer', required: true, description: 'Latest old Task revision.' },
+        reason: { type: 'string', required: true, description: 'Why the old result is insufficient.' },
+        blocked_by: { type: 'array', required: true, items: { type: 'string' }, description: 'Explicit prerequisite Task IDs for the new replacement, possibly empty.' },
+      },
+      output: jsonOutput(TASK_VIEW_SCHEMA),
+      execute(args, exec) {
+        return ctx.agentTeams.reworkTask(callingAgent(exec.agent, 'team_task_rework'), {
+          taskId: TeamTaskId(args.task_id), expectedRevision: args.expected_revision,
+          reason: args.reason, blockedBy: args.blocked_by.map(TeamTaskId),
         })
       },
     })))

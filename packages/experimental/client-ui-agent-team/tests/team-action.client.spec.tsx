@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
-  TeamTaskId, TeamTaskView as TeamTask, TeamView,
+  TeamMessageId, TeamTaskAttemptId, TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
@@ -48,17 +48,20 @@ function remoteFailure(message: string): TeamActionResult<never> {
   return { ok: false, error: new RemoteError('gateway/internal', message, {}) }
 }
 
-function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): TeamActionProps {
+function props(actions: TeamActionInjected, sessionId: SessionId = SESSION, activity?: object): TeamActionProps {
   return {
     sessionId,
     ...actions,
     t: makeTranslate(zh, commonZh),
+    renderSlot: () => null,
+    useProjection: () => activity,
   } as unknown as TeamActionProps
 }
 
 function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {
   return {
     load: () => Promise.resolve({ ok: true, value: view }),
+    loadMessages: () => Promise.resolve({ ok: true, value: { messages: [], total: 0 } }),
     openTeammate: () => {},
     ...overrides,
   }
@@ -98,9 +101,57 @@ describe('TeamAction', () => {
     render(<TeamAction {...props(actions({ openTeammate }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     const worker = await screen.findByRole('button', { name: /worker/u })
+    fireEvent.click(screen.getByRole('button', { name: /Implement runtime/u }))
     expect(screen.getByText('write scopes overlap with task-2')).toBeTruthy()
     fireEvent.click(worker)
     await waitFor(() => { expect(openTeammate).toHaveBeenCalledWith(SESSION, view.members[1]) })
+  })
+
+  it('keeps retired members visible without offering Team execution navigation', async () => {
+    const openTeammate = vi.fn()
+    const retiredView: TeamView = {
+      ...view,
+      members: [view.members[0]!, { ...view.members[1]!, status: 'retired' }],
+      tasks: [{ ...task, ownerName: 'worker' }],
+    }
+    render(<TeamAction {...props(actions({
+      openTeammate,
+      load: () => Promise.resolve({ ok: true, value: retiredView }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    const member = await screen.findByRole('button', { name: /^worker/u })
+    expect(member.hasAttribute('disabled')).toBe(true)
+    expect(member.textContent).toContain(zh['memberStatus.retired'])
+    fireEvent.click(screen.getByRole('button', { name: /Implement runtime/u }))
+    expect(screen.queryByRole('button', { name: zh.openMemberSession })).toBeNull()
+    expect(openTeammate).not.toHaveBeenCalled()
+  })
+
+  it('shows complete peer messages to the Lead without exposing the monitor in a teammate session', async () => {
+    const loadMessages = vi.fn(() => Promise.resolve({ ok: true as const, value: {
+      total: 1,
+      messages: [{
+        id: 'message-1' as TeamMessageId,
+        senderName: 'worker', targetName: 'reviewer',
+        text: 'private review findings',
+        contentJson: '[{"type":"text","text":"private review findings"}]',
+        hasNonText: false,
+        taskId: TASK_1, time: 1_000, status: 'delivered' as const,
+      }],
+    } }))
+    const injected = actions({ loadMessages })
+    const rendered = render(<TeamAction {...props(injected)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    fireEvent.click(await screen.findByRole('button', { name: zh.messages }))
+    expect(await screen.findByText('private review findings')).toBeTruthy()
+    expect(screen.getByText('worker → reviewer')).toBeTruthy()
+    expect(screen.getByText(TASK_1)).toBeTruthy()
+    expect(loadMessages).toHaveBeenCalledWith(SESSION, undefined)
+
+    rendered.rerender(<TeamAction {...props(injected, 'worker-id' as SessionId)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    expect(screen.queryByRole('button', { name: zh.messages })).toBeNull()
   })
 
   it('keeps only the newest overlapping refresh for one session', async () => {
@@ -172,7 +223,7 @@ describe('TeamAction', () => {
     expect(failedMember.querySelector('[data-state="error"]')).not.toBeNull()
     expect(provisioningMember.disabled).toBe(true)
     expect(provisioningMember.querySelector('[data-state="ongoing"]')).not.toBeNull()
-    const tasks = [...document.querySelectorAll('article')]
+    const tasks = [...document.querySelectorAll('button[aria-pressed]')]
     expect(tasks.map(card => card.querySelector('[data-state]')?.getAttribute('data-state')))
       .toEqual(['idle', 'warning', 'done'])
 
@@ -207,30 +258,133 @@ describe('TeamAction', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
-  it('displays task ownership and status without mutation controls', async () => {
+  it('keeps task rows compact and opens the full record before member navigation', async () => {
     const { ownerName: _ownerName, ...unowned } = task
     const tasks: TeamTask[] = [
       { ...unowned, status: 'pending', ready: true },
       { ...task, id: 'task-2' as TeamTaskId },
       { ...task, id: 'task-3' as TeamTaskId, status: 'completed', ownerName: 'worker' },
     ]
+    const openTeammate = vi.fn()
     render(<TeamAction {...props(actions({
+      openTeammate,
       load: () => Promise.resolve({ ok: true, value: { ...view, tasks } }),
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
-    await screen.findAllByRole('article')
+    await screen.findByRole('button', { name: /task-3/u })
+    expect(screen.queryByText('Build the Team runtime')).toBeNull()
     expect(screen.getByText('Owner: 未分配')).toBeTruthy()
     expect(screen.getByText('Owner: lead')).toBeTruthy()
     expect(screen.getByText('Owner: worker')).toBeTruthy()
     expect(screen.getByText(zh['status.pending'])).toBeTruthy()
     expect(screen.getByText(zh['status.in_progress'])).toBeTruthy()
     expect(screen.getByText(zh['status.completed'])).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /新建任务|编辑|完成|重开|删除/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(新建任务|编辑|完成|重开|删除)$/u })).toBeNull()
     expect(screen.queryByRole('combobox')).toBeNull()
     expect(screen.queryByRole('textbox')).toBeNull()
-    for (const card of screen.getAllByRole('article')) {
+    for (const card of document.querySelectorAll('button[aria-pressed]')) {
       expect(card.querySelector('button, input, select, textarea')).toBeNull()
     }
+    fireEvent.click(screen.getByRole('button', { name: /task-3/u }))
+    const detail = screen.getByRole('region', { name: zh.taskDetails })
+    expect(detail.textContent).toContain('Build the Team runtime')
+    expect(detail.textContent).toContain(zh.taskRecord)
+    fireEvent.click(screen.getByRole('button', { name: zh.openMemberSession }))
+    expect(openTeammate).toHaveBeenCalledWith(SESSION, view.members[1])
+    fireEvent.click(screen.getByRole('button', { name: zh.closeDetails }))
+    expect(screen.queryByRole('region', { name: zh.taskDetails })).toBeNull()
+  })
+
+  it('renders the selected task record as safe GFM without changing task data', async () => {
+    const description = '# Final audit\n\n| Task | Result |\n| --- | --- |\n| task-1 | accepted |\n\n<script>alert(1)</script>'
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: {
+        ...view, tasks: [{ ...task, description }],
+      } }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    fireEvent.click(await screen.findByRole('button', { name: /Implement runtime/u }))
+    const detail = screen.getByRole('region', { name: zh.taskDetails })
+    expect(detail.querySelector('h1')?.textContent).toBe('Final audit')
+    expect(detail.querySelectorAll('table')).toHaveLength(1)
+    expect(detail.querySelector('th')?.textContent).toBe('Task')
+    expect(detail.querySelector('td')?.textContent).toBe('task-1')
+    expect(detail.querySelector('script')).toBeNull()
+    expect(view.tasks[0]?.description).toBe('Build the Team runtime')
+  })
+
+  it('keeps the Task request separate from submitted results and review state', async () => {
+    const managed: TeamTask = {
+      ...task,
+      review: {
+        validity: 'none',
+        attempts: [{
+          id: 'attempt-1' as TeamTaskAttemptId,
+          ownerName: 'worker',
+          status: 'submitted',
+          inputs: [],
+          result: { summary: '**Reviewed output**', artifacts: ['reports/review.md'] },
+        }],
+      },
+    }
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: { ...view, tasks: [managed] } }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    fireEvent.click(await screen.findByRole('button', { name: /Implement runtime/u }))
+    const detail = screen.getByRole('region', { name: zh.taskDetails })
+    expect(detail.textContent).toContain('Build the Team runtime')
+    expect(detail.textContent).toContain('Reviewed output')
+    expect(detail.textContent).toContain('reports/review.md')
+    expect(detail.textContent).toContain(zh['review.submitted'])
+    expect(detail.querySelectorAll('h4').length).toBeGreaterThan(1)
+  })
+
+  it('keeps the task list authoritative while an optional graph view is open', async () => {
+    const renderSlot = vi.fn((name: string, owner: { openGraph?: () => void }) => {
+      if (name === 'agent-team.panel.tasks.action') {
+        return <button onClick={owner.openGraph}>Open prerequisite graph</button>
+      }
+      return <div>Read-only graph extension</div>
+    })
+    render(<TeamAction {...{ ...props(actions()), renderSlot } as TeamActionProps} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: 'Open prerequisite graph' }))
+    expect(screen.getByText('Read-only graph extension')).toBeTruthy()
+    expect(screen.queryByText('Implement runtime')).toBeNull()
+    expect(renderSlot.mock.calls.some(([name, owner]) => name === 'agent-team.panel.tasks.graph'
+      && 'view' in owner && owner.view === view
+      && 'openMemberSession' in owner && typeof owner.openMemberSession === 'function')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: zh.taskList }))
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+    expect(screen.queryByText('Read-only graph extension')).toBeNull()
+  })
+
+  it('refreshes an open graph when the Lead Team activity projection advances', async () => {
+    const nextView = { ...view, tasks: [
+      { ...task, status: 'completed' as const },
+      { ...task, id: 'task-2' as TeamTaskId, subject: 'Review result', blockedBy: [TASK_1] },
+    ] }
+    const load = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: view })
+      .mockResolvedValueOnce({ ok: true, value: nextView })
+    const renderSlot = (name: string, owner: { openGraph?: () => void; view?: TeamView }) =>
+      name === 'agent-team.panel.tasks.action'
+        ? <button onClick={owner.openGraph}>Open graph</button>
+        : <div>Graph tasks: {owner.view?.tasks.length}; first: {owner.view?.tasks[0]?.status}; edges: {owner.view?.tasks[1]?.blockedBy.join(',') ?? 'none'}</div>
+    const component = (activity: object) => <TeamAction {...{
+      ...props(actions({ load }), SESSION, activity), renderSlot,
+    } as TeamActionProps} />
+    const rendered = render(component({ revision: 0 }))
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('Implement runtime')
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph' }))
+    expect(screen.getByText('Graph tasks: 1; first: in_progress; edges: none')).toBeTruthy()
+
+    rendered.rerender(component({ revision: 1 }))
+    expect(await screen.findByText('Graph tasks: 2; first: completed; edges: task-1')).toBeTruthy()
+    expect(load).toHaveBeenCalledTimes(2)
   })
   it('keeps panel interactions open and dismisses on outside pointer or Escape', async () => {
     const rendered = render(<TeamAction {...props(actions())} />)

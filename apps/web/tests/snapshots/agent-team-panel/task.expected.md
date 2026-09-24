@@ -5,8 +5,7 @@
   - heading "Members" [level=3]
   - 'button "lead Inactive · Model: deepseek-v4-flash" [disabled]'
   - heading "Shared tasks" [level=3]
-  - article:
+  - button "Messages"
+  - 'button "Agent task In progress task-1 Owner: lead"':
     - strong: Agent task
-    - text: In progress
-    - paragraph: Created by the Team Lead
-    - text: "task-1 Owner: lead Write scopes: src/web"
+    - text: "In progress task-1 Owner: lead"

@@ -58,23 +58,25 @@ kind: "package-reference"
 
 ### Teammate
 
-请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
+请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。可选显式 Agent Preset；选择后会记录声明修订并在冷恢复前校验，未选择时沿用原生的继承配置。teammate 名字是永久的——创建失败或已退队的成员仍保留名字。
 
-roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
+roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning`、`failed`、`retiring` 或 `retired`。仍处于 active 的未加载成员会在唤醒后收到其消息。
 
-只有 Lead 可以创建 teammate 或中断它们。
+只有 Lead 可以创建、中断或让 teammate 退队。退队会先停止接纳新的 Team 操作，再停止存活执行，并保留 Session 历史。Lead 必须先释放或转派成员未完成的任务，并让已排队的 Team 消息到达该成员；停止执行失败时保留 `retiring` 状态，恢复时继续完成。
 
 ### teammate 之间的消息
 
-任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。消息不会丢失，也不会重复投递。
+任何 active 成员都可以向其他 active 成员或 Lead 发送消息。live 成员会立即收到；离线的 active 成员的消息会排队，并在其恢复后到达。消息不会丢失，也不会重复投递。
 
 每条消息都使用 Steer：running target 在最近的步骤边界收到消息，inactive target 在已加载时启动一个轮次，否则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储，因此绝不能重发。
 
+Lead 可以分页读取同伴消息的原始全文、发送者、接收者、可选 Task 关联和投递状态。teammate 不能读取第三方消息历史。可选 Task 关联必须指向真实 Team Task，并接受发送方／接收方归属校验；旧的未关联消息照常显示，不伪造 Task。监看读取与投递相同的 Lead 日志，不让 Lead 代为转发消息。
+
 ### 共享任务板
 
-任何成员都可以添加任务，包含标题、详情、对其他任务的可选依赖，以及可选的文件触及提示。只有其全部依赖完成后，任务才可 claim。
+任何成员都可以添加任务，包含标题、详情、对其他任务的可选依赖，以及可选的文件触及提示。新建受控 Task 只有在全部前置任务的结果已验收且仍有效时才可领取；历史第二版 Task 保留原来的完成规则。
 
-任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
+任务有 owner：领取一个新建受控 Task 会开启 Attempt，并捕获各前置任务的精确修订。Owner 单独提交结果，由 Lead 验收后才放行下游。质量退回会创建新的 Task ID、保留旧结果，并把已验收的下游结果标为过期，不推断或改写 DAG 边。释放会取消运行中的 Attempt，重新分配会开始新的 Attempt。历史第二版 Task 保留原有 complete/reopen 转换。每次变更都是 compare-and-set，过期更新不会覆盖新工作。同一 teammate Session 的复用不合并不同 Task。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -125,17 +127,17 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### Team 身份与 roster
 
-每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。显式 Preset 在 child 首次模型请求前绑定，其声明修订同时记录在 Team 与 child Session 中。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账，若存在显式 Preset，还会核对其绑定。直接 parent、continuable descriptor、可选 Preset 绑定与初始用户消息均匹配时产生 `active`；否则产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
 ### 持久 mailbox
 
-`sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。
+`sendMessage()` 校验 peer 成员关系，追加未关联的 `team/message/queued` 或关联 Task 的 `team/message/queued-task`，并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
 
 ### 共享任务板
 
-任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
+任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。新 Task 通过 `team/task/managed` 事件，在同一事务中原子更新 Task、Attempt、结果与受影响的下游。`submitTaskResult()` 不完成 Task；`acceptTaskResult()` 仅限 Lead。`reworkTask()` 要求下游执行先结束，新建含显式前置条件的 Task，并将历史下游结果标为过期，不改写依赖边。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
 
 ### 等待与中断
 
@@ -143,7 +145,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued` 与 `team/message/delivered` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。既有 `team/member`、`team/task` 与 `team/message/queued` 记录保持已发布格式；`team/member/configured`、`team/task/managed` 与 `team/message/queued-task` 分别增加配置、受控 Task 结果和 Task 关联，不更改旧格式。这些记录与 `team/message/delivered` 都仅存在于日志：它们不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
@@ -173,7 +175,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 ### 浏览器 Remote
 
-`TeamService` 向浏览器客户端公开只读的 `agentTeams/view` Remote method。任务创建与更新由 Team agent 通过服务和模型工具执行。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 导出可供浏览器使用的成员与任务视图。
+`TeamService` 向浏览器客户端公开只读 `agentTeams/view` 和仅 Lead 可用的分页 `agentTeams/messages` Remote method。任务创建与更新由 Team agent 通过服务和模型工具执行。Client 可见的 `agentTeamActivity` 投影在成员、任务或邮箱事件提交后推进；它只携带修订计数，因此浏览器可以重新读取权威视图，而不会经该投影发布消息正文。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 导出可供浏览器使用的成员、任务与 Lead 消息视图。
 
 ## 模型体验
 
@@ -201,7 +203,7 @@ Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用�
 - **实验原型，无稳定性承诺**——本包公开发布，但孵化期间约定仍可自由变更。
 - **单进程、共享 checkout**——成员共享 cwd，修改立即可见；本包不提供 worktree、远端成员、merge 或文件锁。
 - **write scope 仅作提示**——Bash、formatter、代码生成器与直接外部写入可以绕过文件版本检查；Lead 必须协调 owner 并检查最终 diff。
-- **扁平且不可变的 roster**——只有 Lead 可以创建直接 teammate；不支持嵌套 Team、重命名、删除或名字复用。
+- **扁平且保留历史的 roster**——只有 Lead 可以创建直接 teammate；退队停止 Team 参与，但不删除或归档 child Session。不支持嵌套 Team、重命名、删除或名字复用。
 - **不会自动释放 owner**——成员不活动、interrupt、进程退出与工作失败都不会释放任务 owner。
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
 

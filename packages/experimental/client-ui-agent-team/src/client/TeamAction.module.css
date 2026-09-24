@@ -39,11 +39,13 @@
 
   position: fixed;
   z-index: 110;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(680px, calc(100vh - 32px));
+  width: min(1020px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
   padding: 10px;
-  overflow: auto;
+  overflow: hidden;
   border: 0;
   border-radius: 12px;
   background: var(--dsw-specific-menu);
@@ -61,6 +63,7 @@
 
 .toolbar {
   min-height: 28px;
+  flex: none;
 }
 
 .spacer {
@@ -76,15 +79,39 @@
 }
 
 .panel h3 {
-  margin: 12px 0 6px;
+  margin: 0 0 8px;
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
 }
 
+.content {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.membersPane {
+  min-width: 0;
+  min-height: 0;
+  padding-right: 12px;
+  overflow: auto;
+  border-right: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.tasksPane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .roster {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -125,38 +152,250 @@
 }
 
 .tasks {
+  display: grid;
+  align-content: start;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 7px;
+  overflow: auto;
+}
+
+.taskSectionHead,
+.taskViewActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.taskSectionHead {
+  justify-content: space-between;
+  flex: none;
+}
+
+.taskViewActions {
+  margin-left: auto;
+}
+
+.viewButton {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.viewButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.graphExtension {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+.messageList {
+  display: grid;
+  align-content: start;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  overflow: auto;
+}
+
+.messageCard {
+  min-width: 0;
+  padding: 10px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.messageHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.messageHead strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.messageHead time {
+  margin-left: auto;
+}
+
+.messageBody {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+}
+
+.messageRaw {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.taskContent {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.withDetail {
+  display: grid;
+  grid-template-columns: minmax(260px, .9fr) minmax(0, 1.1fr);
+  gap: 9px;
 }
 
 .task {
+  display: block;
+  width: 100%;
+  min-width: 0;
   padding: 9px;
+  overflow: hidden;
   border: 0.5px solid var(--dsw-alias-border-l1);
   border-radius: 9px;
   background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.task:hover,
+.task[aria-pressed="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.task:focus-visible,
+.memberLink:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-info-primary);
+}
+
+.taskTitle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.taskTitle strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .taskState {
   display: inline-flex;
   align-items: center;
+  flex: none;
   gap: 6px;
   margin-left: auto;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
-.task p {
-  margin: 5px 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
 .meta {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
+  margin-top: 5px;
+}
+
+.task .meta span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.taskDetail {
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 9px;
+}
+
+.taskDetailHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.taskDetailActions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+}
+
+.taskDetailHead strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.taskDetail h4 {
+  margin: 10px 0 5px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.taskRecord {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.taskRecord > div {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.taskAttempt {
+  margin-top: 10px;
+  padding-top: 4px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.taskArtifacts {
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.memberLink {
+  padding: 5px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.memberLink:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .notice,
@@ -166,4 +405,45 @@
   gap: 6px;
   padding: 9px;
   font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .content {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  }
+
+  .membersPane {
+    max-height: 160px;
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  }
+
+  .roster {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .withDetail {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .withDetail .taskDetail {
+    order: -1;
+    max-height: 45%;
+    flex: none;
+  }
+
+  .withDetail .tasks {
+    flex: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .roster {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
