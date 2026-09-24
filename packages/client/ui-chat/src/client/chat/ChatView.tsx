@@ -1,7 +1,7 @@
 // An enclosing `[data-conversation-scroll]` owns scrolling when present;
 // otherwise this view owns it. Each row subscribes to one stable node key.
 
-import { memo, useCallback, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type {
   NodeKey, RenderEntry, RenderMessageImages,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -100,8 +100,9 @@ const ChatNodeList = memo(function ChatNodeList({ entries, useChatGroup, pending
 export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
   sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions,
-  usePresentation, useProjection, t,
+  usePresentation, useTurnJump, consumeTurnJump, useProjection, t,
 }: ChatViewSlotProps) {
+  const turnJump = useTurnJump(request => request?.sessionId === sessionId ? request : null)
   const order = useChat(s => s.order)
   const groupedEntries = useConversation(snapshot => snapshot.views.grouped('chat')?.entries)
   const entries = useMemo<readonly RenderEntry[]>(() => groupedEntries
@@ -217,6 +218,14 @@ export function ChatView({
     submissionId: visibleSubmissions.at(-1)?.requestId ?? null,
     loadedTurns: turnNavigationItems,
   })
+
+  useEffect(() => {
+    if (turnJump === null || !scroll.initialized) return
+    const item = railItems.find(candidate => candidate.turn === turnJump.turn)
+      ?? { turn: turnJump.turn, prompt: '', response: '', anchor: { kind: 'unloaded' as const, seq: turnJump.seq } }
+    scroll.navigateToTurn(item)
+    consumeTurnJump(turnJump.requestId)
+  }, [turnJump, scroll.initialized, scroll.navigateToTurn, railItems, consumeTurnJump])
 
   return (
     <div className={css.frame}>

@@ -82,7 +82,7 @@
   justify-content: space-between;
   min-height: 44px;
   padding: 0 10px 0 16px;
-  border-bottom: .5px solid var(--dsw-alias-border-l1);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-label-primary);
   font-size: 14px;
 }
@@ -126,7 +126,7 @@
 }
 
 .body > section { min-width: 0; min-height: 0; }
-.membersPane { padding-right: 12px; overflow-y: auto; border-right: .5px solid var(--dsw-alias-border-l1); }
+.membersPane { padding-right: 12px; overflow-y: auto; border-right: 0.5px solid var(--dsw-alias-border-l1); }
 .tasksPane { display: flex; flex-direction: column; overflow: hidden; }
 .tasksPane > div { flex: 1 1 auto; min-height: 0; }
 .body > .error,
@@ -279,7 +279,7 @@
 @media (max-width: 760px) {
   .panel { width: calc(100vw - 24px); height: min(720px, calc(100vh - 24px)); }
   .body { display: block; overflow-y: auto; }
-  .membersPane { padding-right: 0; padding-bottom: 12px; border-right: 0; border-bottom: .5px solid var(--dsw-alias-border-l1); }
+  .membersPane { padding-right: 0; padding-bottom: 12px; border-right: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
   .tasksPane { min-height: 300px; overflow: visible; }
   .tasks { max-height: 360px; }
 }
@@ -330,8 +330,6 @@
   /* Floated ahead of the meta spans: it keeps the first line's top-right
      corner, so wrapped meta lines continue below it instead of pushing the
      toggle under content it expands. */
-  float: right;
-  margin-left: 10px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -339,6 +337,14 @@
   font-size: 11px;
   line-height: 20px;
   cursor: pointer;
+}
+
+.taskControls {
+  display: inline-flex;
+  float: right;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
 }
 
 .expandToggle:hover,

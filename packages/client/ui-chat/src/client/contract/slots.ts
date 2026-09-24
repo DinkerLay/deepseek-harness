@@ -22,6 +22,7 @@ import type {
 } from './snapshot.ts'
 import type { TurnProcessSpec } from './turn-process.ts'
 import type { PerformanceUsageMode } from '../../chat-settings.ts'
+import type { ChatTurnJumpRequest } from '../turn-jumps.ts'
 
 /** Selector hook over the current Conversation binding's Chat target. */
 export type UseChat = SnapshotSelectorHook<ChatSnapshot>
@@ -183,6 +184,8 @@ export interface ChatViewInjected {
   hooks: {
     /** Live presentation policy derived from the accepted work-details mode. */
     presentation: ObservableSnapshot<ChatPresentationPolicy>
+    /** One pending cross-session Turn jump for this Chat view. */
+    turnJump: ObservableSnapshot<ChatTurnJumpRequest | null>
   }
   keyedHooks: {
     /** Resolve the stable source for one Chat Node key. */
@@ -200,6 +203,8 @@ export interface ChatViewInjected {
   loadOlder: () => void
   /** Jump loader: page history back through seq; resolves when the window covers it. */
   loadThrough: (seq: SessionSeq) => Promise<void>
+  /** Acknowledge one cross-session Turn jump after Chat starts navigating. */
+  consumeTurnJump: (requestId: number) => void
   loadImage: MessageImageLoader
   chatScroll: {
     save: (position: ChatScrollPosition | null) => void

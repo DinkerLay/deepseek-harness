@@ -30,7 +30,8 @@ type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiri
 /** Full props of the Team conversation-header action. */
 export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
-  & PropsRenderSlots<'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'>
+  & PropsRenderSlots<'agent-team.panel.member.meta' | 'agent-team.panel.task.action'
+    | 'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'>
 
 function statusKey(status: TeamTask['status']): TeamKey {
   switch (status) {
@@ -74,18 +75,20 @@ function taskDotState(task: TeamTask): StateDotState {
 }
 
 type TeamMemberRowProps = Pick<TeamActionProps,
-  'sessionId' | 'useSessions' | 'useSessionStatus' | 'openTeammate' | 't'
+  'sessionId' | 'useSessions' | 'useSessionStatus' | 'openTeammate' | 'renderSlot' | 't'
 > & {
   member: TeamMemberProjection
   memberCount: number
+  leadSessionId: SessionId
   onError: (message: string) => void
 }
 
 function TeamMemberRow({
-  member, memberCount, sessionId, useSessions, useSessionStatus, openTeammate, onError, t,
+  member, memberCount, leadSessionId, sessionId, useSessions, useSessionStatus, openTeammate, renderSlot, onError, t,
 }: TeamMemberRowProps) {
   const model = useSessions(state => state.projectionsBySession[member.id]?.values.modelSelection?.next?.model)
   const preset = useSessions(state => state.byId[member.id]?.projectionValues?.agentPreset)
+  const leadPreset = useSessions(state => state.byId[leadSessionId]?.projectionValues?.agentPreset)
   const running = useSessionStatus(state => state.get(member.id)?.running)
   const summaryRunning = useSessions(state => state.byId[member.id]?.running)
   const status: MemberStatus = member.phase === 'active'
@@ -95,9 +98,10 @@ function TeamMemberRow({
   const highlightCurrent = isCurrent && memberCount > 1
   const inert = isCurrent || status === 'failed' || status === 'provisioning'
     || status === 'retiring' || status === 'retired'
-  const name = member.role === 'lead' && typeof preset === 'string'
-    ? preset === 'standard' ? t('standard') : preset
-    : member.name
+  const presetId = typeof preset === 'string' ? preset
+    : member.preset?.id ?? (typeof leadPreset === 'string' ? leadPreset : undefined)
+  const presetMeta = renderSlot('agent-team.panel.member.meta', { member,
+    ...presetId === undefined ? {} : { presetId } })
 
   return (
     <Tooltip label={t('open')} side="bottom" gap={4} disabled={inert}>
@@ -120,18 +124,19 @@ function TeamMemberRow({
         </span>
         <span className={css.memberText}>
           <span className={css.memberName}>
-            <span className={css.memberNameText}>{name}</span>
+            <span className={css.memberNameText}>{member.name}</span>
             {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
           </span>
           <small>
             {t(memberStatusKey(status))}
-            {member.preset !== undefined && (
-              <span className={css.memberModel}>{` · ${t('preset')}: ${member.preset.id}`}</span>
+            {(presetMeta === null || presetMeta === undefined) && presetId !== undefined && (
+              <span className={css.memberModel}>{` · ${t('preset')}: ${presetId}`}</span>
             )}
             {model !== undefined && (
               <span className={css.memberModel}>{` · ${t('model')}: ${model}`}</span>
             )}
           </small>
+          {presetMeta}
           {member.error !== undefined && <small className={css.diagnostic}>{member.error}</small>}
         </span>
       </button>
@@ -140,7 +145,13 @@ function TeamMemberRow({
 }
 
 /** Task card with a two-line description clamp expanded from a toggle in the meta row. */
-function TaskCard({ task, t }: { task: TeamTask; t: TranslateNS<typeof NS> }) {
+function TaskCard({ task, leadSessionId, closePanel, renderSlot, t }: {
+  task: TeamTask
+  leadSessionId: SessionId
+  closePanel: () => void
+  renderSlot: TeamActionProps['renderSlot']
+  t: TranslateNS<typeof NS>
+}) {
   const [expanded, setExpanded] = useState(false)
   const [clamped, setClamped] = useState(false)
   const textRef = useRef<HTMLParagraphElement>(null)
@@ -167,17 +178,16 @@ function TaskCard({ task, t }: { task: TeamTask; t: TranslateNS<typeof NS> }) {
       </div>
       <p ref={textRef} className={expanded ? undefined : css.clampedDescription}>{task.description}</p>
       <div className={css.meta}>
-        {(clamped || expanded) && (
-          <button
-            type="button"
-            className={css.expandToggle}
-            aria-expanded={expanded}
-            onClick={() => { setExpanded(current => !current) }}
-          >
-            {t(expanded ? 'task.collapse' : 'task.expand')}
-            <IconChevronDownOutlineRegular size={12} className={expanded ? css.expandToggleOpen : undefined} />
-          </button>
-        )}
+        <span className={css.taskControls}>
+          {renderSlot('agent-team.panel.task.action', { task, leadSessionId, closePanel })}
+          {(clamped || expanded) && (
+            <button type="button" className={css.expandToggle} aria-expanded={expanded}
+              onClick={() => { setExpanded(current => !current) }}>
+              {t(expanded ? 'task.collapse' : 'task.expand')}
+              <IconChevronDownOutlineRegular size={12} className={expanded ? css.expandToggleOpen : undefined} />
+            </button>
+          )}
+        </span>
         <span>{task.id}</span>
         <span>{t('owner')}: {task.ownerName ?? t('unowned')}</span>
         {task.status === 'pending' && <span>{task.ready ? t('ready') : t('blocked')}</span>}
@@ -346,10 +356,12 @@ export function TeamAction({
                         key={member.id}
                         member={member}
                         memberCount={team.members.length}
+                        leadSessionId={leadSessionId}
                         sessionId={sessionId}
                         useSessions={useSessions}
                         useSessionStatus={useSessionStatus}
                         openTeammate={openTeammate}
+                        renderSlot={renderSlot}
                         onError={setError}
                         t={t}
                       />
@@ -372,13 +384,12 @@ export function TeamAction({
                         {graphOpen
                           ? renderSlot('agent-team.panel.tasks.graph', {
                             view: team,
-                            openMemberSession: (task) => {
-                              const owner = team.members.find(member => member.name === task.ownerName)
-                              if (owner !== undefined) openTeammate(sessionId, owner.id)
-                            },
+                            leadSessionId,
+                            closePanel: () => { changeOpen(false) },
                           })
                           : <div className={css.tasks}>
-                            {team.tasks.map(task => <TaskCard key={task.id} task={task} t={t} />)}
+                            {team.tasks.map(task => <TaskCard key={task.id} task={task} leadSessionId={leadSessionId}
+                              closePanel={() => { changeOpen(false) }} renderSlot={renderSlot} t={t} />)}
                           </div>}
                       </>
                     )}

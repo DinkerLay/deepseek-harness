@@ -129,6 +129,21 @@ async function bench(initialSettings?: ChatSettings, withBrowserRegistry = true,
 }
 
 describe('Chat inject API', () => {
+  it('retains an exact Turn jump until the destination Chat consumes it', async () => {
+    const b = await bench()
+    try {
+      const { injected } = b.chatViewApi(b.rootReference)
+      b.runtime.ctx.chatTurnJumps.open(ROOT, 3, SessionSeq(42))
+      expect(b.openSession).toHaveBeenCalledWith(ROOT)
+      const request = injected.hooks.turnJump.getSnapshot()
+      expect(request).toMatchObject({ sessionId: ROOT, turn: 3, seq: 42 })
+      injected.consumeTurnJump(request!.requestId)
+      expect(injected.hooks.turnJump.getSnapshot()).toBeNull()
+    } finally {
+      await b.runtime.dispose()
+    }
+  })
+
   it('resolves keyed Group sources across registration, activation, and removal', async () => {
     const b = await bench(undefined, true, false)
     try {

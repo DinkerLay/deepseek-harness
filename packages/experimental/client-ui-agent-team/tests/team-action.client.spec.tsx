@@ -141,8 +141,32 @@ describe('TeamAction', () => {
     })
     render(<TeamAction {...b.props} />)
     openPanel()
-    expect(screen.getByRole('button', { name: /标准模式/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /lead/u })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: zh.close }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps lead literal and mounts a direct Task action without opening task details', () => {
+    const slot: TeamActionProps['renderSlot'] = (key, owner) => {
+      if (key === 'agent-team.panel.member.meta') {
+        const metadata = owner as unknown as { member: TeamMemberProjection; presetId?: string }
+        return <small>{metadata.member.name} · {metadata.presetId ?? 'none'}</small>
+      }
+      if (key === 'agent-team.panel.task.action') {
+        const action = owner as unknown as { task: TeamTask; closePanel: () => void }
+        return <button type="button" onClick={action.closePanel}>Jump {action.task.id}</button>
+      }
+      return null
+    }
+    const b = bench({ renderSlot: slot, running: { [SESSION]: false } })
+    const state = b.sessions.getSnapshot()
+    b.sessions.set({ ...state, byId: { ...state.byId,
+      [SESSION]: { ...state.byId[SESSION]!, projectionValues: { agentPreset: 'standard' } },
+    } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText('lead · standard')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Jump task-1' }))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 

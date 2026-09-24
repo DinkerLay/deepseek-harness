@@ -439,6 +439,8 @@ function makeHarness(
     useStore: bindSnapshotSelector(chat),
     actions: chat.actions,
     usePresentation: bindSnapshotSelector(derivePresentationPolicy(transcriptView)),
+    useTurnJump: bindSnapshotSelector(createSnapshotStore(null)),
+    consumeTurnJump: vi.fn(),
     renderSlot,
     SessionProvider: SessionProviderStub,
     inspectCall: (callId: string) => { openView('trajectory', callId) },
