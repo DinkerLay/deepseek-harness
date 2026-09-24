@@ -176,6 +176,7 @@ function mount(
     createSnapshotStore<SessionStatusSnapshot>(new Map()),
   )
   const store = createConversationStore().create()
+  const viewSelection = createSnapshotStore<{ id: number; sessionId: SessionId; view: string } | null>(null)
   store.actions.setDraft('ordinary draft')
   const { wiring, sink } = fakeWiring()
   const useInput = bindSnapshotSelector(wiring.state)
@@ -214,6 +215,7 @@ function mount(
           useSession={useSession}
           useConversation={useConversation}
           useConversationViews={useConversationViews}
+          useViewSelection={bindSnapshotSelector(viewSelection)}
           useChat={useChat}
           useTrajectory={useTrajectory}
           useSessions={props.useSessions}
@@ -230,6 +232,7 @@ function mount(
           renderSlot={renderSlot as never}
           open={open}
           selectView={(view) => { store.actions.setView(view) }}
+          consumeViewSelection={(id) => { if (viewSelection.getSnapshot()?.id === id) viewSelection.set(null) }}
           t={t}
         />
       )
@@ -372,7 +375,7 @@ function mount(
   const props: ConversationSlotProps = { ...runtimeProps, renderSlot, renderFactorySlot }
   const view = render(<ConversationMainPanel {...props} />)
   return {
-    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
+    view, store, viewSelection, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationMainPanel {...props} />) },
   }
@@ -654,6 +657,15 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.getByRole('tab', { name: 'New view' }).getAttribute('aria-selected')).toBe('false')
     // ui-layout's window drag band deepens by matching this marker (:has).
     expect(b.view.getByRole('tablist').hasAttribute('data-conversation-tabs')).toBe(true)
+  })
+
+  it('applies an external View request when its Session header is mounted', () => {
+    const b = mount(sessionSnapshotOf())
+    act(() => { b.store.actions.setView('trajectory') })
+    expect(b.view.getByRole('tab', { name: 'Trajectory' }).getAttribute('aria-selected')).toBe('true')
+    act(() => { b.viewSelection.set({ id: 1, sessionId: SID, view: 'chat' }) })
+    expect(b.view.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true')
+    expect(b.viewSelection.getSnapshot()).toBeNull()
   })
 
   it('rolls the pending workspace label back when switching fails', async () => {

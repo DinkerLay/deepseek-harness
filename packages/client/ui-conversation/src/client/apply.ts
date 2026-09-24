@@ -368,12 +368,13 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     },
     store: conversationStore,
     inject: (sessionId: SessionId, actions: BoundActions<typeof conversationStore>): ConversationSessionHeaderInjected => ({
-      hooks: { conversationViews },
+      hooks: { conversationViews, viewSelection: uiConversation.viewSelection },
       open: (id) => { workspaceNavigation.openSession(id) },
       selectView: (view) => {
         activateView(sessionId, view)
         actions.setView(view)
       },
+      consumeViewSelection: (id) => { uiConversation.consumeViewRequest(id) },
     }),
   }, ConversationSessionHeader)
 

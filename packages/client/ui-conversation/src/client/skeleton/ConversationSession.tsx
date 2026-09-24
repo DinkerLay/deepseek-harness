@@ -1,6 +1,7 @@
 /** Strict per-session header/body content inserted into the resident conversation layout. */
 
 import clsx from 'clsx'
+import { useEffect } from 'react'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
@@ -56,14 +57,20 @@ function equalBreadcrumbs(left: readonly Breadcrumb[], right: readonly Breadcrum
  * @returns Session navigation controls, with title and tabs after conversation starts.
  */
 export function ConversationSessionHeader({
-  sessionId, hideChrome, useSessions, useConversationViews, useStore,
-  renderSlot, open, selectView, t,
+  sessionId, hideChrome, useSessions, useConversationViews, useViewSelection, useStore,
+  renderSlot, open, selectView, consumeViewSelection, t,
 }: ConversationSessionHeaderProps) {
   const tabs = useConversationViews(value => value)
+  const requestedView = useViewSelection(value => value?.sessionId === sessionId ? value : null)
   const selectedId = useStore(s => s.view)
   const active = resolveActiveView(tabs, selectedId)
   const ancestry = useSessions(s => deriveAncestry(s, sessionId), equalBreadcrumbs)
   const showTabs = !hideChrome && tabs.length > 1
+  useEffect(() => {
+    if (requestedView === null) return
+    if (tabs.some(tab => tab.id === requestedView.view)) selectView(requestedView.view)
+    consumeViewSelection(requestedView.id)
+  }, [requestedView, tabs, selectView, consumeViewSelection])
   return (
     <>
       <div className={css.titleRow}>

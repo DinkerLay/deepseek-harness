@@ -45,6 +45,13 @@ export interface ConversationBinding {
   ): ObservableSnapshot<ConversationViewSnapshotMap[Target] | undefined>
 }
 
+/** One external request to select a registered View when its Session is shown. */
+export interface ConversationViewSelection {
+  readonly id: number
+  readonly sessionId: SessionId
+  readonly view: string
+}
+
 class BoundConversation implements ConversationBinding {
   readonly snapshot: SnapshotStore<ConversationSnapshot>
   private readonly viewStore: ConversationViewSnapshotStore
@@ -181,6 +188,9 @@ export class UiConversation extends Service {
   readonly views: ConversationViewRegistry
   /** Business grouping rules over already materialized target Nodes. */
   readonly groups: ConversationGroupRegistry
+  /** Pending cross-session View selection consumed by the destination header. */
+  readonly viewSelection: SnapshotStore<ConversationViewSelection | null> = createSnapshotStore(null)
+  private nextViewSelectionId = 0
   private readonly bindings = new WeakMapWithValues<SessionBinding, BindingRecord>()
   private readonly images: HistoricalImageCache
 
@@ -217,6 +227,24 @@ export class UiConversation extends Service {
         for (const record of [...this.bindings.values]) this.drop(record, true)
       }
     }, 'ui-conversation assembly')
+  }
+
+  /** Request a registered View in a Session that may not be mounted yet.
+   * @param sessionId - destination Session identity.
+   * @param view - registered Conversation View id.
+   * @returns request generation for exact acknowledgement.
+   */
+  requestView(sessionId: SessionId, view: string): number {
+    const id = ++this.nextViewSelectionId
+    this.viewSelection.set({ id, sessionId, view })
+    return id
+  }
+
+  /** Clear only the request handled by the destination Session header.
+   * @param id - request generation observed by that header.
+   */
+  consumeViewRequest(id: number): void {
+    if (this.viewSelection.getSnapshot()?.id === id) this.viewSelection.set(null)
   }
 
   /**

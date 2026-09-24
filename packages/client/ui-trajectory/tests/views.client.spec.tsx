@@ -404,10 +404,12 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
         {...standardProps}
         SessionProvider={({ children }) => children}
         useStore={bindSnapshotSelector(conversation)}
+        useViewSelection={bindSnapshotSelector(createSnapshotStore(null))}
         actions={conversation.actions}
         renderSlot={() => null}
         open={vi.fn()}
         selectView={conversation.actions.setView}
+        consumeViewSelection={() => {}}
         t={tConversation}
       />
       <ConversationSession

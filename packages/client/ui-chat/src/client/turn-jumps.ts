@@ -4,6 +4,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 
 /** One target that Chat consumes after the destination Session opens. */
 export interface ChatTurnJumpRequest {
@@ -38,9 +39,11 @@ export class ChatTurnJumps extends Service {
     const sessionId = typeof target === 'string' ? target : target.childSessionId
     const request: ChatTurnJumpRequest = { requestId: ++this.nextRequestId, sessionId, turn, seq }
     this.pending.set(request)
+    const viewRequestId = this.ctx.uiConversation.requestView(sessionId, 'chat')
     try { this.ctx.uiWorkspace.openSession(target) }
     catch (error) {
       this.consume(request.requestId)
+      this.ctx.uiConversation.consumeViewRequest(viewRequestId)
       throw error
     }
   }

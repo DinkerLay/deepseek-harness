@@ -22,6 +22,7 @@ import type { createConversationStore } from '../stores.ts'
 import type { BusyEnterBehavior } from './composer-submission.ts'
 import type { ConversationSnapshot } from './snapshot.ts'
 import type { ViewTab } from './views.ts'
+import type { ConversationViewSelection } from '../conversation/assembly.ts'
 
 /** Browser-owned draft attachment that has not crossed the durable Host boundary. */
 export type ComposerAttachment = ComposerImageAttachment | ComposerFileAttachment
@@ -349,11 +350,16 @@ export interface ConversationSessionInjected {
 /** Business callbacks injected into the strict Session header. */
 export interface ConversationSessionHeaderInjected {
   /** Package-owned View roster source bound only for the Conversation header. */
-  readonly hooks: { readonly conversationViews: ObservableSnapshot<readonly ViewTab[]> }
+  readonly hooks: {
+    readonly conversationViews: ObservableSnapshot<readonly ViewTab[]>
+    readonly viewSelection: ObservableSnapshot<ConversationViewSelection | null>
+  }
   /** Select a Session through the Session Controller. */
   open: (sessionId: SessionId) => void
   /** Select and activate one registered Conversation View. */
   selectView: (view: string) => void
+  /** Acknowledge the latest external selection after applying it. */
+  consumeViewSelection: (id: number) => void
 }
 
 /** Owner share of the resident composer bar. */
