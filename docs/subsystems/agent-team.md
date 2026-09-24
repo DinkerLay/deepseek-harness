@@ -16,12 +16,14 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
+  readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches `active` or `failed`. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
 
 ## Durable mailbox
 
@@ -87,6 +89,7 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly preset?: TeamPresetBinding
   readonly error?: string
 }
 ```

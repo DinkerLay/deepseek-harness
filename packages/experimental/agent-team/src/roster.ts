@@ -6,8 +6,9 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import type { ContinuableStart } from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import type { ContinuablePresetBinding, ContinuableStart } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -18,6 +19,7 @@ import { TeamId } from './types.ts'
 import type {
   SpawnTeammateRequest,
   SpawnTeammateResult,
+  TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMemberView,
 } from './types.ts'
@@ -144,14 +146,12 @@ export class TeamRoster {
         id: member.id,
         name: member.name,
         role: 'teammate',
-        status: member.phase === 'failed'
-          ? 'failed'
-          : member.phase === 'provisioning'
-            ? 'provisioning'
-            : availability(live),
+        status: member.phase === 'retiring' || member.phase === 'retired' || member.phase === 'failed'
+          || member.phase === 'provisioning' ? member.phase : availability(live),
         description: member.description,
         provider: member.provider,
         context: member.context,
+        ...member.preset === undefined ? {} : { preset: member.preset },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -256,6 +256,16 @@ export class TeamRoster {
     const root = membership.root
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
+    let preset: ContinuablePresetBinding | undefined
+    if (request.presetId !== undefined) {
+      const registry = this.ctx.get('agentPresets')
+      if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
+      await using lease = await registry.acquireComposition(request.presetId)
+      if (lease.revision === undefined) {
+        throw new TeamError(`preset "${lease.id}" has no durable declaration revision`, 'TEAM_PRESET_UNAVAILABLE')
+      }
+      preset = { id: lease.id, revision: lease.revision }
+    }
     const childId = brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,
@@ -263,6 +273,7 @@ export class TeamRoster {
       description,
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
+      ...preset === undefined ? {} : { preset },
       phase: 'provisioning',
     }
 
@@ -274,7 +285,7 @@ export class TeamRoster {
       if (state.members.length >= this.maxMembers) {
         throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
       }
-      await this.journal.appendAndFlush(root, 'team/member', { version: 2, teamId: TeamId(root.id), member })
+      await this.appendMember(root, member)
     })
 
     let started: ContinuableStart
@@ -287,6 +298,7 @@ export class TeamRoster {
           prompt: request.prompt,
           parent: root,
         },
+        ...preset === undefined ? {} : { preset },
         signal,
       })
       await this.checkpointInitialPrompt(childId, started.messageId, signal)
@@ -402,10 +414,15 @@ export class TeamRoster {
         const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal)
         const suffix = loaded.events.slice(loaded.inheritedEventCount)
         const descriptor = foldSubagentDescriptor(suffix)
+        const actualPreset = foldContinuablePreset(suffix)
         const acceptedInitialPrompt = messageAccepted(suffix, message => message.source.kind === 'user')
         if (loaded.header.parentSession === root.id
           && descriptor?.mode === 'continuable'
           && descriptor.provider === member.provider
+          && ((member.preset === undefined && actualPreset === undefined)
+            || (member.preset !== undefined
+              && actualPreset?.id === member.preset.id
+              && actualPreset.revision === member.preset.revision))
           && acceptedInitialPrompt) {
           phase = 'active'
         } else {
@@ -424,11 +441,7 @@ export class TeamRoster {
           phase,
           ...phase === 'failed' ? { error: failure } : {},
         }
-        await this.journal.appendAndFlush(root, 'team/member', {
-          version: 2,
-          teamId: TeamId(root.id),
-          member: settled,
-        })
+        await this.appendMember(root, settled)
       })
     }
   }
@@ -444,9 +457,29 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
+      ...member.preset === undefined ? {} : { preset: member.preset },
       ...live?.options.model === undefined ? {} : { model: live.options.model },
       diagnostics: [],
     }
+  }
+
+  /** Keep the released version-two event exact; use a new event for explicit compositions. */
+  private async appendMember(root: Agent, member: TeamMemberSnapshot): Promise<void> {
+    if (member.preset === undefined
+      && (member.phase === 'provisioning' || member.phase === 'active' || member.phase === 'failed')) {
+      const legacy: TeamMemberLegacySnapshot = {
+        id: member.id,
+        name: member.name,
+        description: member.description,
+        provider: member.provider,
+        context: member.context,
+        phase: member.phase,
+        ...member.error === undefined ? {} : { error: member.error },
+      }
+      await this.journal.appendAndFlush(root, 'team/member', { version: 2, teamId: TeamId(root.id), member: legacy })
+      return
+    }
+    await this.journal.appendAndFlush(root, 'team/member/configured', { version: 3, teamId: TeamId(root.id), member })
   }
 
   /** Validate a never-reused model-facing teammate name. */
@@ -471,12 +504,11 @@ export class TeamRoster {
       if (current === undefined) {
         throw new TeamError(`provisioned teammate "${terminal.id}" disappeared`, 'TEAM_PROVISIONING_CONFLICT')
       }
-      if (current.phase !== 'provisioning') return current.phase
-      await this.journal.appendAndFlush(root, 'team/member', {
-        version: 2,
-        teamId: TeamId(root.id),
-        member: terminal,
-      })
+      if (current.phase === 'active' || current.phase === 'failed') return current.phase
+      if (current.phase !== 'provisioning') {
+        throw new TeamError(`teammate "${current.name}" is no longer provisioning`, 'TEAM_PROVISIONING_CONFLICT')
+      }
+      await this.appendMember(root, terminal)
       return terminal.phase === 'active' ? 'active' : 'failed'
     })
   }

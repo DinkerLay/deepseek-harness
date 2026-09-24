@@ -16,12 +16,14 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
+  readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
 ## 持久 mailbox
 
@@ -87,6 +89,7 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly preset?: TeamPresetBinding
   readonly error?: string
 }
 ```

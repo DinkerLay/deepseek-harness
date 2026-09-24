@@ -163,11 +163,28 @@ describe('dsh-tool-team', () => {
         expect(schema?.properties).toHaveProperty('target')
         expect(schema?.properties).not.toHaveProperty('id')
         expect(schema?.properties).not.toHaveProperty('name')
-        expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed'])
+        expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired'])
       }
       expect(ctx.agentTeams.listMembers(lead)).toEqual([member])
     },
   )
+
+  it('passes a selected Preset to native roster creation and exposes its binding', async () => {
+    const { ctx, lead } = await setup([])
+    const preset = { id: 'reviewer', revision: 'a'.repeat(64) }
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockResolvedValue({ member: {
+      id: SessionId('reviewer-session'), name: 'reviewer', role: 'teammate', status: 'inactive',
+      preset, diagnostics: [],
+    } })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'reviewer', description: 'review changes', prompt: 'review', preset_id: 'reviewer',
+    })
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(text(result))).toEqual({ member: {
+      target: 'reviewer', role: 'teammate', status: 'inactive', preset, diagnostics: [],
+    } })
+    expect(spawn).toHaveBeenCalledWith(lead, expect.objectContaining({ presetId: 'reviewer' }))
+  })
 
   it.each(['running', 'inactive'] as const)('returns interrupted %s status', async (previousStatus) => {
     const { ctx, lead } = await setup([])

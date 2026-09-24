@@ -2109,6 +2109,10 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
         "fresh",
         "fork"
       ]
+    },
+    "preset_id": {
+      "type": "string",
+      "description": "Optional declared Agent Preset for this teammate; omit to inherit the Lead composition."
     }
   },
   "required": [

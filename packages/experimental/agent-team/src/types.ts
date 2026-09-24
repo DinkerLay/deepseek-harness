@@ -41,7 +41,24 @@ export function TeamMessageId(id: string): TeamMessageId {
 }
 
 /** Durable teammate lifecycle. */
-export type TeamMemberPhase = 'provisioning' | 'active' | 'failed'
+export type TeamMemberPhase = 'provisioning' | 'active' | 'failed' | 'retiring' | 'retired'
+
+/** Client-safe declared composition identity retained by a Team member. */
+export interface TeamPresetBinding {
+  readonly id: string
+  readonly revision: string
+}
+
+/** Released version-two member value retained for existing Session logs. */
+export interface TeamMemberLegacySnapshot {
+  readonly id: SessionId
+  readonly name: string
+  readonly description: string
+  readonly provider: string
+  readonly context: 'fresh' | 'fork'
+  readonly phase: 'provisioning' | 'active' | 'failed'
+  readonly error?: string
+}
 
 /** Whole durable value written on every teammate lifecycle change. */
 export interface TeamMemberSnapshot {
@@ -50,6 +67,8 @@ export interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
+  readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -59,10 +78,11 @@ export interface TeamMemberView {
   readonly id: SessionId
   readonly name: string
   readonly role: 'lead' | 'teammate'
-  readonly status: 'running' | 'inactive' | 'provisioning' | 'failed'
+  readonly status: 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiring' | 'retired'
   readonly description?: string
   readonly provider?: string
   readonly context?: 'fresh' | 'fork'
+  readonly preset?: TeamPresetBinding
   readonly model?: string
   readonly diagnostics: string[]
 }
@@ -103,6 +123,7 @@ export interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly preset?: TeamPresetBinding
   readonly error?: string
 }
 
@@ -169,6 +190,8 @@ export interface SpawnTeammateRequest {
   readonly prompt: ContentBlock[]
   readonly context: 'fresh' | 'fork'
   readonly provider: string
+  /** Declared Preset to bind instead of inheriting the Lead composition. */
+  readonly presetId?: string
   readonly signal: AbortSignal
 }
 
@@ -229,7 +252,9 @@ export interface TeamWaitResult {
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** Whole teammate lifecycle value, stored only in the Team Lead Session. */
-    'team/member': { version: 2; teamId: TeamId; member: TeamMemberSnapshot }
+    'team/member': { version: 2; teamId: TeamId; member: TeamMemberLegacySnapshot }
+    /** Explicit-Preset or extended-lifecycle member value, without changing the released version-two event. */
+    'team/member/configured': { version: 3; teamId: TeamId; member: TeamMemberSnapshot }
     /** Whole shared-task value, stored only in the Team Lead Session. */
     'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot }
     /** Durable mailbox enqueue, stored before delivery is attempted. */

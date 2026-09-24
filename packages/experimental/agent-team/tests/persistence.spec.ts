@@ -16,7 +16,7 @@ import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-a
 import TeamService, { TeamId, TeamMessageId } from '../src/index.ts'
 import type { TeamMailbox } from '../src/mailbox.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
-import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
+import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
 const SIGNAL = new AbortController().signal
@@ -122,7 +122,7 @@ async function stack(
   }
 }
 
-function provisioning(childId: SessionId, name: string): TeamMemberSnapshot {
+function provisioning(childId: SessionId, name: string): TeamMemberLegacySnapshot {
   return {
     id: childId,
     name,
@@ -449,7 +449,7 @@ for (const backend of backends) {
       await Promise.resolve()
       await Promise.resolve()
       const provisioned = provisioning(childId, 'pending-mail-worker')
-      const active: TeamMemberSnapshot = {
+      const active: TeamMemberLegacySnapshot = {
         ...provisioned,
         phase: 'active',
       }

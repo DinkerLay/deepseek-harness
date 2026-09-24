@@ -8,6 +8,7 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
   TeamId,
   TeamMemberProjection,
+  TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMessageId,
   TeamMessageSnapshot,
@@ -64,14 +65,25 @@ const contentBlockSchema: z.ZodType<ContentBlock> = z.lazy(() => z.union([
   }),
 ])) as z.ZodType<ContentBlock>
 
-const teamMemberSnapshotSchema = z.object({
+const teamMemberFields = {
   id: sessionIdSchema,
   name: z.string(),
   description: z.string(),
   provider: z.string(),
   context: z.enum(['fresh', 'fork']),
-  phase: z.enum(['provisioning', 'active', 'failed']),
   error: z.string().optional(),
+}
+const legacyTeamMemberSnapshotSchema = z.object({
+  ...teamMemberFields,
+  phase: z.enum(['provisioning', 'active', 'failed']),
+}).strict() as z.ZodType<TeamMemberLegacySnapshot>
+const teamMemberSnapshotSchema = z.object({
+  ...teamMemberFields,
+  phase: z.enum(['provisioning', 'active', 'failed', 'retiring', 'retired']),
+  preset: z.object({
+    id: z.string().min(1),
+    revision: z.string().regex(/^[a-f0-9]{64}$/u),
+  }).strict().optional(),
 }).strict() as z.ZodType<TeamMemberSnapshot>
 
 const teamTaskSnapshotSchema = z.object({
@@ -101,8 +113,14 @@ const teamEventSelectorSchema = z.object({
 const teamMemberEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
-  member: teamMemberSnapshotSchema,
+  member: legacyTeamMemberSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/member']>
+
+const teamMemberConfiguredEventSchema = z.object({
+  version: z.literal(3),
+  teamId: teamIdSchema,
+  member: teamMemberSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['team/member/configured']>
 
 const teamTaskEventSchema = z.object({
   version: z.literal(2),
@@ -177,6 +195,7 @@ const teamProjectionEntrySchema = z.object({
 /** Whether one event belongs to the Team domain. */
 export type TeamEventType =
   | 'team/member'
+  | 'team/member/configured'
   | 'team/task'
   | 'team/message/queued'
   | 'team/message/delivered'
@@ -191,6 +210,7 @@ type TeamSessionEvent = SessionEvent<TeamEventType>
  */
 export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
   return event.type === 'team/member'
+    || event.type === 'team/member/configured'
     || event.type === 'team/task'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
@@ -210,6 +230,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
   switch (event.type) {
     case 'team/member':
       return { ...event, data: parsePersisted(event.type, teamMemberEventSchema, event.data) }
+    case 'team/member/configured':
+      return { ...event, data: parsePersisted(event.type, teamMemberConfiguredEventSchema, event.data) }
     case 'team/task':
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
     case 'team/message/queued':
@@ -228,7 +250,8 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    if (selector.version !== 2) {
+    const expectedVersion = event.type === 'team/member/configured' ? 3 : 2
+    if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
     return applyCurrentTeamEvent(state, parseCurrentTeamEvent(event))
@@ -247,8 +270,9 @@ function replaceAt<T>(items: readonly T[], index: number, item: T): T[] {
 
 function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEvent): TeamProjectionState {
   switch (event.type) {
-    case 'team/member': {
-      const member = event.data.member
+    case 'team/member':
+    case 'team/member/configured': {
+      const member: TeamMemberSnapshot = event.data.member
       const index = state.members.findIndex(candidate => candidate.id === member.id)
       const prior = state.members[index]
       const named = state.members.find(candidate => candidate.name === member.name)
@@ -258,10 +282,15 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       if (prior === undefined) {
         if (member.phase !== 'provisioning') throw new Error(`teammate "${member.name}" must begin provisioning`)
       } else {
-        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context) {
+        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context
+          || prior.preset?.id !== member.preset?.id || prior.preset?.revision !== member.preset?.revision) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
-        if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {
+        const provisioningExit = prior.phase === 'provisioning'
+          && (member.phase === 'active' || member.phase === 'failed')
+        const retirementStart = prior.phase === 'active' && member.phase === 'retiring'
+        const retirementEnd = prior.phase === 'retiring' && member.phase === 'retired'
+        if (!provisioningExit && !retirementStart && !retirementEnd) {
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
         }
       }
@@ -313,7 +342,8 @@ const teamMemberProjectionSchema = z.object({
   id: sessionIdSchema,
   name: z.string(),
   role: z.enum(['lead', 'teammate']),
-  phase: z.enum(['provisioning', 'active', 'failed']),
+  phase: z.enum(['provisioning', 'active', 'failed', 'retiring', 'retired']),
+  preset: z.object({ id: z.string().min(1), revision: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().optional(),
   error: z.string().optional(),
 }).strict() as z.ZodType<TeamMemberProjection>
 
@@ -348,6 +378,7 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
       name: member.name,
       role: 'teammate',
       phase: member.phase,
+      ...member.preset === undefined ? {} : { preset: member.preset },
       ...member.error === undefined ? {} : { error: member.error },
     })
   }
@@ -386,7 +417,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 4,
+  stateVersion: 8,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

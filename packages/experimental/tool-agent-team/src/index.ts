@@ -50,10 +50,17 @@ const MEMBER_VIEW_SCHEMA = {
   properties: {
     target: { type: 'string', required: true },
     role: { type: 'string', required: true, enum: ['lead', 'teammate'] },
-    status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed'] },
+    status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired'] },
     description: { type: 'string' },
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
+    preset: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        id: { type: 'string', required: true },
+        revision: { type: 'string', required: true },
+      },
+    },
     model: { type: 'string' },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
@@ -184,6 +191,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           enum: ['fresh', 'fork'],
           description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
+        preset_id: { type: 'string', description: 'Optional declared Agent Preset for this teammate; omit to inherit the Lead composition.' },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
@@ -206,6 +214,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
+          ...args.preset_id === undefined ? {} : { presetId: args.preset_id },
           signal: exec.signal,
         })
         return { member: modelMember(result.member) }

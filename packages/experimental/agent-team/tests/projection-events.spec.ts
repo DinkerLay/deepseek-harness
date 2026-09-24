@@ -7,7 +7,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { teamProjectionDefinition, teamProjectionView } from '../src/projection.ts'
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import { TeamId, TeamMessageId, TeamTaskId } from '../src/types.ts'
-import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
+import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
 
 const ROOT = SessionId('team-root')
 const TEAM = TeamId(ROOT)
@@ -48,7 +48,7 @@ function isEmptyState(state: TeamState): boolean {
     && state.messages.length === 0 && state.delivered.length === 0
 }
 
-function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
+function member(overrides: Partial<TeamMemberLegacySnapshot> = {}): TeamMemberLegacySnapshot {
   return {
     id: CHILD,
     name: 'worker-a',
@@ -58,6 +58,10 @@ function member(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot
     phase: 'provisioning',
     ...overrides,
   }
+}
+
+function configuredMember(overrides: Partial<TeamMemberSnapshot> = {}): TeamMemberSnapshot {
+  return { ...member(), ...overrides }
 }
 
 function task(overrides: Partial<TeamTaskSnapshot> = {}): TeamTaskSnapshot {
@@ -160,6 +164,36 @@ describe('Agent Teams projection events', () => {
       teamId: TEAM,
       member: duplicateName,
     }, SessionSeq(1))])).toThrow(/name .* reused/)
+  })
+
+  it('keeps version-two members readable and validates configured Preset edges', () => {
+    const preset = { id: 'reviewer', revision: 'a'.repeat(64) }
+    const provisioning = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset }),
+    }, SessionSeq(0))
+    const active = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'active' }),
+    }, SessionSeq(1))
+    const retiring = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'retiring' }),
+    }, SessionSeq(2))
+    const retired = event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset, phase: 'retired' }),
+    }, SessionSeq(3))
+    const projected = projectTeam(ROOT, [provisioning, active, retiring, retired])
+    expect(projected.members[0]).toMatchObject({ preset, phase: 'retired' })
+    expect(teamProjectionView(projected).members[1]).toMatchObject({ preset, phase: 'retired' })
+    expect(() => projectTeam(ROOT, [provisioning, active, retired])).toThrow(/invalid active -> retired/)
+    expect(() => projectTeam(ROOT, [provisioning, event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset: { ...preset, id: 'changed' }, phase: 'active' }),
+    }, SessionSeq(1))])).toThrow(/immutable identity/)
+    const invalidLegacy = { ...member(), preset }
+    expect(() => projectTeam(ROOT, [event('team/member', {
+      version: 2, teamId: TEAM, member: invalidLegacy,
+    }, SessionSeq(0))])).toThrow(/payload is invalid/)
+    expect(() => projectTeam(ROOT, [event('team/member/configured', {
+      version: 3, teamId: TEAM, member: configuredMember({ preset: { ...preset, revision: 'bad' } }),
+    }, SessionSeq(0))])).toThrow(/payload is invalid/)
   })
 
   it('enforces task revision continuity', () => {

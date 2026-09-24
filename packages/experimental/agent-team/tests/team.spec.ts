@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -21,6 +23,7 @@ import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '
 import { TestSessionQuery } from './test-session-query.ts'
 
 const SIGNAL = new AbortController().signal
+const PRESET_TOOL = new URL('../../../subagent/subagent-in-process-driver/tests/fixtures/plugins/preset-tool.js', import.meta.url).href
 const roots: string[] = []
 const contexts: Context[] = []
 
@@ -60,10 +63,20 @@ async function storedEvents(ctx: Context, id: SessionId): Promise<readonly Sessi
 async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   config: ConstructorParameters<typeof TeamService>[1] = {},
+  withPresets = false,
 ) {
   const ctx = new Context()
   contexts.push(ctx)
+  if (withPresets) await ctx.plugin(Loader)
   await mountAgentLoopTestDependencies(ctx)
+  let removeReviewer: (() => Promise<void>) | undefined
+  if (withPresets) {
+    await ctx.plugin(AgentPresets, { default: 'standard' })
+    await ctx.agentPresets.register({ id: 'standard', plugins: [] })
+    removeReviewer = await ctx.agentPresets.register({
+      id: 'reviewer', plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } }],
+    })
+  }
   const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-'))
   roots.push(storageRoot)
   await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
@@ -76,7 +89,7 @@ async function setup(
   const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = await ctx.agentLoop.create(SessionId('lead'), { provider: 'mock', model: 'mock' })
-  return { ctx, lead, adapter, storageRoot, teamFiber }
+  return { ctx, lead, adapter, storageRoot, teamFiber, removeReviewer }
 }
 
 function content(text: string) {
@@ -112,7 +125,7 @@ function spawn(
   ctx: Context,
   lead: Agent,
   name: string,
-  options: { context?: 'fresh' | 'fork'; provider?: string } = {},
+  options: { context?: 'fresh' | 'fork'; provider?: string; presetId?: string } = {},
 ) {
   const context = options.context ?? 'fresh'
   return ctx.agentTeams.spawnTeammate(lead, {
@@ -121,6 +134,7 @@ function spawn(
     prompt: content(`${name} initial`),
     context,
     provider: options.provider ?? (context === 'fork' ? 'fork' : 'spawn'),
+    ...options.presetId === undefined ? {} : { presetId: options.presetId },
     signal: SIGNAL,
   })
 }
@@ -230,6 +244,62 @@ describe('Team identity and provisioning', () => {
     ])
     await expect(spawn(ctx, lead, 'third-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_LIMIT' })
     await expect(spawn(ctx, lead, 'fresh-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
+  })
+
+  it('pins a professional teammate Preset across creation and cold continuation', async () => {
+    const { ctx, lead, adapter } = await setup([
+      textResponse('review complete'),
+      textResponse('Lead receives settlement'),
+      textResponse('review follow-up complete'),
+      textResponse('Lead receives follow-up'),
+    ], {}, true)
+    const started = await spawn(ctx, lead, 'reviewer', { presetId: 'reviewer' })
+    const binding = started.member.preset
+    expect(binding?.id).toBe('reviewer')
+    expect(binding?.revision).toMatch(/^[a-f0-9]{64}$/u)
+    expect(durable(lead).members[0]?.preset).toEqual(binding)
+    expect((await ctx.sessionPersistence.stat(started.member.id))?.header.agentPreset).toBe('reviewer')
+    const events = await storedEvents(ctx, started.member.id)
+    expect(events.filter(event => event.type === 'subagent/continuable-preset').map(event => event.data.preset)).toEqual([binding])
+    await waitNoAgent(ctx, started.member.id)
+    expect(adapter.requests.some(request => request.tools?.some(tool => tool.name === 'review_only'))).toBe(true)
+
+    const resumed: Agent[] = []
+    ctx.on('agent/created', ({ agent }) => {
+      if (agent.id === started.member.id) resumed.push(agent)
+    })
+    const delivered = await ctx.agentTeams.sendMessage(lead, {
+      target: 'reviewer', content: content('continue review'), signal: SIGNAL,
+    })
+    expect(delivered.status).toBe('accepted')
+    await vi.waitFor(() => { expect(resumed).toHaveLength(1) }, { timeout: 5_000 })
+    expect(resumed[0]!.session.header.agentPreset).toBe('reviewer')
+    await vi.waitFor(() => {
+      expect(adapter.requests.filter(request => request.tools?.some(tool => tool.name === 'review_only')).length)
+        .toBeGreaterThanOrEqual(2)
+    }, { timeout: 5_000 })
+    await waitNoAgent(ctx, started.member.id)
+  })
+
+  it('refuses an explicit Preset without the registry before reserving a member', async () => {
+    const { ctx, lead } = await setup([])
+    await expect(spawn(ctx, lead, 'reviewer', { presetId: 'reviewer' }))
+      .rejects.toMatchObject({ code: 'TEAM_PRESET_UNAVAILABLE' })
+    expect(durable(lead).members).toEqual([])
+  })
+
+  it('does not cold-resume a teammate under a changed Preset declaration', async () => {
+    const { ctx, lead, removeReviewer } = await setup([textResponse('initial review')], {}, true)
+    const started = await spawn(ctx, lead, 'reviewer', { presetId: 'reviewer' })
+    await waitNoAgent(ctx, started.member.id)
+    await removeReviewer?.()
+    await ctx.agentPresets.register({ id: 'reviewer', plugins: [] })
+    const message = await ctx.agentTeams.sendMessage(lead, {
+      target: 'reviewer', content: content('continue review'), signal: SIGNAL,
+    })
+    expect(message.status).toBe('queued')
+    expect(ctx.agents.get(started.member.id)).toBeUndefined()
+    expect(durable(lead).pendingMessages.map(item => item.id)).toContain(message.messageId)
   })
 
   it('flushes the accepted child prompt before committing the active roster edge', async () => {
