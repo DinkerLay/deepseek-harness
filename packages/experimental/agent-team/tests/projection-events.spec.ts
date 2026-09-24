@@ -37,15 +37,16 @@ function projectTeam(rootId: SessionId, events: readonly SessionEvent[]): TeamSt
   return teamState(project(rootId, events))
 }
 
-/** Queued-minus-delivered mail retained by the projection. */
+/** Queued mail without a delivered or cancelled settlement. */
 function pending(state: TeamState): TeamMessageSnapshot[] {
-  return state.messages.filter(message => !state.delivered.includes(message.id))
+  return state.messages.filter(message => !state.delivered.includes(message.id)
+    && !state.cancelled.some(item => item.messageId === message.id))
 }
 
 /** Whether one Team state contains no projected records. */
 function isEmptyState(state: TeamState): boolean {
   return state.members.length === 0 && state.tasks.length === 0
-    && state.messages.length === 0 && state.delivered.length === 0
+    && state.messages.length === 0 && state.delivered.length === 0 && state.cancelled.length === 0
 }
 
 function member(overrides: Partial<TeamMemberLegacySnapshot> = {}): TeamMemberLegacySnapshot {
@@ -300,6 +301,25 @@ describe('Agent Teams projection events', () => {
       targetId: SessionId('other'),
     }, SessionSeq(1))])).toThrow(/target changed/)
     expect(() => projectTeam(ROOT, [queued, delivered, { ...delivered, seq: SessionSeq(2) }])).toThrow(/delivered twice/)
+  })
+
+  it('retains cancelled messages for audit without redelivering them', () => {
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: message() }, SessionSeq(0))
+    const cancelled = event('team/message/cancelled', {
+      version: 3, teamId: TEAM, targetId: CHILD,
+      messageIds: [TeamMessageId('message-1')], reason: 'Preset unavailable',
+    }, SessionSeq(1))
+    const state = projectTeam(ROOT, [queued, cancelled])
+    expect(pending(state)).toEqual([])
+    expect(state.cancelled).toEqual([{ messageId: TeamMessageId('message-1'), targetId: CHILD, reason: 'Preset unavailable' }])
+    expect(state.messages).toHaveLength(1)
+    expect(() => projectTeam(ROOT, [queued, cancelled, cancelled])).toThrow(/already settled/)
+    expect(() => projectTeam(ROOT, [queued, event('team/message/delivered', {
+      version: 2, teamId: TEAM, messageId: TeamMessageId('message-1'), targetId: CHILD,
+    }, SessionSeq(2)), cancelled])).toThrow(/already settled/)
+    expect(() => projectTeam(ROOT, [queued, cancelled, event('team/message/delivered', {
+      version: 2, teamId: TEAM, messageId: TeamMessageId('message-1'), targetId: CHILD,
+    }, SessionSeq(2))])).toThrow(/cancelled before delivery/)
   })
 
   it('validates every current-version persisted payload before projecting it', () => {

@@ -17,6 +17,7 @@ import type { TeamRoster } from './roster.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
+import { requiredText } from './validation.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -90,6 +91,7 @@ export class TeamMailbox {
     const state = this.journal.state(membership.root)
     const messages = state.messages.filter(message =>
       !state.delivered.includes(message.id)
+      && !state.cancelled.some(item => item.messageId === message.id)
       && (membership.role === 'lead' || message.targetId === agent.id))
     for (const message of messages) {
       signal.throwIfAborted()
@@ -103,6 +105,38 @@ export class TeamMailbox {
    */
   pendingDispatches(): readonly Promise<unknown>[] {
     return [...this.inFlightDispatches]
+  }
+
+  /**
+   * Cancel pending messages after earlier target-local dispatches settle.
+   * @param caller - exact live Lead Agent.
+   * @param targetName - immutable teammate name.
+   * @param reason - durable explanation for cancellation.
+   * @returns ids of messages cancelled by this call.
+   */
+  async cancelPending(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]> {
+    if (this.lifecycle.disposed) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead can cancel Team mail', 'TEAM_LEAD_REQUIRED')
+    const root = membership.root
+    const name = targetName.trim()
+    const target = this.journal.state(root).members.find(member => member.name === name)
+    if (target === undefined || target.phase === 'retired') {
+      throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+    }
+    const explanation = requiredText(reason, 'reason', 200)
+    return await this.trackDispatch(this.serializeTarget(target.id, async () => await this.journal.transact(root.id, async () => {
+      const state = this.journal.state(root)
+      const pending = state.messages.filter(message => message.targetId === target.id
+        && !state.delivered.includes(message.id)
+        && !state.cancelled.some(item => item.messageId === message.id))
+      if (pending.length === 0) return []
+      const messageIds = pending.map(message => message.id)
+      await this.journal.appendAndFlush(root, 'team/message/cancelled', {
+        version: 3, teamId: TeamId(root.id), targetId: target.id, messageIds, reason: explanation,
+      })
+      return messageIds
+    })))
   }
 
   /** Queue and dispatch one mailbox item admitted before the disposal cutoff. */
@@ -120,7 +154,8 @@ export class TeamMailbox {
       const target = resolveActiveMember(root, state, request.target)
       if (target.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
       const pendingForTarget = state.messages.filter(candidate =>
-        candidate.targetId === target.id && !state.delivered.includes(candidate.id)).length
+        candidate.targetId === target.id && !state.delivered.includes(candidate.id)
+        && !state.cancelled.some(item => item.messageId === candidate.id)).length
       if (pendingForTarget >= this.maxPendingMessagesPerMember) {
         throw new TeamError(
           `teammate "${target.name}" has ${pendingForTarget} pending messages`,
@@ -186,15 +221,11 @@ export class TeamMailbox {
     message: TeamMessageSnapshot,
     signal: AbortSignal,
   ): Promise<boolean> {
-    return await this.serializeDispatch(message, () => this.dispatchThrough(root, message, signal))
+    return await this.serializeTarget(message.targetId, () => this.dispatchThrough(root, message, signal))
   }
 
   /** Serialize delivery admission for one durable target in queued order. */
-  private async serializeDispatch(
-    message: TeamMessageSnapshot,
-    operation: () => Promise<boolean>,
-  ): Promise<boolean> {
-    const targetId = message.targetId
+  private async serializeTarget<T>(targetId: SessionId, operation: () => Promise<T>): Promise<T> {
     const prior = this.dispatchTails.get(targetId) ?? Promise.resolve()
     /* v8 ignore next -- dispatch tails absorb rejection, so the recovery callback is a fail-safe backstop. */
     const run = prior.then(operation, operation)
@@ -216,7 +247,8 @@ export class TeamMailbox {
   ): Promise<boolean> {
     const state = this.journal.state(root)
     const pending = state.messages.filter(candidate =>
-      candidate.targetId === message.targetId && !state.delivered.includes(candidate.id))
+      candidate.targetId === message.targetId && !state.delivered.includes(candidate.id)
+      && !state.cancelled.some(item => item.messageId === candidate.id))
     const requested = pending.findIndex(candidate => candidate.id === message.id)
     if (requested < 0) return state.delivered.includes(message.id)
     for (const candidate of pending.slice(0, requested + 1)) {
@@ -288,6 +320,7 @@ export class TeamMailbox {
       if (state.delivered.includes(messageId)) return
       const queued = state.messages.find(message => message.id === messageId)
       if (queued === undefined || queued.targetId !== targetId) return
+      if (state.cancelled.some(item => item.messageId === messageId)) return
       await this.journal.appendAndFlush(root, 'team/message/delivered', {
         version: 2,
         teamId: TeamId(root.id),

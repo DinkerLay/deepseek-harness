@@ -109,6 +109,14 @@ const SEND_VALUE_SCHEMA = {
   },
 } as const
 
+const CANCEL_VALUE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    messageIds: { type: 'array', required: true, items: { type: 'string' } },
+  },
+} as const
+
 /** `noProgress` is present only on the model-only shortcut that skips the wait. */
 const WAIT_VALUE_SCHEMA = {
   type: 'object',
@@ -292,6 +300,35 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       output: jsonOutput(INTERRUPT_VALUE_SCHEMA),
       execute(args, exec) {
         return Promise.resolve(ctx.agentTeams.interrupt(callingAgent(exec.agent, 'interrupt_agent'), args.target))
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'retire_teammate',
+      description: 'Remove a teammate from Team admission while retaining its Session history. Team Lead only; first resolve unfinished owned tasks and pending Team messages.',
+      parameters: {
+        target: { type: 'string', required: true, description: 'Teammate target returned by list_agents.' },
+      },
+      output: jsonOutput(MEMBER_VIEW_SCHEMA),
+      async execute(args, exec) {
+        const member = await ctx.agentTeams.retireTeammate(callingAgent(exec.agent, 'retire_teammate'), args.target)
+        return modelMember(member)
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'team_message_cancel',
+      description: 'Cancel undelivered messages to one teammate before retirement. Team Lead only; delivered messages and Session history stay intact.',
+      parameters: {
+        target: { type: 'string', required: true, description: 'Teammate target returned by list_agents.' },
+        reason: { type: 'string', required: true, description: 'Why the pending messages must not be delivered.' },
+      },
+      output: jsonOutput(CANCEL_VALUE_SCHEMA),
+      async execute(args, exec) {
+        const messageIds = await ctx.agentTeams.cancelPendingMessages(
+          callingAgent(exec.agent, 'team_message_cancel'), args.target, args.reason,
+        )
+        return { messageIds: [...messageIds] }
       },
     })))
 

@@ -65,12 +65,14 @@ export class TeamRoster {
    * @param journal - authoritative Lead-log transaction owner.
    * @param lifecycle - shared Team runtime admission cutoff.
    * @param maxMembers - maximum immutable roster entries per Team.
+   * @param maxActiveMembers - maximum provisioning, active, or retiring entries per Team.
    */
   constructor(
     private readonly ctx: Context,
     private readonly journal: TeamJournal,
     private readonly lifecycle: TeamRuntimeLifecycle,
     private readonly maxMembers: number,
+    private readonly maxActiveMembers: number,
   ) {}
 
   /**
@@ -192,7 +194,52 @@ export class TeamRoster {
   async recoverFor(agent: Agent, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
     const membership = this.tryMembership(agent)
-    if (membership?.role === 'lead') await this.reconcileProvisioning(membership.root, signal)
+    if (membership?.role === 'lead') {
+      await this.reconcileProvisioning(membership.root, signal)
+      await this.reconcileRetiring(membership.root, signal)
+    }
+  }
+
+  /**
+   * Remove a member from Team admission without deleting its Session history.
+   * Unfinished assignments and undelivered mail must be settled first.
+   * @param caller - exact live Lead Agent authorizing removal.
+   * @param targetName - immutable teammate name.
+   * @returns the retired roster row after its live activation is stopped.
+   */
+  async retire(caller: Agent, targetName: string): Promise<TeamMemberView> {
+    const membership = this.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead can retire teammates', 'TEAM_LEAD_REQUIRED')
+    const root = membership.root
+    const name = targetName.trim()
+    const member = await this.journal.transact(root.id, async () => {
+      if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
+      const state = this.journal.state(root)
+      const current = state.members.find(candidate => candidate.name === name)
+      if (current === undefined) throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+      if (current.phase === 'retired' || current.phase === 'retiring') return current
+      if (current.phase !== 'active' && current.phase !== 'failed') {
+        throw new TeamError(`teammate "${name}" is not active or failed`, 'TEAM_MEMBER_NOT_ACTIVE')
+      }
+      const assignment = state.tasks.find(task => task.ownerId === current.id
+        && task.status !== 'completed' && task.status !== 'deleted')
+      if (assignment !== undefined) {
+        throw new TeamError(`release or reassign task "${assignment.id}" before retiring "${name}"`, 'TEAM_MEMBER_HAS_TASKS')
+      }
+      const pending = state.messages.find(message => message.targetId === current.id
+        && !state.delivered.includes(message.id)
+        && !state.cancelled.some(item => item.messageId === message.id))
+      if (pending !== undefined) {
+        throw new TeamError(`deliver Team message "${pending.id}" before retiring "${name}"`, 'TEAM_MEMBER_HAS_MESSAGES')
+      }
+      const retiring: TeamMemberSnapshot = { ...current, phase: 'retiring' }
+      await this.appendMember(root, retiring)
+      return retiring
+    })
+    if (member.phase !== 'retired') await this.finishRetirement(root, member.id)
+    const result = this.list(membership).find(row => row.id === member.id)
+    if (result === undefined) throw new TeamError(`retired teammate "${name}" disappeared`, 'TEAM_MEMBER_NOT_FOUND')
+    return result
   }
 
   /**
@@ -284,6 +331,11 @@ export class TeamRoster {
       }
       if (state.members.length >= this.maxMembers) {
         throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
+      }
+      const activeCount = state.members.filter(candidate => candidate.phase === 'provisioning'
+        || candidate.phase === 'active' || candidate.phase === 'retiring').length
+      if (activeCount >= this.maxActiveMembers) {
+        throw new TeamError(`active Team member limit ${this.maxActiveMembers} reached`, 'TEAM_ACTIVE_MEMBER_LIMIT')
       }
       await this.appendMember(root, member)
     })
@@ -444,6 +496,28 @@ export class TeamRoster {
         await this.appendMember(root, settled)
       })
     }
+  }
+
+  /** Complete a durable retirement left between admission cutoff and activation teardown. */
+  private async reconcileRetiring(root: Agent, signal: AbortSignal): Promise<void> {
+    const members = this.journal.state(root).members.filter(member => member.phase === 'retiring')
+    for (const member of members) {
+      signal.throwIfAborted()
+      await this.finishRetirement(root, member.id)
+    }
+  }
+
+  /** Stop the execution before publishing the final retired roster edge. */
+  private async finishRetirement(root: Agent, memberId: SessionId): Promise<void> {
+    await this.stopTeammates(root, [memberId])
+    await this.journal.transact(root.id, async () => {
+      const current = this.journal.state(root).members.find(member => member.id === memberId)
+      if (current?.phase === 'retired') return
+      if (current?.phase !== 'retiring') {
+        throw new TeamError(`teammate "${memberId}" is not retiring`, 'TEAM_MEMBER_NOT_ACTIVE')
+      }
+      await this.appendMember(root, { ...current, phase: 'retired' })
+    })
   }
 
   /** Build one runtime member row after successful creation. */

@@ -341,10 +341,22 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active roster row.',
       },
       {
+        signature: 'async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>',
+        description: 'Retire a teammate after its assignments and pending messages are settled. The member name and Session history remain available for audit.',
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'targetName', description: 'immutable teammate name.' }],
+        returns: 'the retired roster row.',
+      },
+      {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
         description: 'Queue one durable peer message, then attempt immediate delivery.',
         parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, and pre-queue cancellation.' }],
         returns: 'durable message identity and immediate-delivery observation.',
+      },
+      {
+        signature: 'async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]>',
+        description: 'Cancel a teammate\'s undelivered messages before retiring an unavailable member.',
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'targetName', description: 'immutable teammate name.' }, { name: 'reason', description: 'durable explanation for cancellation.' }],
+        returns: 'ids of messages cancelled by this call.',
       },
       {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',

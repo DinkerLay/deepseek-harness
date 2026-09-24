@@ -21,7 +21,7 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService from '../../agent-team/src/index.ts'
+import TeamService, { TeamMessageId } from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
 function serializeRequest(request: GenerateOptions) {
@@ -36,6 +36,8 @@ const TOOL_NAMES = [
   'list_agents',
   'wait_agent',
   'interrupt_agent',
+  'retire_teammate',
+  'team_message_cancel',
   'team_task_create',
   'team_task_list',
   'team_task_get',
@@ -192,6 +194,32 @@ describe('dsh-tool-team', () => {
     const result = await execute(ctx, lead, 'interrupt_agent', { target: 'reviewer' })
     expect(JSON.parse(text(result))).toEqual({ previousStatus })
     expect(interrupt).toHaveBeenCalledWith(lead, 'reviewer')
+  })
+
+  it('retires a teammate through the native Team tool and keeps its history row', async () => {
+    const { ctx, lead } = await setup([textResponse('finished')])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'reviewer', description: 'review changes', prompt: 'review',
+    })
+    const childId = spawnedChildId(ctx, lead, spawned)
+    await waitNoAgent(ctx, childId)
+    const retired = await execute(ctx, lead, 'retire_teammate', { target: 'reviewer' })
+    expect(retired.isError).toBe(false)
+    expect(JSON.parse(text(retired))).toMatchObject({ target: 'reviewer', status: 'retired' })
+    expect(JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))))
+      .toContainEqual(expect.objectContaining({ target: 'reviewer', status: 'retired' }))
+    expect((await execute(ctx, lead, 'send_message', { target: 'reviewer', message: 'late' })).isError).toBe(true)
+  })
+
+  it('passes Lead-authorized pending-mail cancellation to the native mailbox', async () => {
+    const { ctx, lead } = await setup([])
+    const cancel = vi.spyOn(ctx.agentTeams, 'cancelPendingMessages').mockResolvedValue([TeamMessageId('message-1')])
+    const result = await execute(ctx, lead, 'team_message_cancel', {
+      target: 'reviewer', reason: 'Preset declaration changed',
+    })
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(text(result))).toEqual({ messageIds: ['message-1'] })
+    expect(cancel).toHaveBeenCalledWith(lead, 'reviewer', 'Preset declaration changed')
   })
 
   it('uses returned targets for messages, interruption, and task assignment', async () => {

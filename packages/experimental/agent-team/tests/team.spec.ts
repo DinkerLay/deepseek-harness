@@ -19,7 +19,7 @@ import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-a
 import TeamService, { TeamError, TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
 import { TeamRuntimeLifecycle } from '../src/lifecycle.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
-import type { TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
+import type { TeamMemberSnapshot, TeamMessageCancellation, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
 const SIGNAL = new AbortController().signal
@@ -38,6 +38,7 @@ function durable(agent: Agent): {
   members: readonly TeamMemberSnapshot[]
   tasks: readonly TeamTaskSnapshot[]
   pendingMessages: readonly TeamMessageSnapshot[]
+  cancelled: readonly TeamMessageCancellation[]
 } {
   let projected = teamProjectionDefinition.init(agent.session.header)
   for (const event of agent.session.snapshotEvents()) projected = teamProjectionDefinition.apply(projected, event)
@@ -46,7 +47,9 @@ function durable(agent: Agent): {
   return {
     members: state.members,
     tasks: state.tasks,
-    pendingMessages: state.messages.filter(message => !state.delivered.includes(message.id)),
+    pendingMessages: state.messages.filter(message => !state.delivered.includes(message.id)
+      && !state.cancelled.some(item => item.messageId === message.id)),
+    cancelled: state.cancelled,
   }
 }
 
@@ -105,7 +108,7 @@ interface TeamServiceInternals {
   }
   readonly mailbox: {
     tryDispatch(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean>
-    serializeDispatch(message: TeamMessageSnapshot, operation: () => Promise<boolean>): Promise<boolean>
+    serializeTarget(targetId: SessionId, operation: () => Promise<boolean>): Promise<boolean>
     markDelivered(root: Agent, messageId: ReturnType<typeof TeamMessageId>, targetId: SessionId): Promise<void>
   }
   readonly journal: {
@@ -170,6 +173,7 @@ describe('Team identity and provisioning', () => {
   it('rejects deployment limits that are not positive safe integers', async () => {
     const fields = [
       'maxMembers',
+      'maxActiveMembers',
       'maxTasks',
       'maxPendingMessagesPerMember',
       'maxMessageBytes',
@@ -300,6 +304,124 @@ describe('Team identity and provisioning', () => {
     expect(message.status).toBe('queued')
     expect(ctx.agents.get(started.member.id)).toBeUndefined()
     expect(durable(lead).pendingMessages.map(item => item.id)).toContain(message.messageId)
+    expect(await ctx.agentTeams.cancelPendingMessages(lead, 'reviewer', 'Preset declaration changed'))
+      .toEqual([message.messageId])
+    expect(await ctx.agentTeams.cancelPendingMessages(lead, 'reviewer', 'Already settled')).toEqual([])
+    expect(durable(lead).cancelled).toEqual([{
+      messageId: message.messageId, targetId: started.member.id, reason: 'Preset declaration changed',
+    }])
+    expect((await ctx.agentTeams.retireTeammate(lead, 'reviewer')).status).toBe('retired')
+    await teamInternals(ctx).recoverFor(lead)
+    expect(durable(lead).cancelled).toHaveLength(1)
+    expect(ctx.agentTeams.listMembers(lead)[1]?.status).toBe('retired')
+  })
+
+  it('retires an idle teammate while preserving its Session and reserving its name', async () => {
+    const { ctx, lead } = await setup([textResponse('worker done')])
+    const started = await spawn(ctx, lead, 'worker')
+    await waitNoAgent(ctx, started.member.id)
+    const before = await storedEvents(ctx, started.member.id)
+
+    const retired = await ctx.agentTeams.retireTeammate(lead, 'worker')
+    expect(retired.status).toBe('retired')
+    expect(durable(lead).members[0]?.phase).toBe('retired')
+    expect((await storedEvents(ctx, started.member.id)).length).toBe(before.length)
+    expect((await ctx.agentTeams.retireTeammate(lead, 'worker')).status).toBe('retired')
+    await expect(spawn(ctx, lead, 'worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
+    await expect(ctx.agentTeams.sendMessage(lead, {
+      target: 'worker', content: content('after retirement'), signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_MEMBER_NOT_FOUND' })
+  })
+
+  it('reuses active capacity after retirement but retains the historical creation ceiling', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('first done'), textResponse('second done'), textResponse('third done'),
+    ], { maxMembers: 2, maxActiveMembers: 1 })
+    const first = await spawn(ctx, lead, 'first')
+    await waitNoAgent(ctx, first.member.id)
+    await expect(spawn(ctx, lead, 'while-first-active'))
+      .rejects.toMatchObject({ code: 'TEAM_ACTIVE_MEMBER_LIMIT' })
+    await ctx.agentTeams.retireTeammate(lead, 'first')
+    const second = await spawn(ctx, lead, 'second')
+    await waitNoAgent(ctx, second.member.id)
+    await ctx.agentTeams.retireTeammate(lead, 'second')
+    await expect(spawn(ctx, lead, 'third'))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_LIMIT' })
+  })
+
+  it('retires a failed member without requiring an executable child Session', async () => {
+    const { ctx, lead } = await setup([])
+    const member = {
+      id: SessionId('failed-child'), name: 'failed-worker', description: 'failed',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const,
+    }
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member', {
+      version: 2, teamId: TeamId(lead.id), member: { ...member, phase: 'failed', error: 'creation failed' },
+    })
+    await ctx.sessions.flush(lead.session)
+    expect((await ctx.agentTeams.retireTeammate(lead, 'failed-worker')).status).toBe('retired')
+    expect(durable(lead).members[0]?.phase).toBe('retired')
+  })
+
+  it('stops a running teammate before publishing its retired roster status', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'worker')
+    await waitRunning(ctx, started.member.id)
+    const retired = await ctx.agentTeams.retireTeammate(lead, 'worker')
+    expect(retired.status).toBe('retired')
+    expect(ctx.agents.get(started.member.id)).toBeUndefined()
+  })
+
+  it('does not let a teammate retire another Team member', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'worker')
+    const child = await waitRunning(ctx, started.member.id)
+    await expect(ctx.agentTeams.retireTeammate(child, 'worker'))
+      .rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    expect(ctx.agentTeams.listMembers(lead)[1]?.status).toBe('running')
+    ctx.agentTeams.interrupt(lead, 'worker')
+  })
+
+  it('requires unfinished tasks and undelivered Team mail to be resolved before retirement', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'worker')
+    const child = await waitRunning(ctx, started.member.id)
+    const task = await ctx.agentTeams.createTask(lead, { subject: 'work', description: 'finish the work' })
+    const claimed = await ctx.agentTeams.updateTask(child, {
+      taskId: task.id, expectedRevision: task.revision, action: 'claim',
+    })
+    await expect(ctx.agentTeams.retireTeammate(lead, 'worker'))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_HAS_TASKS' })
+    const released = await ctx.agentTeams.updateTask(child, {
+      taskId: claimed.id, expectedRevision: claimed.revision, action: 'release',
+    })
+    await ctx.agentTeams.updateTask(lead, {
+      taskId: claimed.id, expectedRevision: released.revision, action: 'reassign', owner: 'lead',
+    })
+    const mailbox = teamInternals(ctx).mailbox
+    vi.spyOn(mailbox, 'tryDispatch').mockResolvedValue(false)
+    const message = await ctx.agentTeams.sendMessage(lead, {
+      target: 'worker', content: content('pending note'), signal: SIGNAL,
+    })
+    expect(message.status).toBe('queued')
+    await expect(ctx.agentTeams.retireTeammate(lead, 'worker'))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_HAS_MESSAGES' })
+    ctx.agentTeams.interrupt(lead, 'worker')
+  })
+
+  it('finishes a persisted retirement edge when the Lead recovers', async () => {
+    const { ctx, lead } = await setup([textResponse('worker done')])
+    const started = await spawn(ctx, lead, 'worker')
+    await waitNoAgent(ctx, started.member.id)
+    const member = durable(lead).members[0]!
+    lead.session.append('team/member/configured', {
+      version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'retiring' },
+    })
+    await ctx.sessions.flush(lead.session)
+    expect(ctx.agentTeams.listMembers(lead)[1]?.status).toBe('retiring')
+    await teamInternals(ctx).recoverFor(lead)
+    expect(ctx.agentTeams.listMembers(lead)[1]?.status).toBe('retired')
   })
 
   it('flushes the accepted child prompt before committing the active roster edge', async () => {
@@ -1277,18 +1399,16 @@ describe('Team mailbox and waiting', () => {
     })
     await ctx.sessions.flush(lead.session)
     await internal.markDelivered(lead, wrongTarget.id, SessionId('wrong-target'))
-    await expect(internal.serializeDispatch(wrongTarget, async () => true)).resolves.toBe(true)
+    await expect(internal.serializeTarget(wrongTarget.targetId, async () => true)).resolves.toBe(true)
     const serialEntered = Promise.withResolvers<undefined>()
     const releaseSerial = Promise.withResolvers<undefined>()
-    const serialFirst = internal.serializeDispatch(wrongTarget, async () => {
+    const serialFirst = internal.serializeTarget(wrongTarget.targetId, async () => {
       serialEntered.resolve(undefined)
       await releaseSerial.promise
       return true
     })
     await serialEntered.promise
-    const serialSecond = internal.serializeDispatch({
-      ...wrongTarget, id: TeamMessageId('second-serialized-message'),
-    }, async () => true)
+    const serialSecond = internal.serializeTarget(wrongTarget.targetId, async () => true)
     releaseSerial.resolve(undefined)
     await expect(Promise.all([serialFirst, serialSecond])).resolves.toEqual([true, true])
 

@@ -364,6 +364,11 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMessageCancellation",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamMessageSource",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

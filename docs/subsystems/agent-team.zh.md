@@ -23,11 +23,11 @@ interface TeamMemberSnapshot {
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
 ## 持久 mailbox
 
-Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。
+Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event。退队前，Lead 可说明原因并取消无法投递的消息。恢复 mailbox 是 queued-minus-delivered-minus-cancelled。
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -37,6 +37,15 @@ interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+}
+```
+
+```ts type-equiv
+/** Lead-authorized cancellation of one undelivered Team message. */
+interface TeamMessageCancellation {
+  readonly messageId: TeamMessageId
+  readonly targetId: SessionId
+  readonly reason: string
 }
 ```
 
@@ -165,12 +174,30 @@ listMembers(agent: Agent): TeamMemberView[]
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 
 /**
+ * Retire a teammate after its assignments and pending messages are settled.
+ * The member name and Session history remain available for audit.
+ * @param caller - exact live Lead Agent.
+ * @param targetName - immutable teammate name.
+ * @returns the retired roster row.
+ */
+async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>
+
+/**
  * Queue one durable peer message, then attempt immediate delivery.
  * @param caller - exact live sending Team member.
  * @param request - target name, content, and pre-queue cancellation.
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Cancel a teammate's undelivered messages before retiring an unavailable member.
+ * @param caller - exact live Lead Agent.
+ * @param targetName - immutable teammate name.
+ * @param reason - durable explanation for cancellation.
+ * @returns ids of messages cancelled by this call.
+ */
+async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]>
 
 /**
  * Create one unowned pending task in the Team Lead log.

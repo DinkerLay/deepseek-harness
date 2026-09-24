@@ -22,6 +22,7 @@ import type {
   SpawnTeammateRequest,
   SpawnTeammateResult,
   TeamMemberView,
+  TeamMessageId,
   TeamTaskView,
   TeamWaitResult,
   UpdateTeamTaskRequest,
@@ -58,6 +59,7 @@ export class TeamService extends Service {
 
   static Config: z<Config> = z.object({
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
+    maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
     maxPendingMessagesPerMember: z.number().step(1).min(1).default(DEFAULT_MAX_PENDING_MESSAGES),
     maxMessageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_BYTES),
@@ -78,6 +80,7 @@ export class TeamService extends Service {
     super(ctx, 'agentTeams')
     this.config = {
       maxMembers: positiveLimit('maxMembers', config.maxMembers ?? DEFAULT_MAX_MEMBERS),
+      maxActiveMembers: positiveLimit('maxActiveMembers', config.maxActiveMembers ?? DEFAULT_MAX_MEMBERS),
       maxTasks: positiveLimit('maxTasks', config.maxTasks ?? DEFAULT_MAX_TASKS),
       maxPendingMessagesPerMember: positiveLimit(
         'maxPendingMessagesPerMember',
@@ -93,7 +96,9 @@ export class TeamService extends Service {
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
     this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) })
-    this.roster = new TeamRoster(ctx, this.journal, this.lifecycle, this.config.maxMembers)
+    this.roster = new TeamRoster(
+      ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
+    )
     this.mailbox = new TeamMailbox(
       ctx,
       this.journal,
@@ -152,6 +157,17 @@ export class TeamService extends Service {
   }
 
   /**
+   * Retire a teammate after its assignments and pending messages are settled.
+   * The member name and Session history remain available for audit.
+   * @param caller - exact live Lead Agent.
+   * @param targetName - immutable teammate name.
+   * @returns the retired roster row.
+   */
+  async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView> {
+    return await this.roster.retire(caller, targetName)
+  }
+
+  /**
    * Queue one durable peer message, then attempt immediate delivery.
    * @param caller - exact live sending Team member.
    * @param request - target name, content, and pre-queue cancellation.
@@ -159,6 +175,17 @@ export class TeamService extends Service {
    */
   async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult> {
     return await this.mailbox.send(caller, request)
+  }
+
+  /**
+   * Cancel a teammate's undelivered messages before retiring an unavailable member.
+   * @param caller - exact live Lead Agent.
+   * @param targetName - immutable teammate name.
+   * @param reason - durable explanation for cancellation.
+   * @returns ids of messages cancelled by this call.
+   */
+  async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]> {
+    return await this.mailbox.cancelPending(caller, targetName, reason)
   }
 
   /**

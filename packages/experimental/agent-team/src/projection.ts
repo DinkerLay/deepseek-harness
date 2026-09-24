@@ -11,6 +11,7 @@ import type {
   TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMessageId,
+  TeamMessageCancellation,
   TeamMessageSnapshot,
   TeamProjection,
   TeamTaskSnapshot,
@@ -141,6 +142,14 @@ const teamMessageDeliveredEventSchema = z.object({
   targetId: sessionIdSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/delivered']>
 
+const teamMessageCancelledEventSchema = z.object({
+  version: z.literal(3),
+  teamId: teamIdSchema,
+  targetId: sessionIdSchema,
+  messageIds: z.array(teamMessageIdSchema).min(1),
+  reason: z.string().min(1).max(200),
+}).strict() as z.ZodType<SessionEventMap['team/message/cancelled']>
+
 /**
  * Current Team state selected by durable Team identity. Every applied Team
  * event produces a new state object and replaces only the collection it
@@ -152,6 +161,7 @@ export interface TeamState {
   readonly tasks: readonly TeamTaskSnapshot[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
+  readonly cancelled: readonly TeamMessageCancellation[]
   readonly nextTaskNumber: number
 }
 
@@ -167,6 +177,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     tasks: [],
     messages: [],
     delivered: [],
+    cancelled: [],
     nextTaskNumber: 1,
   }
 }
@@ -188,6 +199,11 @@ const teamProjectionEntrySchema = z.object({
   tasks: z.array(teamTaskSnapshotSchema),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
+  cancelled: z.array(z.object({
+    messageId: teamMessageIdSchema,
+    targetId: sessionIdSchema,
+    reason: z.string().min(1).max(200),
+  }).strict()),
   nextTaskNumber: positiveSafeInteger,
   failure: z.string().optional(),
 }).strict() as z.ZodType<TeamProjectionState>
@@ -199,6 +215,7 @@ export type TeamEventType =
   | 'team/task'
   | 'team/message/queued'
   | 'team/message/delivered'
+  | 'team/message/cancelled'
 
 /** One event owned by the Team domain. */
 type TeamSessionEvent = SessionEvent<TeamEventType>
@@ -214,6 +231,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/task'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
+    || event.type === 'team/message/cancelled'
 }
 
 /** Decode one persisted Team value and retain the schema failure as its cause. */
@@ -238,6 +256,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
+    case 'team/message/cancelled':
+      return { ...event, data: parsePersisted(event.type, teamMessageCancelledEventSchema, event.data) }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return event
@@ -250,7 +270,7 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    const expectedVersion = event.type === 'team/member/configured' ? 3 : 2
+    const expectedVersion = event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
@@ -288,7 +308,7 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         }
         const provisioningExit = prior.phase === 'provisioning'
           && (member.phase === 'active' || member.phase === 'failed')
-        const retirementStart = prior.phase === 'active' && member.phase === 'retiring'
+        const retirementStart = (prior.phase === 'active' || prior.phase === 'failed') && member.phase === 'retiring'
         const retirementEnd = prior.phase === 'retiring' && member.phase === 'retired'
         if (!provisioningExit && !retirementStart && !retirementEnd) {
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
@@ -330,7 +350,27 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       if (queued === undefined) throw new Error(`team message "${event.data.messageId}" was delivered before queueing`)
       if (queued.targetId !== event.data.targetId) throw new Error(`team message "${event.data.messageId}" target changed`)
       if (state.delivered.includes(event.data.messageId)) throw new Error(`team message "${event.data.messageId}" was delivered twice`)
+      if (state.cancelled.some(item => item.messageId === event.data.messageId)) {
+        throw new Error(`team message "${event.data.messageId}" was cancelled before delivery`)
+      }
       return { ...state, delivered: [...state.delivered, event.data.messageId] }
+    }
+    case 'team/message/cancelled': {
+      const { targetId, messageIds, reason } = event.data
+      const seen = new Set<TeamMessageId>()
+      const additions: TeamMessageCancellation[] = []
+      for (const messageId of messageIds) {
+        if (seen.has(messageId)) throw new Error(`team message "${messageId}" was cancelled twice`)
+        seen.add(messageId)
+        const queued = state.messages.find(message => message.id === messageId)
+        if (queued === undefined) throw new Error(`team message "${messageId}" was cancelled before queueing`)
+        if (queued.targetId !== targetId) throw new Error(`team message "${messageId}" target changed`)
+        if (state.delivered.includes(messageId) || state.cancelled.some(item => item.messageId === messageId)) {
+          throw new Error(`team message "${messageId}" was already settled`)
+        }
+        additions.push({ messageId, targetId, reason })
+      }
+      return { ...state, cancelled: [...state.cancelled, ...additions] }
     }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
@@ -417,7 +457,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 8,
+  stateVersion: 9,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

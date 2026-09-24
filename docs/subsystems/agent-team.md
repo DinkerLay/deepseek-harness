@@ -23,11 +23,11 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches `active` or `failed`. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches `active` or `failed`. The Lead can move an active or failed member through `retiring` to `retired` after settling assignments and mail; the Session and immutable name remain. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
 
 ## Durable mailbox
 
-The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox.
+The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable. The Lead can cancel undelivered messages with a reason before retiring an unavailable member. The recovery mailbox is queued-minus-delivered-minus-cancelled.
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -37,6 +37,15 @@ interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+}
+```
+
+```ts type-equiv
+/** Lead-authorized cancellation of one undelivered Team message. */
+interface TeamMessageCancellation {
+  readonly messageId: TeamMessageId
+  readonly targetId: SessionId
+  readonly reason: string
 }
 ```
 
@@ -165,12 +174,30 @@ listMembers(agent: Agent): TeamMemberView[]
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 
 /**
+ * Retire a teammate after its assignments and pending messages are settled.
+ * The member name and Session history remain available for audit.
+ * @param caller - exact live Lead Agent.
+ * @param targetName - immutable teammate name.
+ * @returns the retired roster row.
+ */
+async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>
+
+/**
  * Queue one durable peer message, then attempt immediate delivery.
  * @param caller - exact live sending Team member.
  * @param request - target name, content, and pre-queue cancellation.
  * @returns durable message identity and immediate-delivery observation.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
+
+/**
+ * Cancel a teammate's undelivered messages before retiring an unavailable member.
+ * @param caller - exact live Lead Agent.
+ * @param targetName - immutable teammate name.
+ * @param reason - durable explanation for cancellation.
+ * @returns ids of messages cancelled by this call.
+ */
+async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]>
 
 /**
  * Create one unowned pending task in the Team Lead log.

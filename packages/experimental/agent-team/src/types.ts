@@ -154,6 +154,13 @@ export interface TeamMessageSnapshot {
   readonly content: ContentBlock[]
 }
 
+/** Lead-authorized cancellation of one undelivered Team message. */
+export interface TeamMessageCancellation {
+  readonly messageId: TeamMessageId
+  readonly targetId: SessionId
+  readonly reason: string
+}
+
 /** Source retained by the target Session for durable mailbox de-duplication. */
 export interface TeamMessageSource {
   readonly kind: 'team-message'
@@ -173,9 +180,11 @@ declare module '@deepseek-ai/dsh-llm' {
 export interface Config {
   /** Maximum immutable teammate names retained by one Team. */
   readonly maxMembers?: number
+  /** Maximum provisioning, active, or retiring teammates in one Team. */
+  readonly maxActiveMembers?: number
   /** Maximum non-deleted tasks retained by one Team. */
   readonly maxTasks?: number
-  /** Maximum queued-minus-delivered messages for one target member. */
+  /** Maximum queued messages without delivery or cancellation for one target member. */
   readonly maxPendingMessagesPerMember?: number
   /** Maximum UTF-8 bytes in one complete sender-framed delivery. */
   readonly maxMessageBytes?: number
@@ -265,6 +274,14 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       messageId: TeamMessageId
       targetId: SessionId
+    }
+    /** Lead-authorized cancellation of pending messages for one teammate. */
+    'team/message/cancelled': {
+      version: 3
+      teamId: TeamId
+      targetId: SessionId
+      messageIds: TeamMessageId[]
+      reason: string
     }
   }
 }
