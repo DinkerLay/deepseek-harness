@@ -12,6 +12,19 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
 async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
 
 describe('creation composition lease', () => {
+  it('keeps a portable declaration revision across resolver base URLs', async () => {
+    const first = await setup()
+    const second = await setup()
+    first.baseUrl = 'file:///install/one/'
+    second.baseUrl = 'file:///install/two/'
+    await declare(first, { id: 'portable', plugins: [] })
+    await declare(second, { id: 'portable', plugins: [] })
+    await using left = await first.agentPresets.acquireComposition('portable')
+    await using right = await second.agentPresets.acquireComposition('portable')
+    expect(left.revision).toMatch(/^[a-f0-9]{64}$/)
+    expect(right.revision).toBe(left.revision)
+  })
+
   it('refuses a lease whose registry was unloaded while the Host remains live', async () => {
     const ctx = new Context(); contexts.push(ctx)
     await ctx.plugin(Loader)

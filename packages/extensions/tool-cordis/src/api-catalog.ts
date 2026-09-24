@@ -208,6 +208,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'A revision lease; dispose it after the scoped read completes.',
       },
       {
+        signature: 'async acquireComposition(id?: string): Promise<PresetCompositionLease>',
+        description: 'Retain the selected composition for asynchronous Agent preparation without re-resolving its id. Definition replacement/removal does not change this lease; releasing it prevents future mounts. A successful mount owns its own binding reference after the caller releases the lease. The lease does not serialize configuration or retain revisions across process restarts.',
+        parameters: [{ name: 'id', description: 'preset identity or the current default.' }],
+        returns: 'a caller-owned composition lease; dispose it after creation succeeds or fails.',
+      },
+      {
         signature: 'compositionInventory(): Promise<AgentPresetComposition[]>',
         description: 'Read plugin rows without creating an Agent.',
         parameters: [],
@@ -4666,12 +4672,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ContinuableCreateSpec {\n    readonly seed?: readonly SessionEvent[];\n}',
   },
   {
+    name: 'ContinuablePresetBinding',
+    declaration: 'export interface ContinuablePresetBinding {\n    readonly id: string;\n    readonly revision: string;\n}',
+  },
+  {
     name: 'ContinuableStart',
     declaration: 'export interface ContinuableStart {\n    readonly childId: SessionId;\n    readonly messageId: MessageId;\n}',
   },
   {
     name: 'ContinuableStartSpec',
-    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'ContinuableSubagentDescriptorData',
@@ -5720,6 +5730,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PrepareSessionOptions',
     declaration: 'export type PrepareSessionOptions = (CreateSessionOptions & {\n    readonly eventState?: undefined;\n}) | RestoredSessionOptions;',
+  },
+  {
+    name: 'PresetCompositionLease',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
   },
   {
     name: 'PresetDefinition',

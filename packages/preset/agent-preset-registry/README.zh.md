@@ -49,6 +49,8 @@ Web 内置定义来自 `dsh-web-app` bundle。定义使用普通插件行；注�
 
 Host 准备新 Agent 时可以通过 `acquireComposition(id)` 保留一个组合，再在 Agent 工厂的 setup 回调中调用租约的 `mount(agentCtx)`。准备期间即使声明被替换或移除，租约仍保留选中的代际。成功或失败后都要释放租约；已挂载 Agent 持有自己的引用。已释放租约、已关闭或已有绑定的 scope，以及已发布 Agent，均不能通过此接口获得新绑定。该进程内租约不持久化旧代际，也不放宽已开始会话的选择限制。
 
+租约修订摘要包含 Preset ID 和捕获的 JSON 声明，不包含 resolver 的绝对 base URL。如果声明本身写了绝对插件 URL，摘要仍包含该机器路径；跨安装环境的绑定应使用包名。摘要只标识声明，不标识插件二进制或求值后的环境值。恢复时若修订不可用或已改变，必须拒绝，不能换用当前同名声明。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

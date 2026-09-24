@@ -14,7 +14,7 @@ export interface AgentPreset {
 export interface PresetCompositionLease extends AsyncDisposable {
   /** Identity of the retained declaration, even if the registry later replaces it. */
   readonly id: string
-  /** SHA-256 of the captured declaration and resolver base URL; absent for non-JSON declarations. Not a plugin-binary digest. */
+  /** SHA-256 of the captured JSON declaration and preset id; absent for non-JSON declarations. Not a plugin-binary digest. */
   readonly revision: string | undefined
   /**
    * Bind an unpublished, unbound Agent scope to this exact retained revision.

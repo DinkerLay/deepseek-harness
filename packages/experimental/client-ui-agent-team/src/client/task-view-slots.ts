@@ -1,16 +1,16 @@
 /** Optional views that extend the official Agent Team task section. */
-import type { TeamTaskView, TeamView } from '@deepseek-ai/dsh-experimental-agent-team/client'
+import type { TeamProjection, TeamTaskView } from '@deepseek-ai/dsh-experimental-agent-team/client'
 
 /** Action beside the native task-list heading. */
 export interface TeamTaskViewActionOwner {
-  readonly view: TeamView
+  readonly view: TeamProjection
   readonly active: boolean
   readonly openGraph: () => void
 }
 
 /** Current native Team projection supplied to a graph renderer. */
 export interface TeamTaskGraphOwner {
-  readonly view: TeamView
+  readonly view: TeamProjection
   /** Opens the owner's conversation, not a task-specific Turn. */
   readonly openMemberSession: (task: TeamTaskView) => void
 }

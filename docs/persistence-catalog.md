@@ -58,6 +58,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:step/end` | event | `e0a787e6ec76c7c94fecbc501b489164ab0293db05bc947914077ad01e674f05` | [`{ type: "step/end" }`](#persistence-type-sha256-e0a787e6ec76c7c94fecbc501b489164ab0293db05bc947914077ad01e674f05) |
 | `event:step/start` | event | `4513e088d43e6c68425be30451b9f961cc264fe7318ca62681c41d4d78615986` | [`{ type: "step/start" }`](#persistence-type-sha256-4513e088d43e6c68425be30451b9f961cc264fe7318ca62681c41d4d78615986) |
 | `event:subagent/catalog` | event | `3abae7324356f155cb42450c00b806d134ec93bd6439d2063b8d724162d58604` | [`{ type: "subagent/catalog" }`](#persistence-type-sha256-3abae7324356f155cb42450c00b806d134ec93bd6439d2063b8d724162d58604) |
+| `event:subagent/continuable-preset` | event | `20d13228022fd1275ca30056c9b3726bef9a8c052f2971fe63a76671f4cba246` | [`{ type: "subagent/continuable-preset" }`](#persistence-type-sha256-20d13228022fd1275ca30056c9b3726bef9a8c052f2971fe63a76671f4cba246) |
 | `event:subagent/descriptor` | event | `b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5` | [`{ type: "subagent/descriptor" }`](#persistence-type-sha256-b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5) |
 | `event:subagent/model-selection-policy` | event | `a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc` | [`{ type: "subagent/model-selection-policy" }`](#persistence-type-sha256-a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc) |
 | `event:system/message` | event | `69081694be231d56fd9580ba14645fd5e35373202605d5c5c841a9435b5fa3b1` | [`{ type: "system/message" }`](#persistence-type-sha256-69081694be231d56fd9580ba14645fd5e35373202605d5c5c841a9435b5fa3b1) |
@@ -901,6 +902,17 @@ Source: [`packages/core/session/src/types.ts:299`](../packages/core/session/src/
 ```
 
 Source: [`packages/subagent/subagent/src/catalog.ts:43`](../packages/subagent/subagent/src/catalog.ts)
+
+<a id="subagentcontinuable-preset--log-only"></a>
+
+#### `subagent/continuable-preset` — log-only
+
+```ts persistence-catalog
+/** Explicit child composition; absent from older children that inherit their parent's preset. */
+'subagent/continuable-preset': { version: 1; preset: ContinuablePresetBinding }
+```
+
+Source: [`packages/subagent/subagent/src/continuable-preset.ts:15`](../packages/subagent/subagent/src/continuable-preset.ts)
 
 <a id="subagentdescriptor--log-only"></a>
 
@@ -2475,6 +2487,14 @@ SHA-256: `44c8c77aa9aa100b0d74d2deee85474b29faa6eee0ac0f662f7abe9931ddd7f2`
 
 `"subagent/catalog"`
 
+<a id="persistence-type-sha256-22f40a7a0c35e2a53e95d084aab76ef004149a58d9556ce466834fa21c3a7562"></a>
+
+### `"subagent/continuable-preset"`
+
+SHA-256: `22f40a7a0c35e2a53e95d084aab76ef004149a58d9556ce466834fa21c3a7562`
+
+`"subagent/continuable-preset"`
+
 <a id="persistence-type-sha256-5ebce1317eacd2c148456627a09668e927ee15c204f0643f5ea76b46b54a2647"></a>
 
 ### `"subagent/descriptor"`
@@ -3203,6 +3223,23 @@ Sources: [`packages/llm/llm/src/message.ts:70`](../packages/llm/llm/src/message.
 SHA-256: `c748fb42c80a120038a8c587af80ec39924803c401364db11c8974d5bf6d0262`
 
 Array of [`ContextSnapshotSection`](#persistence-type-sha256-86e1e384495ee09ac2d60c9db3610f1f1fddac2d248f6f1d6000e78054680219).
+
+<a id="persistence-type-sha256-d7cfc08a8b0d763e3c68b885fd584e816fc1e551742c1a983ee7bb076da08d5b"></a>
+
+<a id="persistence-type-continuablepresetbinding"></a>
+
+<a id="persistence-type-packagessubagentsubagentsrccontinuable-presettscontinuablepresetbinding"></a>
+
+### `ContinuablePresetBinding`
+
+SHA-256: `d7cfc08a8b0d763e3c68b885fd584e816fc1e551742c1a983ee7bb076da08d5b`
+
+Sources: [`packages/subagent/subagent/src/continuable-preset.ts:7`](../packages/subagent/subagent/src/continuable-preset.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `id` | required | `string` |
+| `revision` | required | `string` |
 
 <a id="persistence-type-sha256-6487b10ba7542f3c447b1e41a1c6a590b7bfafe0b9b66b49f34028da85bb970f"></a>
 
@@ -7462,6 +7499,19 @@ Sources: [`packages/interaction/permission-presets/src/index.ts:59`](../packages
 |---|---|---|
 | `preset` | required | `string` |
 
+<a id="persistence-type-sha256-f70581bcbe53975008cf3c21bdfe05f53aab002870de095f6cc7e36b4ef7a12b"></a>
+
+### `{ preset, version }`
+
+SHA-256: `f70581bcbe53975008cf3c21bdfe05f53aab002870de095f6cc7e36b4ef7a12b`
+
+Sources: [`packages/subagent/subagent/src/continuable-preset.ts:15`](../packages/subagent/subagent/src/continuable-preset.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `preset` | required | [`ContinuablePresetBinding`](#persistence-type-sha256-d7cfc08a8b0d763e3c68b885fd584e816fc1e551742c1a983ee7bb076da08d5b) |
+| `version` | required | `1` |
+
 <a id="persistence-type-sha256-e481c46af3813e0010558e93f578b2986acd658404cec2d1679e3ac2a6c48654"></a>
 
 ### `{ reason, turn }`
@@ -8289,6 +8339,22 @@ SHA-256: `3abae7324356f155cb42450c00b806d134ec93bd6439d2063b8d724162d58604`
 | `seq` | required | `number` |
 | `time` | required | `number` |
 | `type` | required | `"subagent/catalog"` |
+
+<a id="persistence-type-sha256-20d13228022fd1275ca30056c9b3726bef9a8c052f2971fe63a76671f4cba246"></a>
+
+<a id="persistence-type-eventsubagentcontinuable-preset"></a>
+
+### `{ type: "subagent/continuable-preset" }`
+
+SHA-256: `20d13228022fd1275ca30056c9b3726bef9a8c052f2971fe63a76671f4cba246`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`{ preset, version }`](#persistence-type-sha256-f70581bcbe53975008cf3c21bdfe05f53aab002870de095f6cc7e36b4ef7a12b) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"subagent/continuable-preset"` |
 
 <a id="persistence-type-sha256-b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5"></a>
 

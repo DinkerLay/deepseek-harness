@@ -563,6 +563,16 @@ async recompose(ctx: Context, id: string): Promise<AgentPreset>
  */
 async acquireScope(id?: string): Promise<{ key: ScopeKey } & AsyncDisposable>
 
+/**
+ * Retain the selected composition for asynchronous Agent preparation without re-resolving its id.
+ * Definition replacement/removal does not change this lease; releasing it prevents future mounts.
+ * A successful mount owns its own binding reference after the caller releases the lease.
+ * The lease does not serialize configuration or retain revisions across process restarts.
+ * @param id - preset identity or the current default.
+ * @returns a caller-owned composition lease; dispose it after creation succeeds or fails.
+ */
+async acquireComposition(id?: string): Promise<PresetCompositionLease>
+
 /** Read plugin rows without creating an Agent.
  * @returns Current declaration metadata and activation states.
  */
