@@ -745,6 +745,41 @@ describe('Team identity and provisioning', () => {
 })
 
 describe('Team shared task DAG', () => {
+  it('commits a Task and pending teammate notice in the same durable event', async () => {
+    const { ctx, lead } = await setup([])
+    await Promise.resolve()
+    const member = {
+      id: SessionId('notice-worker'), name: 'notice-worker', description: 'notification target',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const,
+    }
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member', {
+      version: 2, teamId: TeamId(lead.id), member: { ...member, phase: 'active' },
+    })
+    await ctx.sessions.flush(lead.session)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'notice-writer', create: unavailable, update: unavailable,
+    })
+    const noticeId = TeamMessageId('task-notice-1')
+    await handle.commit(lead, () => ({
+      updates: [{ previousRevision: null, task: {
+        id: TeamTaskId('task-1'), revision: 1, subject: 'notify', description: 'notify worker',
+        status: 'pending', blockedBy: [], writeScopes: [],
+      } }],
+      dataJson: '{}',
+      notices: [{ id: noticeId, senderId: lead.id, senderName: 'lead', targetId: member.id,
+        content: content('Task task-1 is assigned') }],
+    }))
+    const event = lead.session.snapshotEvents().filter(item => item.type === 'team/task/transaction')
+    expect(event).toHaveLength(1)
+    expect(event[0]?.data.notices?.map(notice => notice.id)).toEqual([noticeId])
+    expect(durable(lead).pendingMessages.map(notice => notice.id)).toContain(noticeId)
+    await expect(ctx.agentTeams.retireTeammate(lead, 'notice-worker'))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_HAS_MESSAGES' })
+    handle.dispose()
+  })
+
   it('rejects malformed or oversized extension data before any Task event is committed', async () => {
     const { ctx, lead } = await setup([], { maxTaskExtensionBytes: 8 })
     const unavailable = async (): Promise<never> => { throw new Error('not used') }

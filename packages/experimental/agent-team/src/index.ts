@@ -116,8 +116,14 @@ export class TeamService extends Service {
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
+      this.config.maxPendingMessagesPerMember, this.config.maxMessageBytes,
       agent => this.roster.membership(agent),
       () => this.lifecycle.disposed,
+      (root) => {
+        void this.mailbox.recoverFor(root, this.lifecycle.signal).catch((error: unknown) => {
+          if (!this.lifecycle.disposed) this.ctx.logger.warn(`Team Task notice dispatch failed: ${errorMessage(error)}`)
+        })
+      },
     )
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })

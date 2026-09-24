@@ -84,7 +84,7 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
 
-可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照与扩展自有 JSON。原生投影忽略该 JSON，只发布 Board。扩展代码回放同一事件时必须自行校验 JSON。
+可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照、可选 Team mailbox 通知与扩展自有 JSON。原生投影忽略该 JSON，但把通知折叠进同一持久 mailbox。扩展代码回放同一事件时必须自行校验 JSON。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -154,7 +154,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
 
-`installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新与 JSON；原生投影在发布前检查连续修订、顺序数字 id 和最终无环图。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。
+`installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新、扩展 JSON 与可选 Team 通知；原生投影在发布前检查连续修订、顺序数字 id、mailbox 身份和最终无环图。flush 后待投递通知沿用原生 mailbox 投递与冷恢复路径。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。
 
 ### 等待与中断
 

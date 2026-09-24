@@ -221,9 +221,11 @@ describe('Agent Teams projection events', () => {
         { previousRevision: null, task: second },
       ],
       extension: { id: 'product-task', dataJson: '{"attempts":[]}' },
+      notices: [message({ id: TeamMessageId('task-notice-1') })],
     }, SessionSeq(0))
     const created = projectTeam(ROOT, [create])
     expect(created.tasks.map(row => row.id)).toEqual([first.id, second.id])
+    expect(created.messages.map(row => row.id)).toEqual([TeamMessageId('task-notice-1')])
     expect(created.nextTaskNumber).toBe(3)
     const change = event('team/task/transaction', {
       version: 1, teamId: TEAM,

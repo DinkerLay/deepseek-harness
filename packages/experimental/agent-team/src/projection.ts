@@ -140,6 +140,7 @@ const teamTaskTransactionEventSchema = z.object({
   teamId: teamIdSchema,
   updates: z.array(teamTaskTransactionUpdateSchema).min(1),
   extension: z.object({ id: z.string().min(1), dataJson: z.string() }).strict(),
+  notices: z.array(teamMessageSnapshotSchema).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/task/transaction']>
 
 const teamMessageQueuedEventSchema = z.object({
@@ -358,7 +359,16 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
     }
     case 'team/task/transaction': {
       const next = applyTaskTransaction(state.tasks, state.nextTaskNumber, event.data.updates)
-      return { ...state, ...next }
+      const notices = event.data.notices ?? []
+      const seen = new Set<TeamMessageId>()
+      for (const notice of notices) {
+        if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
+          throw new Error(`team message "${notice.id}" was queued twice`)
+        }
+        seen.add(notice.id)
+      }
+      return { ...state, ...next,
+        messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
     case 'team/message/queued': {
       const message = event.data.message

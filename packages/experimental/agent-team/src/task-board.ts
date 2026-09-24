@@ -13,6 +13,7 @@ import type { TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBui
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   CreateTeamTaskRequest,
+  TeamMessageSnapshot,
   TeamTaskSnapshot,
   TeamTaskTransactionUpdate,
   TeamTaskView,
@@ -35,15 +36,21 @@ export class TeamTaskBoard {
    * @param journal - authoritative Lead-log transaction owner.
    * @param maxTasks - maximum non-deleted tasks retained by one Team.
    * @param maxTaskExtensionBytes - byte limit for the extension-owned JSON in one event.
+   * @param maxPendingMessagesPerMember - maximum unsettled Team notices for a target.
+   * @param maxMessageBytes - maximum sender-framed Team notice size.
    * @param membershipOf - resolves the exact current caller inside each transaction.
    * @param isDisposed - Team runtime admission cutoff.
+   * @param dispatchNotices - non-throwing post-commit mailbox wakeup.
    */
   constructor(
     private readonly journal: TeamJournal,
     private readonly maxTasks: number,
     private readonly maxTaskExtensionBytes: number,
+    private readonly maxPendingMessagesPerMember: number,
+    private readonly maxMessageBytes: number,
     private readonly membershipOf: (caller: Agent) => TeamMembership,
     private readonly isDisposed: () => boolean,
+    private readonly dispatchNotices: (root: Agent) => void,
   ) {}
 
   /**
@@ -254,7 +261,7 @@ export class TeamTaskBoard {
     if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
     const initial = this.membershipOf(caller)
     const root = initial.root
-    return await this.journal.transact(root.id, async () => {
+    const result = await this.journal.transact(root.id, async () => {
       if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
       if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       if (this.membershipOf(caller).root !== root) throw new TeamError('Team member changed during Task transaction', 'TEAM_NOT_MEMBER')
@@ -304,13 +311,43 @@ export class TeamTaskBoard {
           throw new TeamError(`Task "${update.task.id}" owner is not active`, 'TEAM_MEMBER_NOT_FOUND')
         }
       }
+      const notices: TeamMessageSnapshot[] = (plan.notices ?? []).map(notice => structuredClone(notice))
+      const seen = new Set<string>()
+      const sender = this.membershipOf(caller)
+      for (const notice of notices) {
+        if (notice.senderId !== caller.id || notice.senderName !== sender.name || notice.targetId === caller.id) {
+          throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
+        }
+        if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
+          throw new TeamError(`Task notice "${notice.id}" already exists`, 'TEAM_INVALID_ARGUMENT')
+        }
+        seen.add(notice.id)
+        if (notice.targetId !== root.id && !state.members.some(member =>
+          member.id === notice.targetId && member.phase === 'active')) {
+          throw new TeamError(`Task notice "${notice.id}" target is not active`, 'TEAM_MEMBER_NOT_FOUND')
+        }
+        const pending = state.messages.filter(message => message.targetId === notice.targetId
+          && !state.delivered.includes(message.id)
+          && !state.cancelled.some(item => item.messageId === message.id)).length
+          + notices.filter(candidate => candidate.targetId === notice.targetId && candidate !== notice).length
+        if (pending >= this.maxPendingMessagesPerMember) {
+          throw new TeamError('Task notice target has too many pending messages', 'TEAM_MAILBOX_FULL')
+        }
+        const framed = [{ type: 'text', text: `Team message ${notice.id} from ${notice.senderName}:` }, ...notice.content]
+        if (Buffer.byteLength(JSON.stringify(framed), 'utf8') > this.maxMessageBytes) {
+          throw new TeamError(`Task notice "${notice.id}" exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
+        }
+      }
       await this.journal.appendAndFlush(root, 'team/task/transaction', {
         version: 1, teamId: TeamId(root.id), updates,
         extension: { id: extensionId, dataJson: plan.dataJson },
+        ...notices.length === 0 ? {} : { notices },
       })
       const committed = this.journal.state(root)
-      return updates.map(update => projectTaskView(committed, update.task))
+      return { views: updates.map(update => projectTaskView(committed, update.task)), hasNotices: notices.length > 0 }
     })
+    if (result.hasNotices) this.dispatchNotices(root)
+    return result.views
   }
 
   /** Validate and de-duplicate dependency ids against the current task graph. */

@@ -7098,6 +7098,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamMessageId = Branded<\'TeamMessageId\'>;',
   },
   {
+    name: 'TeamMessageSnapshot',
+    declaration: 'export interface TeamMessageSnapshot {\n    readonly id: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly targetId: SessionId;\n    readonly content: ContentBlock[];\n}',
+  },
+  {
     name: 'TeamPresetBinding',
     declaration: 'export interface TeamPresetBinding {\n    readonly id: string;\n    readonly revision: string;\n}',
   },
@@ -7131,7 +7135,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionPlan',
-    declaration: 'export interface TeamTaskTransactionPlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n}',
+    declaration: 'export interface TeamTaskTransactionPlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
   },
   {
     name: 'TeamTaskTransactionSnapshot',

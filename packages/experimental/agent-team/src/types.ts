@@ -120,6 +120,8 @@ export interface TeamTaskTransactionSnapshot {
 export interface TeamTaskTransactionPlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
+  /** Durable Team messages enqueued atomically with the Task updates. */
+  readonly notices?: readonly TeamMessageSnapshot[]
 }
 
 /** Runtime-enriched task view returned to tools and hosts. */
@@ -294,6 +296,7 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       updates: TeamTaskTransactionUpdate[]
       extension: { id: string; dataJson: string }
+      notices?: TeamMessageSnapshot[]
     }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
