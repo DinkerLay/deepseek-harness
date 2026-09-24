@@ -55,6 +55,16 @@ afterEach(() => {
 })
 
 describe('Remote model generation', { timeout: 60_000 }, () => {
+  it('recognizes protocol decorators imported from published declaration files outside the workspace', () => {
+    const root = copyFixture()
+    editFile(root, 'typert-protocol.d.ts', source => source
+      .replace("declare module '@deepseek-ai/dsh-typert-protocol' {", '')
+      .replace(/\n\}\s*$/u, '\n'))
+    const artifact = new WorkspaceTypertGenerator(root).generate(['@fixture/remote'], ['host'])[0]
+    expect(artifact?.remote?.js).toContain("namespace: 'goals'")
+    expect(artifact?.remote?.dts).toContain('create')
+    expect(artifact?.remote?.dts).toContain('rename')
+  })
   it('projects a generic binary result without copying or freezing its bytes', async () => {
     const root = copyFixture()
     editFile(root, 'packages/remote/src/types.ts', source => `${source}\nexport type BinaryFile<Data extends Uint8Array = Uint8Array> = {\n  readonly data: Data\n} & { readonly size: number }\n`)

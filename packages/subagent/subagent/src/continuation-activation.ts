@@ -28,7 +28,9 @@ import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
+  applyDelegatedComposition,
 } from './child-agent.ts'
+import type { ContinuablePresetBinding } from './continuable-preset.ts'
 import type { DelegatedPolicyOverrides } from './child-agent.ts'
 import { createSettlementMessage } from './continuation-messages.ts'
 import type { SubagentDescriptorData } from './descriptor.ts'
@@ -127,6 +129,8 @@ export interface MaterializeInputs {
   }
   agentOptions: AgentOptions
   composition: { persona?: string | undefined; toolFilter?: ToolRestriction | undefined }
+  /** Persisted explicit composition; absent for inherited-composition children. */
+  preset?: ContinuablePresetBinding
   signal: AbortSignal
 }
 
@@ -620,14 +624,29 @@ export class ContinuableActivationRegistry {
   ): Promise<Activation> {
     const { childId, provider, parent, create } = inputs
     inputs.signal.throwIfAborted()
-    const setup = (childCtx: Context, child: Agent): void => {
+    const setup = async (childCtx: Context, child: Agent): Promise<void> => {
       // Only fresh creation appends the descriptor and delegated policy after
       // the inherited marker; a cold resume replays those persisted events.
       if (create !== undefined) {
         child.session.append('subagent/descriptor', create.descriptor)
+        if (inputs.preset !== undefined) {
+          child.session.append('subagent/continuable-preset', { version: 1, preset: inputs.preset })
+          child.session.append('agent-preset/selected', { agentPreset: inputs.preset.id })
+        }
         appendDelegatedPolicyOverrides(child.session, create.delegatedPolicies)
       }
-      applyChildComposition(childCtx, parent, inputs.composition)
+      if (inputs.preset === undefined) {
+        applyChildComposition(childCtx, parent, inputs.composition)
+      } else {
+        const registry = childCtx.get('agentPresets')
+        if (registry === undefined) throw new Error('explicit continuable preset requires the Agent Preset registry')
+        await using lease = await registry.acquireComposition(inputs.preset.id)
+        if (lease.revision !== inputs.preset.revision) {
+          throw new Error(`continuable preset "${inputs.preset.id}" declaration changed; recovery refused`)
+        }
+        await lease.mount(childCtx)
+        applyDelegatedComposition(childCtx, inputs.composition)
+      }
     }
     const observer = this.observeActivation(provider, childId, parent)
     const handle: AgentHandle = create === undefined

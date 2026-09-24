@@ -47,6 +47,8 @@ Web 内置定义来自 `dsh-web-app` bundle。定义使用普通插件行；注�
 
 注册表不写入任何声明。新建 preset 或覆盖内置 preset 都是 bundle 补丁：插入一行 `@deepseek-ai/dsh-agent-preset`，或按该行 id 写覆盖补丁，再用 `plugin_manager` 安装到 profile；创造模式在对话中编写这类 bundle。
 
+Host 准备新 Agent 时可以通过 `acquireComposition(id)` 保留一个组合，再在 Agent 工厂的 setup 回调中调用租约的 `mount(agentCtx)`。准备期间即使声明被替换或移除，租约仍保留选中的代际。成功或失败后都要释放租约；已挂载 Agent 持有自己的引用。已释放租约、已关闭或已有绑定的 scope，以及已发布 Agent，均不能通过此接口获得新绑定。该进程内租约不持久化旧代际，也不放宽已开始会话的选择限制。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

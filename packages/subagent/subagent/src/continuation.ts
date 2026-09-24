@@ -39,6 +39,7 @@ import {
 } from './continuation-messages.ts'
 import { assertSubagentMaxDepth } from './depth.ts'
 import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor.ts'
+import { foldContinuablePreset } from './continuable-preset.ts'
 import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
@@ -164,13 +165,17 @@ export class SubagentContinuationManager {
           parent,
           create: {
             seed,
-            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+            meta: {
+              ...childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+              ...spec.preset === undefined ? {} : { agentPreset: spec.preset.id },
+            },
             inheritedEventCount,
             delegatedPolicies,
             descriptor,
           },
           agentOptions,
           composition: { persona: request.persona, toolFilter: request.toolFilter },
+          ...spec.preset === undefined ? {} : { preset: spec.preset },
           signal: spec.signal,
         })
         const childHeader = activation.handle.agent.session.header
@@ -425,6 +430,7 @@ export class SubagentContinuationManager {
     const descriptor = foldSubagentDescriptor(
       source.events.slice(source.inheritedEventCount),
     )
+    const preset = foldContinuablePreset(source.events.slice(source.inheritedEventCount))
     if (descriptor === undefined || descriptor.mode !== 'continuable') {
       throw new SubagentError(
         `subagent "${childId}" has no supported continuation state and cannot be resumed; choose a different target`,
@@ -445,6 +451,7 @@ export class SubagentContinuationManager {
             : {},
         },
         composition: { persona: descriptor.persona, toolFilter: descriptor.toolFilter },
+        ...preset === undefined ? {} : { preset },
         signal: options.signal,
       })
     } catch (error: unknown) {
