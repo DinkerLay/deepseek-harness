@@ -15,6 +15,7 @@ import type {
   TeamMessageSnapshot,
   TeamProjection,
   TeamTaskSnapshot,
+  TeamTaskTransactionUpdate,
   TeamTaskView,
 } from './types.ts'
 import {
@@ -23,6 +24,7 @@ import {
   TeamTaskId as toTeamTaskId,
 } from './types.ts'
 import { assertTaskGraphCandidate } from './task-graph.ts'
+import { applyTaskTransaction } from './task-transaction.ts'
 import { projectTaskView } from './task-view.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -129,6 +131,17 @@ const teamTaskEventSchema = z.object({
   task: teamTaskSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/task']>
 
+const teamTaskTransactionUpdateSchema = z.object({
+  previousRevision: positiveSafeInteger.nullable(),
+  task: teamTaskSnapshotSchema,
+}).strict() as z.ZodType<TeamTaskTransactionUpdate>
+const teamTaskTransactionEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  updates: z.array(teamTaskTransactionUpdateSchema).min(1),
+  extension: z.object({ id: z.string().min(1), dataJson: z.string() }).strict(),
+}).strict() as z.ZodType<SessionEventMap['team/task/transaction']>
+
 const teamMessageQueuedEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
@@ -213,6 +226,7 @@ export type TeamEventType =
   | 'team/member'
   | 'team/member/configured'
   | 'team/task'
+  | 'team/task/transaction'
   | 'team/message/queued'
   | 'team/message/delivered'
   | 'team/message/cancelled'
@@ -229,6 +243,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
   return event.type === 'team/member'
     || event.type === 'team/member/configured'
     || event.type === 'team/task'
+    || event.type === 'team/task/transaction'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
     || event.type === 'team/message/cancelled'
@@ -252,6 +267,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamMemberConfiguredEventSchema, event.data) }
     case 'team/task':
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
+    case 'team/task/transaction':
+      return { ...event, data: parsePersisted(event.type, teamTaskTransactionEventSchema, event.data) }
     case 'team/message/queued':
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
     case 'team/message/delivered':
@@ -270,7 +287,8 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    const expectedVersion = event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
+    const expectedVersion = event.type === 'team/task/transaction' ? 1
+      : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
     }
@@ -337,6 +355,10 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         )
       }
       return { ...state, tasks: replaceAt(state.tasks, index, task), nextTaskNumber }
+    }
+    case 'team/task/transaction': {
+      const next = applyTaskTransaction(state.tasks, state.nextTaskNumber, event.data.updates)
+      return { ...state, ...next }
     }
     case 'team/message/queued': {
       const message = event.data.message
@@ -457,7 +479,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 9,
+  stateVersion: 10,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

@@ -13,6 +13,7 @@ import { teamProjectionDefinition } from './projection.ts'
 import { TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
+import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extension.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   Config,
@@ -30,6 +31,7 @@ import type {
 
 export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
+export type { TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
 export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
 export { TeamError } from './error.ts'
 
@@ -43,6 +45,7 @@ const DEFAULT_MAX_MEMBERS = 16
 const DEFAULT_MAX_TASKS = 256
 const DEFAULT_MAX_PENDING_MESSAGES = 64
 const DEFAULT_MAX_MESSAGE_BYTES = 65_536
+const DEFAULT_MAX_TASK_EXTENSION_BYTES = 262_144
 const DEFAULT_DISPOSAL_TIMEOUT_MS = 5_000
 
 /** Validate one positive safe-integer deployment limit. */
@@ -63,6 +66,7 @@ export class TeamService extends Service {
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
     maxPendingMessagesPerMember: z.number().step(1).min(1).default(DEFAULT_MAX_PENDING_MESSAGES),
     maxMessageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_BYTES),
+    maxTaskExtensionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_TASK_EXTENSION_BYTES),
     disposalTimeoutMs: z.number().step(1).min(1).default(DEFAULT_DISPOSAL_TIMEOUT_MS),
   })
 
@@ -87,6 +91,9 @@ export class TeamService extends Service {
         config.maxPendingMessagesPerMember ?? DEFAULT_MAX_PENDING_MESSAGES,
       ),
       maxMessageBytes: positiveLimit('maxMessageBytes', config.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES),
+      maxTaskExtensionBytes: positiveLimit(
+        'maxTaskExtensionBytes', config.maxTaskExtensionBytes ?? DEFAULT_MAX_TASK_EXTENSION_BYTES,
+      ),
       disposalTimeoutMs: positiveLimit(
         'disposalTimeoutMs',
         config.disposalTimeoutMs ?? DEFAULT_DISPOSAL_TIMEOUT_MS,
@@ -107,7 +114,11 @@ export class TeamService extends Service {
       this.config.maxPendingMessagesPerMember,
       this.config.maxMessageBytes,
     )
-    this.tasks = new TeamTaskBoard(this.journal, this.config.maxTasks)
+    this.tasks = new TeamTaskBoard(
+      this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
+      agent => this.roster.membership(agent),
+      () => this.lifecycle.disposed,
+    )
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('agent/created', ({ agent }) => { this.scheduleRecovery(agent) })
@@ -195,7 +206,16 @@ export class TeamService extends Service {
    * @returns the revision-one task view.
    */
   async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView> {
-    return await this.tasks.create(this.roster.membership(caller), request)
+    return await this.tasks.create(caller, this.roster.membership(caller), request)
+  }
+
+  /**
+   * Install one product Task writer while retaining the native Team Board and Session log.
+   * @param writer - create/update policy and stable extension event identifier.
+   * @returns an effect-owned transaction capability and disposer.
+   */
+  installTaskExtension(writer: TeamTaskExtension): TeamTaskExtensionHandle {
+    return this.tasks.installExtension(writer)
   }
 
   /**

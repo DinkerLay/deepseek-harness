@@ -8,10 +8,13 @@ import type { TeamState } from './projection.ts'
 import { resolveActiveMember } from './roster.ts'
 import { assertTaskGraphCandidate, TeamTaskGraphError } from './task-graph.ts'
 import type { TeamTaskGraphViolation } from './task-graph.ts'
+import { applyTaskTransaction, TeamTaskTransactionError } from './task-transaction.ts'
+import type { TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   CreateTeamTaskRequest,
   TeamTaskSnapshot,
+  TeamTaskTransactionUpdate,
   TeamTaskView,
   UpdateTeamTaskRequest,
 } from './types.ts'
@@ -26,22 +29,50 @@ const TASK_GRAPH_ERROR_CODES: Record<TeamTaskGraphViolation, string> = {
 
 /** Owns Team task limits, authorization, transitions, and derived views. */
 export class TeamTaskBoard {
+  private extension: { readonly writer: TeamTaskExtension; readonly handle: TeamTaskExtensionHandle } | undefined
+
   /**
    * @param journal - authoritative Lead-log transaction owner.
    * @param maxTasks - maximum non-deleted tasks retained by one Team.
+   * @param maxTaskExtensionBytes - byte limit for the extension-owned JSON in one event.
+   * @param membershipOf - resolves the exact current caller inside each transaction.
+   * @param isDisposed - Team runtime admission cutoff.
    */
   constructor(
     private readonly journal: TeamJournal,
     private readonly maxTasks: number,
+    private readonly maxTaskExtensionBytes: number,
+    private readonly membershipOf: (caller: Agent) => TeamMembership,
+    private readonly isDisposed: () => boolean,
   ) {}
 
   /**
+   * Install one optional Task writer without replacing the native Team service.
+   * @param writer - product create/update implementation and stable event identifier.
+   * @returns an effect-owned commit capability and disposer.
+   */
+  installExtension(writer: TeamTaskExtension): TeamTaskExtensionHandle {
+    if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+    if (this.extension !== undefined) throw new TeamError('Team Task extension is already installed', 'TEAM_TASK_EXTENSION_CONFLICT')
+    const id = requiredText(writer.id, 'extension id', 200)
+    const handle: TeamTaskExtensionHandle = {
+      commit: async (caller, build) => await this.commitExtension(writer, id, caller, build),
+      dispose: () => { if (this.extension?.handle === handle) this.extension = undefined },
+    }
+    this.extension = { writer, handle }
+    return handle
+  }
+
+  /**
    * Create one unowned pending task in the Team Lead log.
+   * @param caller - exact live member creating the Task.
    * @param membership - exact caller membership resolved by the Team roster.
    * @param request - task text, blockers, and advisory write scopes.
    * @returns the revision-one task view.
    */
-  async create(membership: TeamMembership, request: CreateTeamTaskRequest): Promise<TeamTaskView> {
+  async create(caller: Agent, membership: TeamMembership, request: CreateTeamTaskRequest): Promise<TeamTaskView> {
+    const extension = this.extension
+    if (extension !== undefined) return await extension.writer.create(caller, request, extension.handle)
     const { root } = membership
     return this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
@@ -107,6 +138,8 @@ export class TeamTaskBoard {
     membership: TeamMembership,
     request: UpdateTeamTaskRequest,
   ): Promise<TeamTaskView> {
+    const extension = this.extension
+    if (extension !== undefined) return await extension.writer.update(caller, request, extension.handle)
     const root = membership.root
     return this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
@@ -207,6 +240,76 @@ export class TeamTaskBoard {
       this.assertTaskGraph(state, task)
       await this.journal.appendAndFlush(root, 'team/task', { version: 2, teamId: TeamId(root.id), task })
       return projectTaskView(state, task)
+    })
+  }
+
+  /** Commit one extension proposal under the same native Team lock used by default Task commands. */
+  private async commitExtension(
+    writer: TeamTaskExtension,
+    extensionId: string,
+    caller: Agent,
+    build: TeamTaskTransactionBuilder,
+  ): Promise<TeamTaskView[]> {
+    if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+    if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+    const initial = this.membershipOf(caller)
+    const root = initial.root
+    return await this.journal.transact(root.id, async () => {
+      if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+      if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      if (this.membershipOf(caller).root !== root) throw new TeamError('Team member changed during Task transaction', 'TEAM_NOT_MEMBER')
+      const state = this.journal.state(root)
+      const plan = build({
+        tasks: structuredClone(state.tasks),
+        members: structuredClone(state.members),
+        nextTaskNumber: state.nextTaskNumber,
+      })
+      if (Buffer.byteLength(plan.dataJson, 'utf8') > this.maxTaskExtensionBytes) {
+        throw new TeamError(`Task extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
+      }
+      try {
+        JSON.parse(plan.dataJson)
+      } catch {
+        throw new TeamError('Task extension data must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
+      }
+      const updates: TeamTaskTransactionUpdate[] = plan.updates.map(update => ({
+        previousRevision: update.previousRevision,
+        task: structuredClone(update.task),
+      }))
+      let next: ReturnType<typeof applyTaskTransaction>
+      try {
+        next = applyTaskTransaction(state.tasks, state.nextTaskNumber, updates)
+      } catch (error: unknown) {
+        if (error instanceof TeamTaskGraphError) {
+          throw new TeamError(error.message, TASK_GRAPH_ERROR_CODES[error.violation], { cause: error })
+        }
+        if (error instanceof TeamTaskTransactionError) {
+          const code = error.violation === 'stale' ? 'TEAM_TASK_STALE_REVISION'
+            : error.violation === 'id-space' ? 'TEAM_TASK_LIMIT' : 'TEAM_INVALID_ARGUMENT'
+          throw new TeamError(error.message, code, { cause: error })
+        }
+        throw error
+      }
+      if (next.tasks.filter(task => task.status !== 'deleted').length > this.maxTasks) {
+        throw new TeamError(`Team task limit ${this.maxTasks} reached`, 'TEAM_TASK_LIMIT')
+      }
+      for (const update of updates) {
+        const prior = state.tasks.find(task => task.id === update.task.id)
+        const ownerId = update.task.ownerId
+        if (update.task.status === 'in_progress' && ownerId === undefined) {
+          throw new TeamError(`in-progress Task "${update.task.id}" needs an owner`, 'TEAM_INVALID_ARGUMENT')
+        }
+        if (ownerId !== undefined && ownerId !== prior?.ownerId && ownerId !== root.id
+          && !state.members.some(member => member.id === ownerId && member.phase === 'active')) {
+          throw new TeamError(`Task "${update.task.id}" owner is not active`, 'TEAM_MEMBER_NOT_FOUND')
+        }
+      }
+      await this.journal.appendAndFlush(root, 'team/task/transaction', {
+        version: 1, teamId: TeamId(root.id), updates,
+        extension: { id: extensionId, dataJson: plan.dataJson },
+      })
+      const committed = this.journal.state(root)
+      return updates.map(update => projectTaskView(committed, update.task))
     })
   }
 

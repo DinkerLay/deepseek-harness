@@ -743,6 +743,8 @@ export interface Config {
   readonly maxTasks?: number
   /** Maximum queued messages without delivery or cancellation for one target member. */
   readonly maxPendingMessagesPerMember?: number
+  /** Maximum UTF-8 bytes in one extension-owned Task transaction payload. */
+  readonly maxTaskExtensionBytes?: number
   /** Maximum UTF-8 bytes in one complete sender-framed delivery. */
   readonly maxMessageBytes?: number
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
@@ -750,7 +752,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/experimental/agent-team/src/types.ts:180`](../packages/experimental/agent-team/src/types.ts)
+来源： [`packages/experimental/agent-team/src/types.ts:200`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-api-speech-to-text"></a>
 

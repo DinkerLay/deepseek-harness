@@ -84,6 +84,34 @@ interface TeamTaskSnapshot {
 
 `pending` 表示尚未开始或已经释放，`in_progress` 携带 owner，`completed` 满足 blocker，`deleted` 是保留的 tombstone。view 会添加 owner name、readiness 和 write-scope 重叠警告，但不会改变持久快照。
 
+可选的 Host 写入方能在一条 `team/task/transaction` 事件中提交多个原生 Task 快照。注册的写入方在 Team 事务锁内取得脱离原状态的 Board 快照；每个现有 Task 必须匹配其上一修订，新分配的数字 id 必须连续。原生投影校验最终 DAG，只折叠 Task 值。扩展拥有同一事件中的 JSON 字符串，可为验收详情单独注册投影，但不能取代原生 Board。
+
+```ts type-equiv
+/** One new or next-revision Task written by an optional Team extension. */
+interface TeamTaskTransactionUpdate {
+  /** Null creates a new Task; otherwise the current revision must match. */
+  readonly previousRevision: number | null
+  readonly task: TeamTaskSnapshot
+}
+```
+
+```ts type-equiv
+/** Detached native Team state available to one synchronous extension planner. */
+interface TeamTaskTransactionSnapshot {
+  readonly tasks: readonly TeamTaskSnapshot[]
+  readonly members: readonly TeamMemberSnapshot[]
+  readonly nextTaskNumber: number
+}
+```
+
+```ts type-equiv
+/** Atomic native Task updates with opaque extension-owned JSON. */
+interface TeamTaskTransactionPlan {
+  readonly updates: readonly TeamTaskTransactionUpdate[]
+  readonly dataJson: string
+}
+```
+
 <a id="web-projection"></a>
 
 ## Web 投影
@@ -206,6 +234,13 @@ async cancelPendingMessages(caller: Agent, targetName: string, reason: string): 
  * @returns the revision-one task view.
  */
 async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>
+
+/**
+ * Install one product Task writer while retaining the native Team Board and Session log.
+ * @param writer - create/update policy and stable extension event identifier.
+ * @returns an effect-owned transaction capability and disposer.
+ */
+installTaskExtension(writer: TeamTaskExtension): TeamTaskExtensionHandle
 
 /**
  * Return one task, including a deleted tombstone.

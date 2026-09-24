@@ -177,6 +177,7 @@ describe('Team identity and provisioning', () => {
       'maxTasks',
       'maxPendingMessagesPerMember',
       'maxMessageBytes',
+      'maxTaskExtensionBytes',
       'disposalTimeoutMs',
     ] as const
     for (const field of fields) {
@@ -744,6 +745,86 @@ describe('Team identity and provisioning', () => {
 })
 
 describe('Team shared task DAG', () => {
+  it('rejects malformed or oversized extension data before any Task event is committed', async () => {
+    const { ctx, lead } = await setup([], { maxTaskExtensionBytes: 8 })
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'bounded-writer', create: unavailable, update: unavailable,
+    })
+    const first = {
+      id: TeamTaskId('task-1'), revision: 1, subject: 'bounded', description: 'bounded extension',
+      status: 'pending' as const, blockedBy: [], writeScopes: [],
+    }
+    const updates = [{ previousRevision: null, task: first }]
+    await expect(handle.commit(lead, () => ({ updates, dataJson: '123456789' })))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_TOO_LARGE' })
+    await expect(handle.commit(lead, () => ({ updates, dataJson: 'not-json' })))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_INVALID' })
+    expect(ctx.agentTeams.listTasks(lead)).toEqual([])
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/task/transaction')).toEqual([])
+    handle.dispose()
+  })
+
+  it('lets one outer writer atomically update the native Board without a second Team service', async () => {
+    const { ctx, lead } = await setup([])
+    const routedCreate = vi.fn(async () => { throw new Error('outer create policy reached') })
+    const routedUpdate = vi.fn(async () => { throw new Error('outer update policy reached') })
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'test-task-writer', create: routedCreate, update: routedUpdate,
+    })
+    await expect(ctx.agentTeams.createTask(lead, { subject: 'routed', description: 'not a native write' }))
+      .rejects.toThrow('outer create policy reached')
+    expect(routedCreate).toHaveBeenCalledOnce()
+    expect(() => ctx.agentTeams.installTaskExtension({
+      id: 'second', create: routedCreate, update: routedUpdate,
+    })).toThrow()
+
+    const created = await handle.commit(lead, (snapshot) => {
+      expect(snapshot.tasks).toEqual([])
+      expect(snapshot.nextTaskNumber).toBe(1)
+      const first = {
+        id: TeamTaskId('task-1'), revision: 1, subject: 'source', description: 'source work',
+        status: 'pending' as const, blockedBy: [], writeScopes: [],
+      }
+      const second = {
+        id: TeamTaskId('task-2'), revision: 1, subject: 'consumer', description: 'consumer work',
+        status: 'pending' as const, blockedBy: [first.id], writeScopes: [],
+      }
+      return { updates: [
+        { previousRevision: null, task: first },
+        { previousRevision: null, task: second },
+      ], dataJson: JSON.stringify({ attemptPolicy: 'reviewed' }) }
+    })
+    expect(created.map(task => task.id)).toEqual([TeamTaskId('task-1'), TeamTaskId('task-2')])
+    expect(ctx.agentTeams.listTasks(lead).map(task => task.id)).toEqual(created.map(task => task.id))
+    const events = lead.session.snapshotEvents()
+    expect(events.filter(event => event.type === 'team/task/transaction')).toHaveLength(1)
+    expect(events.filter(event => event.type === 'team/task')).toHaveLength(0)
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: TeamTaskId('task-1'), expectedRevision: 1, action: 'edit', subject: 'routed',
+    })).rejects.toThrow('outer update policy reached')
+    expect(routedUpdate).toHaveBeenCalledOnce()
+
+    const changed = await handle.commit(lead, snapshot => ({
+      updates: [
+        { previousRevision: 1, task: { ...snapshot.tasks[0]!, revision: 2, status: 'deleted' } },
+        { previousRevision: 1, task: { ...snapshot.tasks[1]!, revision: 2, blockedBy: [] } },
+      ],
+      dataJson: JSON.stringify({ graphEdit: true }),
+    }))
+    expect(changed.map(task => task.revision)).toEqual([2, 2])
+    expect(ctx.agentTeams.listTasks(lead).map(task => task.id)).toEqual([TeamTaskId('task-2')])
+    await expect(handle.commit(lead, () => ({
+      updates: [{ previousRevision: 1, task: { ...durable(lead).tasks[1]!, revision: 2 } }],
+      dataJson: '{}',
+    }))).rejects.toMatchObject({ code: 'TEAM_TASK_STALE_REVISION' })
+    handle.dispose()
+    await expect(handle.commit(lead, () => ({ updates: [], dataJson: '{}' })))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
+    expect((await ctx.agentTeams.createTask(lead, { subject: 'native again', description: 'default writer' })).id)
+      .toBe(TeamTaskId('task-3'))
+  })
+
   it('fails loudly when the durable numeric task id space is exhausted', async () => {
     const { ctx, lead } = await setup([])
     const id = TeamTaskId(`task-${Number.MAX_SAFE_INTEGER}`)

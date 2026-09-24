@@ -211,6 +211,40 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(1))])).toThrow(/revision is not contiguous/)
   })
 
+  it('replays one extension-owned Task batch as one native Board change', () => {
+    const first = task()
+    const second = task({ id: TeamTaskId('task-2'), blockedBy: [first.id] })
+    const create = event('team/task/transaction', {
+      version: 1, teamId: TEAM,
+      updates: [
+        { previousRevision: null, task: first },
+        { previousRevision: null, task: second },
+      ],
+      extension: { id: 'product-task', dataJson: '{"attempts":[]}' },
+    }, SessionSeq(0))
+    const created = projectTeam(ROOT, [create])
+    expect(created.tasks.map(row => row.id)).toEqual([first.id, second.id])
+    expect(created.nextTaskNumber).toBe(3)
+    const change = event('team/task/transaction', {
+      version: 1, teamId: TEAM,
+      updates: [
+        { previousRevision: 1, task: { ...first, revision: 2, status: 'deleted' } },
+        { previousRevision: 1, task: { ...second, revision: 2, blockedBy: [] } },
+      ],
+      extension: { id: 'product-task', dataJson: '{"graphEdit":true}' },
+    }, SessionSeq(1))
+    const changed = projectTeam(ROOT, [create, change])
+    expect(changed.tasks.map(row => row.status)).toEqual(['deleted', 'pending'])
+    expect(() => projectTeam(ROOT, [create, change, change])).toThrow(/stale Task/)
+    expect(() => projectTeam(ROOT, [event('team/task/transaction', {
+      ...create.data,
+      updates: [
+        { previousRevision: null, task: { ...first, blockedBy: [second.id] } },
+        { previousRevision: null, task: second },
+      ],
+    }, SessionSeq(0))])).toThrow(/dependency cycle/)
+  })
+
   it('rejects every invalid persisted task dependency relation', () => {
     const first = event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(0))
     const second = event('team/task', {

@@ -102,6 +102,26 @@ export interface TeamTaskSnapshot {
   readonly writeScopes: string[]
 }
 
+/** One new or next-revision Task written by an optional Team extension. */
+export interface TeamTaskTransactionUpdate {
+  /** Null creates a new Task; otherwise the current revision must match. */
+  readonly previousRevision: number | null
+  readonly task: TeamTaskSnapshot
+}
+
+/** Detached native Team state available to one synchronous extension planner. */
+export interface TeamTaskTransactionSnapshot {
+  readonly tasks: readonly TeamTaskSnapshot[]
+  readonly members: readonly TeamMemberSnapshot[]
+  readonly nextTaskNumber: number
+}
+
+/** Atomic native Task updates with opaque extension-owned JSON. */
+export interface TeamTaskTransactionPlan {
+  readonly updates: readonly TeamTaskTransactionUpdate[]
+  readonly dataJson: string
+}
+
 /** Runtime-enriched task view returned to tools and hosts. */
 export interface TeamTaskView {
   readonly id: TeamTaskId
@@ -186,6 +206,8 @@ export interface Config {
   readonly maxTasks?: number
   /** Maximum queued messages without delivery or cancellation for one target member. */
   readonly maxPendingMessagesPerMember?: number
+  /** Maximum UTF-8 bytes in one extension-owned Task transaction payload. */
+  readonly maxTaskExtensionBytes?: number
   /** Maximum UTF-8 bytes in one complete sender-framed delivery. */
   readonly maxMessageBytes?: number
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
@@ -266,6 +288,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     'team/member/configured': { version: 3; teamId: TeamId; member: TeamMemberSnapshot }
     /** Whole shared-task value, stored only in the Team Lead Session. */
     'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot }
+    /** One atomic Task update batch and extension record in the Lead Session. */
+    'team/task/transaction': {
+      version: 1
+      teamId: TeamId
+      updates: TeamTaskTransactionUpdate[]
+      extension: { id: string; dataJson: string }
+    }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
     /** Durable acknowledgement that the target Session recorded the message. */

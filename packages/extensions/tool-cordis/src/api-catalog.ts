@@ -365,6 +365,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the revision-one task view.',
       },
       {
+        signature: 'installTaskExtension(writer: TeamTaskExtension): TeamTaskExtensionHandle',
+        description: 'Install one product Task writer while retaining the native Team Board and Session log.',
+        parameters: [{ name: 'writer', description: 'create/update policy and stable extension event identifier.' }],
+        returns: 'an effect-owned transaction capability and disposer.',
+      },
+      {
         signature: 'getTask(caller: Agent, id: TeamTaskId): TeamTaskView',
         description: 'Return one task, including a deleted tombstone.',
         parameters: [{ name: 'caller', description: 'exact live Team member reading the task.' }, { name: 'id', description: 'Team-local task identity.' }],
@@ -7072,8 +7078,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeamMemberPhase',
+    declaration: 'export type TeamMemberPhase = \'provisioning\' | \'active\' | \'failed\' | \'retiring\' | \'retired\';',
+  },
+  {
     name: 'TeamMembership',
     declaration: 'export interface TeamMembership {\n    readonly root: Agent;\n    readonly id: TeamId;\n    readonly role: \'lead\' | \'teammate\';\n    readonly name: string;\n}',
+  },
+  {
+    name: 'TeamMemberSnapshot',
+    declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly preset?: TeamPresetBinding;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
   },
   {
     name: 'TeamMemberView',
@@ -7092,12 +7106,40 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamTaskAction = \'claim\' | \'release\' | \'edit\' | \'set_dependencies\' | \'complete\' | \'reopen\' | \'reassign\' | \'delete\';',
   },
   {
+    name: 'TeamTaskExtension',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+  },
+  {
+    name: 'TeamTaskExtensionHandle',
+    declaration: 'export interface TeamTaskExtensionHandle {\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    dispose(): void;\n}',
+  },
+  {
     name: 'TeamTaskId',
     declaration: 'export type TeamTaskId = Branded<\'TeamTaskId\'>;',
   },
   {
+    name: 'TeamTaskSnapshot',
+    declaration: 'export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n}',
+  },
+  {
     name: 'TeamTaskStatus',
     declaration: 'export type TeamTaskStatus = \'pending\' | \'in_progress\' | \'completed\' | \'deleted\';',
+  },
+  {
+    name: 'TeamTaskTransactionBuilder',
+    declaration: 'export type TeamTaskTransactionBuilder = (snapshot: TeamTaskTransactionSnapshot) => TeamTaskTransactionPlan;',
+  },
+  {
+    name: 'TeamTaskTransactionPlan',
+    declaration: 'export interface TeamTaskTransactionPlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n}',
+  },
+  {
+    name: 'TeamTaskTransactionSnapshot',
+    declaration: 'export interface TeamTaskTransactionSnapshot {\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly nextTaskNumber: number;\n}',
+  },
+  {
+    name: 'TeamTaskTransactionUpdate',
+    declaration: 'export interface TeamTaskTransactionUpdate {\n    readonly previousRevision: number | null;\n    readonly task: TeamTaskSnapshot;\n}',
   },
   {
     name: 'TeamTaskView',

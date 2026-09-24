@@ -30,6 +30,17 @@ export function assertTaskGraphCandidate(
   const tasks = new Map(current.map(task => [task.id, task]))
   tasks.set(candidate.id, candidate)
 
+  assertTaskGraph([...tasks.values()])
+}
+
+/**
+ * Validate the complete active DAG after a multi-Task transaction.
+ * @param current - final Task snapshots, including retained tombstones.
+ * @throws {TeamTaskGraphError} when an active dependency is missing, duplicated, self-referential, or cyclic.
+ */
+export function assertTaskGraph(current: readonly TeamTaskSnapshot[]): void {
+  const tasks = new Map(current.map(task => [task.id, task]))
+
   for (const task of tasks.values()) {
     if (task.status === 'deleted') continue
     const seen = new Set<TeamTaskId>()

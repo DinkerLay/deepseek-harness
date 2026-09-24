@@ -84,6 +84,34 @@ interface TeamTaskSnapshot {
 
 `pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
 
+An optional Host writer can submit several native Task snapshots in one `team/task/transaction` event. The registered writer receives a detached Board snapshot under the Team transaction lock; each existing Task must match its previous revision, and newly allocated numeric ids are sequential. The native projection validates the final DAG and folds only Task values. The extension owns the JSON string in the same event and may register a separate projection for its review details; it cannot replace the native Board.
+
+```ts type-equiv
+/** One new or next-revision Task written by an optional Team extension. */
+interface TeamTaskTransactionUpdate {
+  /** Null creates a new Task; otherwise the current revision must match. */
+  readonly previousRevision: number | null
+  readonly task: TeamTaskSnapshot
+}
+```
+
+```ts type-equiv
+/** Detached native Team state available to one synchronous extension planner. */
+interface TeamTaskTransactionSnapshot {
+  readonly tasks: readonly TeamTaskSnapshot[]
+  readonly members: readonly TeamMemberSnapshot[]
+  readonly nextTaskNumber: number
+}
+```
+
+```ts type-equiv
+/** Atomic native Task updates with opaque extension-owned JSON. */
+interface TeamTaskTransactionPlan {
+  readonly updates: readonly TeamTaskTransactionUpdate[]
+  readonly dataJson: string
+}
+```
+
 <a id="web-projection"></a>
 
 ## Web projection
@@ -206,6 +234,13 @@ async cancelPendingMessages(caller: Agent, targetName: string, reason: string): 
  * @returns the revision-one task view.
  */
 async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>
+
+/**
+ * Install one product Task writer while retaining the native Team Board and Session log.
+ * @param writer - create/update policy and stable extension event identifier.
+ * @returns an effect-owned transaction capability and disposer.
+ */
+installTaskExtension(writer: TeamTaskExtension): TeamTaskExtensionHandle
 
 /**
  * Return one task, including a deleted tombstone.

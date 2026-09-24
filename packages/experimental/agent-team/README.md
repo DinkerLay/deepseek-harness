@@ -52,6 +52,7 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxActiveMembers` | `16` | Maximum provisioning, active, or retiring teammates at once |
 | `maxTasks` | `256` | Maximum active tasks on the board |
 | `maxPendingMessagesPerMember` | `64` | Maximum queued, unsettled messages for one member |
+| `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Task event |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
 | `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
 
@@ -82,6 +83,8 @@ If a target cannot resume, the Lead can cancel its undelivered messages with a r
 Any member can add a task with a title, details, optional dependencies on other tasks, and optional hints about which files it will touch. A task is claimable only when everything it depends on is complete.
 
 Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
+
+An optional Host Task extension can replace only the native create/update writer while keeping the same Team roster, Board, and Lead Session log. Without it, the official task tools retain their normal behavior. The installed extension receives a private commit handle; a batch checks current revisions and the final dependency DAG, then stores all Task snapshots with extension-owned JSON in one event. The native projection ignores that JSON and keeps publishing only the Board. Extension code must validate its own JSON when it replays the same event.
 
 File hints produce warnings when two in-progress tasks plan to touch overlapping paths — they never block anything. Deleted tasks remain in history but disappear from the active list.
 
@@ -127,6 +130,8 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/journal.ts`](src/journal.ts) | Serialized Lead-log transactions and commit notification |
 | [`src/projection.ts`](src/projection.ts) | Strict replay projection that decodes and validates Team events and publishes the `agentTeam` client view |
 | [`src/task-view.ts`](src/task-view.ts) | Pure task readiness, owner-name, and write-overlap derivation shared by the task board and the client view |
+| [`src/task-extension.ts`](src/task-extension.ts) | Host-only registered writer and atomic commit capability |
+| [`src/task-transaction.ts`](src/task-transaction.ts) | Pure revision and final-DAG validation for Task batches |
 | [`src/activity.ts`](src/activity.ts) | One-shot change waiters and disposal release |
 | [`src/lifecycle.ts`](src/lifecycle.ts) | Shared admission cutoff and bounded settlement |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion that replays candidate events before append |
@@ -149,17 +154,19 @@ Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continu
 
 Tasks are complete versioned snapshots; every mutation carries `expectedRevision`, and a stale caller receives `TEAM_TASK_STALE_REVISION` instead of overwriting a newer value. Numeric `task-<n>` ids require a safe-integer suffix, and id-space exhaustion reports `TEAM_TASK_LIMIT` instead of reusing the final id. Deleted tasks remain tombstones for replay and id stability but do not consume `maxTasks` or appear in `listTasks()`. `writeScopes` are normalized workspace-relative prefixes; views warn on overlap with in-progress tasks but never block claim or authorize writes.
 
+`installTaskExtension()` accepts one writer and returns a disposable commit capability. While registered, every native `createTask()` and `updateTask()` call delegates to that writer, including calls from the shipped model tools; there is no direct version-two write path around it. The commit builder receives detached tasks and members under the Team transaction lock and must return synchronously. One `team/task/transaction` event stores its complete Task updates and JSON; the native projection checks contiguous revisions, sequential numeric ids and the final acyclic graph before publishing. Disposal restores the default writer. The Host plugin must own and dispose the handle through its Cordis effect.
+
 ### Waiting and interruption
 
 `waitForChange()` waits for one roster, task, mailbox, or live-status edge that occurs after registration, from ten seconds through one hour, and reports only whether it timed out; runtime disposal releases current waits. Cancellation preserves an Error reason or reports a non-Error reason through `TEAM_WAIT_ABORTED`. `interrupt()` is Lead-only and delegates to the continuable-subagent interrupt path, which cancels only a live teammate's current turn with `keepInbox`; it neither releases task ownership nor deletes durable mail.
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/member/configured`, `team/task`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 9 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 10 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
 
 ### Disposal
 
