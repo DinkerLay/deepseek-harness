@@ -1981,6 +1981,12 @@ class FaceAnalyzer {
     if (declaration === undefined) return false
     const registration = this.registrationForFile(declaration.getSourceFile().fileName)
     if (registration?.name === '@deepseek-ai/dsh-typert-protocol') return true
+    // External consumers resolve the published declaration module, which has neither a workspace registration nor an ambient wrapper.
+    const localName = ts.isIdentifier(node) ? node.text
+      : ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) ? node.expression.text : undefined
+    const imported = localName === undefined ? undefined : importBindingOf(node.getSourceFile(), localName)
+    if (imported?.specifier === '@deepseek-ai/dsh-typert-protocol'
+      && (imported.name === name || imported.name === undefined && ts.isPropertyAccessExpression(node))) return true
     for (let current: ts.Node | undefined = declaration; current !== undefined; current = optionalParent(current)) {
       if (ts.isModuleDeclaration(current)
         && ts.isStringLiteral(current.name)

@@ -203,6 +203,15 @@ export function applyChildComposition(
   composition: ChildComposition,
 ): void {
   childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx)
+  applyDelegatedComposition(childCtx, composition)
+}
+
+/**
+ * Install delegated prompt and tool restrictions after a caller binds an explicit preset.
+ * @param childCtx - unpublished child scope with its preset already bound.
+ * @param composition - captured persona and tool restrictions.
+ */
+export function applyDelegatedComposition(childCtx: Context, composition: ChildComposition): void {
   childCtx.systemPrompt.context({
     name: 'subagent:delegation',
     order: childCtx.systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),

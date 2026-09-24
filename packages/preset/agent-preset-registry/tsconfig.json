@@ -8,6 +8,7 @@
     "src"
   ],
   "references": [
+    { "path": "../../util/values" },
     {
       "path": "../../boot/app-boot"
     },

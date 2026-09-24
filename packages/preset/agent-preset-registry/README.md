@@ -47,6 +47,8 @@ The Web definitions come from the `dsh-web-app` bundle. Definitions are ordinary
 
 The registry writes no declarations. The `read` Remote renders one declaration’s child list back as entry-list YAML (`!!js` conditions included) so a client can show what a preset composes; nothing accepts YAML back. A new preset or an override of a shipped one is a bundle patch: an `insert` of a `@deepseek-ai/dsh-agent-preset` row, or a patch keyed by that row’s id, installed into the profile with `plugin_manager`; Creator mode authors such bundles in conversation.
 
+Host code preparing a new Agent can retain one composition with `acquireComposition(id)`, then call the lease’s `mount(agentCtx)` inside the Agent factory setup callback. The lease keeps the selected revision even if its declaration is replaced or removed during preparation. Release the lease on success or failure; a mounted Agent keeps its own reference. A released lease, closed or already bound scope, or published Agent cannot receive a new binding through this interface. This process-local lease neither persists old revisions nor relaxes the started-session selection guard.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

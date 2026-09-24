@@ -1,5 +1,7 @@
 /** Declarative Agent capability sets, activation and session binding. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context, FiberState } from '@deepseek-ai/cordis'
+import { createHash } from 'node:crypto'
+import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import z from '@deepseek-ai/schemastery'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { bindScopeParent, createScope, scopeOf, type Scope, type ScopeKey, type ScopeParentBinding } from '@deepseek-ai/dsh-scope'
@@ -11,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { AgentPresetDocument, AgentPresetRoster } from './types.ts'
 import { entryListProblem, type PresetDefinition } from './definition.ts'
-import type { AgentPreset, Config } from './preset.ts'
+import type { AgentPreset, Config, PresetCompositionLease } from './preset.ts'
 import { agentPresetProjectionDefinition } from './session.ts'
 import { auditRows, mountPreset, standingMountFor, serviceForAgent, type PresetMount } from './mount.ts'
 import { definitionComposition, mountedCompositionRows, type AgentPresetComposition } from './composition-inventory.ts'
@@ -19,7 +21,7 @@ import { definitionComposition, mountedCompositionRows, type AgentPresetComposit
 export { agentPresetProjectionDefinition } from './session.ts'
 export { entryListProblem, type PresetDefinition } from './definition.ts'
 export { auditRows, livePresetMounts, leakedServices, serviceForAgent, standingMountFor, type PresetMount, type RowAudit } from './mount.ts'
-export type { AgentPreset, Config } from './preset.ts'
+export type { AgentPreset, Config, PresetCompositionLease } from './preset.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -33,6 +35,7 @@ interface Generation {
   mount: PresetMount
   users: number
   retired: boolean
+  revision: string | undefined
 }
 interface Definition {
   config: PresetDefinition
@@ -112,8 +115,12 @@ export class AgentPresetRegistry extends TypertRemoteService {
       const problem = entryListProblem(record.config.plugins)
       if (problem !== undefined) throw new Error(problem)
       const context = scope.ctx.extend({ baseUrl: record.context.baseUrl })
-      const mount = await mountPreset(context, record.config.id, record.config.plugins)
-      const generation: Generation = { scope, key, mount, users: 0, retired: false }
+      const captured = snapshotJsonValue(record.config.plugins)
+      const revision = captured === undefined ? undefined : createHash('sha256')
+        .update(JSON.stringify({ id: record.config.id, baseUrl: String(record.context.baseUrl), plugins: captured }))
+        .digest('hex')
+      const mount = await mountPreset(context, record.config.id, captured ?? record.config.plugins)
+      const generation: Generation = { scope, key, mount, users: 0, retired: false, revision }
       this.generations.set(key, generation)
       record.generation = generation
     } catch (error) {
@@ -353,6 +360,49 @@ export class AgentPresetRegistry extends TypertRemoteService {
       generation.users--
       await this.collect(generation)
     } }
+  }
+
+  /**
+   * Retain the selected composition for asynchronous Agent preparation without re-resolving its id.
+   * Definition replacement/removal does not change this lease; releasing it prevents future mounts.
+   * A successful mount owns its own binding reference after the caller releases the lease.
+   * The lease does not serialize configuration or retain revisions across process restarts.
+   * @param id - preset identity or the current default.
+   * @returns a caller-owned composition lease; dispose it after creation succeeds or fails.
+   */
+  async acquireComposition(id?: string): Promise<PresetCompositionLease> {
+    const generation = await this.retain(id)
+    let disposed = false
+    return {
+      id: generation.mount.presetId,
+      revision: generation.revision,
+      // oxlint-disable-next-line typescript/require-await -- setup callers receive rejected promises for invalid leases.
+      mount: async (ctx) => {
+        if (disposed) throw new Error('Preset composition lease has been released')
+        if (ctx.root.fiber !== this.owner.root.fiber) throw new Error('Preset composition lease belongs to another Host')
+        if ([FiberState.UNLOADING, FiberState.DISPOSED, FiberState.FAILED].includes(this.owner.fiber.state)) {
+          throw new Error('Preset composition registry has been closed')
+        }
+        const key = scopeOf(ctx)
+        if (key === undefined) throw new Error('Preset composition lease requires a scoped context')
+        if ([FiberState.UNLOADING, FiberState.DISPOSED, FiberState.FAILED].includes(ctx.fiber.state)) {
+          throw new Error('Preset composition lease cannot bind a closed scope')
+        }
+        if (this.bindings.has(key)) throw new Error('Preset composition lease cannot replace an existing binding')
+        if (this.owner.get('agents')?.list().some(agent => scopeOf(agent.ctx) === key)) {
+          throw new Error('Preset composition lease cannot bind a published Agent')
+        }
+        // No await between checking the lease and joining: release cannot race the binding increment.
+        this.join(ctx, key, generation)
+        return { id: generation.mount.presetId }
+      },
+      [Symbol.asyncDispose]: async () => {
+        if (disposed) return
+        disposed = true
+        generation.users--
+        await this.collect(generation)
+      },
+    }
   }
 
   /** Read plugin rows without creating an Agent.
