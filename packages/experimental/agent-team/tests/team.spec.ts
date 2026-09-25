@@ -397,6 +397,10 @@ describe('Team identity and provisioning', () => {
     const released = await ctx.agentTeams.updateTask(child, {
       taskId: claimed.id, expectedRevision: claimed.revision, action: 'release',
     })
+    expect(child.status).toBe('running')
+    await expect(ctx.agentTeams.updateTask(child, {
+      taskId: claimed.id, expectedRevision: claimed.revision, action: 'complete',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_STALE_REVISION' })
     await ctx.agentTeams.updateTask(lead, {
       taskId: claimed.id, expectedRevision: released.revision, action: 'reassign', owner: 'lead',
     })

@@ -13,7 +13,7 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService, { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamId, TeamMessageId } from '../src/index.ts'
+import TeamService, { TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
 import type { TeamMailbox } from '../src/mailbox.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
@@ -325,6 +325,56 @@ for (const backend of backends) {
         : [])
       expect(peerIds).toEqual([queued.messageId])
 
+      await rootHandle.dispose()
+      await second.dispose()
+    })
+
+    it('recovers a Task and its assignment notice together after pre-delivery restart', {
+      timeout: PERSISTENCE_TEST_TIMEOUT_MS,
+    }, async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), `dsh-team-task-notice-${backend.name.toLowerCase()}-`))
+      roots.push(storageRoot)
+      const rootId = SessionId(`${backend.name.toLowerCase()}-task-notice-root`)
+      const noticeId = TeamMessageId(`${backend.name.toLowerCase()}-task-notice`)
+      const first = await stack(backend, storageRoot, [textResponse('initial teammate answer')])
+      const lead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const started = await first.ctx.agentTeams.spawnTeammate(lead, {
+        name: 'task-worker', description: 'durable Task notice worker',
+        prompt: [{ type: 'text', text: 'finish before assignment' }],
+        context: 'fresh', provider: 'spawn', signal: SIGNAL,
+      })
+      await vi.waitFor(() => { expect(first.ctx.agents.get(started.member.id)).toBeUndefined() }, { timeout: 5_000 })
+      vi.spyOn(first.ctx.sessionPersistence, 'open')
+        .mockRejectedValueOnce(new Error('temporary target read failure'))
+      const unavailable = async (): Promise<never> => { throw new Error('not used') }
+      const writer = first.ctx.agentTeams.installTaskExtension({
+        id: 'task-notice-recovery', create: unavailable, update: unavailable,
+      })
+      await writer.commit(lead, () => ({
+        updates: [{ previousRevision: null, task: {
+          id: TeamTaskId('task-1'), revision: 1, subject: 'Recovered assignment',
+          description: 'Work after restart', status: 'pending', blockedBy: [], writeScopes: [],
+        } }],
+        dataJson: '{}',
+        notices: [{ id: noticeId, senderId: rootId, senderName: 'lead',
+          targetId: started.member.id, content: [{ type: 'text', text: 'Task task-1 is assigned' }] }],
+      }))
+      expect(durable(lead).pendingMessages.map(message => message.id)).toEqual([noticeId])
+      expect(durable(lead).tasks.map(task => task.id)).toEqual([TeamTaskId('task-1')])
+      writer.dispose()
+      await first.dispose()
+
+      const second = await stack(backend, storageRoot, [textResponse('resumed teammate answer')])
+      const rootHandle = await second.ctx.agents.resume({
+        resumeSessionId: rootId, agentOptions: { provider: 'mock', model: 'mock' },
+      })
+      await vi.waitFor(() => { expect(second.ctx.agents.get(started.member.id)).toBeUndefined() }, { timeout: 5_000 })
+      await vi.waitFor(() => { expect(durable(rootHandle.agent).pendingMessages).toEqual([]) })
+      expect(second.ctx.agentTeams.listTasks(rootHandle.agent).map(task => task.id)).toEqual([TeamTaskId('task-1')])
+      const child = await storedEvents(second.ctx, started.member.id)
+      expect(child.flatMap(event => event.type === 'user/message'
+        && event.data.source.kind === 'team-message' ? [event.data.source.messageId] : []))
+        .toEqual([noticeId])
       await rootHandle.dispose()
       await second.dispose()
     })

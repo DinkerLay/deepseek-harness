@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
 import type {} from '@deepseek-ai/dsh-experimental-agent-team'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -79,6 +79,18 @@ describe('web e2e: Agent Teams panel', () => {
   afterAll(async () => {
     await browser?.close()
     await scaffold?.close()
+  })
+
+  it('rejects a direct delegation call from the assembled Web Team Lead', async () => {
+    const lead = scaffold.ctx.agents.list()[0]
+    if (lead === undefined) throw new Error('connected Team workspace did not create a Lead')
+    const result = await scaffold.ctx.tools.execute({
+      callId: ToolCallId('web-team-bypass-check'), name: 'subagent',
+      arguments: {}, agent: lead, signal: new AbortController().signal,
+    })
+    expect(result.isError).toBe(true)
+    expect(result.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''))
+      .toContain('Team members must delegate through Agent Team')
   })
 
   it('displays agent-owned task changes through a read-only board without a refresh action', async () => {

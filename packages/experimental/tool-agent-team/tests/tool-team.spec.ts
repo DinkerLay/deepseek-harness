@@ -69,6 +69,7 @@ async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   legacyControl = false,
   teamConfig: toolTeam.Config = {},
+  bypassTools: readonly string[] = [],
 ) {
   const ctx = new Context()
   contexts.add(ctx)
@@ -83,6 +84,14 @@ async function setup(
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
+  for (const toolName of bypassTools) {
+    ctx.tools.register(defineContentToolFixture({
+      name: toolName,
+      description: 'Delegation capability from the base composition.',
+      parameters: {},
+      async execute() { return [{ type: 'text', text: 'bypass ran' }] },
+    }))
+  }
   const fiber = await ctx.plugin(toolTeam, teamConfig)
   const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
@@ -141,6 +150,33 @@ async function waitNoAgent(ctx: Context, id: SessionId): Promise<void> {
 }
 
 describe('dsh-tool-team', () => {
+  it('denies direct delegation calls even when an unsafe composition exposes the tool', async () => {
+    const { ctx, lead, fiber } = await setup([], false, {}, ['subagent', 'workflow'])
+    const visible = () => ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
+    expect(ctx.tools.schemas().map(schema => schema.name)).toContain('subagent')
+    expect(visible()).toContain('subagent')
+    expect(visible()).toContain('workflow')
+    expect((await execute(ctx, lead, 'subagent', {})).isError).toBe(true)
+
+    ctx.tools.register(defineContentToolFixture({
+      name: 'ralph', description: 'Late-loaded delegation capability.', parameters: {},
+      async execute() { return [{ type: 'text', text: 'late bypass ran' }] },
+    }))
+    expect(visible()).toContain('ralph')
+    expect((await execute(ctx, lead, 'ralph', {})).isError).toBe(true)
+
+    lead.ctx.tools.register(defineContentToolFixture({
+      name: 'subagent_fork', description: 'Agent-local delegation capability.', parameters: {},
+      async execute() { return [{ type: 'text', text: 'local bypass ran' }] },
+    }))
+    expect(visible()).toContain('subagent_fork')
+    expect((await execute(ctx, lead, 'subagent_fork', {})).isError).toBe(true)
+
+    await fiber.dispose()
+    expect(visible()).toEqual(expect.arrayContaining(['subagent', 'workflow', 'ralph', 'subagent_fork']))
+    expect((await execute(ctx, lead, 'subagent', {})).isError).toBe(false)
+  })
+
   it.each(['running', 'inactive', 'provisioning', 'failed'] as const)(
     'projects %s members consistently in creation, listing, and schemas', async (status) => {
       const { ctx, lead } = await setup([])
@@ -784,6 +820,7 @@ describe('dsh-tool-team', () => {
     const reviewedPrompt = renderPrompt(await assembly(reviewed.ctx, reviewed.lead))
     expect(reviewedPrompt).toContain('team_task_submit_result')
     expect(reviewedPrompt).toContain('team_task_accept_result')
+    expect(reviewedPrompt).toContain('Releasing a Task cancels its Attempt but does not stop a running member turn')
     expect(reviewedPrompt).not.toContain('perform the work, then complete')
     expect(actions(reviewed.ctx, reviewed.lead)).not.toContain('complete')
     expect(actions(reviewed.ctx, reviewed.lead)).not.toContain('reopen')

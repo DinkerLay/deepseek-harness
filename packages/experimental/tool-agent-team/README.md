@@ -66,6 +66,8 @@ Creation and listing results identify members by `target`, with no member Sessio
 
 By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. Server-side Task policy remains authoritative in either mode.
 
+Releasing a Task cancels its Attempt but does not interrupt an executing member turn or undo file effects. To stop work, the Lead first calls `interrupt_agent`, waits for the member to become inactive, then releases the Task; stale results are rejected by the Task writer. A scoped monotonic guard also rejects direct calls to `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`, `workflow`, and `ralph` for Team members. The guard prevents execution but does not hide tools mounted by a Preset in the same Agent scope: product bundles must omit those plugin rows to keep them out of the model catalog.
+
 ### What success and failure look like
 
 Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. Task edits based on an outdated revision are rejected rather than overwriting newer work.

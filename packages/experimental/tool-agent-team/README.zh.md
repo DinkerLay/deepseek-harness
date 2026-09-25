@@ -66,6 +66,8 @@ kind: "package-reference"
 
 默认情况下，模型看到原生的「领取并完成」Task 流程。产品组合可以设置 `reviewedTasks: true`，改为引导成员提交结果、由 Lead 验收，并从面向模型的 `team_task_update` 操作枚举中移除 `complete` 和 `reopen`。两种模式下，服务端 Task 策略始终是最终裁决。
 
+放弃 Task 只取消对应 Attempt，不会中断成员正在执行的轮次，也不会撤销文件副作用。需要停止工作时，Lead 先调用 `interrupt_agent`，确认成员转为空闲，再放弃 Task；Task 写入方会拒绝迟到结果。作用域内的单调 guard 还会拒绝 Team 成员直接调用 `subagent`、`subagent_fork`、`subagent_codex`、`subagent_claude_code`、`workflow` 和 `ralph`。guard 能阻止执行，但不能隐藏 Preset 在同一 Agent scope 中装配的工具；产品 bundle 必须不装配这些插件行，才能让模型工具目录也看不到它们。
+
 ### 成功与失败的表现
 
 发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning 时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。

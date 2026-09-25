@@ -32,7 +32,7 @@ export const Config: z<Config> = z.object({
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
 const NATIVE_TASK_WORKFLOW = 'Shared-task workflow is list, get, claim with the current revision, perform the work, then complete.'
-const REVIEWED_TASK_WORKFLOW = 'Shared-task workflow is list/get, then claim or Lead reassign, perform the work, use team_task_review to read the running Attempt id, and call team_task_submit_result with that id and current revision. Submission does not complete the Task: the Lead checks it with team_task_review and calls team_task_accept_result. Quality rework uses team_task_rework to create a new Task. Do not use complete or reopen.'
+const REVIEWED_TASK_WORKFLOW = 'Shared-task workflow is list/get, then claim or Lead reassign, perform the work, use team_task_review to read the running Attempt id, and call team_task_submit_result with that id and current revision. Submission does not complete the Task: the Lead checks it with team_task_review and calls team_task_accept_result. Quality rework uses team_task_rework to create a new Task. Releasing a Task cancels its Attempt but does not stop a running member turn or undo file effects. To stop ongoing work, the Lead uses interrupt_agent, waits until that member is inactive, then releases the Task; a late result is rejected. Do not use complete or reopen.'
 const POLICY = (reviewedTasks: boolean): string => `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
 
 The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
@@ -46,6 +46,10 @@ const REVIEWED_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', '
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
+const BYPASS_DELEGATION_TOOLS = [
+  'subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'workflow', 'ralph',
+] as const
+const BYPASS_DELEGATION_NAMES: ReadonlySet<string> = new Set(BYPASS_DELEGATION_TOOLS)
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the
@@ -189,6 +193,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
   try {
+    // Product Presets omit these capabilities at composition time. The guard
+    // remains monotonic if a custom or misconfigured Preset exposes one.
+    register(scoped.tools.guard(exec => BYPASS_DELEGATION_NAMES.has(exec.name)
+      ? `Team members must delegate through Agent Team, not ${exec.name}` : undefined))
+
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
