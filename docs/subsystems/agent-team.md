@@ -16,6 +16,8 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Optional durable collaboration group; not the member's immutable address. */
+  readonly group?: string
   /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
   readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
@@ -24,6 +26,22 @@ interface TeamMemberSnapshot {
 ```
 
 Every member starts in `provisioning` and reaches `active` or `failed`. The Lead can move an active or failed member through `retiring` to `retired` after settling assignments and mail; the Session and immutable name remain. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
+
+A product composition may persist one immutable controlled-mode record before opening Team tools. The official composition leaves it absent. A controlled Team keeps its required Task writer and permission-table revision across restarts; member-to-member direct messages are rejected before queueing.
+
+```ts type-equiv
+/** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
+interface TeamControlledMode {
+  /** Controlled collaboration admits only the configured product Task writer. */
+  readonly kind: 'controlled'
+  /** Stable extension writer identity required for every controlled Task mutation. */
+  readonly requiredTaskExtensionId: string
+  /** Stable name of the product's preconfigured group-permission table. */
+  readonly permissionTableId: string
+  /** Fingerprint of the exact permission-table revision chosen for this Team. */
+  readonly permissionRevision: string
+}
+```
 
 ## Durable mailbox
 
@@ -79,6 +97,8 @@ interface TeamTaskSnapshot {
   readonly ownerId?: SessionId
   readonly blockedBy: TeamTaskId[]
   readonly writeScopes: string[]
+  /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
+  readonly resultUnavailable?: true
 }
 ```
 
@@ -128,6 +148,7 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly group?: string
   readonly preset?: TeamPresetBinding
   readonly error?: string
 }
@@ -145,6 +166,7 @@ interface TeamTaskView {
   readonly writeScopes: string[]
   readonly ownerName?: string
   readonly ready: boolean
+  readonly resultUnavailable?: true
   readonly writeScopeWarnings: string[]
 }
 ```
@@ -187,6 +209,13 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/**
+ * Read the immutable controlled-mode binding, if this Team opted in.
+ * @param agent - exact live Team caller.
+ * @returns the durable controlled-mode binding, or undefined for an official Team.
+ */
+controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
  * List the runtime-enriched roster visible to one Team member.

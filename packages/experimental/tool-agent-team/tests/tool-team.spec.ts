@@ -21,7 +21,7 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamMessageId } from '../../agent-team/src/index.ts'
+import TeamService, { TeamId, TeamMessageId } from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
 function serializeRequest(request: GenerateOptions) {
@@ -70,6 +70,7 @@ async function setup(
   legacyControl = false,
   teamConfig: toolTeam.Config = {},
   bypassTools: readonly string[] = [],
+  serviceConfig: ConstructorParameters<typeof TeamService>[1] = {},
 ) {
   const ctx = new Context()
   contexts.add(ctx)
@@ -83,7 +84,7 @@ async function setup(
   if (legacyControl) await ctx.plugin(ToolSubagentControl)
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
-  await ctx.plugin(TeamService)
+  await ctx.plugin(TeamService, serviceConfig)
   for (const toolName of bypassTools) {
     ctx.tools.register(defineContentToolFixture({
       name: toolName,
@@ -150,6 +151,48 @@ async function waitNoAgent(ctx: Context, id: SessionId): Promise<void> {
 }
 
 describe('dsh-tool-team', () => {
+  it('uses default-on controlled guidance and hides Lead-only tools from a teammate', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead } = await setup([], false,
+      { controlledTasks: true, reviewedTasks: true }, [], { controlledMode: mode })
+    const leadTools = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
+    expect(leadTools).toContain('spawn_teammate')
+    expect(leadTools).toContain('team_task_create')
+    expect(renderPrompt(await assembly(ctx, lead))).toContain('Agent Team is active by default')
+    const captured = vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockResolvedValue({ member: {
+      id: SessionId('controlled-created'), name: 'collector', role: 'teammate',
+      status: 'inactive', group: 'collectors', diagnostics: [],
+    } })
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'collector', description: 'Gather public evidence', group: 'collectors',
+    })
+    expect(spawned.isError).toBe(false)
+    expect(captured).toHaveBeenCalledWith(lead, expect.objectContaining({
+      name: 'collector', group: 'collectors', context: 'fresh',
+    }))
+    const firstPrompt = captured.mock.calls[0]?.[1]?.prompt[0]
+    expect(firstPrompt?.type === 'text' ? firstPrompt.text : '').toContain('Remain on standby')
+    const memberId = SessionId('controlled-member')
+    const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+      member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const child = await ctx.agents.create({ sessionId: memberId,
+      meta: { parentSession: lead.id }, agentOptions: {} })
+    const memberTools = ctx.tools.schemas(scopeOf(child.agent.ctx)).map(schema => schema.name)
+    expect(memberTools).toContain('team_task_list')
+    expect(memberTools).toContain('send_message')
+    expect(memberTools).not.toContain('spawn_teammate')
+    expect(memberTools).not.toContain('team_task_create')
+    expect(memberTools).not.toContain('interrupt_agent')
+    expect(ctx.tools.get('team_task_update', scopeOf(child.agent.ctx))?.parameters)
+      .toMatchObject({ properties: { action: { enum: ['release'] } } })
+    await child.dispose()
+  })
+
   it('denies direct delegation calls even when an unsafe composition exposes the tool', async () => {
     const { ctx, lead, fiber } = await setup([], false, {}, ['subagent', 'workflow'])
     const visible = () => ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)

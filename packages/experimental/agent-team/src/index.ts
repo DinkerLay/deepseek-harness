@@ -17,6 +17,7 @@ import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extensio
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   Config,
+  TeamControlledMode,
   CreateTeamTaskRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -61,6 +62,12 @@ export class TeamService extends Service {
   static inject = ['agents', 'sessions', 'sessionPersistence', 'sessionProjections', 'subagents']
 
   static Config: z<Config> = z.object({
+    controlledMode: z.union([z.object({
+      kind: z.const('controlled'),
+      requiredTaskExtensionId: z.string().required(),
+      permissionTableId: z.string().required(),
+      permissionRevision: z.string().required(),
+    }), z.const(undefined)]),
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
@@ -71,7 +78,7 @@ export class TeamService extends Service {
   })
 
   /** Validated deployment limits used by every Team operation. */
-  private readonly config: Required<Config>
+  private readonly config: Required<Omit<Config, 'controlledMode'>> & Pick<Config, 'controlledMode'>
 
   private readonly activity: TeamActivity
   private readonly lifecycle: TeamRuntimeLifecycle
@@ -83,6 +90,7 @@ export class TeamService extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
     this.config = {
+      ...config.controlledMode === undefined ? {} : { controlledMode: config.controlledMode },
       maxMembers: positiveLimit('maxMembers', config.maxMembers ?? DEFAULT_MAX_MEMBERS),
       maxActiveMembers: positiveLimit('maxActiveMembers', config.maxActiveMembers ?? DEFAULT_MAX_MEMBERS),
       maxTasks: positiveLimit('maxTasks', config.maxTasks ?? DEFAULT_MAX_TASKS),
@@ -102,7 +110,8 @@ export class TeamService extends Service {
 
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
-    this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) })
+    this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) },
+      this.config.controlledMode !== undefined)
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
     )
@@ -127,7 +136,10 @@ export class TeamService extends Service {
     )
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
-    ctx.on('agent/created', ({ agent }) => { this.scheduleRecovery(agent) })
+    ctx.on('agent/created', async ({ agent, source }) => {
+      await this.initializeControlledMode(agent, source)
+      this.scheduleRecovery(agent)
+    })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)
       if (membership !== undefined) this.activity.notify(membership.id)
@@ -152,6 +164,15 @@ export class TeamService extends Service {
    */
   membership(agent: Agent): TeamMembership {
     return this.roster.membership(agent)
+  }
+
+  /**
+   * Read the immutable controlled-mode binding, if this Team opted in.
+   * @param agent - exact live Team caller.
+   * @returns the durable controlled-mode binding, or undefined for an official Team.
+   */
+  controlledMode(agent: Agent): TeamControlledMode | undefined {
+    return this.journal.state(this.roster.membership(agent).root).mode
   }
 
   /**
@@ -282,6 +303,25 @@ export class TeamService extends Service {
    */
   tryMembership(agent: Agent): TeamMembership | undefined {
     return this.roster.tryMembership(agent)
+  }
+
+  /** Write the mode before any Team tool can be installed on a new root Agent. */
+  private async initializeControlledMode(agent: Agent, source: string): Promise<void> {
+    const configured = this.config.controlledMode
+    if (configured === undefined || source !== 'startup') return
+    const membership = this.roster.tryMembership(agent)
+    if (membership?.role !== 'lead') return
+    const root = membership.root
+    await this.journal.transact(root.id, async () => {
+      const state = this.journal.state(root)
+      if (state.mode !== undefined) return
+      // A historical product Team must not be silently converted by a resumed
+      // or incorrectly republished Agent. It remains read-only under this bundle.
+      if (state.members.length > 0 || state.tasks.length > 0 || state.messages.length > 0) return
+      await this.journal.appendAndFlush(root, 'team/mode', {
+        version: 1, teamId: TeamId(root.id), mode: configured,
+      })
+    })
   }
 
   /** Queue one contained recovery pass after publication has unwound. */

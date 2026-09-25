@@ -329,6 +329,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'its root, Team identity, role, and model-facing name.',
       },
       {
+        signature: 'controlledMode(agent: Agent): TeamControlledMode | undefined',
+        description: 'Read the immutable controlled-mode binding, if this Team opted in.',
+        parameters: [{ name: 'agent', description: 'exact live Team caller.' }],
+        returns: 'the durable controlled-mode binding, or undefined for an official Team.',
+      },
+      {
         signature: 'listMembers(agent: Agent): TeamMemberView[]',
         description: 'List the runtime-enriched roster visible to one Team member.',
         parameters: [{ name: 'agent', description: 'exact live Team member.' }],
@@ -5751,7 +5757,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetCompositionLease',
-    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
   },
   {
     name: 'PresetDefinition',
@@ -6767,7 +6773,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly group?: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -7074,6 +7080,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TableValueOf<S extends DomainSpec, N extends keyof S[\'tables\']> = S[\'tables\'][N] extends DomainTableSpec<string, infer V> ? V : never;',
   },
   {
+    name: 'TeamControlledMode',
+    declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n}',
+  },
+  {
     name: 'TeamId',
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
@@ -7087,11 +7097,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberSnapshot',
-    declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly preset?: TeamPresetBinding;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
+    declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly preset?: TeamPresetBinding;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageId',
@@ -7123,7 +7133,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskSnapshot',
-    declaration: 'export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n}',
+    declaration: 'export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly resultUnavailable?: true;\n}',
   },
   {
     name: 'TeamTaskStatus',
@@ -7147,7 +7157,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskView',
-    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly writeScopeWarnings: string[];\n}',
+    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly resultUnavailable?: true;\n    readonly writeScopeWarnings: string[];\n}',
   },
   {
     name: 'TeamWaitResult',

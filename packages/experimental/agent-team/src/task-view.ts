@@ -22,7 +22,10 @@ function scopesOverlap(left: string, right: string): boolean {
  * @returns whether the task has no incomplete blockers.
  */
 export function taskReady(state: TeamState, task: TeamTaskSnapshot): boolean {
-  return task.blockedBy.every(id => state.tasks.find(candidate => candidate.id === id)?.status === 'completed')
+  return task.blockedBy.every((id) => {
+    const blocker = state.tasks.find(candidate => candidate.id === id)
+    return blocker?.status === 'completed' && blocker.resultUnavailable !== true
+  })
 }
 
 /**
@@ -57,6 +60,7 @@ export function projectTaskView(state: TeamState, task: TeamTaskSnapshot): TeamT
     writeScopes: [...task.writeScopes],
     ...ownerName === undefined ? {} : { ownerName },
     ready: task.status === 'pending' && taskReady(state, task),
+    ...task.resultUnavailable === true ? { resultUnavailable: true as const } : {},
     writeScopeWarnings: [...warnings],
   }
 }

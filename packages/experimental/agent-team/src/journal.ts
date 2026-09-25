@@ -3,6 +3,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
+import { TeamError } from './error.ts'
 import type { TeamEventType, TeamState } from './projection.ts'
 
 type AppendTeamEvent = <T extends TeamEventType>(type: T, data: SessionEventMap[T]) => void
@@ -19,6 +20,7 @@ export class TeamJournal {
   constructor(
     private readonly ctx: Context,
     private readonly onCommit: (root: Agent) => void,
+    private readonly productModeRequired = false,
   ) {}
 
   /**
@@ -31,6 +33,19 @@ export class TeamJournal {
     if (projection === undefined) throw new Error('Agent Teams projection is not registered')
     if (projection.failure !== undefined) throw new Error(projection.failure)
     return projection
+  }
+
+  /**
+   * Keep unmarked historical Teams read-only in a controlled product composition.
+   * @param root - exact live Lead whose Team state is inspected.
+   * @returns committed Team state admitted for a write.
+   */
+  assertWriteAdmission(root: Agent): TeamState {
+    const state = this.state(root)
+    if (this.productModeRequired && state.mode === undefined) {
+      throw new TeamError('unmarked Team is read-only in the controlled product', 'TEAM_MODE_REQUIRED')
+    }
+    return state
   }
 
   /**

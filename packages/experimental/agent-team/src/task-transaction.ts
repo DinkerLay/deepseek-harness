@@ -4,7 +4,7 @@ import { assertTaskGraph } from './task-graph.ts'
 import type { TeamTaskSnapshot, TeamTaskTransactionUpdate } from './types.ts'
 
 /** Rejection category shared by commit-time and replay-time validation. */
-export type TaskTransactionViolation = 'empty' | 'duplicate' | 'stale' | 'id-space' | 'revision'
+export type TaskTransactionViolation = 'empty' | 'duplicate' | 'stale' | 'id-space' | 'revision' | 'result-marker'
 
 /** Exact invalid Task transaction relation. */
 export class TeamTaskTransactionError extends Error {
@@ -41,6 +41,9 @@ export function applyTaskTransaction(
     const index = tasks.findIndex(candidate => candidate.id === task.id)
     const prior = tasks[index]
     if (previousRevision === null) {
+      if (task.resultUnavailable === true) {
+        throw new TeamTaskTransactionError(`new Task "${task.id}" cannot start with an unavailable result`, 'result-marker')
+      }
       if (prior !== undefined) {
         throw new TeamTaskTransactionError(`Task "${task.id}" already exists`,
           task.id === `task-${next}` ? 'id-space' : 'stale')
@@ -59,6 +62,12 @@ export function applyTaskTransaction(
     }
     if (previousRevision === Number.MAX_SAFE_INTEGER || task.revision !== previousRevision + 1) {
       throw new TeamTaskTransactionError(`Task "${task.id}" revision is not contiguous`, 'revision')
+    }
+    if (prior.resultUnavailable === true && task.resultUnavailable !== true) {
+      throw new TeamTaskTransactionError(`Task "${task.id}" cannot restore an unavailable result`, 'result-marker')
+    }
+    if (prior.resultUnavailable !== true && task.resultUnavailable === true && prior.status !== 'completed') {
+      throw new TeamTaskTransactionError(`Task "${task.id}" has no completed result to invalidate`, 'result-marker')
     }
     tasks[index] = task
   }

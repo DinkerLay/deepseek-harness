@@ -67,6 +67,8 @@ export interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Optional durable collaboration group; not the member's immutable address. */
+  readonly group?: string
   /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
   readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
@@ -82,6 +84,7 @@ export interface TeamMemberView {
   readonly description?: string
   readonly provider?: string
   readonly context?: 'fresh' | 'fork'
+  readonly group?: string
   readonly preset?: TeamPresetBinding
   readonly model?: string
   readonly diagnostics: string[]
@@ -100,6 +103,8 @@ export interface TeamTaskSnapshot {
   readonly ownerId?: SessionId
   readonly blockedBy: TeamTaskId[]
   readonly writeScopes: string[]
+  /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
+  readonly resultUnavailable?: true
 }
 
 /** One new or next-revision Task written by an optional Team extension. */
@@ -135,6 +140,7 @@ export interface TeamTaskView {
   readonly writeScopes: string[]
   readonly ownerName?: string
   readonly ready: boolean
+  readonly resultUnavailable?: true
   readonly writeScopeWarnings: string[]
 }
 
@@ -145,6 +151,7 @@ export interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly group?: string
   readonly preset?: TeamPresetBinding
   readonly error?: string
 }
@@ -192,6 +199,18 @@ export interface TeamMessageSource {
   readonly senderName: string
 }
 
+/** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
+export interface TeamControlledMode {
+  /** Controlled collaboration admits only the configured product Task writer. */
+  readonly kind: 'controlled'
+  /** Stable extension writer identity required for every controlled Task mutation. */
+  readonly requiredTaskExtensionId: string
+  /** Stable name of the product's preconfigured group-permission table. */
+  readonly permissionTableId: string
+  /** Fingerprint of the exact permission-table revision chosen for this Team. */
+  readonly permissionRevision: string
+}
+
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'team-message': TeamMessageSource
@@ -200,6 +219,8 @@ declare module '@deepseek-ai/dsh-llm' {
 
 /** Team-service deployment limits. */
 export interface Config {
+  /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
+  readonly controlledMode?: TeamControlledMode | undefined
   /** Maximum immutable teammate names retained by one Team. */
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
@@ -220,6 +241,7 @@ export interface Config {
 export interface SpawnTeammateRequest {
   readonly name: string
   readonly description: string
+  readonly group?: string
   readonly prompt: ContentBlock[]
   readonly context: 'fresh' | 'fork'
   readonly provider: string
@@ -284,6 +306,8 @@ export interface TeamWaitResult {
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
+    /** Immutable controlled-mode policy written before a new Lead can use Team tools. */
+    'team/mode': { version: 1; teamId: TeamId; mode: TeamControlledMode }
     /** Whole teammate lifecycle value, stored only in the Team Lead Session. */
     'team/member': { version: 2; teamId: TeamId; member: TeamMemberLegacySnapshot }
     /** Explicit-Preset or extended-lifecycle member value, without changing the released version-two event. */

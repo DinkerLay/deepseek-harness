@@ -152,7 +152,7 @@ export interface Config {
 
 Depends on: `Volatile` (`@deepseek-ai/cordis`)
 
-Source: [`packages/preset/agent-preset-registry/src/preset.ts:29`](../packages/preset/agent-preset-registry/src/preset.ts)
+Source: [`packages/preset/agent-preset-registry/src/preset.ts:32`](../packages/preset/agent-preset-registry/src/preset.ts)
 
 <a id="deepseek-aidsh-agent-tool-presentation"></a>
 
@@ -733,6 +733,8 @@ Requires: `agents` · `sessions` · `sessionPersistence` · `sessionProjections`
 ```ts config-catalog
 /** Team-service deployment limits. */
 export interface Config {
+  /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
+  readonly controlledMode?: TeamControlledMode | undefined
   /** Maximum immutable teammate names retained by one Team. */
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
@@ -748,9 +750,21 @@ export interface Config {
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
   readonly disposalTimeoutMs?: number
 }
+
+/** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
+export interface TeamControlledMode {
+  /** Controlled collaboration admits only the configured product Task writer. */
+  readonly kind: 'controlled'
+  /** Stable extension writer identity required for every controlled Task mutation. */
+  readonly requiredTaskExtensionId: string
+  /** Stable name of the product's preconfigured group-permission table. */
+  readonly permissionTableId: string
+  /** Fingerprint of the exact permission-table revision chosen for this Team. */
+  readonly permissionRevision: string
+}
 ```
 
-Source: [`packages/experimental/agent-team/src/types.ts:202`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:221`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-api-speech-to-text"></a>
 
@@ -1091,6 +1105,8 @@ export interface Config {
   readonly forkProvider?: string
   /** Use product Task submission and Lead acceptance instead of native complete/reopen. */
   readonly reviewedTasks?: boolean
+  /** Product-controlled Team: default-on Lead policy and role-scoped tools. */
+  readonly controlledTasks?: boolean
 }
 ```
 

@@ -119,6 +119,7 @@ export class TeamMailbox {
     const membership = this.roster.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can cancel Team mail', 'TEAM_LEAD_REQUIRED')
     const root = membership.root
+    this.journal.assertWriteAdmission(root)
     const name = targetName.trim()
     const target = this.journal.state(root).members.find(member => member.name === name)
     if (target === undefined || target.phase === 'retired') {
@@ -150,8 +151,11 @@ export class TeamMailbox {
     const content = structuredClone(request.content)
     const queued = await this.journal.transact(root.id, async () => {
       request.signal.throwIfAborted()
-      const state = this.journal.state(root)
+      const state = this.journal.assertWriteAdmission(root)
       const target = resolveActiveMember(root, state, request.target)
+      if (state.mode?.kind === 'controlled' && membership.role === 'teammate' && target.id !== root.id) {
+        throw new TeamError('controlled teammates may message only the Lead', 'TEAM_MESSAGE_TARGET_DENIED')
+      }
       if (target.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
       const pendingForTarget = state.messages.filter(candidate =>
         candidate.targetId === target.id && !state.delivered.includes(candidate.id)

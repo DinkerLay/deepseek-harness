@@ -55,6 +55,7 @@ kind: "package-reference"
 | `maxTaskExtensionBytes` | `262,144` | 单次原子 Task 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
 | `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
+| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方及权限表修订 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -63,6 +64,8 @@ kind: "package-reference"
 请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
 
 可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，teammate 保持普通的继承组合。
+
+teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前检查租约所保留的 Preset 代际；声明中含委派插件时拒绝创建，继承 Lead Preset 的成员也不例外。
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
 
@@ -73,6 +76,8 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 ### teammate 之间的消息
 
 任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。消息不会丢失，也不会重复投递。
+
+这是官方模式的成员消息规则。受控 Team 先持久写入模式记录，并在 mailbox 入队前拒绝 teammate 向其他 teammate 发消息；teammate 只能联系 Lead。受控产品组合载入没有模式记录的历史 Team 时，该 Team 保持只读。
 
 每条消息都使用 Steer：running target 在最近的步骤边界收到消息，inactive target 在已加载时启动一个轮次，否则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储，因此绝不能重发。
 
@@ -85,6 +90,8 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
 
 可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照、可选 Team mailbox 通知与扩展自有 JSON。原生投影忽略该 JSON，但把通知折叠进同一持久 mailbox。扩展代码回放同一事件时必须自行校验 JSON。
+
+受控 Team 只接受模式事件中指定的扩展 id 写入 Task；卸载该写入方后不会退回原生 Task 修改。扩展可给已完成结果设置不可撤销的不可用标记，使下游 Task 不再显示 ready，同时保留历史已完成 Task 可查。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -138,9 +145,9 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### Team 身份与 roster
 
-每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；官方 Team 没有创建事件，持久状态从第一条成员、消息或任务记录开始。受控产品先写入 `team/mode`。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
-未配置的成员沿用 `team/member` 第 2 版记录。配置了 Preset 的成员使用 `team/member/configured` 第 3 版；恢复时，其 Preset 身份与修订值必须和 child 的 continuable-Preset 事件一致。投影接受两种记录，并拒绝更改已有成员的 Preset 绑定。
+未配置的成员沿用 `team/member` 第 2 版记录。配置了 Preset 或分组的成员使用 `team/member/configured` 第 3 版；恢复时，其 Preset 身份与修订值必须和 child 的 continuable-Preset 事件一致。投影接受两种记录，并拒绝更改已有成员的 Preset 绑定或分组。
 
 ### 持久 mailbox
 
@@ -162,11 +169,11 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/message/queued`、`team/message/delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/mode`、`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/message/queued`、`team/message/delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
-Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 10 从 Session 日志重建较早缓存版本的 checkpoint；Session 格式版本保持不变。
+Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 13 从 Session 日志重建较早缓存版本的 checkpoint；Session 格式版本保持不变。
 
 ### Dispose
 

@@ -2125,6 +2125,10 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
       "type": "string",
       "description": "Short description of the delegated responsibility."
     },
+    "group": {
+      "type": "string",
+      "description": "Optional durable collaboration group, distinct from the teammate name."
+    },
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."

@@ -2119,6 +2119,10 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
       "type": "string",
       "description": "Short description of the delegated responsibility."
     },
+    "group": {
+      "type": "string",
+      "description": "Optional durable collaboration group, distinct from the teammate name."
+    },
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."

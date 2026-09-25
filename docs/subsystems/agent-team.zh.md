@@ -16,6 +16,8 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Optional durable collaboration group; not the member's immutable address. */
+  readonly group?: string
   /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
   readonly preset?: TeamPresetBinding
   readonly phase: TeamMemberPhase
@@ -24,6 +26,22 @@ interface TeamMemberSnapshot {
 ```
 
 每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
+
+产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方和权限表修订，并在入队前拒绝成员间直接消息。
+
+```ts type-equiv
+/** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
+interface TeamControlledMode {
+  /** Controlled collaboration admits only the configured product Task writer. */
+  readonly kind: 'controlled'
+  /** Stable extension writer identity required for every controlled Task mutation. */
+  readonly requiredTaskExtensionId: string
+  /** Stable name of the product's preconfigured group-permission table. */
+  readonly permissionTableId: string
+  /** Fingerprint of the exact permission-table revision chosen for this Team. */
+  readonly permissionRevision: string
+}
+```
 
 ## 持久 mailbox
 
@@ -79,6 +97,8 @@ interface TeamTaskSnapshot {
   readonly ownerId?: SessionId
   readonly blockedBy: TeamTaskId[]
   readonly writeScopes: string[]
+  /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
+  readonly resultUnavailable?: true
 }
 ```
 
@@ -128,6 +148,7 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  readonly group?: string
   readonly preset?: TeamPresetBinding
   readonly error?: string
 }
@@ -145,6 +166,7 @@ interface TeamTaskView {
   readonly writeScopes: string[]
   readonly ownerName?: string
   readonly ready: boolean
+  readonly resultUnavailable?: true
   readonly writeScopeWarnings: string[]
 }
 ```
@@ -187,6 +209,13 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/**
+ * Read the immutable controlled-mode binding, if this Team opted in.
+ * @param agent - exact live Team caller.
+ * @returns the durable controlled-mode binding, or undefined for an official Team.
+ */
+controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
  * List the runtime-enriched roster visible to one Team member.

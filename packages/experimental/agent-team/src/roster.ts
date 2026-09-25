@@ -26,6 +26,11 @@ import type {
 import { requiredText } from './validation.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const DELEGATION_PRESET_MODULES = new Set([
+  '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
+  '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow',
+  '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-ralph',
+])
 
 /** Caller identity inside one implicit Team. */
 export interface TeamMembership {
@@ -151,6 +156,7 @@ export class TeamRoster {
         status: member.phase === 'retiring' || member.phase === 'retired' || member.phase === 'failed'
           || member.phase === 'provisioning' ? member.phase : availability(live),
         description: member.description,
+        ...member.group === undefined ? {} : { group: member.group },
         provider: member.provider,
         context: member.context,
         ...member.preset === undefined ? {} : { preset: member.preset },
@@ -211,6 +217,7 @@ export class TeamRoster {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can retire teammates', 'TEAM_LEAD_REQUIRED')
     const root = membership.root
+    this.journal.assertWriteAdmission(root)
     const name = targetName.trim()
     const member = await this.journal.transact(root.id, async () => {
       if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
@@ -252,6 +259,7 @@ export class TeamRoster {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can interrupt teammates', 'TEAM_LEAD_REQUIRED')
     const state = this.journal.state(membership.root)
+    this.journal.assertWriteAdmission(membership.root)
     const target = resolveActiveMember(membership.root, state, targetName)
     if (target.id === membership.root.id) throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
     const live = this.ctx.agents.get(target.id)
@@ -301,15 +309,23 @@ export class TeamRoster {
     const signal = AbortSignal.any([request.signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const root = membership.root
+    this.journal.assertWriteAdmission(root)
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
+    const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
     let preset: ContinuablePresetBinding | undefined
-    if (request.presetId !== undefined) {
+    const mode = this.journal.state(root).mode
+    if (request.presetId !== undefined || mode !== undefined) {
       const registry = this.ctx.get('agentPresets')
       if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
-      await using lease = await registry.acquireComposition(request.presetId)
+      const selectedId = request.presetId ?? root.session.header.agentPreset ?? registry.defaultId
+      await using lease = await registry.acquireComposition(selectedId)
       if (lease.revision === undefined) {
         throw new TeamError(`preset "${lease.id}" has no durable declaration revision`, 'TEAM_PRESET_UNAVAILABLE')
+      }
+      if (mode !== undefined && lease.compositionRows.some(row =>
+        row.enabled !== false && DELEGATION_PRESET_MODULES.has(row.moduleName))) {
+        throw new TeamError(`preset "${lease.id}" exposes delegation outside Agent Team`, 'TEAM_UNSAFE_PRESET')
       }
       preset = { id: lease.id, revision: lease.revision }
     }
@@ -318,6 +334,7 @@ export class TeamRoster {
       id: childId,
       name,
       description,
+      ...group === undefined ? {} : { group },
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
       ...preset === undefined ? {} : { preset },
@@ -529,6 +546,7 @@ export class TeamRoster {
       role: 'teammate',
       status: availability(live),
       description: member.description,
+      ...member.group === undefined ? {} : { group: member.group },
       provider: member.provider,
       context: member.context,
       ...member.preset === undefined ? {} : { preset: member.preset },
@@ -539,7 +557,7 @@ export class TeamRoster {
 
   /** Keep the released version-two event exact; use a new event for explicit compositions. */
   private async appendMember(root: Agent, member: TeamMemberSnapshot): Promise<void> {
-    if (member.preset === undefined
+    if (member.preset === undefined && member.group === undefined
       && (member.phase === 'provisioning' || member.phase === 'active' || member.phase === 'failed')) {
       const legacy: TeamMemberLegacySnapshot = {
         id: member.id,

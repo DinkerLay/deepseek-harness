@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, retire members, and coordinate through a shared task board. Every team member receives the same eleven tools and guidance for coordinating in a shared workspace. Choose it when the model should operate a team only after you explicitly request one. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions. The package is published under its experimental name and provides no stability guarantee.
+This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request; `controlledTasks` instead gives the Lead default-on collaboration guidance and hides Lead-only tools from teammates. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions. The package is published under its experimental name and provides no stability guarantee.
 
 ## Table of Contents
 
@@ -25,15 +25,15 @@ This package lets the model create named teammates, send them messages, inspect 
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same eleven tools plus the same coordination policy. `spawn_teammate` prefixes the initial task with the teammate’s role and name.
+Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. By default every member gets the same eleven tools and coordination policy. In controlled mode the Lead receives a wider tool set than teammates; `spawn_teammate` starts a teammate with a fixed standby reminder instead of a model-authored first task.
 
 ### When to choose it
 
-Choose it when the model should create and coordinate teammates by itself rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. The fixed policy creates teammates only when you explicitly ask for a team or teammates, so ordinary tasks never trigger delegation on their own.
+Choose it when the model should create and coordinate teammates by itself rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. The default policy creates teammates only on explicit request; a controlled product composition may recruit them for ordinary tasks.
 
 ### Smallest working example
 
-The smallest addition to an existing composition is the two-package fragment from the [agent-team README](../agent-team/README.md#smallest-working-setup): durable session storage, the team domain package, and this package. The plugin itself takes two optional settings:
+The smallest addition to an existing composition is the two-package fragment from the [agent-team README](../agent-team/README.md#smallest-working-setup): durable session storage, the team domain package, and this package. The plugin settings include:
 
 ```yaml
 - id: tool-agent-team
@@ -47,6 +47,8 @@ The smallest addition to an existing composition is the two-package fragment fro
 |---|---|---|
 | `freshProvider` | `spawn` | Provider that starts fresh teammates |
 | `forkProvider` | `fork` | Provider that starts fork teammates |
+| `reviewedTasks` | `false` | Guide Task submission and Lead acceptance instead of native completion |
+| `controlledTasks` | `false` | Default-on Team guidance with role-scoped tools; requires a persisted controlled Team mode |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -62,9 +64,9 @@ The eleven tools group into five capabilities:
 - **See and wait** — `list_agents` returns each member’s `target` and availability; `wait_agent` waits for the next team change; `interrupt_agent` stops a teammate's current turn (Lead only).
 - **Manage the task board** — `team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update` add, browse, read, and update shared tasks.
 
-Creation and listing results identify members by `target`, with no member Session ID. Use that value in message and interrupt calls or the task tools’ `owner` parameter; task `ownerName` uses the same value. `inactive` means no turn is executing, whether the member is loaded or must be resumed; it does not describe task completion or outcome. `provisioning` and `failed` describe member creation. Any member can message any other member and use the task board; only the Lead creates and interrupts teammates. Task updates keep the domain's owner and revision checks, so an outdated edit is rejected instead of overwriting newer work.
+Creation and listing results identify members by `target`, with no member Session ID. Use that value in message and interrupt calls or the task tools’ `owner` parameter; task `ownerName` uses the same value. `inactive` means no turn is executing, whether the member is loaded or must be resumed; it does not describe task completion or outcome. `provisioning` and `failed` describe member creation. In the default mode any member can message any other member and use the task board; only the Lead creates and interrupts teammates. Task updates keep the domain's owner and revision checks, so an outdated edit is rejected instead of overwriting newer work.
 
-By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. Server-side Task policy remains authoritative in either mode.
+By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. With `controlledTasks: true`, the Lead can recruit without a separate user request, while teammates see only Team read/message and release actions from this package; the controlled Team service enforces the persisted mode and denies peer messages. Server-side Task policy remains authoritative in every mode.
 
 Releasing a Task cancels its Attempt but does not interrupt an executing member turn or undo file effects. To stop work, the Lead first calls `interrupt_agent`, waits for the member to become inactive, then releases the Task; stale results are rejected by the Task writer. A scoped monotonic guard also rejects direct calls to `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`, `workflow`, and `ralph` for Team members. The guard prevents execution but does not hide tools mounted by a Preset in the same Agent scope: product bundles must omit those plugin rows to keep them out of the model catalog.
 
@@ -130,7 +132,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-One shared system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. All eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. `spawn_teammate` prefixes its initial user message with `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`, followed by a blank line and the task. The prefix contains no Team id and works when runtime context is disabled. Forks inherit history without an additional Lead identity message.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task and supplies a fixed standby reminder with the member name, group, responsibility, and Lead-only message rule. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
 
 #### Token effect
 

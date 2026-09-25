@@ -90,6 +90,30 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it('makes an invalidated completed result permanently unavailable to dependent Tasks', () => {
+    const source = task({ status: 'completed' })
+    const dependent = task({ id: TeamTaskId('task-2'), blockedBy: [source.id] })
+    const initial = [
+      event('team/task', { version: 2, teamId: TEAM, task: source }, SessionSeq(0)),
+      event('team/task', { version: 2, teamId: TEAM, task: dependent }, SessionSeq(1)),
+    ]
+    expect(teamProjectionView(project(ROOT, initial)).tasks.find(row => row.id === dependent.id)?.ready).toBe(true)
+    const unavailable = event('team/task/transaction', {
+      version: 1, teamId: TEAM,
+      updates: [{ previousRevision: 1, task: { ...source, revision: 2, resultUnavailable: true } }],
+      extension: { id: 'test-writer', dataJson: '{}' },
+    }, SessionSeq(2))
+    const state = project(ROOT, [...initial, unavailable])
+    expect(teamProjectionView(state).tasks.find(row => row.id === dependent.id)?.ready).toBe(false)
+    expect(teamProjectionView(state).tasks.find(row => row.id === source.id)?.resultUnavailable).toBe(true)
+    const restore = event('team/task/transaction', {
+      version: 1, teamId: TEAM,
+      updates: [{ previousRevision: 2, task: { ...source, revision: 3 } }],
+      extension: { id: 'test-writer', dataJson: '{}' },
+    }, SessionSeq(3))
+    expect(() => projectTeam(ROOT, [...initial, unavailable, restore])).toThrow(/cannot restore an unavailable result/)
+  })
+
   it('rejects retired tool-result content when restoring a native V4 Team checkpoint', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())

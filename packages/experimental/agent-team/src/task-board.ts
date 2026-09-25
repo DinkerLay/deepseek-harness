@@ -82,7 +82,10 @@ export class TeamTaskBoard {
     if (extension !== undefined) return await extension.writer.create(caller, request, extension.handle)
     const { root } = membership
     return this.journal.transact(root.id, async () => {
-      const state = this.journal.state(root)
+      const state = this.journal.assertWriteAdmission(root)
+      if (state.mode !== undefined) {
+        throw new TeamError('controlled Task writer is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
       const active = state.tasks.filter(task => task.status !== 'deleted').length
       if (active >= this.maxTasks) {
         throw new TeamError(`Team task limit ${this.maxTasks} reached`, 'TEAM_TASK_LIMIT')
@@ -149,7 +152,10 @@ export class TeamTaskBoard {
     if (extension !== undefined) return await extension.writer.update(caller, request, extension.handle)
     const root = membership.root
     return this.journal.transact(root.id, async () => {
-      const state = this.journal.state(root)
+      const state = this.journal.assertWriteAdmission(root)
+      if (state.mode !== undefined) {
+        throw new TeamError('controlled Task writer is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
       const current = state.tasks.find(task => task.id === request.taskId)
       if (current === undefined) throw new TeamError(`team task "${request.taskId}" not found`, 'TEAM_TASK_NOT_FOUND')
       if (state.taskWriters.some(writer => writer.taskId === current.id)) {
@@ -268,7 +274,10 @@ export class TeamTaskBoard {
       if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
       if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       if (this.membershipOf(caller).root !== root) throw new TeamError('Team member changed during Task transaction', 'TEAM_NOT_MEMBER')
-      const state = this.journal.state(root)
+      const state = this.journal.assertWriteAdmission(root)
+      if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
+        throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
       const plan = build({
         tasks: structuredClone(state.tasks),
         members: structuredClone(state.members),

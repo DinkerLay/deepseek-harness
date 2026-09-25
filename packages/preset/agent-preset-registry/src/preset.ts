@@ -1,5 +1,6 @@
 import type { Volatile } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
+import type { AgentPresetCompositionRow } from './composition-inventory.ts'
 /** Public preset roster and selection configuration. */
 /** One declared preset and its current activation failure, if any. */
 export interface AgentPreset {
@@ -16,6 +17,8 @@ export interface PresetCompositionLease extends AsyncDisposable {
   readonly id: string
   /** SHA-256 of the captured JSON declaration and preset id; absent for non-JSON declarations. Not a plugin-binary digest. */
   readonly revision: string | undefined
+  /** Rows captured from the same retained generation used by mount(), avoiding an inventory/revision race. */
+  readonly compositionRows: readonly AgentPresetCompositionRow[]
   /**
    * Bind an unpublished, unbound Agent scope to this exact retained revision.
    * @param ctx - Agent factory setup context; never a live published Agent scope.

@@ -128,7 +128,7 @@ function spawn(
   ctx: Context,
   lead: Agent,
   name: string,
-  options: { context?: 'fresh' | 'fork'; provider?: string; presetId?: string } = {},
+  options: { context?: 'fresh' | 'fork'; provider?: string; presetId?: string; group?: string } = {},
 ) {
   const context = options.context ?? 'fresh'
   return ctx.agentTeams.spawnTeammate(lead, {
@@ -138,6 +138,7 @@ function spawn(
     context,
     provider: options.provider ?? (context === 'fork' ? 'fork' : 'spawn'),
     ...options.presetId === undefined ? {} : { presetId: options.presetId },
+    ...options.group === undefined ? {} : { group: options.group },
     signal: SIGNAL,
   })
 }
@@ -284,6 +285,88 @@ describe('Team identity and provisioning', () => {
         .toBeGreaterThanOrEqual(2)
     }, { timeout: 5_000 })
     await waitNoAgent(ctx, started.member.id)
+  })
+
+  it('persists a teammate group without changing its address or Session identity', async () => {
+    const { ctx, lead } = await setup([textResponse('ready')])
+    const started = await spawn(ctx, lead, 'collector-one', { group: 'collectors' })
+    expect(started.member.group).toBe('collectors')
+    expect(started.member.name).toBe('collector-one')
+    expect(durable(lead).members[0]?.group).toBe('collectors')
+    expect(ctx.agentTeams.listMembers(lead)[1]?.group).toBe('collectors')
+    const configured = lead.session.snapshotEvents().filter(event => event.type === 'team/member/configured')
+    expect(configured.map(event => event.data.member.group)).toEqual(['collectors', 'collectors'])
+    await waitNoAgent(ctx, started.member.id)
+  })
+
+  it('persists controlled mode before Team work and rejects member-to-member private messages', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead } = await setup([], { controlledMode: mode })
+    expect(ctx.agentTeams.controlledMode(lead)).toEqual(mode)
+    expect(lead.session.snapshotEvents().find(event => event.type.startsWith('team/'))?.type).toBe('team/mode')
+    const firstId = SessionId('controlled-first')
+    const secondId = SessionId('controlled-second')
+    for (const [id, name, group] of [[firstId, 'first', 'collectors'], [secondId, 'second', 'analysts']] as const) {
+      const member = { id, name, group, description: `${name} role`,
+        provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+      lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+      lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+        member: { ...member, phase: 'active' } })
+    }
+    await ctx.sessions.flush(lead.session)
+    const first = await ctx.agents.create({ sessionId: firstId,
+      meta: { parentSession: lead.id }, agentOptions: {} })
+    await expect(ctx.agentTeams.sendMessage(first.agent, {
+      target: 'second', content: content('private work'), signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_MESSAGE_TARGET_DENIED' })
+    expect(durable(lead).pendingMessages.some(message => message.senderId === firstId
+      && message.targetId === secondId)).toBe(false)
+    await expect(ctx.agentTeams.createTask(lead, {
+      subject: 'Bypass', description: 'No required extension loaded',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
+    await first.dispose()
+  })
+
+  it('keeps an unmarked historical Team read-only when the controlled product mounts later', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-old-controlled-'))
+    roots.push(storageRoot)
+    await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    const disposeProjection = ctx.sessionProjections.register(teamProjectionDefinition)
+    const lead = await ctx.agentLoop.create(SessionId('old-lead'), {})
+    lead.session.append('team/task', { version: 2, teamId: TeamId(lead.id),
+      task: { id: TeamTaskId('task-1'), revision: 1, subject: 'Old', description: 'Historical work',
+        status: 'pending', blockedBy: [], writeScopes: [] } })
+    await ctx.sessions.flush(lead.session)
+    disposeProjection()
+    await ctx.plugin(TeamService, { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+      permissionRevision: 'revision-1' } })
+    expect(ctx.agentTeams.controlledMode(lead)).toBeUndefined()
+    expect(ctx.agentTeams.listTasks(lead)).toHaveLength(1)
+    await expect(ctx.agentTeams.createTask(lead, { subject: 'New', description: 'Must not convert old Team' }))
+      .rejects.toMatchObject({ code: 'TEAM_MODE_REQUIRED' })
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/mode')).toEqual([])
+  })
+
+  it('rejects an unsafe declared Preset before reserving a controlled teammate', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+      permissionRevision: 'revision-1' } }, true)
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockResolvedValue({
+      id: 'unsafe', revision: 'a'.repeat(64),
+      compositionRows: [{ entryId: 'delegation', moduleName: '@deepseek-ai/dsh-tool-subagent', enabled: true }],
+      mount: async () => ({ id: 'unsafe' }),
+      [Symbol.asyncDispose]: async () => undefined,
+    })
+    await expect(spawn(ctx, lead, 'unsafe-worker', { presetId: 'unsafe' }))
+      .rejects.toMatchObject({ code: 'TEAM_UNSAFE_PRESET' })
+    expect(durable(lead).members).toEqual([])
   })
 
   it('refuses an explicit Preset without the registry before reserving a member', async () => {

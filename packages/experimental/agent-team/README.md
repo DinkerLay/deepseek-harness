@@ -55,6 +55,7 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Task event |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
 | `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
+| `controlledMode` | unset | Immutable required Task writer and permission-table revision, written before a new Team opens its tools |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -63,6 +64,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 Ask the Lead to create a teammate: give it a unique lowercase name such as `reviewer` and describe its job. A teammate starts fresh with no memory of the Lead's conversation, or as a fork that inherits the Lead's completed turns; the creation request chooses which. Teammate names are permanent — even a teammate whose creation failed keeps its name, and no name is ever reused.
 
 An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, the teammate keeps the ordinary inherited composition.
+
+A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the roster checks the retained Preset generation before reserving the member; a declared delegation plugin is rejected, including when the child would inherit the Lead's Preset.
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.
 
@@ -73,6 +76,8 @@ The Lead can retire a teammate after settling its unfinished tasks and pending m
 ### Messages between teammates
 
 Any member can send a message to any other member or to the Lead. A live member receives it immediately; an offline member's messages queue and arrive when it resumes. Messages are never lost and never delivered twice.
+
+That peer rule is the official mode's behavior. A controlled Team persists its mode first and rejects teammate-to-teammate messages before mailbox admission; teammates may message only the Lead. An unmarked historical Team remains read-only when loaded by a controlled product composition.
 
 Every message uses Steer: a running target receives it at the nearest step boundary; an inactive target starts a turn if loaded or cold-resumes otherwise. The sender always sees the outcome — accepted by the target inbox, or retained as queued when delivery is temporarily unavailable. A queued message is already safely stored, so it must not be resent.
 
@@ -85,6 +90,8 @@ Any member can add a task with a title, details, optional dependencies on other 
 Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
 
 An optional Host Task extension can replace only the native create/update writer while keeping the same Team roster, Board, and Lead Session log. Without it, the official task tools retain their normal behavior. The installed extension receives a private commit handle; a batch checks current revisions and the final dependency DAG, then stores all Task snapshots, optional Team mailbox notices, and extension-owned JSON in one event. The native projection ignores that JSON but folds the notices into the same durable mailbox. Extension code must validate its own JSON when it replays the same event.
+
+A controlled Team accepts Task writes only from the extension id recorded in its mode event; unloading that writer never falls back to native Task mutation. An extension may irreversibly mark a completed result unavailable, so dependent Tasks stop reporting ready even while the historical completed Task remains visible.
 
 File hints produce warnings when two in-progress tasks plan to touch overlapping paths — they never block anything. Deleted tasks remain in history but disappear from the active list.
 
@@ -138,9 +145,9 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 ### Team identity and roster
 
-Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; there is no creation event, and durable state begins with the first member, message, or task record. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
+Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; official Teams have no creation event, and durable state begins with the first member, message, or task record. A controlled product writes `team/mode` first. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
 
-Unconfigured members retain the `team/member` version 2 record. A configured member uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding.
+Unconfigured members retain the `team/member` version 2 record. A member with a Preset or group uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding or group.
 
 ### Durable mailbox
 
@@ -162,11 +169,11 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 10 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 13 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
 
 ### Disposal
 

@@ -380,6 +380,7 @@ export class AgentPresetRegistry extends TypertRemoteService {
     return {
       id: generation.mount.presetId,
       revision: generation.revision,
+      compositionRows: mountedCompositionRows(generation.mount.tree),
       // oxlint-disable-next-line typescript/require-await -- setup callers receive rejected promises for invalid leases.
       mount: async (ctx) => {
         if (disposed) throw new Error('Preset composition lease has been released')
