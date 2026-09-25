@@ -1164,6 +1164,18 @@ describe('ChatView', () => {
     expect(h.turnJump.getSnapshot()).toBeNull()
   })
 
+  it('waits for the destination Session to open before dispatching an external Turn jump', async () => {
+    const later = [userInTurn(8, 'latest prompt', 3), assistant(9, 'latest response', 3)]
+    const h = makeHarness({ nodes: later }, { hasMore: true })
+    h.setOutline([{ turn: 1, seq: 0, prompt: 'first prompt', response: '' }])
+    render(<h.ChatView {...h.props} />)
+    act(() => { h.setSession({ openState: 'loading' }) })
+    act(() => { h.turnJump.set({ requestId: 2, sessionId: SID, turn: 1, seq: SessionSeq(0) }) })
+    expect(h.loadThrough).not.toHaveBeenCalled()
+    act(() => { h.setSession({ openState: 'open' }) })
+    await waitFor(() => { expect(h.loadThrough).toHaveBeenCalledWith(0) })
+  })
+
   it('uses a known turn landing without hit testing or consuming rail scroll as transcript input', async () => {
     const original = Object.getOwnPropertyDescriptor(document, 'elementsFromPoint')
     const hitTest = vi.fn((): Element[] => [])

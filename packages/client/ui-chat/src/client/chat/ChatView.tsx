@@ -221,14 +221,16 @@ export function ChatView({
   const startedTurnJump = useRef<number | null>(null)
 
   useEffect(() => {
-    if (turnJump === null || !scroll.initialized || startedTurnJump.current === turnJump.requestId) return
+    // Reading can initialize before the destination Session finishes opening.
+    if (turnJump === null || openState !== 'open' || !scroll.initialized
+      || startedTurnJump.current === turnJump.requestId) return
     startedTurnJump.current = turnJump.requestId
     // The external request may arrive before a destination's historical rows mount.
     // Use its durable seq and acknowledge only after the actual Turn lands.
     scroll.navigateToTurn({
       turn: turnJump.turn, prompt: '', response: '', anchor: { kind: 'unloaded', seq: turnJump.seq },
     }, () => { consumeTurnJump(turnJump.requestId) })
-  }, [turnJump, scroll.initialized, scroll.navigateToTurn, consumeTurnJump])
+  }, [turnJump, openState, scroll.initialized, scroll.navigateToTurn, consumeTurnJump])
 
   return (
     <div className={css.frame}>
