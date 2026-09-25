@@ -328,6 +328,97 @@ describe('Team identity and provisioning', () => {
     await first.dispose()
   })
 
+  it('generates the controlled first input in the service and rejects inherited context', async () => {
+    const { ctx, lead } = await setup([textResponse('ready')], { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+    } }, true)
+    await expect(spawn(ctx, lead, 'fork-worker', { context: 'fork', presetId: 'reviewer' }))
+      .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    const started = await spawn(ctx, lead, 'collector-one', { group: 'collectors', presetId: 'reviewer' })
+    const events = await storedEvents(ctx, started.member.id)
+    const first = events.find(event => event.type === 'user/message')
+    const firstText = first?.type === 'user/message'
+      ? first.data.content.filter(block => block.type === 'text').map(block => block.text).join('\n') : ''
+    expect(firstText).toContain('Remain on standby until a Task is assigned')
+    expect(firstText).toContain('collector-one')
+    expect(firstText).toContain('collectors')
+    expect(firstText).not.toContain('collector-one initial')
+  })
+
+  it('retains controlled mode and group across a cold restart with the opt-in config removed', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const first = await setup([], { controlledMode: mode })
+    const member = { id: SessionId('durable-group-member'), name: 'durable-worker', group: 'collectors',
+      description: 'Collect evidence', provider: 'spawn', context: 'fresh' as const,
+      phase: 'provisioning' as const }
+    first.lead.session.append('team/member/configured', {
+      version: 3, teamId: TeamId(first.lead.id), member,
+    })
+    first.lead.session.append('team/member/configured', {
+      version: 3, teamId: TeamId(first.lead.id), member: { ...member, phase: 'active' },
+    })
+    await first.ctx.sessions.flush(first.lead.session)
+    await first.ctx.fiber.dispose()
+    contexts.splice(contexts.indexOf(first.ctx), 1)
+
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(JsonlSessionPersistence, { root: first.storageRoot })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    await ctx.plugin(TeamService)
+    const resumed = await ctx.agents.resume({ resumeSessionId: first.lead.id, agentOptions: {} })
+    expect(ctx.agentTeams.controlledMode(resumed.agent)).toEqual(mode)
+    expect(ctx.agentTeams.listMembers(resumed.agent).find(row => row.name === member.name)?.group)
+      .toBe('collectors')
+    expect(resumed.agent.session.snapshotEvents().filter(event => event.type === 'team/mode')).toHaveLength(1)
+    await resumed.dispose()
+  })
+
+  it('serializes a first Task write behind the controlled-mode durability barrier', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-mode-race-'))
+    roots.push(storageRoot)
+    await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    await ctx.plugin(TeamService, { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+    } })
+    const rootId = SessionId('controlled-race')
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session.id === rootId && session.snapshotEvents().some(event => event.type === 'team/mode')) {
+        entered.resolve(undefined)
+        await release.promise
+      }
+      return await flush(session)
+    })
+    const creation = ctx.agentLoop.create(rootId, {})
+    let attempted: ReturnType<typeof ctx.agentTeams.createTask> | undefined
+    try {
+      await entered.promise
+      const live = ctx.agents.get(rootId)
+      expect(live).toBeDefined()
+      attempted = ctx.agentTeams.createTask(live!, { subject: 'Too early', description: 'Must wait for mode' })
+      expect(live!.session.snapshotEvents().filter(event => event.type === 'team/task')).toEqual([])
+    } finally {
+      release.resolve(undefined)
+    }
+    await creation
+    await expect(attempted).rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
+    expect(ctx.agents.get(rootId)?.session.snapshotEvents().find(event => event.type.startsWith('team/'))?.type)
+      .toBe('team/mode')
+  })
+
   it('keeps an unmarked historical Team read-only when the controlled product mounts later', async () => {
     const ctx = new Context()
     contexts.push(ctx)
@@ -351,6 +442,10 @@ describe('Team identity and provisioning', () => {
     expect(ctx.agentTeams.listTasks(lead)).toHaveLength(1)
     await expect(ctx.agentTeams.createTask(lead, { subject: 'New', description: 'Must not convert old Team' }))
       .rejects.toMatchObject({ code: 'TEAM_MODE_REQUIRED' })
+    await expect(ctx.agentTeams.sendMessage(lead, {
+      target: 'missing', content: content('Must not enqueue'), signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_MODE_REQUIRED' })
+    await expect(spawn(ctx, lead, 'missing')).rejects.toMatchObject({ code: 'TEAM_MODE_REQUIRED' })
     expect(lead.session.snapshotEvents().filter(event => event.type === 'team/mode')).toEqual([])
   })
 
@@ -841,6 +936,37 @@ describe('Team identity and provisioning', () => {
 })
 
 describe('Team shared task DAG', () => {
+  it('delivers controlled Task notices from one member to another without peer-message admission', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'notice-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead } = await setup(['hang', 'hang'],
+      { controlledMode: mode }, true)
+    const sender = await spawn(ctx, lead, 'debater', { group: 'debaters', presetId: 'reviewer' })
+    const target = await spawn(ctx, lead, 'collector', { group: 'collectors', presetId: 'reviewer' })
+    const senderAgent = await waitRunning(ctx, sender.member.id)
+    await waitRunning(ctx, target.member.id)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'notice-writer', create: unavailable, update: unavailable,
+    })
+    const noticeId = TeamMessageId('member-task-notice')
+    await handle.commit(senderAgent, () => ({
+      updates: [{ previousRevision: null, task: {
+        id: TeamTaskId('task-1'), revision: 1, subject: 'Collect evidence',
+        description: 'Find a source', status: 'in_progress', ownerId: target.member.id,
+        blockedBy: [], writeScopes: [],
+      } }],
+      dataJson: '{}',
+      notices: [{ id: noticeId, senderId: sender.member.id, senderName: 'debater',
+        targetId: target.member.id, content: content('Assigned Task task-1') }],
+    }))
+    await vi.waitFor(() => {
+      expect(lead.session.snapshotEvents().filter(event => event.type === 'team/message/delivered'
+        && event.data.messageId === noticeId)).toHaveLength(1)
+    }, { timeout: 5_000 })
+    handle.dispose()
+  })
+
   it('commits a Task and pending teammate notice in the same durable event', async () => {
     const { ctx, lead } = await setup([])
     await Promise.resolve()
@@ -931,6 +1057,11 @@ describe('Team shared task DAG', () => {
     const events = lead.session.snapshotEvents()
     expect(events.filter(event => event.type === 'team/task/transaction')).toHaveLength(1)
     expect(events.filter(event => event.type === 'team/task')).toHaveLength(0)
+    expect((await handle.commit(lead, () => ({ existingTaskIds: [TeamTaskId('task-1'), TeamTaskId('task-2')] })))
+      .map(task => task.id)).toEqual(created.map(task => task.id))
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/task/transaction')).toHaveLength(1)
+    await expect(handle.commit(lead, () => ({ existingTaskIds: [TeamTaskId('task-404')] })))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
     await expect(ctx.agentTeams.updateTask(lead, {
       taskId: TeamTaskId('task-1'), expectedRevision: 1, action: 'edit', subject: 'routed',
     })).rejects.toThrow('outer update policy reached')

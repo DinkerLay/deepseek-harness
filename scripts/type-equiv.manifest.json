@@ -394,6 +394,16 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamTaskTransactionWritePlan",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamTaskTransactionExistingPlan",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamTaskTransactionPlan",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

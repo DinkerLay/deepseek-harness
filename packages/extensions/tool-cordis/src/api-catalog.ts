@@ -335,6 +335,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the durable controlled-mode binding, or undefined for an official Team.',
       },
       {
+        signature: 'hasRunningAttempt(agent: Agent): boolean',
+        description: 'Read the installed Task writer\'s running-Attempt admission for one exact member.',
+        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
+        returns: 'whether the member has a running product Attempt.',
+      },
+      {
         signature: 'listMembers(agent: Agent): TeamMemberView[]',
         description: 'List the runtime-enriched roster visible to one Team member.',
         parameters: [{ name: 'agent', description: 'exact live Team member.' }],
@@ -343,7 +349,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
         description: 'Create one named, continuable direct child of the Team Lead.',
-        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation.' }],
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation. Controlled Teams replace the prompt and require fresh context.' }],
         returns: 'the active roster row.',
       },
       {
@@ -7121,7 +7127,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
@@ -7144,8 +7150,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamTaskTransactionBuilder = (snapshot: TeamTaskTransactionSnapshot) => TeamTaskTransactionPlan;',
   },
   {
+    name: 'TeamTaskTransactionExistingPlan',
+    declaration: 'export interface TeamTaskTransactionExistingPlan {\n    readonly existingTaskIds: readonly TeamTaskId[];\n}',
+  },
+  {
     name: 'TeamTaskTransactionPlan',
-    declaration: 'export interface TeamTaskTransactionPlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
+    declaration: 'export type TeamTaskTransactionPlan = TeamTaskTransactionWritePlan | TeamTaskTransactionExistingPlan;',
   },
   {
     name: 'TeamTaskTransactionSnapshot',
@@ -7154,6 +7164,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamTaskTransactionUpdate',
     declaration: 'export interface TeamTaskTransactionUpdate {\n    readonly previousRevision: number | null;\n    readonly task: TeamTaskSnapshot;\n}',
+  },
+  {
+    name: 'TeamTaskTransactionWritePlan',
+    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
   },
   {
     name: 'TeamTaskView',

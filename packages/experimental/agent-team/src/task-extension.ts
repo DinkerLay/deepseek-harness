@@ -15,7 +15,8 @@ export type TeamTaskTransactionBuilder = (snapshot: TeamTaskTransactionSnapshot)
 /** Native commit capability held only by the registered extension. */
 export interface TeamTaskExtensionHandle {
   /**
-   * Commit one Task batch and opaque extension record in the same Lead Session event.
+   * Commit one Task batch and opaque extension record in the Lead Session.
+   * An existing result returns without another event.
    * @param caller - exact live Team member authorizing this operation.
    * @param build - synchronous planner receiving a detached current Board snapshot.
    * @returns native Task views after the event has been flushed.
@@ -29,6 +30,13 @@ export interface TeamTaskExtensionHandle {
 export interface TeamTaskExtension {
   /** Stable identifier stored with each extension-owned Task event. */
   readonly id: string
+  /**
+   * Whether this exact member currently owns a running product Attempt.
+   * Controlled Team tool admission fails closed when this callback is absent.
+   * @param caller - exact live Team member.
+   * @returns whether non-standby tools may be used.
+   */
+  hasRunningAttempt?(caller: Agent): boolean
   /**
    * Handle native Task creation without writing a version-two Task event.
    * @param caller - exact live Team member.

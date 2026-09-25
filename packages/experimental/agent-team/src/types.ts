@@ -122,12 +122,20 @@ export interface TeamTaskTransactionSnapshot {
 }
 
 /** Atomic native Task updates with opaque extension-owned JSON. */
-export interface TeamTaskTransactionPlan {
+export interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
   readonly notices?: readonly TeamMessageSnapshot[]
 }
+
+/** Return an earlier committed Task result without appending an event. */
+export interface TeamTaskTransactionExistingPlan {
+  readonly existingTaskIds: readonly TeamTaskId[]
+}
+
+/** A new atomic write or an existing result selected under the same Team lock. */
+export type TeamTaskTransactionPlan = TeamTaskTransactionWritePlan | TeamTaskTransactionExistingPlan
 
 /** Runtime-enriched task view returned to tools and hosts. */
 export interface TeamTaskView {

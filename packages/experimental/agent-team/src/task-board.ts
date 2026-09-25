@@ -71,6 +71,15 @@ export class TeamTaskBoard {
   }
 
   /**
+   * Read product Attempt admission without approximating it from native Task status.
+   * @param caller - exact live member whose tools are being admitted.
+   * @returns whether the installed writer reports a running Attempt.
+   */
+  hasRunningAttempt(caller: Agent): boolean {
+    return this.extension?.writer.hasRunningAttempt?.(caller) ?? false
+  }
+
+  /**
    * Create one unowned pending task in the Team Lead log.
    * @param caller - exact live member creating the Task.
    * @param membership - exact caller membership resolved by the Team roster.
@@ -283,6 +292,19 @@ export class TeamTaskBoard {
         members: structuredClone(state.members),
         nextTaskNumber: state.nextTaskNumber,
       })
+      if ('existingTaskIds' in plan) {
+        if (plan.existingTaskIds.length === 0 || new Set(plan.existingTaskIds).size !== plan.existingTaskIds.length) {
+          throw new TeamError('existing Task result needs distinct Task ids', 'TEAM_INVALID_ARGUMENT')
+        }
+        const views = plan.existingTaskIds.map((id) => {
+          const task = state.tasks.find(candidate => candidate.id === id)
+          if (task === undefined || !state.taskWriters.some(owner => owner.taskId === id && owner.writerId === extensionId)) {
+            throw new TeamError(`existing Task "${id}" does not belong to this writer`, 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+          }
+          return projectTaskView(state, task)
+        })
+        return { views, hasNotices: false }
+      }
       if (Buffer.byteLength(plan.dataJson, 'utf8') > this.maxTaskExtensionBytes) {
         throw new TeamError(`Task extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
       }

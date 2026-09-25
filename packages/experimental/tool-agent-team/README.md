@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request; `controlledTasks` instead gives the Lead default-on collaboration guidance and hides Lead-only tools from teammates. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions. The package is published under its experimental name and provides no stability guarantee.
+This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request. A durable controlled Team mode selects role-scoped tools and guidance; the current `controlledTasks` setting only withholds tools from unmarked Teams in a controlled product composition. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the m
 
 ### When to choose it
 
-Choose it when the model should create and coordinate teammates by itself rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. The default policy creates teammates only on explicit request; a controlled product composition may recruit them for ordinary tasks.
+Choose it when the model should create and coordinate teammates rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. Both the native and controlled policies require an explicit user request before the Lead recruits teammates; autonomous recruitment is a separate product policy.
 
 ### Smallest working example
 
@@ -48,7 +48,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 | `freshProvider` | `spawn` | Provider that starts fresh teammates |
 | `forkProvider` | `fork` | Provider that starts fork teammates |
 | `reviewedTasks` | `false` | Guide Task submission and Lead acceptance instead of native completion |
-| `controlledTasks` | `false` | Default-on Team guidance with role-scoped tools; requires a persisted controlled Team mode |
+| `controlledTasks` | `false` | Withhold Team tools from unmarked Teams in a controlled product composition; durable mode selects controlled tools and guidance |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -66,7 +66,7 @@ The eleven tools group into five capabilities:
 
 Creation and listing results identify members by `target`, with no member Session ID. Use that value in message and interrupt calls or the task tools’ `owner` parameter; task `ownerName` uses the same value. `inactive` means no turn is executing, whether the member is loaded or must be resumed; it does not describe task completion or outcome. `provisioning` and `failed` describe member creation. In the default mode any member can message any other member and use the task board; only the Lead creates and interrupts teammates. Task updates keep the domain's owner and revision checks, so an outdated edit is rejected instead of overwriting newer work.
 
-By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. With `controlledTasks: true`, the Lead can recruit without a separate user request, while teammates see only Team read/message and release actions from this package; the controlled Team service enforces the persisted mode and denies peer messages. Server-side Task policy remains authoritative in every mode.
+By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. A persisted controlled mode selects controlled guidance and role-scoped tools even after configuration changes: teammates see Team read/message and release actions, and without a running product Attempt other tools are denied. The controlled Team service denies peer messages. Server-side Task policy remains authoritative in every mode.
 
 Releasing a Task cancels its Attempt but does not interrupt an executing member turn or undo file effects. To stop work, the Lead first calls `interrupt_agent`, waits for the member to become inactive, then releases the Task; stale results are rejected by the Task writer. A scoped monotonic guard also rejects direct calls to `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`, `workflow`, and `ralph` for Team members. The guard prevents execution but does not hide tools mounted by a Preset in the same Agent scope: product bundles must omit those plugin rows to keep them out of the model catalog.
 
@@ -132,7 +132,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task and supplies a fixed standby reminder with the member name, group, responsibility, and Lead-only message rule. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task; the Team service supplies a fixed standby reminder with the member name, group, responsibility, and Lead-only message rule. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
 
 #### Token effect
 

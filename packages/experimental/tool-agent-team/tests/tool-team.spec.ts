@@ -159,7 +159,8 @@ describe('dsh-tool-team', () => {
     const leadTools = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
     expect(leadTools).toContain('spawn_teammate')
     expect(leadTools).toContain('team_task_create')
-    expect(renderPrompt(await assembly(ctx, lead))).toContain('Agent Team is active by default')
+    expect(renderPrompt(await assembly(ctx, lead))).toContain('Agent Team is available by default')
+    expect(renderPrompt(await assembly(ctx, lead))).not.toContain('without waiting for the user')
     const captured = vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockResolvedValue({ member: {
       id: SessionId('controlled-created'), name: 'collector', role: 'teammate',
       status: 'inactive', group: 'collectors', diagnostics: [],
@@ -171,8 +172,7 @@ describe('dsh-tool-team', () => {
     expect(captured).toHaveBeenCalledWith(lead, expect.objectContaining({
       name: 'collector', group: 'collectors', context: 'fresh',
     }))
-    const firstPrompt = captured.mock.calls[0]?.[1]?.prompt[0]
-    expect(firstPrompt?.type === 'text' ? firstPrompt.text : '').toContain('Remain on standby')
+    expect(captured.mock.calls[0]?.[1]?.prompt).toEqual([])
     const memberId = SessionId('controlled-member')
     const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
       provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
@@ -190,6 +190,46 @@ describe('dsh-tool-team', () => {
     expect(memberTools).not.toContain('interrupt_agent')
     expect(ctx.tools.get('team_task_update', scopeOf(child.agent.ctx))?.parameters)
       .toMatchObject({ properties: { action: { enum: ['release'] } } })
+    await child.dispose()
+  })
+
+  it('selects controlled tools and guidance from the durable Team mode after config changes', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead } = await setup([], false,
+      { controlledTasks: false, reviewedTasks: false }, [], { controlledMode: mode })
+    const names = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
+    expect(names).toContain('spawn_teammate')
+    expect(ctx.tools.get('team_task_update', scopeOf(lead.ctx))?.parameters)
+      .toMatchObject({ properties: { action: { enum: ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'] } } })
+    expect(renderPrompt(await assembly(ctx, lead))).toContain('The shared Task Board is the authoritative collaboration channel')
+  })
+
+  it('denies non-Team tools on standby and rechecks the installed Attempt admission', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead } = await setup([], false, { controlledTasks: true, reviewedTasks: true },
+      ['web_search'], { controlledMode: mode })
+    const id = SessionId('standby-member')
+    const member = { id, name: 'standby-member', description: 'Research', group: 'collectors',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+      member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const child = await ctx.agents.create({ sessionId: id, meta: { parentSession: lead.id }, agentOptions: {} })
+    expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
+    expect((await execute(ctx, child.agent, 'team_task_list', {})).isError).toBe(false)
+    let running = true
+    const unavailable = async (): Promise<never> => { throw new Error('unused') }
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'test-writer', hasRunningAttempt: () => running,
+      create: unavailable, update: unavailable,
+    })
+    expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(false)
+    running = false
+    expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
+    handle.dispose()
     await child.dispose()
   })
 

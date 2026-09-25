@@ -32,6 +32,15 @@ const DELEGATION_PRESET_MODULES = new Set([
   '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-ralph',
 ])
 
+/** Fixed first input for a controlled teammate; caller-authored work is ignored. */
+function controlledStandbyPrompt(name: string, group: string | undefined, description: string) {
+  return [{ type: 'text' as const, text: `<system-reminder>
+You are teammate "${name}" in group "${group ?? 'unassigned'}".
+Your Team Lead is "lead". Your responsibility is: ${description}.
+Remain on standby until a Task is assigned. Read the Task Board when needed and send coordination questions only to lead. Do not message another teammate or start unassigned work.
+</system-reminder>` }]
+}
+
 /** Caller identity inside one implicit Team. */
 export interface TeamMembership {
   readonly root: Agent
@@ -315,6 +324,9 @@ export class TeamRoster {
     const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
     let preset: ContinuablePresetBinding | undefined
     const mode = this.journal.state(root).mode
+    if (mode !== undefined && request.context !== 'fresh') {
+      throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
+    }
     if (request.presetId !== undefined || mode !== undefined) {
       const registry = this.ctx.get('agentPresets')
       if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
@@ -364,7 +376,7 @@ export class TeamRoster {
         provider: request.provider,
         label: description,
         request: {
-          prompt: request.prompt,
+          prompt: mode === undefined ? request.prompt : controlledStandbyPrompt(name, group, description),
           parent: root,
         },
         ...preset === undefined ? {} : { preset },

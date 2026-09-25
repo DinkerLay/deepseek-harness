@@ -104,7 +104,7 @@ interface TeamTaskSnapshot {
 
 `pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
 
-An optional Host writer can submit several native Task snapshots and mailbox notices in one `team/task/transaction` event. The registered writer receives a detached Board snapshot under the Team transaction lock; each existing Task must match its previous revision, and newly allocated numeric ids are sequential. The native projection validates the final DAG and folds Task values plus notices. The extension owns the JSON string in the same event and may register a separate projection for its review details; it cannot replace the native Board.
+An optional Host writer can submit several native Task snapshots and mailbox notices in one `team/task/transaction` event. The registered writer receives a detached Board snapshot under the Team transaction lock; each existing Task must match its previous revision, and newly allocated numeric ids are sequential. It can also return existing Tasks under that lock without appending an event. The native projection validates the final DAG and folds Task values plus notices. The extension owns the JSON string in the same event and may register a separate projection for its review details; it cannot replace the native Board.
 
 ```ts type-equiv
 /** One new or next-revision Task written by an optional Team extension. */
@@ -126,12 +126,24 @@ interface TeamTaskTransactionSnapshot {
 
 ```ts type-equiv
 /** Atomic native Task updates with opaque extension-owned JSON. */
-interface TeamTaskTransactionPlan {
+interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
   readonly notices?: readonly TeamMessageSnapshot[]
 }
+```
+
+```ts type-equiv
+/** Return an earlier committed Task result without appending an event. */
+interface TeamTaskTransactionExistingPlan {
+  readonly existingTaskIds: readonly TeamTaskId[]
+}
+```
+
+```ts type-equiv
+/** A new atomic write or an existing result selected under the same Team lock. */
+type TeamTaskTransactionPlan = TeamTaskTransactionWritePlan | TeamTaskTransactionExistingPlan
 ```
 
 <a id="web-projection"></a>
@@ -218,6 +230,13 @@ membership(agent: Agent): TeamMembership
 controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
+ * Read the installed Task writer's running-Attempt admission for one exact member.
+ * @param agent - exact live Team member.
+ * @returns whether the member has a running product Attempt.
+ */
+hasRunningAttempt(agent: Agent): boolean
+
+/**
  * List the runtime-enriched roster visible to one Team member.
  * @param agent - exact live Team member.
  * @returns Lead and teammate rows in creation order.
@@ -228,6 +247,7 @@ listMembers(agent: Agent): TeamMemberView[]
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
  * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+ * Controlled Teams replace the prompt and require fresh context.
  * @returns the active roster row.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>

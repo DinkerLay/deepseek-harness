@@ -766,7 +766,7 @@ export interface TeamControlledMode {
 }
 ```
 
-来源： [`packages/experimental/agent-team/src/types.ts:221`](../packages/experimental/agent-team/src/types.ts)
+来源： [`packages/experimental/agent-team/src/types.ts:229`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-api-speech-to-text"></a>
 
@@ -1107,7 +1107,7 @@ export interface Config {
   readonly forkProvider?: string
   /** Use product Task submission and Lead acceptance instead of native complete/reopen. */
   readonly reviewedTasks?: boolean
-  /** Product-controlled Team: default-on Lead policy and role-scoped tools. */
+  /** Withhold Team tools from unmarked Teams in a controlled product composition. */
   readonly controlledTasks?: boolean
 }
 ```

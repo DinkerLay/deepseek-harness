@@ -176,6 +176,16 @@ export class TeamService extends Service {
   }
 
   /**
+   * Read the installed Task writer's running-Attempt admission for one exact member.
+   * @param agent - exact live Team member.
+   * @returns whether the member has a running product Attempt.
+   */
+  hasRunningAttempt(agent: Agent): boolean {
+    this.roster.membership(agent)
+    return this.tasks.hasRunningAttempt(agent)
+  }
+
+  /**
    * List the runtime-enriched roster visible to one Team member.
    * @param agent - exact live Team member.
    * @returns Lead and teammate rows in creation order.
@@ -188,6 +198,7 @@ export class TeamService extends Service {
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
    * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+   * Controlled Teams replace the prompt and require fresh context.
    * @returns the active roster row.
    */
   async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {

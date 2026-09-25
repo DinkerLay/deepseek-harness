@@ -104,7 +104,7 @@ interface TeamTaskSnapshot {
 
 `pending` 表示尚未开始或已经释放，`in_progress` 携带 owner，`completed` 满足 blocker，`deleted` 是保留的 tombstone。view 会添加 owner name、readiness 和 write-scope 重叠警告，但不会改变持久快照。
 
-可选的 Host 写入方能在一条 `team/task/transaction` 事件中提交多个原生 Task 快照和 mailbox 通知。注册的写入方在 Team 事务锁内取得脱离原状态的 Board 快照；每个现有 Task 必须匹配其上一修订，新分配的数字 id 必须连续。原生投影校验最终 DAG，并折叠 Task 值与通知。扩展拥有同一事件中的 JSON 字符串，可为验收详情单独注册投影，但不能取代原生 Board。
+可选的 Host 写入方能在一条 `team/task/transaction` 事件中提交多个原生 Task 快照和 mailbox 通知。注册的写入方在 Team 事务锁内取得脱离原状态的 Board 快照；每个现有 Task 必须匹配其上一修订，新分配的数字 id 必须连续。它也能在同一锁内返回已有 Task，而不追加事件。原生投影校验最终 DAG，并折叠 Task 值与通知。扩展拥有同一事件中的 JSON 字符串，可为验收详情单独注册投影，但不能取代原生 Board。
 
 ```ts type-equiv
 /** One new or next-revision Task written by an optional Team extension. */
@@ -126,12 +126,24 @@ interface TeamTaskTransactionSnapshot {
 
 ```ts type-equiv
 /** Atomic native Task updates with opaque extension-owned JSON. */
-interface TeamTaskTransactionPlan {
+interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
   readonly notices?: readonly TeamMessageSnapshot[]
 }
+```
+
+```ts type-equiv
+/** Return an earlier committed Task result without appending an event. */
+interface TeamTaskTransactionExistingPlan {
+  readonly existingTaskIds: readonly TeamTaskId[]
+}
+```
+
+```ts type-equiv
+/** A new atomic write or an existing result selected under the same Team lock. */
+type TeamTaskTransactionPlan = TeamTaskTransactionWritePlan | TeamTaskTransactionExistingPlan
 ```
 
 <a id="web-projection"></a>
@@ -218,6 +230,13 @@ membership(agent: Agent): TeamMembership
 controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
+ * Read the installed Task writer's running-Attempt admission for one exact member.
+ * @param agent - exact live Team member.
+ * @returns whether the member has a running product Attempt.
+ */
+hasRunningAttempt(agent: Agent): boolean
+
+/**
  * List the runtime-enriched roster visible to one Team member.
  * @param agent - exact live Team member.
  * @returns Lead and teammate rows in creation order.
@@ -228,6 +247,7 @@ listMembers(agent: Agent): TeamMemberView[]
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
  * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+ * Controlled Teams replace the prompt and require fresh context.
  * @returns the active roster row.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>

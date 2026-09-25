@@ -21,7 +21,7 @@ export interface Config {
   readonly forkProvider?: string
   /** Use product Task submission and Lead acceptance instead of native complete/reopen. */
   readonly reviewedTasks?: boolean
-  /** Product-controlled Team: default-on Lead policy and role-scoped tools. */
+  /** Withhold Team tools from unmarked Teams in a controlled product composition. */
   readonly controlledTasks?: boolean
 }
 
@@ -44,7 +44,7 @@ Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VE
 
 Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. ${reviewedTasks ? REVIEWED_TASK_WORKFLOW : NATIVE_TASK_WORKFLOW} Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
 
-const CONTROLLED_LEAD_POLICY = `Agent Team is active by default. You are lead. Answer simple requests yourself; when a task benefits from parallel or specialist work, use Agent Find and create suitable teammates without waiting for the user to mention Agent Team.
+const CONTROLLED_LEAD_POLICY = `Agent Team is available by default. You are lead. Answer simple requests yourself; create teammates when the user explicitly requests Team collaboration or teammates.
 
 The shared Task Board is the authoritative collaboration channel. Only accepted Task results can serve downstream work. Create dependent Tasks as drafts when prerequisites are not yet accepted; do not assign them early. Once prerequisites are accepted, review the current results and explicitly confirm or rewrite a draft's requirements in the same assignment operation. Use team_task_assign for this. Receive member coordination messages, inspect submitted results, and accept or rework them. Do not treat ordinary messages as accepted Task results. Members may message only lead, not one another. Do not use subagent, workflow, or another delegation path outside Agent Team.`
 const CONTROLLED_MEMBER_POLICY = 'You are a controlled Agent Team teammate. Work only on an assigned running Task and submit its result for lead acceptance. The shared Task Board, not private messages, carries work and accepted results. You may message only lead for blockers or clarification. Do not contact other teammates or treat an ordinary message as an accepted Task result. Do not claim, edit, delete, reassign, or complete Tasks directly; you may release your own running Task and notify lead. Without an active Task, remain on standby and use only Team read-only queries or a message to lead.'
@@ -59,6 +59,9 @@ const BYPASS_DELEGATION_TOOLS = [
   'subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'workflow', 'ralph',
 ] as const
 const BYPASS_DELEGATION_NAMES: ReadonlySet<string> = new Set(BYPASS_DELEGATION_TOOLS)
+const STANDBY_TOOLS: ReadonlySet<string> = new Set([
+  'list_agents', 'team_task_list', 'team_task_get', 'team_task_review', 'send_message',
+])
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the
@@ -211,6 +214,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     // remains monotonic if a custom or misconfigured Preset exposes one.
     register(scoped.tools.guard(exec => BYPASS_DELEGATION_NAMES.has(exec.name)
       ? `Team members must delegate through Agent Team, not ${exec.name}` : undefined))
+    if (controlledMember) {
+      register(scoped.tools.guard(exec => !STANDBY_TOOLS.has(exec.name)
+        && !ctx.agentTeams.hasRunningAttempt(agent)
+        ? `No running Task Attempt; remain on standby before using ${exec.name}` : undefined))
+    }
 
     register(scoped.systemPrompt.section({
       name: 'team:policy',
@@ -243,11 +251,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
             name: args.name,
             description: args.description,
             ...args.group === undefined ? {} : { group: args.group },
-            prompt: config.controlledTasks ? [{ type: 'text', text: `<system-reminder>
-You are teammate "${args.name.trim()}" in group "${args.group?.trim() ?? 'unassigned'}".
-Your Team Lead is "lead". Your responsibility is: ${args.description.trim()}.
-Remain on standby until a Task is assigned. Read the Task Board when needed and send coordination questions only to lead. Do not message another teammate or start unassigned work.
-</system-reminder>` }] : [
+            prompt: config.controlledTasks ? [] : [
               { type: 'text', text: `<system-reminder>
 You are teammate "${args.name.trim()}".
 Your Team Lead is named "lead".
@@ -503,8 +507,13 @@ export function apply(ctx: Context, config: Config = {}): void {
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
     if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
-    if (resolved.controlledTasks && ctx.agentTeams.controlledMode(agent) === undefined) return
-    installed.set(agent, install(agent, ctx, resolved))
+    const controlled = ctx.agentTeams.controlledMode(agent) !== undefined
+    if (resolved.controlledTasks && !controlled) return
+    installed.set(agent, install(agent, ctx, {
+      ...resolved,
+      controlledTasks: controlled,
+      reviewedTasks: controlled || resolved.reviewedTasks,
+    }))
   }
   for (const agent of ctx.agents.list()) maybeInstall(agent)
   ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
