@@ -152,6 +152,9 @@ export class TeamTaskBoard {
       const state = this.journal.state(root)
       const current = state.tasks.find(task => task.id === request.taskId)
       if (current === undefined) throw new TeamError(`team task "${request.taskId}" not found`, 'TEAM_TASK_NOT_FOUND')
+      if (state.taskWriters.some(writer => writer.taskId === current.id)) {
+        throw new TeamError(`team task "${current.id}" requires its extension writer`, 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
       if (current.revision !== request.expectedRevision) {
         throw new TeamError(
           `stale team task "${current.id}" revision ${request.expectedRevision}; current revision is ${current.revision}`,
@@ -302,6 +305,10 @@ export class TeamTaskBoard {
       }
       for (const update of updates) {
         const prior = state.tasks.find(task => task.id === update.task.id)
+        const owner = state.taskWriters.find(writer => writer.taskId === update.task.id)?.writerId
+        if (owner !== undefined && owner !== extensionId) {
+          throw new TeamError(`Task "${update.task.id}" belongs to another extension writer`, 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
         const ownerId = update.task.ownerId
         if (update.task.status === 'in_progress' && ownerId === undefined) {
           throw new TeamError(`in-progress Task "${update.task.id}" needs an owner`, 'TEAM_INVALID_ARGUMENT')

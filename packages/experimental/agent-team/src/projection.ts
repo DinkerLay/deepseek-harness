@@ -15,6 +15,7 @@ import type {
   TeamMessageSnapshot,
   TeamProjection,
   TeamTaskSnapshot,
+  TeamTaskId,
   TeamTaskTransactionUpdate,
   TeamTaskView,
 } from './types.ts'
@@ -173,6 +174,8 @@ export interface TeamState {
   readonly id: TeamId
   readonly members: readonly TeamMemberSnapshot[]
   readonly tasks: readonly TeamTaskSnapshot[]
+  /** Durable event-derived writer identity for Tasks claimed by an extension. */
+  readonly taskWriters: readonly { readonly taskId: TeamTaskId; readonly writerId: string }[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
   readonly cancelled: readonly TeamMessageCancellation[]
@@ -189,6 +192,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     id: toTeamId(rootId),
     members: [],
     tasks: [],
+    taskWriters: [],
     messages: [],
     delivered: [],
     cancelled: [],
@@ -211,6 +215,7 @@ const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
+  taskWriters: z.array(z.object({ taskId: teamTaskIdSchema, writerId: z.string().min(1) }).strict()),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
   cancelled: z.array(z.object({
@@ -337,6 +342,9 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
     }
     case 'team/task': {
       const task = event.data.task
+      if (state.taskWriters.some(writer => writer.taskId === task.id)) {
+        throw new Error(`team task "${task.id}" requires its registered extension writer`)
+      }
       const index = state.tasks.findIndex(candidate => candidate.id === task.id)
       const prior = state.tasks[index]
       if (prior === undefined && task.revision !== 1) {
@@ -358,7 +366,19 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       return { ...state, tasks: replaceAt(state.tasks, index, task), nextTaskNumber }
     }
     case 'team/task/transaction': {
+      for (const update of event.data.updates) {
+        const writer = state.taskWriters.find(candidate => candidate.taskId === update.task.id)?.writerId
+        if (writer !== undefined && writer !== event.data.extension.id) {
+          throw new Error(`team task "${update.task.id}" belongs to another extension writer`)
+        }
+      }
       const next = applyTaskTransaction(state.tasks, state.nextTaskNumber, event.data.updates)
+      const taskWriters = [...state.taskWriters]
+      for (const update of event.data.updates) {
+        if (!taskWriters.some(writer => writer.taskId === update.task.id)) {
+          taskWriters.push({ taskId: update.task.id, writerId: event.data.extension.id })
+        }
+      }
       const notices = event.data.notices ?? []
       const seen = new Set<TeamMessageId>()
       for (const notice of notices) {
@@ -367,7 +387,7 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         }
         seen.add(notice.id)
       }
-      return { ...state, ...next,
+      return { ...state, ...next, taskWriters,
         messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
     case 'team/message/queued': {
@@ -489,7 +509,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 10,
+  stateVersion: 11,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

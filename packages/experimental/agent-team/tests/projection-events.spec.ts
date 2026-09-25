@@ -225,6 +225,10 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(0))
     const created = projectTeam(ROOT, [create])
     expect(created.tasks.map(row => row.id)).toEqual([first.id, second.id])
+    expect(created.taskWriters).toEqual([
+      { taskId: first.id, writerId: 'product-task' },
+      { taskId: second.id, writerId: 'product-task' },
+    ])
     expect(created.messages.map(row => row.id)).toEqual([TeamMessageId('task-notice-1')])
     expect(created.nextTaskNumber).toBe(3)
     const change = event('team/task/transaction', {
@@ -237,6 +241,15 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(1))
     const changed = projectTeam(ROOT, [create, change])
     expect(changed.tasks.map(row => row.status)).toEqual(['deleted', 'pending'])
+    expect(changed.taskWriters).toEqual(created.taskWriters)
+    expect(() => projectTeam(ROOT, [create, event('team/task', {
+      version: 2, teamId: TEAM, task: { ...first, revision: 2, status: 'completed' },
+    }, SessionSeq(1))])).toThrow(/requires its registered extension writer/)
+    expect(() => projectTeam(ROOT, [create, event('team/task/transaction', {
+      version: 1, teamId: TEAM,
+      updates: [{ previousRevision: 1, task: { ...first, revision: 2 } }],
+      extension: { id: 'another-writer', dataJson: '{}' },
+    }, SessionSeq(1))])).toThrow(/belongs to another extension writer/)
     expect(() => projectTeam(ROOT, [create, change, change])).toThrow(/stale Task/)
     expect(() => projectTeam(ROOT, [event('team/task/transaction', {
       ...create.data,
@@ -467,6 +480,32 @@ describe('Agent Teams projection events', () => {
       )
       const state = teamProjectionDefinition.stateSchema.parse(restored.checkpoint['agentTeam']!.val)
       expect(state.messages[0]?.content).toEqual([extension])
+    } finally {
+      await registry.dispose()
+    }
+  })
+
+  it('rebuilds version-10 checkpoints and retains extension Task ownership', async () => {
+    const ctx = new Context()
+    const registry = ctx.plugin(SessionProjectionRegistry)
+    try {
+      await registry
+      ctx.sessionProjections.register(teamProjectionDefinition)
+      const created = event('team/task/transaction', {
+        version: 1, teamId: TEAM,
+        updates: [{ previousRevision: null, task: task() }],
+        extension: { id: 'product-task', dataJson: '{}' },
+      }, SessionSeq(0))
+      const oldCheckpoint = { ...project(ROOT, [created]), taskWriters: undefined }
+      const restored = ctx.sessionProjections.restore(
+        { agentTeam: { ver: 10, seq: SessionSeq(0), val: oldCheckpoint } },
+        [created],
+        SessionLogOffset(0),
+        { version: SESSION_FORMAT_VERSION, id: ROOT, createdAt: 0, isSeeded: false },
+        SessionLogOffset(0),
+      )
+      const state = teamProjectionDefinition.stateSchema.parse(restored.checkpoint['agentTeam']!.val)
+      expect(state.taskWriters).toEqual([{ taskId: TeamTaskId('task-1'), writerId: 'product-task' }])
     } finally {
       await registry.dispose()
     }

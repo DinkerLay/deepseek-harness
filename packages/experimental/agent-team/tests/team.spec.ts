@@ -856,8 +856,23 @@ describe('Team shared task DAG', () => {
     handle.dispose()
     await expect(handle.commit(lead, () => ({ updates: [], dataJson: '{}' })))
       .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
-    expect((await ctx.agentTeams.createTask(lead, { subject: 'native again', description: 'default writer' })).id)
-      .toBe(TeamTaskId('task-3'))
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: TeamTaskId('task-2'), expectedRevision: 2, action: 'edit', subject: 'bypass review',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
+    const native = await ctx.agentTeams.createTask(lead, { subject: 'native again', description: 'default writer' })
+    expect(native.id).toBe(TeamTaskId('task-3'))
+    expect((await ctx.agentTeams.updateTask(lead, {
+      taskId: native.id, expectedRevision: native.revision, action: 'edit', subject: 'native edit',
+    })).subject).toBe('native edit')
+
+    const other = ctx.agentTeams.installTaskExtension({
+      id: 'another-writer', create: routedCreate, update: routedUpdate,
+    })
+    await expect(other.commit(lead, snapshot => ({
+      updates: [{ previousRevision: 2, task: { ...snapshot.tasks[1]!, revision: 3, subject: 'hijacked' } }],
+      dataJson: '{}',
+    }))).rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
+    other.dispose()
   })
 
   it('fails loudly when the durable numeric task id space is exhausted', async () => {
