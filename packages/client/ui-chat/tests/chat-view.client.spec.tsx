@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useEffect } from 'react'
 import type {
   AssistantMessageNode, ChatNode, ChatNodeHookContext, ChatNodeOwnerProps, ChatSnapshot,
+  ChatTurnJumpRequest,
   ChatViewSlotProps, CommandNode, CompactionSummaryNode, ContextMessageNode, ConversationNode,
   LegacyConversationSlice, ModelRetryNode, StartedToolCall, SteeringMessageNode,
   ToolCallBlock, ToolResultNode, TurnErrorNode, TurnMaxTokensNode, UseChatNodeTurnData,
@@ -304,6 +305,10 @@ function makeHarness(
     read: () => savedScroll,
   }
   const forkAt = vi.fn()
+  const turnJump = createSnapshotStore<ChatTurnJumpRequest | null>(null)
+  const consumeTurnJump = vi.fn((requestId: number) => {
+    if (turnJump.getSnapshot()?.requestId === requestId) turnJump.set(null)
+  })
   // Rows and the harness must observe the same chat-store instance.
   const chat = createChatStore().create()
   const transcriptView = createSnapshotStore<TranscriptViewMode>('compact')
@@ -439,8 +444,8 @@ function makeHarness(
     useStore: bindSnapshotSelector(chat),
     actions: chat.actions,
     usePresentation: bindSnapshotSelector(derivePresentationPolicy(transcriptView)),
-    useTurnJump: bindSnapshotSelector(createSnapshotStore(null)),
-    consumeTurnJump: vi.fn(),
+    useTurnJump: bindSnapshotSelector(turnJump),
+    consumeTurnJump,
     renderSlot,
     SessionProvider: SessionProviderStub,
     inspectCall: (callId: string) => { openView('trajectory', callId) },
@@ -481,7 +486,7 @@ function makeHarness(
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
     openFile, openSkill, loadOlder, loadThrough, openView,
     setOutline: (value: unknown) => { outlineValue = value },
-    chatScroll, forkAt, toolOwners,
+    chatScroll, forkAt, toolOwners, turnJump, consumeTurnJump,
     setPerformanceUsage: (mode: 'compact' | 'detailed') => { performanceUsage.set(mode) },
     setGrouped: (value: ConversationGroupedView<ProcessGroupData> | undefined) => {
       grouped = value
@@ -1123,6 +1128,40 @@ describe('ChatView', () => {
     await waitFor(() => { expect(first.getAttribute('aria-busy')).toBeNull() })
     expect(h.loadThrough.mock.calls).toEqual([[0], [0]])
     expect(view.getByRole('button', { name: '跳转到第 3 轮' }).getAttribute('aria-current')).toBe('true')
+  })
+
+  it('pages an external Turn request already pending when the destination Chat mounts', async () => {
+    const later = [userInTurn(8, 'latest prompt', 3), assistant(9, 'latest response', 3)]
+    const h = makeHarness({ nodes: later }, { hasMore: true })
+    h.setOutline([
+      { turn: 1, seq: 0, prompt: 'first prompt', response: '' },
+      { turn: 3, seq: 8, prompt: 'latest prompt', response: 'latest response' },
+    ])
+    let releaseJump: (() => void) | undefined
+    h.loadThrough.mockImplementation(() => new Promise<void>((resolve) => { releaseJump = resolve }))
+    h.turnJump.set({ requestId: 1, sessionId: SID, turn: 1, seq: SessionSeq(0) })
+    const view = render(<h.ChatView {...h.props} />)
+    await view.findByRole('button', { name: '加载并跳转到第 1 轮' })
+    await waitFor(() => { expect(h.loadThrough).toHaveBeenCalledWith(0) })
+    expect(h.consumeTurnJump).not.toHaveBeenCalled()
+    const scroller = view.container.querySelector('[data-chat-flow]')!.parentElement as HTMLDivElement
+    installScrollMetrics(scroller, 1_000, 300)
+    scroller.scrollTop = 700
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.chatAnchorKey === 'fixture:user:0') {
+        const top = 100 - scroller.scrollTop
+        return { top, bottom: top + 40 } as DOMRect
+      }
+      return { top: 0, bottom: 300 } as DOMRect
+    })
+    act(() => {
+      h.setChat({ nodes: [userInTurn(0, 'first prompt', 1), assistant(1, 'first response', 1), ...later],
+        turnTimings: new Map([[1, { startTime: 1_000 }], [3, { startTime: 8_000 }]]) })
+    })
+    await act(async () => { releaseJump?.() })
+    await waitFor(() => { expect(scroller.scrollTop).toBe(76) })
+    await waitFor(() => { expect(h.consumeTurnJump).toHaveBeenCalledWith(1) })
+    expect(h.turnJump.getSnapshot()).toBeNull()
   })
 
   it('uses a known turn landing without hit testing or consuming rail scroll as transcript input', async () => {

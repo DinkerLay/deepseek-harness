@@ -17,6 +17,7 @@ export interface ChatNavigationInput extends Pick<ChatViewSlotProps, 'loadOlder'
 interface TurnJump {
   readonly turn: number
   readonly seq: SessionSeq
+  readonly onLand?: (() => void) | undefined
   phase: 'loading' | 'settled'
   landing: 'pending' | 'landed' | 'interrupted'
   repageHead: ChatNavigationInput['firstSeq']
@@ -65,14 +66,16 @@ export class ChatNavigation {
   /**
    * Replace the current jump with an explicit turn selection.
    * @param item - loaded anchor or unloaded turn to fetch before landing.
+   * @param onLand - optional acknowledgement called only after the exact Turn lands.
    */
-  readonly navigateToTurn = (item: TurnRailItem): void => {
+  readonly navigateToTurn = (item: TurnRailItem, onLand?: () => void): void => {
     if (item.anchor.kind === 'loaded') {
       this.cancel()
       const landing = this.viewport.scrollToTurn(item.turn)
       if (landing === null) return
       this.reading.acceptNavigation(landing)
       if (this.input.loadingOlder) this.viewport.beginPreserving(landing.position)
+      onLand?.()
       return
     }
     this.cancel()
@@ -81,6 +84,7 @@ export class ChatNavigation {
     const jump: TurnJump = {
       turn: item.turn,
       seq: item.anchor.seq,
+      onLand,
       phase: 'loading',
       landing: 'pending',
       repageHead: null,
@@ -159,7 +163,10 @@ export class ChatNavigation {
     const landing = this.viewport.scrollToTurn(jump.turn)
     if (landing === null) return false
     this.reading.acceptNavigation(landing)
-    if (settle) this.cancel()
+    if (settle) {
+      this.cancel()
+      jump.onLand?.()
+    }
     else {
       this.viewport.beginPreserving(landing.position)
       jump.landing = 'landed'
