@@ -132,7 +132,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task; the Team service supplies a fixed standby reminder with the member name, group, responsibility, and Lead-only message rule. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task; the Team service supplies a fixed standby reminder with the member name, group, responsibility, Lead-only message rule, and first-turn instruction to confirm readiness without tools or messages. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
 
 #### Token effect
 

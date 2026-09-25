@@ -183,6 +183,7 @@ describe('dsh-tool-team', () => {
     const child = await ctx.agents.create({ sessionId: memberId,
       meta: { parentSession: lead.id }, agentOptions: {} })
     const memberTools = ctx.tools.schemas(scopeOf(child.agent.ctx)).map(schema => schema.name)
+    expect(renderPrompt(await assembly(ctx, child.agent))).toContain('On your first turn, only confirm readiness')
     expect(memberTools).toContain('team_task_list')
     expect(memberTools).toContain('send_message')
     expect(memberTools).not.toContain('spawn_teammate')

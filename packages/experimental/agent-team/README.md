@@ -65,7 +65,7 @@ Ask the Lead to create a teammate: give it a unique lowercase name such as `revi
 
 An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, the teammate keeps the ordinary inherited composition.
 
-A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the roster checks the retained Preset generation before reserving the member; a declared delegation plugin is rejected, including when the child would inherit the Lead's Preset. The service replaces caller-authored first work with a fixed standby input and requires fresh context.
+A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the roster checks the retained Preset generation before reserving the member; a declared delegation plugin is rejected, including when the child would inherit the Lead's Preset. The service replaces caller-authored first work with a fixed standby input that asks the member to reply only “Ready.” without tools or messages, and requires fresh context.
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.
 

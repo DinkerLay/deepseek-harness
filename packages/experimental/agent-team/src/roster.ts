@@ -38,6 +38,7 @@ function controlledStandbyPrompt(name: string, group: string | undefined, descri
 You are teammate "${name}" in group "${group ?? 'unassigned'}".
 Your Team Lead is "lead". Your responsibility is: ${description}.
 Remain on standby until a Task is assigned. Read the Task Board when needed and send coordination questions only to lead. Do not message another teammate or start unassigned work.
+For this first turn, reply only "Ready." Do not call any tool, including send_message, and do not ask a question. Wait for an assignment notification before doing work.
 </system-reminder>` }]
 }
 

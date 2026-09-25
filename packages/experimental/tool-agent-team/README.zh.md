@@ -132,7 +132,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的初始任务，Team 服务会提供包含成员名字、分组、职责与仅联系 Lead 规则的固定待命提醒。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的初始任务，Team 服务会提供包含成员名字、分组、职责、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
 
 #### Token 影响
 

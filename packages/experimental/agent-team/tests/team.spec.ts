@@ -341,6 +341,7 @@ describe('Team identity and provisioning', () => {
     const firstText = first?.type === 'user/message'
       ? first.data.content.filter(block => block.type === 'text').map(block => block.text).join('\n') : ''
     expect(firstText).toContain('Remain on standby until a Task is assigned')
+    expect(firstText).toContain('Do not call any tool, including send_message')
     expect(firstText).toContain('collector-one')
     expect(firstText).toContain('collectors')
     expect(firstText).not.toContain('collector-one initial')
