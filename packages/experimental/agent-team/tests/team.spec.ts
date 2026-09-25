@@ -377,7 +377,9 @@ describe('Team identity and provisioning', () => {
   })
 
   it('does not cold-resume a teammate under a changed Preset declaration', async () => {
-    const { ctx, lead, removeReviewer } = await setup([textResponse('initial review')], {}, true)
+    const { ctx, lead, removeReviewer } = await setup([
+      textResponse('initial review'), textResponse('replacement ready'),
+    ], {}, true)
     const started = await spawn(ctx, lead, 'reviewer', { presetId: 'reviewer' })
     await waitNoAgent(ctx, started.member.id)
     await removeReviewer?.()
@@ -398,6 +400,13 @@ describe('Team identity and provisioning', () => {
     await teamInternals(ctx).recoverFor(lead)
     expect(durable(lead).cancelled).toHaveLength(1)
     expect(ctx.agentTeams.listMembers(lead)[1]?.status).toBe('retired')
+    const replacement = await spawn(ctx, lead, 'reviewer-new', { presetId: 'reviewer' })
+    expect(replacement.member.id).not.toBe(started.member.id)
+    expect(replacement.member.preset?.revision).not.toBe(started.member.preset?.revision)
+    expect(ctx.agentTeams.listMembers(lead).map(row => [row.name, row.status])).toEqual([
+      ['lead', expect.any(String)], ['reviewer', 'retired'], ['reviewer-new', expect.any(String)],
+    ])
+    await waitNoAgent(ctx, replacement.member.id)
   })
 
   it('retires an idle teammate while preserving its Session and reserving its name', async () => {
