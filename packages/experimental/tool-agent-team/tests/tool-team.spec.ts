@@ -65,7 +65,11 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legacyControl = false) {
+async function setup(
+  script: ConstructorParameters<typeof MockAdapter>[0],
+  legacyControl = false,
+  teamConfig: toolTeam.Config = {},
+) {
   const ctx = new Context()
   contexts.add(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -79,7 +83,7 @@ async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legac
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
-  const fiber = await ctx.plugin(toolTeam)
+  const fiber = await ctx.plugin(toolTeam, teamConfig)
   const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = await ctx.agentLoop.create(SessionId('tool-team-lead'), { provider: 'mock', model: 'mock' })
@@ -762,6 +766,28 @@ describe('dsh-tool-team', () => {
     expect('default' in toolTeam).toBe(false)
     expect(toolTeam.name).toBe('tool-agent-team')
     expect(toolTeam.inject).toEqual(['agents', 'agentTeams', 'tools', 'systemPrompt'])
+  })
+
+  it('keeps native completion by default and advertises review only in reviewed Task mode', async () => {
+    const actions = (ctx: Context, agent: Agent): readonly string[] => {
+      const schema = ctx.tools.schemas(scopeOf(agent.ctx)).find(tool => tool.name === 'team_task_update')
+      const params = schema?.parameters as { properties?: { action?: { enum?: string[] } } } | undefined
+      return params?.properties?.action?.enum ?? []
+    }
+    const native = await setup([])
+    const nativePrompt = renderPrompt(await assembly(native.ctx, native.lead))
+    expect(nativePrompt).toContain('perform the work, then complete')
+    expect(nativePrompt).not.toContain('team_task_submit_result')
+    expect(actions(native.ctx, native.lead)).toContain('complete')
+
+    const reviewed = await setup([], false, { reviewedTasks: true })
+    const reviewedPrompt = renderPrompt(await assembly(reviewed.ctx, reviewed.lead))
+    expect(reviewedPrompt).toContain('team_task_submit_result')
+    expect(reviewedPrompt).toContain('team_task_accept_result')
+    expect(reviewedPrompt).not.toContain('perform the work, then complete')
+    expect(actions(reviewed.ctx, reviewed.lead)).not.toContain('complete')
+    expect(actions(reviewed.ctx, reviewed.lead)).not.toContain('reopen')
+    expect(actions(reviewed.ctx, reviewed.lead)).toContain('claim')
   })
 
   it('uses configured fresh and fork provider names', async () => {

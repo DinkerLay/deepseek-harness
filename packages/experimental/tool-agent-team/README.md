@@ -64,6 +64,8 @@ The eleven tools group into five capabilities:
 
 Creation and listing results identify members by `target`, with no member Session ID. Use that value in message and interrupt calls or the task tools’ `owner` parameter; task `ownerName` uses the same value. `inactive` means no turn is executing, whether the member is loaded or must be resumed; it does not describe task completion or outcome. `provisioning` and `failed` describe member creation. Any member can message any other member and use the task board; only the Lead creates and interrupts teammates. Task updates keep the domain's owner and revision checks, so an outdated edit is rejected instead of overwriting newer work.
 
+By default, the model sees the native claim-and-complete Task workflow. A product composition can set `reviewedTasks: true` to instead tell members to submit results for Lead acceptance and to omit `complete` and `reopen` from the model-facing `team_task_update` action enum. Server-side Task policy remains authoritative in either mode.
+
 ### What success and failure look like
 
 Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. Task edits based on an outdated revision are rejected rather than overwriting newer work.
@@ -92,12 +94,12 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: config, the fixed policy text, and the eleven scoped tool registrations |
+| [`src/index.ts`](src/index.ts) | Plugin entry: config, the selected policy text, and the eleven scoped tool registrations |
 | — | No runtime invariant companion is published; the Team service owns durable and authorization relations. |
 
 ### Policy and tools
 
-One `team:policy` section on the member scope states the shared coordination rules; the fixed text and the eleven tool registrations are declared in [`src/index.ts`](src/index.ts). The eleven tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
+One `team:policy` section on the member scope states the shared coordination rules; its Task workflow wording and the `team_task_update` action enum follow `reviewedTasks`. The eleven tool registrations are declared in [`src/index.ts`](src/index.ts). Tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
 
 ### Scoped registration and teardown
 

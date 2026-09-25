@@ -1089,6 +1089,8 @@ export interface Config {
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /** Use product Task submission and Lead acceptance instead of native complete/reopen. */
+  readonly reviewedTasks?: boolean
 }
 ```
 

@@ -19,22 +19,30 @@ export interface Config {
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /** Use product Task submission and Lead acceptance instead of native complete/reopen. */
+  readonly reviewedTasks?: boolean
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
 export const Config: z<Config> = z.object({
   freshProvider: z.string().default('spawn'),
   forkProvider: z.string().default('fork'),
+  reviewedTasks: z.boolean().default(false),
 })
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
-const POLICY = `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
+const NATIVE_TASK_WORKFLOW = 'Shared-task workflow is list, get, claim with the current revision, perform the work, then complete.'
+const REVIEWED_TASK_WORKFLOW = 'Shared-task workflow is list/get, then claim or Lead reassign, perform the work, use team_task_review to read the running Attempt id, and call team_task_submit_result with that id and current revision. Submission does not complete the Task: the Lead checks it with team_task_review and calls team_task_accept_result. Quality rework uses team_task_rework to create a new Task. Do not use complete or reopen.'
+const POLICY = (reviewedTasks: boolean): string => `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
 
 The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
-Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. ${reviewedTasks ? REVIEWED_TASK_WORKFLOW : NATIVE_TASK_WORKFLOW} Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+
+const NATIVE_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'] as const
+const REVIEWED_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'] as const
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
@@ -184,7 +192,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
-      text: POLICY,
+      text: POLICY(config.reviewedTasks),
     }))
 
     register(scoped.tools.register(defineTool({
@@ -405,14 +413,16 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
     register(scoped.tools.register(defineTool({
       name: 'team_task_update',
-      description: 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
+      description: config.reviewedTasks
+        ? 'Compare-and-set a shared Task action. Submit results with team_task_submit_result; only the Lead accepts them.'
+        : 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
       parameters: {
         task_id: { type: 'string', required: true, description: 'Shared task id.' },
         expected_revision: { type: 'integer', required: true, description: 'Current task revision used as the CAS precondition.' },
         action: {
           type: 'string',
           required: true,
-          enum: ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'],
+          enum: config.reviewedTasks ? REVIEWED_TASK_ACTIONS : NATIVE_TASK_ACTIONS,
           description: 'Task transition to apply.',
         },
         subject: { type: 'string', description: 'Replacement title for edit.' },
@@ -449,6 +459,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
+    reviewedTasks: config.reviewedTasks ?? false,
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
