@@ -95,6 +95,7 @@ export class TeamRoster {
     private readonly maxMembers: number,
     private readonly maxActiveMembers: number,
     private readonly validateMemberGroup: (caller: Agent, group: string | undefined) => void,
+    private readonly defaultMemberPresetId?: string,
   ) {}
 
   /**
@@ -223,7 +224,10 @@ export class TeamRoster {
     const tools = this.ctx.get('tools')
     const scope = scopeOf(agent.ctx)
     if (registry === undefined || tools === undefined || scope === undefined) {
-      throw new TeamError('member tool catalog cannot be checked', 'TEAM_UNSAFE_PRESET')
+      const missing = [registry === undefined ? 'preset registry' : undefined,
+        tools === undefined ? 'tool registry' : undefined, scope === undefined ? 'member scope' : undefined]
+        .filter((value): value is string => value !== undefined)
+      throw new TeamError(`member tool catalog cannot be checked: ${missing.join(', ')} unavailable`, 'TEAM_UNSAFE_PRESET')
     }
     await using lease = await registry.acquireComposition(member.preset.id)
     if (lease.revision !== member.preset.revision) {
@@ -367,10 +371,11 @@ export class TeamRoster {
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
     }
-    if (request.presetId !== undefined || mode !== undefined) {
+    if (request.presetId !== undefined || this.defaultMemberPresetId !== undefined || mode !== undefined) {
       const registry = this.ctx.get('agentPresets')
       if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
-      const selectedId = request.presetId ?? root.session.header.agentPreset ?? registry.defaultId
+      const selectedId = request.presetId ?? this.defaultMemberPresetId
+        ?? root.session.header.agentPreset ?? registry.defaultId
       await using lease = await registry.acquireComposition(selectedId)
       if (lease.revision === undefined) {
         throw new TeamError(`preset "${lease.id}" has no durable declaration revision`, 'TEAM_PRESET_UNAVAILABLE')

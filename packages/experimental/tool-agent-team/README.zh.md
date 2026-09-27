@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包让模型创建具名 teammate、向它们发送消息、查看可用状态、等待进展、中断卡住的工作、让成员退队，并通过共享任务板协调。默认策略向每个成员提供相同的十一个工具，且仅在明确要求后创建成员。持久的受控 Team 模式决定按角色装配的工具与指引；当前的 `controlledTasks` 设置只让受控产品组合中的无模式记录 Team 不获得工具。它会取代同名的旧版 subagent 控件，因此同时需要两者的组合必须禁用旧定义。
+本包让模型创建 teammate、发消息、等待、中断工作、让成员退队，并通过共享任务板协调。默认策略向每个成员提供相同的十一个工具，且仅在明确要求后创建成员。持久的受控 Team 模式决定按角色装配的工具与指引；当前的 `controlledTasks` 设置只让受控产品组合中的无模式记录 Team 不获得工具。独立的 `autonomousDelegation` 开关只改变 Lead 的招募指引。它会取代同名的旧版 subagent 控件，因此同时需要两者的组合必须禁用旧定义。
 
 ## 目录
 
@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 何时选择
 
-当模型应该创建与协调 teammate、而不是由人来操作 subagent 控件时，选择它。当同名的旧全局 subagent 工具必须继续可用时，请不要选择：团队工具会为团队成员取代它们，因此想同时使用两者的组合必须禁用旧定义。原生和受控策略都要求用户明确提出请求后，Lead 才招募成员；自主招募属于独立的产品策略。
+当模型应该创建与协调 teammate、而不是由人来操作 subagent 控件时，选择它。当同名的旧全局 subagent 工具必须继续可用时，请不要选择：团队工具会为团队成员取代它们，因此想同时使用两者的组合必须禁用旧定义。默认的原生与受控策略都要求用户明确提出请求后才招募；设置 `autonomousDelegation: true` 后，产品 Lead 可在委派确有帮助时自主招募，与受控模式独立。
 
 ### 最小工作示例
 
@@ -49,6 +49,7 @@ kind: "package-reference"
 | `forkProvider` | `fork` | 启动 fork teammate 的提供方 |
 | `reviewedTasks` | `false` | 使用成员提交与 Lead 验收，而非原生完成流程 |
 | `controlledTasks` | `false` | 让受控产品组合中的无模式记录 Team 不获得工具；持久模式决定受控工具和指引 |
+| `autonomousDelegation` | `false` | Lead 可在委派有帮助时自主招募，无须明确提出 Team；与受控模式独立 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-tool-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -132,7 +133,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的初始任务，Team 服务会提供包含成员名字、分组、职责、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的初始任务，Team 服务会提供包含成员名字、分组、职责、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
 
 #### Token 影响
 
@@ -151,7 +152,7 @@ provider／model、共享 system 策略和工具 schema 相同时，fork 保留�
 这些限制说明策略与工具无法为一支团队保证什么。它们是当前包约束，不是与其他协作方式的对比。
 
 - **提示词策略只负责协调，不负责 confinement**——它无法阻止 Bash 或外部进程写入重叠文件。
-- **不会自主创建 Team**——除非用户明确要求，普通任务不会触发 delegation。
+- **自主性是指引，而非强制委派**——开关开启后，Lead 仍可自行回答简单请求。
 - **没有 Web 控制功能**——浏览器 roster 与任务板呈现不属于该运行时包。
 - **实验原型，无稳定性承诺**——本包公开发布，但孵化期间 schema 仍可自由变更。
 

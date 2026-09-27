@@ -62,6 +62,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:subagent/descriptor` | event | `b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5` | [`{ type: "subagent/descriptor" }`](#persistence-type-sha256-b79ada42962cad0190a9d465805260567621fa3a4abd757eb31e6016b52d5ab5) |
 | `event:subagent/model-selection-policy` | event | `a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc` | [`{ type: "subagent/model-selection-policy" }`](#persistence-type-sha256-a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc) |
 | `event:system/message` | event | `69081694be231d56fd9580ba14645fd5e35373202605d5c5c841a9435b5fa3b1` | [`{ type: "system/message" }`](#persistence-type-sha256-69081694be231d56fd9580ba14645fd5e35373202605d5c5c841a9435b5fa3b1) |
+| `event:team/extension` | event | `3728c6204af7e7dd3dd0d016ca34ac0249a239221b8b3cd0017d58a3b4c71d61` | [`{ type: "team/extension" }`](#persistence-type-sha256-3728c6204af7e7dd3dd0d016ca34ac0249a239221b8b3cd0017d58a3b4c71d61) |
 | `event:team/member` | event | `4fb59762612c3e3ac3a3bd4f84c9c148d3c3893bd422ba2b201cc039fabd49bc` | [`{ type: "team/member" }`](#persistence-type-sha256-4fb59762612c3e3ac3a3bd4f84c9c148d3c3893bd422ba2b201cc039fabd49bc) |
 | `event:team/member/configured` | event | `fa9f4c7b2727b86530bca8973950bbd2ea70e2d22cf3d978733493d5e683a507` | [`{ type: "team/member/configured" }`](#persistence-type-sha256-fa9f4c7b2727b86530bca8973950bbd2ea70e2d22cf3d978733493d5e683a507) |
 | `event:team/message/cancelled` | event | `7e9638f6cd7c05e5251ad9379fe114fb7d62524031a332b7ea47f23fef25680c` | [`{ type: "team/message/cancelled" }`](#persistence-type-sha256-7e9638f6cd7c05e5251ad9379fe114fb7d62524031a332b7ea47f23fef25680c) |
@@ -980,6 +981,24 @@ Source: [`packages/core/session/src/types.ts:330`](../packages/core/session/src/
 
 ### `team/*`
 
+<a id="teamextension--log-only"></a>
+
+#### `team/extension` — log-only
+
+```ts persistence-catalog
+/** One opaque extension record and optional Team notices, without a Task update. */
+'team/extension': {
+  version: 1
+  teamId: TeamId
+  extension: { id: string; recordId: string; dataJson: string }
+  notices?: TeamMessageSnapshot[]
+}
+```
+
+Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:366`](../packages/experimental/agent-team/src/types.ts)
+
 <a id="teammember--log-only"></a>
 
 #### `team/member` — log-only
@@ -991,7 +1010,7 @@ Source: [`packages/core/session/src/types.ts:330`](../packages/core/session/src/
 
 Types: [TeamId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:322`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:352`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammemberconfigured--log-only"></a>
 
@@ -1004,7 +1023,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:322`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMemberSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:324`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:354`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagecancelled--log-only"></a>
 
@@ -1023,7 +1042,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:324`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:345`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:382`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -1041,7 +1060,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:345`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:338`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:375`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -1054,7 +1073,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:338`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:336`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:373`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammode--log-only"></a>
 
@@ -1067,7 +1086,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:336`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:320`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:350`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -1080,7 +1099,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:320`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:326`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:356`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtasktransaction--log-only"></a>
 
@@ -1099,7 +1118,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:326`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:328`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:358`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 
@@ -2650,6 +2669,14 @@ SHA-256: `f05fb85e715af4ab4de0b6ba111166dd0435bd8bb74a0fa0f32b9d174113fc7c`
 SHA-256: `2e4debca12f2c449f96dc6574f3fbf2fb346193443114a241d01a236362ec48c`
 
 `"team-message"`
+
+<a id="persistence-type-sha256-93f351ac5dee6d84c886cfc9dc5e00975dd2c0af688969cb06e7bd71066bb67a"></a>
+
+### `"team/extension"`
+
+SHA-256: `93f351ac5dee6d84c886cfc9dc5e00975dd2c0af688969cb06e7bd71066bb67a`
+
+`"team/extension"`
 
 <a id="persistence-type-sha256-18fcdd273a2f2f9d813a3be5e71df5903a963a5c88e46b90b14de6e2db890da0"></a>
 
@@ -4828,7 +4855,7 @@ Sources: [`packages/llm/llm/src/message.ts:35`](../packages/llm/llm/src/message.
 
 SHA-256: `5db382bb9356fef35b7a8bc1aac1fec00134d63eb999451487a7e2a10a7b09d6`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:211`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:239`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -4914,7 +4941,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:64`](../packages/experi
 
 SHA-256: `2eafefdc6f79a4922d68a787a09eaf4dd2b2369c3777fba4c05e800b5678ac8e`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:186`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:214`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -4942,7 +4969,7 @@ Array of [`TeamMessageSnapshot`](#persistence-type-sha256-2eafefdc6f79a4922d68a7
 
 SHA-256: `2152caf1a71e588e4df2358a806dea24936c1c47131134f01a12939d12cdc0c0`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:202`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:230`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6052,12 +6079,26 @@ Sources: [`packages/compaction/compaction/src/types.ts:24`](../packages/compacti
 
 SHA-256: `20c33d05656cc3fb6f032e79a9a858c1a6d4eac72d5330e45b05677846450bb4`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:332`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:362`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
 | `dataJson` | required | `string` |
 | `id` | required | `string` |
+
+<a id="persistence-type-sha256-6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163"></a>
+
+### `{ dataJson, id, recordId }`
+
+SHA-256: `6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:369`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `dataJson` | required | `string` |
+| `id` | required | `string` |
+| `recordId` | required | `string` |
 
 <a id="persistence-type-sha256-8ad45ad053b4d89f8865c17cc9ff3b8748e86045f3f0fb816269a34af2619141"></a>
 
@@ -6217,7 +6258,7 @@ Sources: [`packages/core/session/src/types.ts:375`](../packages/core/session/src
 
 SHA-256: `caf7b94ee06948f73b17c2ad9449f9789687fc30c045c8b5f3b3c10a5dbf3a9f`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:328`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:358`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6225,6 +6266,21 @@ Sources: [`packages/experimental/agent-team/src/types.ts:328`](../packages/exper
 | `notices` | optional | [`TeamMessageSnapshot[]`](#persistence-type-sha256-895e44e0836c3a5ffcc9a45caa22ed0ddf3ab59bdc79825e0f27dc4a2edd58e0) |
 | `teamId` | required | `string` |
 | `updates` | required | [`TeamTaskTransactionUpdate[]`](#persistence-type-sha256-fce74ec6552e9de0eb1219129e834e3d45f5276097f030cb9e0179f641240a1a) |
+| `version` | required | `1` |
+
+<a id="persistence-type-sha256-77ac955897c4fb15d2da8f4ba57905d9f424ad2587c6e6cf244b1e14c4d35618"></a>
+
+### `{ extension, notices?, teamId, version }`
+
+SHA-256: `77ac955897c4fb15d2da8f4ba57905d9f424ad2587c6e6cf244b1e14c4d35618`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:366`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `extension` | required | [`{ dataJson, id, recordId }`](#persistence-type-sha256-6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163) |
+| `notices` | optional | [`TeamMessageSnapshot[]`](#persistence-type-sha256-895e44e0836c3a5ffcc9a45caa22ed0ddf3ab59bdc79825e0f27dc4a2edd58e0) |
+| `teamId` | required | `string` |
 | `version` | required | `1` |
 
 <a id="persistence-type-sha256-8e31bb958e9b015e6f8407eaade32217068159e816f3cc99c3ad76eb889732e0"></a>
@@ -7670,7 +7726,7 @@ Sources: [`packages/web/web-search-deepseek/src/provider.ts:61`](../packages/web
 
 SHA-256: `a0556ce24b97bf259fa6e7ff1efc1a679cf196225f8d88398781e2a4d1091db8`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:324`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:354`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7684,7 +7740,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:324`](../packages/exper
 
 SHA-256: `b1ebd5cda47d90d980bb05bffc3f970c51537b9aff15b3bc3d639811727741b1`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:322`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:352`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7712,7 +7768,7 @@ Sources: [`packages/core/session/src/types.ts:330`](../packages/core/session/src
 
 SHA-256: `ea08ec1df0c33108fd03345b9af199cf04dea450aa045d3c683f216311403403`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:336`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:373`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7726,7 +7782,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:336`](../packages/exper
 
 SHA-256: `0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:338`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:375`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7741,7 +7797,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:338`](../packages/exper
 
 SHA-256: `7e78ed670ff281b5b68829e83852302a6f31fc81433e985da3746f25dfab1107`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:345`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:382`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7770,7 +7826,7 @@ Sources: [`packages/sandbox/sandbox-policy/src/session-mode.ts:33`](../packages/
 
 SHA-256: `c6dfe342d415232f361ee19a57313f71e42048fc8508d907bac356dcebc4be4c`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:320`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:350`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -7915,7 +7971,7 @@ Sources: [`packages/compaction/compaction-image-offload/src/projection.ts:25`](.
 
 SHA-256: `de793be4f7d671ed79c4b8c7ef9747a20480bfb8a3d1e968b5782ce0d5ac609b`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:326`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:356`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -8709,6 +8765,22 @@ SHA-256: `69081694be231d56fd9580ba14645fd5e35373202605d5c5c841a9435b5fa3b1`
 | `surfaceOp` | required | [`SurfaceOp`](#persistence-type-sha256-335e242de1fcc17b6ca920fc420d71bec2d76e53e37955c00948b65ab77f05c5) |
 | `time` | required | `number` |
 | `type` | required | `"system/message"` |
+
+<a id="persistence-type-sha256-3728c6204af7e7dd3dd0d016ca34ac0249a239221b8b3cd0017d58a3b4c71d61"></a>
+
+<a id="persistence-type-eventteamextension"></a>
+
+### `{ type: "team/extension" }`
+
+SHA-256: `3728c6204af7e7dd3dd0d016ca34ac0249a239221b8b3cd0017d58a3b4c71d61`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`{ extension, notices?, teamId, version }`](#persistence-type-sha256-77ac955897c4fb15d2da8f4ba57905d9f424ad2587c6e6cf244b1e14c4d35618) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"team/extension"` |
 
 <a id="persistence-type-sha256-4fb59762612c3e3ac3a3bd4f84c9c148d3c3893bd422ba2b201cc039fabd49bc"></a>
 

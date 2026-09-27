@@ -288,6 +288,17 @@ describe('Team identity and provisioning', () => {
     await waitNoAgent(ctx, started.member.id)
   })
 
+  it('uses a configured default member Preset without changing the official inheritance default', async () => {
+    const product = await setup([textResponse('ready'), textResponse('lead settled')],
+      { defaultMemberPresetId: 'reviewer' }, true)
+    const member = await spawn(product.ctx, product.lead, 'general-worker')
+    expect(member.member.preset?.id).toBe('reviewer')
+    expect((await product.ctx.sessionPersistence.stat(member.member.id))?.header.agentPreset).toBe('reviewer')
+    const official = await setup([textResponse('ready'), textResponse('lead settled')], {}, true)
+    const inherited = await spawn(official.ctx, official.lead, 'ordinary-worker')
+    expect(inherited.member.preset).toBeUndefined()
+  })
+
   it('persists a teammate group without changing its address or Session identity', async () => {
     const { ctx, lead } = await setup([textResponse('ready')])
     const started = await spawn(ctx, lead, 'collector-one', { group: 'collectors' })
@@ -1144,6 +1155,35 @@ describe('Team shared task DAG', () => {
     expect(durable(lead).pendingMessages.map(notice => notice.id)).toContain(noticeId)
     await expect(ctx.agentTeams.retireTeammate(lead, 'notice-worker'))
       .rejects.toMatchObject({ code: 'TEAM_MEMBER_HAS_MESSAGES' })
+    handle.dispose()
+  })
+
+  it('commits extension-only records with notices and de-duplicates under the Team lock', async () => {
+    const { ctx, lead } = await setup([])
+    const unavailable = async (): Promise<never> => { throw new Error('unused') }
+    const handle = ctx.agentTeams.installTaskExtension({
+      id: 'record-writer', create: unavailable, update: unavailable,
+    })
+    const member = {
+      id: SessionId('record-target'), name: 'record-target', description: 'notice target',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const,
+    }
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const write = () => handle.commitRecord(lead, snapshot => snapshot.records.some(row => row.recordId === 'proposal-1')
+      ? { existingRecordId: 'proposal-1' }
+      : { recordId: 'proposal-1', dataJson: '{"kind":"proposal"}', notices: [{
+        id: TeamMessageId('proposal-notice-1'), senderId: lead.id, senderName: 'lead', targetId: member.id,
+        content: content('New proposal'),
+      }] })
+    const results = await Promise.all([write(), write()])
+    expect(results.map(result => result.committed).sort()).toEqual([false, true])
+    expect(ctx.agentTeams.listTasks(lead)).toEqual([])
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/extension')).toHaveLength(1)
+    expect(durable(lead).pendingMessages.map(notice => notice.id)).toContain(TeamMessageId('proposal-notice-1'))
+    await expect(handle.commitRecord(lead, () => ({ recordId: 'proposal-1', dataJson: '{}' })))
+      .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
     handle.dispose()
   })
 

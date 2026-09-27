@@ -21,7 +21,7 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamId, TeamMessageId } from '../../agent-team/src/index.ts'
+import TeamService, { TeamId, TeamMessageId, TeamTaskId } from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
 function serializeRequest(request: GenerateOptions) {
@@ -207,11 +207,30 @@ describe('dsh-tool-team', () => {
     expect(renderPrompt(await assembly(ctx, lead))).toContain('a chat answer does not complete it')
   })
 
+  it('keeps recruitment independent of controlled mode and preserves the official default', async () => {
+    const official = await setup([], false, {})
+    expect(renderPrompt(await assembly(official.ctx, official.lead)))
+      .toContain('only when the user explicitly asks to use Agent Teams')
+    const autonomousNative = await setup([], false, { autonomousDelegation: true })
+    expect(renderPrompt(await assembly(autonomousNative.ctx, autonomousNative.lead)))
+      .toContain('without waiting for an explicit Team request')
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const product = await setup([], false, { controlledTasks: true, autonomousDelegation: true }, [],
+      { controlledMode: mode })
+    const prompt = renderPrompt(await assembly(product.ctx, product.lead))
+    expect(prompt).toContain('recruit teammates without waiting for the user to mention Agent Team')
+    expect(prompt).toContain('shared Task Board is the authoritative collaboration channel')
+    const controlledExplicit = await setup([], false, { controlledTasks: true }, [], { controlledMode: mode })
+    expect(renderPrompt(await assembly(controlledExplicit.ctx, controlledExplicit.lead)))
+      .toContain('Create teammates only when the user explicitly asks')
+  })
+
   it('denies non-Team tools on standby and rechecks the installed Attempt admission', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
       permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
     const { ctx, lead } = await setup([], false, { controlledTasks: true, reviewedTasks: true },
-      ['web_search'], { controlledMode: mode })
+      ['web_search', 'team_task_claim_open'], { controlledMode: mode })
     const id = SessionId('standby-member')
     const member = { id, name: 'standby-member', description: 'Research', group: 'collectors',
       provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
@@ -221,16 +240,28 @@ describe('dsh-tool-team', () => {
     await ctx.sessions.flush(lead.session)
     const child = await ctx.agents.create({ sessionId: id, meta: { parentSession: lead.id }, agentOptions: {} })
     expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
+    expect((await execute(ctx, child.agent, 'team_task_claim_open', {})).isError).toBe(true)
     expect((await execute(ctx, child.agent, 'team_task_list', {})).isError).toBe(false)
     let running = true
     const unavailable = async (): Promise<never> => { throw new Error('unused') }
+    const released = { id: TeamTaskId('task-1'), revision: 2, subject: 'Open test',
+      description: 'Open test', status: 'pending' as const, blockedBy: [], writeScopes: [],
+      ready: true, writeScopeWarnings: [] }
     const handle = ctx.agentTeams.installTaskExtension({
       id: 'test-writer', hasRunningAttempt: () => running,
-      create: unavailable, update: unavailable,
+      standbyToolNames: ['team_task_claim_open'],
+      claimableTaskIds: () => [TeamTaskId('task-2')],
+      create: unavailable, update: async () => released,
     })
     expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(false)
+    const release = await execute(ctx, child.agent, 'team_task_update', {
+      task_id: 'task-1', expected_revision: 1, action: 'release',
+    })
+    expect(release.isError).toBe(false)
+    expect(JSON.parse(text(release))).toMatchObject({ availableOpenTaskIds: ['task-2'] })
     running = false
     expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
+    expect((await execute(ctx, child.agent, 'team_task_claim_open', {})).isError).toBe(false)
     handle.dispose()
     await child.dispose()
   })

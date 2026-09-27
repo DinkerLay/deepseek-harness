@@ -335,10 +335,28 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the durable controlled-mode binding, or undefined for an official Team.',
       },
       {
+        signature: 'defaultMemberPresetId(): string | undefined',
+        description: 'Read the configured teammate Preset used when a spawn request omits one.',
+        parameters: [],
+        returns: 'configured Preset id, or undefined to inherit the Lead.',
+      },
+      {
         signature: 'hasRunningAttempt(agent: Agent): boolean',
         description: 'Read the installed Task writer\'s running-Attempt admission for one exact member.',
         parameters: [{ name: 'agent', description: 'exact live Team member.' }],
         returns: 'whether the member has a running product Attempt.',
+      },
+      {
+        signature: 'standbyToolNames(agent: Agent): readonly string[]',
+        description: 'Read extension-declared standby tools; each tool still owns its authorization check.',
+        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
+        returns: 'additional tool names admitted during standby.',
+      },
+      {
+        signature: 'claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[]',
+        description: 'Read product-owned open offers after a controlled member releases work.',
+        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
+        returns: 'claimable Task ids supplied by the installed extension.',
       },
       {
         signature: 'listMembers(agent: Agent): TeamMemberView[]',
@@ -7358,6 +7376,34 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n}',
   },
   {
+    name: 'TeamExtensionRecord',
+    declaration: 'export interface TeamExtensionRecord {\n    readonly recordId: string;\n    readonly dataJson: string;\n}',
+  },
+  {
+    name: 'TeamExtensionRecordBuilder',
+    declaration: 'export type TeamExtensionRecordBuilder = (snapshot: TeamExtensionRecordSnapshot) => TeamExtensionRecordPlan;',
+  },
+  {
+    name: 'TeamExtensionRecordExistingPlan',
+    declaration: 'export interface TeamExtensionRecordExistingPlan {\n    readonly existingRecordId: string;\n}',
+  },
+  {
+    name: 'TeamExtensionRecordNoopPlan',
+    declaration: 'export interface TeamExtensionRecordNoopPlan {\n    readonly skip: true;\n}',
+  },
+  {
+    name: 'TeamExtensionRecordPlan',
+    declaration: 'export type TeamExtensionRecordPlan = TeamExtensionRecordWritePlan | TeamExtensionRecordExistingPlan | TeamExtensionRecordNoopPlan;',
+  },
+  {
+    name: 'TeamExtensionRecordSnapshot',
+    declaration: 'export interface TeamExtensionRecordSnapshot extends TeamTaskTransactionSnapshot {\n    readonly records: readonly TeamExtensionRecord[];\n}',
+  },
+  {
+    name: 'TeamExtensionRecordWritePlan',
+    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
+  },
+  {
     name: 'TeamId',
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
@@ -7395,11 +7441,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    readonly standbyToolNames?: readonly string[];\n    claimableTaskIds?(caller: Agent): readonly TeamTaskId[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
-    declaration: 'export interface TeamTaskExtensionHandle {\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    dispose(): void;\n}',
+    declaration: 'export interface TeamTaskExtensionHandle {\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    commitRecord(caller: Agent, build: TeamExtensionRecordBuilder): Promise<{\n        recordId: string;\n        committed: boolean;\n    }>;\n    dispose(): void;\n}',
   },
   {
     name: 'TeamTaskId',

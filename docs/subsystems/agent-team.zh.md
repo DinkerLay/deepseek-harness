@@ -232,11 +232,31 @@ membership(agent: Agent): TeamMembership
 controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
+ * Read the configured teammate Preset used when a spawn request omits one.
+ * @returns configured Preset id, or undefined to inherit the Lead.
+ */
+defaultMemberPresetId(): string | undefined
+
+/**
  * Read the installed Task writer's running-Attempt admission for one exact member.
  * @param agent - exact live Team member.
  * @returns whether the member has a running product Attempt.
  */
 hasRunningAttempt(agent: Agent): boolean
+
+/**
+ * Read extension-declared standby tools; each tool still owns its authorization check.
+ * @param agent - exact live Team member.
+ * @returns additional tool names admitted during standby.
+ */
+standbyToolNames(agent: Agent): readonly string[]
+
+/**
+ * Read product-owned open offers after a controlled member releases work.
+ * @param agent - exact live Team member.
+ * @returns claimable Task ids supplied by the installed extension.
+ */
+claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[]
 
 /**
  * List the runtime-enriched roster visible to one Team member.

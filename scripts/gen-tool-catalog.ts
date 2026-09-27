@@ -61,6 +61,7 @@ import * as ToolSessionQuery from '@deepseek-ai/dsh-tool-session-query'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
 import BrowserUseRegistry from '@deepseek-ai/dsh-browser-use'
 import * as StagehandBrowserTools from '@deepseek-ai/dsh-experimental-browser-use-stagehand-native'
+import { TeamId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
 import * as ToolTeam from '@deepseek-ai/dsh-experimental-tool-agent-team'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
@@ -593,16 +594,17 @@ const TOOL_PACKAGES: ToolPackage[] = [
       let agent!: Agent
       const membership = {
         get root() { return agent },
-        id: session.id,
+        id: TeamId(session.id),
         role: 'lead' as const,
         name: 'lead',
       }
-      ctx.provide('agentTeams', {
+      const teamFixture = {
         tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
         membership: () => membership,
         controlledMode: () => undefined,
         hasRunningAttempt: () => false,
-      } as unknown as TeamService)
+      } satisfies Pick<TeamService, 'tryMembership' | 'membership' | 'controlledMode' | 'hasRunningAttempt'>
+      ctx.provide('agentTeams', Object.assign(Object.create(null), teamFixture) as TeamService)
       await ctx.plugin(Object.assign(async (inner: Context) => {
         agent = {
           id: session.id,

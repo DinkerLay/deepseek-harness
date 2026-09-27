@@ -809,13 +809,15 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:231`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:259`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
 export interface Config {
   /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
   readonly controlledMode?: TeamControlledMode | undefined
+  /** Optional product default for members without an explicit Preset; official Teams inherit the Lead. */
+  readonly defaultMemberPresetId?: string
   /** Maximum immutable teammate names retained by one Team. */
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
@@ -1197,6 +1199,8 @@ export interface Config {
   readonly reviewedTasks?: boolean
   /** Withhold Team tools from unmarked Teams in a controlled product composition. */
   readonly controlledTasks?: boolean
+  /** Let the Lead recruit teammates when task complexity warrants it, without an explicit Team request. */
+  readonly autonomousDelegation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-tool-agent-team -->

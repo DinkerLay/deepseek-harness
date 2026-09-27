@@ -32,7 +32,7 @@ import type {
 
 export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
-export type { TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
+export type { TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
 export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
 export { TeamError } from './error.ts'
 
@@ -69,6 +69,7 @@ export class TeamService extends Service {
       permissionRevision: z.string().required(),
       maxOrdinaryMessageBytes: z.number().step(1).min(1),
     }), z.const(undefined)]),
+    defaultMemberPresetId: z.string(),
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
@@ -79,7 +80,8 @@ export class TeamService extends Service {
   })
 
   /** Validated deployment limits used by every Team operation. */
-  private readonly config: Required<Omit<Config, 'controlledMode'>> & Pick<Config, 'controlledMode'>
+  private readonly config: Required<Omit<Config, 'controlledMode' | 'defaultMemberPresetId'>>
+    & Pick<Config, 'controlledMode' | 'defaultMemberPresetId'>
 
   private readonly activity: TeamActivity
   private readonly lifecycle: TeamRuntimeLifecycle
@@ -91,6 +93,7 @@ export class TeamService extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
     this.config = {
+      ...config.defaultMemberPresetId === undefined ? {} : { defaultMemberPresetId: config.defaultMemberPresetId },
       ...config.controlledMode === undefined ? {} : { controlledMode: {
         ...config.controlledMode,
         ...config.controlledMode.maxOrdinaryMessageBytes === undefined ? {} : {
@@ -122,6 +125,7 @@ export class TeamService extends Service {
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
       (caller, group) => { this.tasks.validateMemberGroup(caller, group) },
+      this.config.defaultMemberPresetId,
     )
     this.mailbox = new TeamMailbox(
       ctx,
@@ -187,6 +191,14 @@ export class TeamService extends Service {
   }
 
   /**
+   * Read the configured teammate Preset used when a spawn request omits one.
+   * @returns configured Preset id, or undefined to inherit the Lead.
+   */
+  defaultMemberPresetId(): string | undefined {
+    return this.config.defaultMemberPresetId
+  }
+
+  /**
    * Read the installed Task writer's running-Attempt admission for one exact member.
    * @param agent - exact live Team member.
    * @returns whether the member has a running product Attempt.
@@ -194,6 +206,26 @@ export class TeamService extends Service {
   hasRunningAttempt(agent: Agent): boolean {
     this.roster.membership(agent)
     return this.tasks.hasRunningAttempt(agent)
+  }
+
+  /**
+   * Read extension-declared standby tools; each tool still owns its authorization check.
+   * @param agent - exact live Team member.
+   * @returns additional tool names admitted during standby.
+   */
+  standbyToolNames(agent: Agent): readonly string[] {
+    this.roster.membership(agent)
+    return this.tasks.extensionStandbyToolNames()
+  }
+
+  /**
+   * Read product-owned open offers after a controlled member releases work.
+   * @param agent - exact live Team member.
+   * @returns claimable Task ids supplied by the installed extension.
+   */
+  claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[] {
+    this.roster.membership(agent)
+    return this.tasks.extensionClaimableTaskIds(agent)
   }
 
   /**

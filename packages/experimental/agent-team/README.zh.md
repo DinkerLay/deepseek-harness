@@ -52,10 +52,11 @@ kind: "package-reference"
 | `maxActiveMembers` | `16` | 同时处于 provisioning、active 或 retiring 的 teammate 上限 |
 | `maxTasks` | `256` | 任务板上最多的活动任务数 |
 | `maxPendingMessagesPerMember` | `64` | 单个成员最多可排队且未结算的消息数 |
-| `maxTaskExtensionBytes` | `262,144` | 单次原子 Task 事件中扩展自有 JSON 的字节上限 |
+| `maxTaskExtensionBytes` | `262,144` | 单次原子 Team 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
 | `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
 | `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订及可选普通消息字节上限 |
+| `defaultMemberPresetId` | 未设置 | 未显式指定 Preset 时使用的产品默认成员 Preset；不设置则保留继承 Lead 的行为 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -63,9 +64,11 @@ kind: "package-reference"
 
 请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
 
-可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，teammate 保持普通的继承组合。
+可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，优先使用已配置的 `defaultMemberPresetId`；否则保持普通的继承组合。
 
 teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前由必需的 Task 扩展校验组名；扩展缺席时拒绝创建。roster 还检查租约所保留的 Preset 代际，并拒绝声明的委派插件。Preset 的 `allowedTools` 声明会收窄继承工具、拒绝 Preset 自有的额外工具，并在首次或冷投递前核对成员的最终工具目录。服务端将调用者编写的首轮工作替换为固定待命输入，要求成员只回复“Ready.”、不调用工具或发消息，并要求 fresh 上下文。
+
+最终成员工具目录核对与 Agent Loop 使用同一份 `@deepseek-ai/dsh-scope` 运行时。本包把 Scope 声明为 peer 依赖，避免生产 bundle 生成第二个作用域身份；构建产物测试核对此边界。目录服务或作用域缺失时，成员准入失败，不绕过 Preset 允许清单。
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
 
@@ -163,17 +166,19 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 `installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新、扩展 JSON 与可选 Team 通知；原生投影在发布前检查连续修订、顺序数字 id、mailbox 身份和最终无环图。flush 后待投递通知沿用原生 mailbox 投递与冷恢复路径。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。
 
+同一句柄上的 `commitRecord()` 写入 `team/extension` 事件：包含不透明的写入方作用域记录 ID 和 JSON，以及可选 Team 通知，但不修改任务板。它的同步构造器在同一把锁内看到脱离原状态的 Team 快照和该写入方的持久记录，也可以返回已有记录 ID 而不重复写事件。原生投影拒绝重复身份，并将通知折叠到已有邮箱。扩展自行校验和解释自己的 JSON；官方 Team 组合不写这类扩展记录。扩展还可以声明额外的待命工具名，但每个产品工具仍负责执行时授权。
+
 ### 等待与中断
 
 `waitForChange()` 等待注册之后发生的下一条 roster、task、mailbox 或实时状态边，时长从 10 秒到 1 小时，并且只报告是否超时；运行时 dispose 会释放当前等待。取消会保留 Error reason；非 Error reason 则通过 `TEAM_WAIT_ABORTED` 报告。`interrupt()` 仅限 Lead，委托 continuable-subagent 的 interrupt 路径，以 `keepInbox` 只取消 live teammate 的当前 turn；它既不释放任务 owner，也不删除持久 mail。
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/mode`、`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/message/queued`、`team/message/delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/mode`、`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/extension`、`team/message/queued`、`team/message/delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
-Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 13 从 Session 日志重建较早缓存版本的 checkpoint；Session 格式版本保持不变。
+Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 14 从 Session 日志重建较早缓存版本的 checkpoint，包括扩展记录身份索引；Session 格式版本保持不变。
 
 ### Dispose
 

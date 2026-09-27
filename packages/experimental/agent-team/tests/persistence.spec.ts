@@ -29,6 +29,7 @@ function durable(agent: Agent): {
   members: readonly TeamMemberSnapshot[]
   tasks: readonly TeamTaskSnapshot[]
   pendingMessages: readonly TeamMessageSnapshot[]
+  extensionRecords: readonly { readonly writerId: string; readonly recordId: string; readonly dataJson: string }[]
 } {
   let projected = teamProjectionDefinition.init(agent.session.header)
   for (const event of agent.session.snapshotEvents()) projected = teamProjectionDefinition.apply(projected, event)
@@ -38,6 +39,7 @@ function durable(agent: Agent): {
     members: state.members,
     tasks: state.tasks,
     pendingMessages: state.messages.filter(message => !state.delivered.includes(message.id)),
+    extensionRecords: state.extensionRecords,
   }
 }
 
@@ -376,6 +378,44 @@ for (const backend of backends) {
         && event.data.source.kind === 'team-message' ? [event.data.source.messageId] : []))
         .toEqual([noticeId])
       await rootHandle.dispose()
+      await second.dispose()
+    })
+
+    it('recovers an extension-only record without adding a Task', {
+      timeout: PERSISTENCE_TEST_TIMEOUT_MS,
+    }, async () => {
+      const storageRoot = mkdtempSync(join(tmpdir(), `dsh-team-extension-record-${backend.name.toLowerCase()}-`))
+      roots.push(storageRoot)
+      const rootId = SessionId(`${backend.name.toLowerCase()}-extension-record-root`)
+      const first = await stack(backend, storageRoot, [])
+      const lead = await first.ctx.agentLoop.create(rootId, { provider: 'mock', model: 'mock' })
+      const unavailable = async (): Promise<never> => { throw new Error('unused') }
+      const writer = first.ctx.agentTeams.installTaskExtension({
+        id: 'record-recovery', create: unavailable, update: unavailable,
+      })
+      expect(await writer.commitRecord(lead, () => ({ recordId: 'proposal-1', dataJson: '{"kind":"proposal"}' })))
+        .toEqual({ recordId: 'proposal-1', committed: true })
+      expect(durable(lead).tasks).toEqual([])
+      writer.dispose()
+      await first.dispose()
+
+      const second = await stack(backend, storageRoot, [])
+      const resumed = await second.ctx.agents.resume({
+        resumeSessionId: rootId, agentOptions: { provider: 'mock', model: 'mock' },
+      })
+      expect(durable(resumed.agent).extensionRecords).toEqual([{
+        writerId: 'record-recovery', recordId: 'proposal-1', dataJson: '{"kind":"proposal"}',
+      }])
+      expect(durable(resumed.agent).tasks).toEqual([])
+      const next = second.ctx.agentTeams.installTaskExtension({
+        id: 'record-recovery', create: unavailable, update: unavailable,
+      })
+      expect(await next.commitRecord(resumed.agent, (snapshot) => {
+        expect(snapshot.records).toEqual([{ recordId: 'proposal-1', dataJson: '{"kind":"proposal"}' }])
+        return { existingRecordId: 'proposal-1' }
+      })).toEqual({ recordId: 'proposal-1', committed: false })
+      next.dispose()
+      await resumed.dispose()
       await second.dispose()
     })
 

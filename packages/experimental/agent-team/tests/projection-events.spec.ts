@@ -284,6 +284,24 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(0))])).toThrow(/dependency cycle/)
   })
 
+  it('replays an extension-only record without a Task and rejects duplicate identities', () => {
+    const record = event('team/extension', {
+      version: 1, teamId: TEAM,
+      extension: { id: 'product-task', recordId: 'comment-1', dataJson: '{"text":"question"}' },
+      notices: [message({ id: TeamMessageId('comment-notice-1') })],
+    }, SessionSeq(0))
+    const projected = projectTeam(ROOT, [record])
+    expect(projected.tasks).toEqual([])
+    expect(projected.extensionRecords).toEqual([{
+      writerId: 'product-task', recordId: 'comment-1', dataJson: '{"text":"question"}',
+    }])
+    expect(projected.messages.map(item => item.id)).toEqual([TeamMessageId('comment-notice-1')])
+    expect(() => projectTeam(ROOT, [record, event('team/extension', {
+      version: 1, teamId: TEAM,
+      extension: { id: 'product-task', recordId: 'comment-1', dataJson: '{}' },
+    }, SessionSeq(1))])).toThrow(/written twice/)
+  })
+
   it('rejects every invalid persisted task dependency relation', () => {
     const first = event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(0))
     const second = event('team/task', {

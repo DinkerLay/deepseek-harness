@@ -121,6 +121,34 @@ export interface TeamTaskTransactionSnapshot {
   readonly nextTaskNumber: number
 }
 
+/** Opaque extension record, independent of any Task mutation. */
+export interface TeamExtensionRecord {
+  readonly recordId: string
+  readonly dataJson: string
+}
+
+/** Detached Team state and this writer's durable records under the Team lock. */
+export interface TeamExtensionRecordSnapshot extends TeamTaskTransactionSnapshot {
+  readonly records: readonly TeamExtensionRecord[]
+}
+
+/** One new record, optionally enqueueing notices in the same event. */
+export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {
+  readonly notices?: readonly TeamMessageSnapshot[]
+}
+
+/** Return an earlier record without appending another event. */
+export interface TeamExtensionRecordExistingPlan {
+  readonly existingRecordId: string
+}
+
+/** Decline a now-inapplicable notification after inspecting the current locked Team state. */
+export interface TeamExtensionRecordNoopPlan { readonly skip: true }
+
+/** Synchronous extension-record decision under the native Team lock. */
+export type TeamExtensionRecordPlan = TeamExtensionRecordWritePlan | TeamExtensionRecordExistingPlan
+  | TeamExtensionRecordNoopPlan
+
 /** Atomic native Task updates with opaque extension-owned JSON. */
 export interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
@@ -231,6 +259,8 @@ declare module '@deepseek-ai/dsh-llm' {
 export interface Config {
   /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
   readonly controlledMode?: TeamControlledMode | undefined
+  /** Optional product default for members without an explicit Preset; official Teams inherit the Lead. */
+  readonly defaultMemberPresetId?: string
   /** Maximum immutable teammate names retained by one Team. */
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
@@ -330,6 +360,13 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       updates: TeamTaskTransactionUpdate[]
       extension: { id: string; dataJson: string }
+      notices?: TeamMessageSnapshot[]
+    }
+    /** One opaque extension record and optional Team notices, without a Task update. */
+    'team/extension': {
+      version: 1
+      teamId: TeamId
+      extension: { id: string; recordId: string; dataJson: string }
       notices?: TeamMessageSnapshot[]
     }
     /** Durable mailbox enqueue, stored before delivery is attempted. */

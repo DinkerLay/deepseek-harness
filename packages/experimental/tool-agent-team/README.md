@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request. A durable controlled Team mode selects role-scoped tools and guidance; the current `controlledTasks` setting only withholds tools from unmarked Teams in a controlled product composition. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions.
+This package lets the model create teammates, message them, wait, interrupt work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request. A durable controlled Team mode selects role-scoped tools and guidance; the current `controlledTasks` setting only withholds tools from unmarked Teams in a controlled product composition. The independent `autonomousDelegation` switch changes only the Lead's recruitment guidance. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the m
 
 ### When to choose it
 
-Choose it when the model should create and coordinate teammates rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. Both the native and controlled policies require an explicit user request before the Lead recruits teammates; autonomous recruitment is a separate product policy.
+Choose it when the model should create and coordinate teammates rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. By default both native and controlled policies require an explicit user request before recruitment; `autonomousDelegation: true` lets a product Lead recruit when delegation would materially help, independently of controlled mode.
 
 ### Smallest working example
 
@@ -49,6 +49,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 | `forkProvider` | `fork` | Provider that starts fork teammates |
 | `reviewedTasks` | `false` | Guide Task submission and Lead acceptance instead of native completion |
 | `controlledTasks` | `false` | Withhold Team tools from unmarked Teams in a controlled product composition; durable mode selects controlled tools and guidance |
+| `autonomousDelegation` | `false` | Let the Lead recruit when delegation helps without an explicit Team request; independent of controlled mode |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -132,7 +133,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task; the Team service supplies a fixed standby reminder with the member name, group, responsibility, Lead-only message rule, and first-turn instruction to confirm readiness without tools or messages. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. The independent autonomy switch replaces only its recruitment guidance. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts no model-authored initial task; the Team service supplies a fixed standby reminder with the member name, group, responsibility, Lead-only message rule, and first-turn instruction to confirm readiness without tools or messages. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
 
 #### Token effect
 
@@ -151,7 +152,7 @@ With the same provider/model, shared system policy, and tool schemas, a fork ret
 These limits describe what the policy and tools cannot guarantee for a team. They are current package constraints, not a comparison with other collaboration surfaces.
 
 - **Prompt policy is coordination, not confinement** — it cannot stop Bash or external processes from writing overlapping files.
-- **No autonomous team creation** — ordinary tasks do not trigger delegation unless the user explicitly requests it.
+- **Autonomy is guidance, not a mandatory delegation trigger** — with the switch enabled, the Lead may still answer simple requests itself.
 - **No Web controls** — browser roster and task-board presentation is outside this runtime package.
 - **Experimental prototype with no stability promise** — the package is public, but its schemas can change freely while it incubates.
 

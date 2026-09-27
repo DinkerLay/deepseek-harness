@@ -9,7 +9,9 @@ import { resolveActiveMember } from './roster.ts'
 import { assertTaskGraphCandidate, TeamTaskGraphError } from './task-graph.ts'
 import type { TeamTaskGraphViolation } from './task-graph.ts'
 import { applyTaskTransaction, TeamTaskTransactionError } from './task-transaction.ts'
-import type { TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
+import type {
+  TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder,
+} from './task-extension.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   CreateTeamTaskRequest,
@@ -64,6 +66,7 @@ export class TeamTaskBoard {
     const id = requiredText(writer.id, 'extension id', 200)
     const handle: TeamTaskExtensionHandle = {
       commit: async (caller, build) => await this.commitExtension(writer, id, caller, build),
+      commitRecord: async (caller, build) => await this.commitExtensionRecord(writer, id, caller, build),
       dispose: () => { if (this.extension?.handle === handle) this.extension = undefined },
     }
     this.extension = { writer, handle }
@@ -102,6 +105,23 @@ export class TeamTaskBoard {
    */
   extensionTeamToolNames(): readonly string[] {
     return this.extension?.writer.teamToolNames ?? []
+  }
+
+  /**
+   * Extra extension capabilities visible in controlled member standby.
+   * @returns extension-declared tool names, or an empty list.
+   */
+  extensionStandbyToolNames(): readonly string[] {
+    return this.extension?.writer.standbyToolNames ?? []
+  }
+
+  /**
+   * Product-owned ready offers for a controlled member after release.
+   * @param caller - exact live member.
+   * @returns extension-supplied claimable Task ids.
+   */
+  extensionClaimableTaskIds(caller: Agent): readonly TeamTaskId[] {
+    return this.extension?.writer.claimableTaskIds?.(caller) ?? []
   }
 
   /**
@@ -374,33 +394,7 @@ export class TeamTaskBoard {
           throw new TeamError(`Task "${update.task.id}" owner is not active`, 'TEAM_MEMBER_NOT_FOUND')
         }
       }
-      const notices: TeamMessageSnapshot[] = (plan.notices ?? []).map(notice => structuredClone(notice))
-      const seen = new Set<string>()
-      const sender = this.membershipOf(caller)
-      for (const notice of notices) {
-        if (notice.senderId !== caller.id || notice.senderName !== sender.name || notice.targetId === caller.id) {
-          throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
-        }
-        if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
-          throw new TeamError(`Task notice "${notice.id}" already exists`, 'TEAM_INVALID_ARGUMENT')
-        }
-        seen.add(notice.id)
-        if (notice.targetId !== root.id && !state.members.some(member =>
-          member.id === notice.targetId && member.phase === 'active')) {
-          throw new TeamError(`Task notice "${notice.id}" target is not active`, 'TEAM_MEMBER_NOT_FOUND')
-        }
-        const pending = state.messages.filter(message => message.targetId === notice.targetId
-          && !state.delivered.includes(message.id)
-          && !state.cancelled.some(item => item.messageId === message.id)).length
-          + notices.filter(candidate => candidate.targetId === notice.targetId && candidate !== notice).length
-        if (pending >= this.maxPendingMessagesPerMember) {
-          throw new TeamError('Task notice target has too many pending messages', 'TEAM_MAILBOX_FULL')
-        }
-        const framed = [{ type: 'text', text: `Team message ${notice.id} from ${notice.senderName}:` }, ...notice.content]
-        if (Buffer.byteLength(JSON.stringify(framed), 'utf8') > this.maxMessageBytes) {
-          throw new TeamError(`Task notice "${notice.id}" exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
-        }
-      }
+      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [])
       await this.journal.appendAndFlush(root, 'team/task/transaction', {
         version: 1, teamId: TeamId(root.id), updates,
         extension: { id: extensionId, dataJson: plan.dataJson },
@@ -411,6 +405,95 @@ export class TeamTaskBoard {
     })
     if (result.hasNotices) this.dispatchNotices(root)
     return result.views
+  }
+
+  /** Write an extension-owned record without inventing a Task mutation. */
+  private async commitExtensionRecord(
+    writer: TeamTaskExtension,
+    extensionId: string,
+    caller: Agent,
+    build: TeamExtensionRecordBuilder,
+  ): Promise<{ recordId: string; committed: boolean }> {
+    if (this.isDisposed() || this.extension?.writer !== writer) {
+      throw new TeamError('Team Task extension is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+    }
+    const root = this.membershipOf(caller).root
+    const result = await this.journal.transact(root.id, async () => {
+      if (this.isDisposed() || this.extension?.writer !== writer || this.membershipOf(caller).root !== root) {
+        throw new TeamError('Team Task extension changed during record transaction', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
+      const state = this.journal.assertWriteAdmission(root)
+      if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
+        throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
+      const records = state.extensionRecords.filter(record => record.writerId === extensionId)
+        .map(({ recordId, dataJson }) => ({ recordId, dataJson }))
+      const plan = build({
+        tasks: structuredClone(state.tasks), members: structuredClone(state.members),
+        nextTaskNumber: state.nextTaskNumber, records: structuredClone(records),
+      })
+      if ('skip' in plan) return { recordId: '', committed: false, hasNotices: false }
+      if ('existingRecordId' in plan) {
+        if (!records.some(record => record.recordId === plan.existingRecordId)) {
+          throw new TeamError(`extension record "${plan.existingRecordId}" does not exist`, 'TEAM_INVALID_ARGUMENT')
+        }
+        return { recordId: plan.existingRecordId, committed: false, hasNotices: false }
+      }
+      const recordId = requiredText(plan.recordId, 'extension record id', 200)
+      if (records.some(record => record.recordId === recordId)) {
+        throw new TeamError(`extension record "${recordId}" already exists`, 'TEAM_INVALID_ARGUMENT')
+      }
+      if (Buffer.byteLength(plan.dataJson, 'utf8') > this.maxTaskExtensionBytes) {
+        throw new TeamError(`Team extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
+      }
+      try { JSON.parse(plan.dataJson) } catch {
+        throw new TeamError('Team extension data must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
+      }
+      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [])
+      await this.journal.appendAndFlush(root, 'team/extension', {
+        version: 1, teamId: TeamId(root.id), extension: { id: extensionId, recordId, dataJson: plan.dataJson },
+        ...notices.length === 0 ? {} : { notices },
+      })
+      return { recordId, committed: true, hasNotices: notices.length > 0 }
+    })
+    if (result.hasNotices) this.dispatchNotices(root)
+    return { recordId: result.recordId, committed: result.committed }
+  }
+
+  private validateExtensionNotices(
+    state: TeamState,
+    caller: Agent,
+    root: Agent,
+    proposed: readonly TeamMessageSnapshot[],
+  ): TeamMessageSnapshot[] {
+    const notices = proposed.map(notice => structuredClone(notice))
+    const seen = new Set<string>()
+    const sender = this.membershipOf(caller)
+    for (const notice of notices) {
+      if (notice.senderId !== caller.id || notice.senderName !== sender.name || notice.targetId === caller.id) {
+        throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
+      }
+      if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
+        throw new TeamError(`Task notice "${notice.id}" already exists`, 'TEAM_INVALID_ARGUMENT')
+      }
+      seen.add(notice.id)
+      if (notice.targetId !== root.id && !state.members.some(member =>
+        member.id === notice.targetId && member.phase === 'active')) {
+        throw new TeamError(`Task notice "${notice.id}" target is not active`, 'TEAM_MEMBER_NOT_FOUND')
+      }
+      const pending = state.messages.filter(message => message.targetId === notice.targetId
+        && !state.delivered.includes(message.id)
+        && !state.cancelled.some(item => item.messageId === message.id)).length
+        + notices.filter(candidate => candidate.targetId === notice.targetId && candidate !== notice).length
+      if (pending >= this.maxPendingMessagesPerMember) {
+        throw new TeamError('Task notice target has too many pending messages', 'TEAM_MAILBOX_FULL')
+      }
+      const framed = [{ type: 'text', text: `Team message ${notice.id} from ${notice.senderName}:` }, ...notice.content]
+      if (Buffer.byteLength(JSON.stringify(framed), 'utf8') > this.maxMessageBytes) {
+        throw new TeamError(`Task notice "${notice.id}" exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
+      }
+    }
+    return notices
   }
 
   /** Validate and de-duplicate dependency ids against the current task graph. */

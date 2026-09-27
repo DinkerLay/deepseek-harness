@@ -52,10 +52,11 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxActiveMembers` | `16` | Maximum provisioning, active, or retiring teammates at once |
 | `maxTasks` | `256` | Maximum active tasks on the board |
 | `maxPendingMessagesPerMember` | `64` | Maximum queued, unsettled messages for one member |
-| `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Task event |
+| `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Team event |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
 | `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
 | `controlledMode` | unset | Immutable required Task writer, permission-table revision, and optional ordinary-message byte limit, written before a new Team opens its tools |
+| `defaultMemberPresetId` | unset | Product default Preset for new teammates without an explicit Preset; unset preserves Lead inheritance |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -63,9 +64,11 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 Ask the Lead to create a teammate: give it a unique lowercase name such as `reviewer` and describe its job. A teammate starts fresh with no memory of the Lead's conversation, or as a fork that inherits the Lead's completed turns; the creation request chooses which. Teammate names are permanent — even a teammate whose creation failed keeps its name, and no name is ever reused.
 
-An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, the teammate keeps the ordinary inherited composition.
+An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, a configured `defaultMemberPresetId` is used; otherwise the teammate keeps the ordinary inherited composition.
 
 A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the required Task extension validates the group before the roster reserves the member; an absent extension refuses creation. The roster also checks the retained Preset generation and rejects declared delegation plugins. A Preset `allowedTools` declaration masks inherited tools, rejects extra Preset-owned tools, and checks the final member catalog before initial or cold delivery. The service replaces caller-authored first work with a fixed standby input that asks the member to reply only “Ready.” without tools or messages, and requires fresh context.
+
+The final member catalog check uses the same `@deepseek-ai/dsh-scope` runtime as Agent Loop. This package declares Scope as a peer dependency so its production bundle does not create a second scope identity; the built-library test checks that boundary. Missing catalog services or scope fail member admission rather than bypassing the Preset allowance.
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.
 
@@ -163,17 +166,19 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 `installTaskExtension()` accepts one writer and returns a disposable commit capability. While registered, every native `createTask()` and `updateTask()` call delegates to that writer, including calls from the shipped model tools; there is no direct version-two write path around it. The commit builder receives detached tasks and members under the Team transaction lock and must return synchronously. One `team/task/transaction` event stores complete Task updates, extension JSON and optional Team notices; the native projection checks contiguous revisions, sequential numeric ids, mailbox identity and the final acyclic graph before publishing. After the flush, pending notices use the existing mailbox dispatch and cold-recovery path. Disposal restores the default writer. The Host plugin must own and dispose the handle through its Cordis effect.
 
+The same handle's `commitRecord()` writes a `team/extension` event with an opaque writer-scoped record id and JSON, optionally with Team notices, without modifying the Board. Its synchronous planner sees detached Team state and that writer's durable records under the same lock, and can return an existing record id without appending another event. The native projection rejects duplicate identities and folds notices into the existing mailbox. Extensions validate and interpret their own JSON; official Team compositions do not emit extension-only records. An extension may also declare additional standby tool names, but each product tool remains responsible for execution authorization.
+
 ### Waiting and interruption
 
 `waitForChange()` waits for one roster, task, mailbox, or live-status edge that occurs after registration, from ten seconds through one hour, and reports only whether it timed out; runtime disposal releases current waits. Cancellation preserves an Error reason or reports a non-Error reason through `TEAM_WAIT_ABORTED`. `interrupt()` is Lead-only and delegates to the continuable-subagent interrupt path, which cancels only a live teammate's current turn with `keepInbox`; it neither releases task ownership nor deletes durable mail.
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/extension`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 13 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 14 rebuilds checkpoints from earlier cache versions from the Session log, including the extension-record identity index; the Session format version is unchanged.
 
 ### Disposal
 

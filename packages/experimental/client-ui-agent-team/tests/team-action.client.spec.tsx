@@ -44,6 +44,20 @@ const worker: TeamMemberProjection = {
 }
 const team: TeamProjection = { members: [lead, worker], tasks: [task] }
 
+function memberMeta(value: unknown): value is { member: { name: string }; presetId?: string } {
+  return typeof value === 'object' && value !== null && 'member' in value
+    && typeof value.member === 'object' && value.member !== null
+    && 'name' in value.member && typeof value.member.name === 'string'
+    && (!('presetId' in value) || value.presetId === undefined || typeof value.presetId === 'string')
+}
+
+function taskAction(value: unknown): value is { task: { id: string }; closePanel: () => void } {
+  return typeof value === 'object' && value !== null && 'task' in value
+    && typeof value.task === 'object' && value.task !== null
+    && 'id' in value.task && typeof value.task.id === 'string'
+    && 'closePanel' in value && typeof value.closePanel === 'function'
+}
+
 type Projections = SessionListState['projectionsBySession']
 
 function summary(id: SessionId, running: boolean): SessionSummary {
@@ -148,13 +162,11 @@ describe('TeamAction', () => {
 
   it('keeps lead literal and mounts a direct Task action without opening task details', () => {
     const slot: TeamActionProps['renderSlot'] = (key, owner) => {
-      if (key === 'agent-team.panel.member.meta') {
-        const metadata = owner as unknown as { member: TeamMemberProjection; presetId?: string }
-        return <small>{metadata.member.name} · {metadata.presetId ?? 'none'}</small>
+      if (key === 'agent-team.panel.member.meta' && memberMeta(owner)) {
+        return <small>{owner.member.name} · {owner.presetId ?? 'none'}</small>
       }
-      if (key === 'agent-team.panel.task.action') {
-        const action = owner as unknown as { task: TeamTask; closePanel: () => void }
-        return <button type="button" onClick={action.closePanel}>Jump {action.task.id}</button>
+      if (key === 'agent-team.panel.task.action' && taskAction(owner)) {
+        return <button type="button" onClick={owner.closePanel}>Jump {owner.task.id}</button>
       }
       return null
     }

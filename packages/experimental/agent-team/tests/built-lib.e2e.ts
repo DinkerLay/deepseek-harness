@@ -1,7 +1,7 @@
 /** Plain-Node smoke for the built Agent Teams service. */
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -16,6 +16,12 @@ const requiredArtifacts = [
 ].every(path => existsSync(artifact(path)))
 
 describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
+  it('shares the runtime Scope identity instead of bundling a second copy', () => {
+    const built = readFileSync(artifact('packages/experimental/agent-team/lib/index.js'), 'utf8')
+    expect(built).toContain('from "@deepseek-ai/dsh-scope"')
+    expect(built).not.toContain('Symbol("dsh.scope")')
+  })
+
   it('loads the Host service under plain Node', async () => {
     const urls = {
       host: artifactUrl('packages/experimental/agent-team/lib/index.js'),

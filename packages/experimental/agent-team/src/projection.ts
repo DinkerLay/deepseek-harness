@@ -147,6 +147,13 @@ const teamTaskTransactionEventSchema = z.object({
   notices: z.array(teamMessageSnapshotSchema).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/task/transaction']>
 
+const teamExtensionEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  extension: z.object({ id: z.string().min(1), recordId: z.string().min(1), dataJson: z.string() }).strict(),
+  notices: z.array(teamMessageSnapshotSchema).optional(),
+}).strict() as z.ZodType<SessionEventMap['team/extension']>
+
 const teamMessageQueuedEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
@@ -193,6 +200,8 @@ export interface TeamState {
   readonly tasks: readonly TeamTaskSnapshot[]
   /** Durable event-derived writer identity for Tasks claimed by an extension. */
   readonly taskWriters: readonly { readonly taskId: TeamTaskId; readonly writerId: string }[]
+  /** Writer-scoped idempotency and recovery index for extension-only records. */
+  readonly extensionRecords: readonly { readonly writerId: string; readonly recordId: string; readonly dataJson: string }[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
   readonly cancelled: readonly TeamMessageCancellation[]
@@ -210,6 +219,7 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     members: [],
     tasks: [],
     taskWriters: [],
+    extensionRecords: [],
     messages: [],
     delivered: [],
     cancelled: [],
@@ -234,6 +244,9 @@ const teamProjectionEntrySchema = z.object({
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
   taskWriters: z.array(z.object({ taskId: teamTaskIdSchema, writerId: z.string().min(1) }).strict()),
+  extensionRecords: z.array(z.object({
+    writerId: z.string().min(1), recordId: z.string().min(1), dataJson: z.string(),
+  }).strict()).default([]),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
   cancelled: z.array(z.object({
@@ -252,6 +265,7 @@ export type TeamEventType =
   | 'team/member/configured'
   | 'team/task'
   | 'team/task/transaction'
+  | 'team/extension'
   | 'team/message/queued'
   | 'team/message/delivered'
   | 'team/message/cancelled'
@@ -270,6 +284,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/member/configured'
     || event.type === 'team/task'
     || event.type === 'team/task/transaction'
+    || event.type === 'team/extension'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
     || event.type === 'team/message/cancelled'
@@ -297,6 +312,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
     case 'team/task/transaction':
       return { ...event, data: parsePersisted(event.type, teamTaskTransactionEventSchema, event.data) }
+    case 'team/extension':
+      return { ...event, data: parsePersisted(event.type, teamExtensionEventSchema, event.data) }
     case 'team/message/queued':
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
     case 'team/message/delivered':
@@ -315,7 +332,8 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    const expectedVersion = event.type === 'team/mode' || event.type === 'team/task/transaction' ? 1
+    const expectedVersion = event.type === 'team/mode' || event.type === 'team/task/transaction'
+      || event.type === 'team/extension' ? 1
       : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
@@ -417,6 +435,24 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         seen.add(notice.id)
       }
       return { ...state, ...next, taskWriters,
+        messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
+    }
+    case 'team/extension': {
+      const { recordId, id, dataJson } = event.data.extension
+      if (id.length > 200 || recordId.length > 200) throw new Error('Team extension record identity is too long')
+      try { JSON.parse(dataJson) } catch { throw new Error('Team extension record is not JSON') }
+      if (state.extensionRecords.some(record => record.writerId === id && record.recordId === recordId)) {
+        throw new Error(`Team extension record "${recordId}" was written twice`)
+      }
+      const notices = event.data.notices ?? []
+      const seen = new Set<TeamMessageId>()
+      for (const notice of notices) {
+        if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
+          throw new Error(`team message "${notice.id}" was queued twice`)
+        }
+        seen.add(notice.id)
+      }
+      return { ...state, extensionRecords: [...state.extensionRecords, { writerId: id, recordId, dataJson }],
         messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
     case 'team/message/queued': {
@@ -541,7 +577,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 13,
+  stateVersion: 14,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,
