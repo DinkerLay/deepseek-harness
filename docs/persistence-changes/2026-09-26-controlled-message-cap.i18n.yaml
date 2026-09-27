@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-26-controlled-message-cap.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-26-controlled-message-cap.md
-2026-09-26-controlled-message-cap.md: e9f7df9cb36d113126f7214fe33b20289d717c32
-2026-09-26-controlled-message-cap.zh.md: e1b1f77eb3d36a245c1a07ca58f4f7ed73c64a55
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-26-controlled-message-cap:
+  en: af4f061a57bb7d25
+  zh: fcb01a52c3d4d000
+/2026-09-26-controlled-message-cap/summary:
+  en: 9fb16a11be536c1d
+  zh: 86be0f797c288ad8
+/2026-09-26-controlled-message-cap/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-26-controlled-message-cap/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-26-controlled-message-cap/compatibility:
+  en: 0b22e2489f7111a2
+  zh: e565b32d2407de1c
+/2026-09-26-controlled-message-cap/verification:
+  en: c0a908b7064dc4d2
+  zh: 9cbd66a6cb178019
+/2026-09-26-controlled-message-cap/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

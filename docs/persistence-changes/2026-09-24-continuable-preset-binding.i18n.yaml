@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-24-continuable-preset-binding.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-24-continuable-preset-binding.md
-2026-09-24-continuable-preset-binding.md: 75c47bd2279bb072ca90b5279a4039e07a219bc6
-2026-09-24-continuable-preset-binding.zh.md: 54bc4152ff6aaa42c9b84109c6a4e06d82ab1428
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-24-continuable-preset-binding:
+  en: bec1ade9610f15b6
+  zh: d9e660d46685ffae
+/2026-09-24-continuable-preset-binding/summary:
+  en: 9921d1ebeed1251c
+  zh: a427fa5a606baef1
+/2026-09-24-continuable-preset-binding/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-24-continuable-preset-binding/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-24-continuable-preset-binding/compatibility:
+  en: 87b833ac664835cd
+  zh: ee159d9bf2b8ebdf
+/2026-09-24-continuable-preset-binding/verification:
+  en: fa322249b4c3f17d
+  zh: bcf22328619125fd
+/2026-09-24-continuable-preset-binding/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

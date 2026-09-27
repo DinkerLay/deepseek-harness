@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-24-team-task-extension-transaction.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-24-team-task-extension-transaction.md
-2026-09-24-team-task-extension-transaction.md: 4d8fa72ade43ea5cccbe663a5cbf9647e9170c11
-2026-09-24-team-task-extension-transaction.zh.md: 2260147c362d4f82e00472a119513dc861af6f74
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-24-team-task-extension-transaction:
+  en: 321cefc6af7e74b8
+  zh: 3d916127ae4e148d
+/2026-09-24-team-task-extension-transaction/summary:
+  en: 52c029e8b8e6a75b
+  zh: d6d50c7fd74993c9
+/2026-09-24-team-task-extension-transaction/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-24-team-task-extension-transaction/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-24-team-task-extension-transaction/compatibility:
+  en: e7a786b76aa004e3
+  zh: 327b820c75bbccc8
+/2026-09-24-team-task-extension-transaction/verification:
+  en: 137a93d5138f6b50
+  zh: af495c246eb074a5
+/2026-09-24-team-task-extension-transaction/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

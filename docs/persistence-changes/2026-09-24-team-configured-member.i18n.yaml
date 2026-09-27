@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-24-team-configured-member.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-24-team-configured-member.md
-2026-09-24-team-configured-member.md: 8334094e0619ca313672df4f056b980f87f28898
-2026-09-24-team-configured-member.zh.md: ddd2660b065fc05469ab952d5ffa52d2065a3aeb
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-24-team-configured-member:
+  en: f0428653cf0de600
+  zh: c231bebb2042ed39
+/2026-09-24-team-configured-member/summary:
+  en: 35928fad38f11538
+  zh: ddcaf0293778e591
+/2026-09-24-team-configured-member/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-24-team-configured-member/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-24-team-configured-member/compatibility:
+  en: a678b4bc92c61d28
+  zh: f8d3630da660ae0e
+/2026-09-24-team-configured-member/verification:
+  en: 6ec3f7c37b14e706
+  zh: d2acc5d099718981
+/2026-09-24-team-configured-member/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269
