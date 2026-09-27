@@ -27,7 +27,7 @@ interface TeamMemberSnapshot {
 
 每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
-产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方和权限表修订，并在入队前拒绝成员间直接消息。
+产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订及可选的普通消息上限，并在入队前拒绝成员间直接消息。
 
 ```ts type-equiv
 /** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
@@ -40,6 +40,8 @@ interface TeamControlledMode {
   readonly permissionTableId: string
   /** Fingerprint of the exact permission-table revision chosen for this Team. */
   readonly permissionRevision: string
+  /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
+  readonly maxOrdinaryMessageBytes?: number
 }
 ```
 

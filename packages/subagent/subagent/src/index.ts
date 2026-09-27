@@ -143,6 +143,13 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     /**
+     * Validate a continuable child's fully initialized tool catalog before
+     * accepting its next message. A failure disposes the Activation.
+     * @param child - exact initialized child, before inbox admission.
+     * @mode serial
+     */
+    'subagent/continuable-admission'(child: Agent): void | Promise<void>
+    /**
      * A provider became resolvable in the registry.
      * @param provider - the registered provider.
      * @mode emit

@@ -154,7 +154,7 @@ export interface Config {
 
 Depends on: `Volatile` (`@deepseek-ai/cordis`)
 
-来源： [`packages/preset/agent-preset-registry/src/preset.ts:32`](../packages/preset/agent-preset-registry/src/preset.ts)
+来源： [`packages/preset/agent-preset-registry/src/preset.ts:38`](../packages/preset/agent-preset-registry/src/preset.ts)
 
 <a id="deepseek-aidsh-agent-tool-presentation"></a>
 
@@ -763,10 +763,12 @@ export interface TeamControlledMode {
   readonly permissionTableId: string
   /** Fingerprint of the exact permission-table revision chosen for this Team. */
   readonly permissionRevision: string
+  /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
+  readonly maxOrdinaryMessageBytes?: number
 }
 ```
 
-来源： [`packages/experimental/agent-team/src/types.ts:229`](../packages/experimental/agent-team/src/types.ts)
+来源： [`packages/experimental/agent-team/src/types.ts:231`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-api-speech-to-text"></a>
 
@@ -2978,7 +2980,7 @@ export interface Config {
 
 Depends on: `Volatile` (`@deepseek-ai/cordis`)
 
-来源： [`packages/subagent/subagent/src/index.ts:194`](../packages/subagent/subagent/src/index.ts)
+来源： [`packages/subagent/subagent/src/index.ts:201`](../packages/subagent/subagent/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-acp"></a>
 

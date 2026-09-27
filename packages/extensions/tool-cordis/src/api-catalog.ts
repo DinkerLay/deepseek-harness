@@ -4090,6 +4090,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'subagent/continuable-admission',
+    mode: 'serial',
+    signature: '\'subagent/continuable-admission\'(child: Agent): void | Promise<void>',
+    summary: 'Validate a continuable child\'s fully initialized tool catalog before accepting its next message.',
+    description: 'Validate a continuable child\'s fully initialized tool catalog before accepting its next message. A failure disposes the Activation.',
+    parameters: [{ name: 'child', description: 'exact initialized child, before inbox admission.' }],
+  },
+  {
     name: 'subagent/end',
     mode: 'emit',
     signature: '\'subagent/end\'(this: Scoped<SubagentRuntime>, info: SubagentRunEndInfo): void',
@@ -5763,11 +5771,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetCompositionLease',
-    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    readonly allowedTools?: readonly string[];\n    readonly inheritedToolNames: readonly string[];\n    readonly presetToolNames: readonly string[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
   },
   {
     name: 'PresetDefinition',
-    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
+    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly allowedTools?: readonly string[];\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
   },
   {
     name: 'PresetOption',
@@ -7087,7 +7095,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamControlledMode',
-    declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n}',
+    declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n}',
   },
   {
     name: 'TeamId',
@@ -7127,7 +7135,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',

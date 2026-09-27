@@ -471,6 +471,7 @@ export class SubagentContinuationManager {
     commit?: () => void,
   ): Promise<MessageId> {
     try {
+      await this.ctx.serial('subagent/continuable-admission', activation.handle.agent)
       if (contentHasImage(content)) {
         await this.assertImageCapable(activation.handle.agent, options.signal)
         if (activation.inbox.closing !== undefined) {

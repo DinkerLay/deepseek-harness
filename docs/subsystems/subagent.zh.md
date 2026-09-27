@@ -686,6 +686,26 @@ Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/suba
 
 ### `subagent/*` events
 
+<a id="subagentcontinuable-admission--serial"></a>
+
+#### `subagent/continuable-admission` — serial
+
+Validate a continuable child's fully initialized tool catalog before accepting its next message. A failure disposes the Activation.
+
+```ts cordis-catalog
+/**
+ * Validate a continuable child's fully initialized tool catalog before
+ * accepting its next message. A failure disposes the Activation.
+ * @param child - exact initialized child, before inbox admission.
+ * @mode serial
+ */
+'subagent/continuable-admission'(child: Agent): void | Promise<void>
+```
+
+Types: [Agent](core.zh.md)
+
+Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
 <a id="subagentend--emit"></a>
 
 #### `subagent/end` — emit

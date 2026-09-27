@@ -80,6 +80,31 @@ export class TeamTaskBoard {
   }
 
   /**
+   * Apply the configured Task extension's member-group admission under the roster lock.
+   * @param caller - exact live Lead creating a member.
+   * @param group - proposed optional member group.
+   */
+  validateMemberGroup(caller: Agent, group: string | undefined): void {
+    const membership = this.membershipOf(caller)
+    const mode = this.journal.state(membership.root).mode
+    if (mode === undefined) return
+    const extension = this.extension
+    if (extension === undefined || extension.writer.id !== mode.requiredTaskExtensionId
+      || extension.writer.validateMemberGroup === undefined) {
+      throw new TeamError('controlled member creation requires its Task policy; no member was created',
+        'TEAM_TASK_EXTENSION_UNAVAILABLE')
+    }
+    extension.writer.validateMemberGroup(caller, group)
+  }
+
+  /** Read the installed extension's Team tool names for final member admission.
+   * @returns names supplied by the installed extension's Team tool adapter.
+   */
+  extensionTeamToolNames(): readonly string[] {
+    return this.extension?.writer.teamToolNames ?? []
+  }
+
+  /**
    * Create one unowned pending task in the Team Lead log.
    * @param caller - exact live member creating the Task.
    * @param membership - exact caller membership resolved by the Team roster.

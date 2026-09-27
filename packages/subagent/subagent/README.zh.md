@@ -60,6 +60,8 @@ kind: "package-reference"
 
 受信任的 `startContinuable` 调用方可以绑定显式 Agent Preset 及其捕获的声明修订。child 会在首次模型请求前记录该绑定，并在冷恢复时核对同一修订；声明已变化或不可用时拒绝恢复，不会默默继承 parent 当前配置。省略绑定时仍沿用原来的 parent Preset 继承方式。fork child 会把自身绑定记录在继承事件前缀之后。
 
+可继续子 Agent 初始化后，`subagent/continuable-admission` 监听器可以在下一条消息进入 inbox 前检查其实际能力。监听器失败会释放这次 Activation，并拒绝创建或冷投递；被拒的工具目录不会进入子 Agent 轮次。
+
 ### 消息、中断与发现
 
 每个确切在线 Agent 都可以对直接可继续 child 使用 `sendMessage()`；驻留的可继续 child 还可以对自己的直接 parent 使用它。正在工作的目标通过 Steer 在最近 step 接收 Agent 消息；空闲目标启动轮次，且只有直接 child 可以冷恢复。parent 也可以随时中断正在运行的后代或列举自己的子级。浏览器发出的继续执行 prompt 会独立选择 Queue 或 Steer，并且可以携带图片部分：Host 先通过附件存储完成整批图片的准入与持久化，子级 inbox 才接受这条消息；当子级声明的模型不接受图片输入时拒绝投递。 直接子级发现读取 parent 自有的 `subagentCatalog` projection。`listChildren(parentSessionId, signal?)` 持有一次优先实时来源的 Session 观察，异步返回目录，不读取子级日志。它转发取消信号，并在物化后释放观察。物化以 O(D) 时间保留 D 条事实的父日志事件顺序。完整后代发现保留 Session 语料库与子级身份 projection；两条路径都不加载或恢复子级 Agent。

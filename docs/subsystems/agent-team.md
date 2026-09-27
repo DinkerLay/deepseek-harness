@@ -27,7 +27,7 @@ interface TeamMemberSnapshot {
 
 Every member starts in `provisioning` and reaches `active` or `failed`. The Lead can move an active or failed member through `retiring` to `retired` after settling assignments and mail; the Session and immutable name remain. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
 
-A product composition may persist one immutable controlled-mode record before opening Team tools. The official composition leaves it absent. A controlled Team keeps its required Task writer and permission-table revision across restarts; member-to-member direct messages are rejected before queueing.
+A product composition may persist one immutable controlled-mode record before opening Team tools. The official composition leaves it absent. A controlled Team keeps its required Task writer, permission-table revision, and optional ordinary-message limit across restarts; member-to-member direct messages are rejected before queueing.
 
 ```ts type-equiv
 /** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
@@ -40,6 +40,8 @@ interface TeamControlledMode {
   readonly permissionTableId: string
   /** Fingerprint of the exact permission-table revision chosen for this Team. */
   readonly permissionRevision: string
+  /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
+  readonly maxOrdinaryMessageBytes?: number
 }
 ```
 

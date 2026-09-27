@@ -1,0 +1,125 @@
+{
+  "formatVersion": 2,
+  "roots": [
+    {
+      "key": "event:team/mode",
+      "kind": "event",
+      "event": "team/mode",
+      "surface": false,
+      "digest": "00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 8,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "mode",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "kind",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "maxOrdinaryMessageBytes",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "permissionRevision",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "permissionTableId",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "requiredTaskExtensionId",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "controlled"
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "literal",
+            "value": "team/mode"
+          }
+        ]
+      }
+    }
+  ],
+  "types": []
+}

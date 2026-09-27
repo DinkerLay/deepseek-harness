@@ -204,6 +204,7 @@ describe('dsh-tool-team', () => {
     expect(ctx.tools.get('team_task_update', scopeOf(lead.ctx))?.parameters)
       .toMatchObject({ properties: { action: { enum: ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'] } } })
     expect(renderPrompt(await assembly(ctx, lead))).toContain('The shared Task Board is the authoritative collaboration channel')
+    expect(renderPrompt(await assembly(ctx, lead))).toContain('a chat answer does not complete it')
   })
 
   it('denies non-Team tools on standby and rechecks the installed Attempt admission', async () => {

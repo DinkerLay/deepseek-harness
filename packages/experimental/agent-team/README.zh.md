@@ -55,7 +55,7 @@ kind: "package-reference"
 | `maxTaskExtensionBytes` | `262,144` | 单次原子 Task 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
 | `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
-| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方及权限表修订 |
+| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订及可选普通消息字节上限 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -65,7 +65,7 @@ kind: "package-reference"
 
 可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，teammate 保持普通的继承组合。
 
-teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前检查租约所保留的 Preset 代际；声明中含委派插件时拒绝创建，继承 Lead Preset 的成员也不例外。服务端将调用者编写的首轮工作替换为固定待命输入，要求成员只回复“Ready.”、不调用工具或发消息，并要求 fresh 上下文。
+teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前由必需的 Task 扩展校验组名；扩展缺席时拒绝创建。roster 还检查租约所保留的 Preset 代际，并拒绝声明的委派插件。Preset 的 `allowedTools` 声明会收窄继承工具、拒绝 Preset 自有的额外工具，并在首次或冷投递前核对成员的最终工具目录。服务端将调用者编写的首轮工作替换为固定待命输入，要求成员只回复“Ready.”、不调用工具或发消息，并要求 fresh 上下文。
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
 
@@ -77,7 +77,7 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。消息不会丢失，也不会重复投递。
 
-这是官方模式的成员消息规则。受控 Team 先持久写入模式记录，并在 mailbox 入队前拒绝 teammate 向其他 teammate 发消息；teammate 只能联系 Lead。受控产品组合载入没有模式记录的历史 Team 时，该 Team 保持只读。
+这是官方模式的成员消息规则。受控 Team 先持久写入模式记录，并在 mailbox 入队前拒绝 teammate 向其他 teammate 发消息；teammate 只能联系 Lead。模式记录可固定普通消息字节上限，不改变 Task 通知的上限。受控产品组合载入没有模式记录的历史 Team 时，该 Team 保持只读。
 
 每条消息都使用 Steer：running target 在最近的步骤边界收到消息，inactive target 在已加载时启动一个轮次，否则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储，因此绝不能重发。
 
@@ -89,7 +89,7 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
 
-可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照、可选 Team mailbox 通知与扩展自有 JSON。扩展也可在同一 Team 锁内返回已有 Task 的 id，不追加事件或通知；只允许返回归该扩展所有的 Task。原生投影忽略扩展 JSON，但把通知折叠进持久 mailbox。扩展代码回放同一事件时必须自行校验 JSON。受控工具适配器可查询扩展对当前进行中 Attempt 的准入判断；未提供回调时按待命处理。
+可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照、可选 Team mailbox 通知与扩展自有 JSON。扩展也可在同一 Team 锁内返回已有 Task 的 id，不追加事件或通知；只允许返回归该扩展所有的 Task。原生投影忽略扩展 JSON，但把通知折叠进持久 mailbox。扩展代码回放同一事件时必须自行校验 JSON。受控工具适配器可查询扩展对当前进行中 Attempt 的准入判断；未提供回调时按待命处理。扩展还可校验待创建成员的组名，并声明其 Team 工具名供最终成员工具目录核对。
 
 受控 Team 只接受模式事件中指定的扩展 id 写入 Task；卸载该写入方后不会退回原生 Task 修改。扩展可给已完成结果设置不可撤销的不可用标记，使下游 Task 不再显示 ready，同时保留历史已完成 Task 可查。
 

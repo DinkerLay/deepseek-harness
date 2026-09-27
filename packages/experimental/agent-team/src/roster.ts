@@ -8,6 +8,7 @@ import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ContinuablePresetBinding, ContinuableStart } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
@@ -30,6 +31,11 @@ const DELEGATION_PRESET_MODULES = new Set([
   '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
   '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow',
   '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-ralph',
+])
+const NATIVE_TEAM_TOOL_NAMES = new Set([
+  'spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent',
+  'retire_teammate', 'team_message_cancel', 'team_task_create', 'team_task_list',
+  'team_task_get', 'team_task_update',
 ])
 
 /** Fixed first input for a controlled teammate; caller-authored work is ignored. */
@@ -88,6 +94,7 @@ export class TeamRoster {
     private readonly lifecycle: TeamRuntimeLifecycle,
     private readonly maxMembers: number,
     private readonly maxActiveMembers: number,
+    private readonly validateMemberGroup: (caller: Agent, group: string | undefined) => void,
   ) {}
 
   /**
@@ -200,6 +207,37 @@ export class TeamRoster {
    */
   pendingCreations(): readonly Promise<unknown>[] {
     return [...this.inFlightCreations]
+  }
+
+  /**
+   * Refuse any effective member tool not declared by its Preset or Team adapters.
+   * @param agent - initialized, exact live Team child before message admission.
+   * @param extensionTeamToolNames - product Team tools supplied by the installed writer.
+   */
+  async validateMemberTools(agent: Agent, extensionTeamToolNames: readonly string[]): Promise<void> {
+    const membership = this.tryMembership(agent)
+    if (membership?.role !== 'teammate') return
+    const member = this.journal.state(membership.root).members.find(candidate => candidate.id === agent.id)
+    if (member?.preset === undefined) return
+    const registry = this.ctx.get('agentPresets')
+    const tools = this.ctx.get('tools')
+    const scope = scopeOf(agent.ctx)
+    if (registry === undefined || tools === undefined || scope === undefined) {
+      throw new TeamError('member tool catalog cannot be checked', 'TEAM_UNSAFE_PRESET')
+    }
+    await using lease = await registry.acquireComposition(member.preset.id)
+    if (lease.revision !== member.preset.revision) {
+      throw new TeamError(`preset "${member.preset.id}" declaration changed; member tools cannot be admitted`,
+        'TEAM_UNSAFE_PRESET')
+    }
+    if (lease.allowedTools === undefined) return
+    const allowed = new Set([...lease.allowedTools, ...NATIVE_TEAM_TOOL_NAMES, ...extensionTeamToolNames])
+    const unexpected = tools.schemas(scope).map(tool => tool.name)
+      .filter(name => name !== 'run_code' && !allowed.has(name))
+    if (unexpected.length > 0) {
+      throw new TeamError(`member tool catalog contains tools outside preset allowance: ${unexpected.join(', ')}`,
+        'TEAM_UNSAFE_PRESET')
+    }
   }
 
   /**
@@ -324,6 +362,7 @@ export class TeamRoster {
     const description = requiredText(request.description, 'description', 200)
     const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
     let preset: ContinuablePresetBinding | undefined
+    let allowedTools: readonly string[] | undefined
     const mode = this.journal.state(root).mode
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
@@ -339,6 +378,18 @@ export class TeamRoster {
       if (mode !== undefined && lease.compositionRows.some(row =>
         row.enabled !== false && DELEGATION_PRESET_MODULES.has(row.moduleName))) {
         throw new TeamError(`preset "${lease.id}" exposes delegation outside Agent Team`, 'TEAM_UNSAFE_PRESET')
+      }
+      if (lease.allowedTools !== undefined) {
+        const allowed = new Set(lease.allowedTools)
+        const available = new Set(lease.inheritedToolNames)
+        const missing = lease.allowedTools.filter(tool => !available.has(tool))
+        const undeclared = lease.presetToolNames.filter(tool => !allowed.has(tool))
+        if (missing.length > 0 || undeclared.length > 0) {
+          throw new TeamError(`preset "${lease.id}" tool allowance is invalid: ${[
+            ...missing.map(tool => `missing ${tool}`), ...undeclared.map(tool => `undeclared ${tool}`),
+          ].join(', ')}`, 'TEAM_UNSAFE_PRESET')
+        }
+        allowedTools = [...lease.allowedTools]
       }
       preset = { id: lease.id, revision: lease.revision }
     }
@@ -356,6 +407,7 @@ export class TeamRoster {
 
     await this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
+      this.validateMemberGroup(caller, group)
       if (state.members.some(member => member.name === name)) {
         throw new TeamError(`teammate name "${name}" was already used in this Team`, 'TEAM_MEMBER_NAME_TAKEN')
       }
@@ -379,6 +431,7 @@ export class TeamRoster {
         request: {
           prompt: mode === undefined ? request.prompt : controlledStandbyPrompt(name, group, description),
           parent: root,
+          ...allowedTools === undefined ? {} : { toolFilter: { allow: allowedTools } },
         },
         ...preset === undefined ? {} : { preset },
         signal,

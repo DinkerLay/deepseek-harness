@@ -217,6 +217,8 @@ export interface TeamControlledMode {
   readonly permissionTableId: string
   /** Fingerprint of the exact permission-table revision chosen for this Team. */
   readonly permissionRevision: string
+  /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
+  readonly maxOrdinaryMessageBytes?: number
 }
 
 declare module '@deepseek-ai/dsh-llm' {

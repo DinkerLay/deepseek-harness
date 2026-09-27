@@ -173,7 +173,15 @@ export class TeamMailbox {
         targetId: target.id,
         content,
       }
-      if (Buffer.byteLength(JSON.stringify(this.deliveryContent(queued)), 'utf8') > this.maxMessageBytes) {
+      const ordinaryLimit = state.mode?.maxOrdinaryMessageBytes
+      const deliveryBytes = Buffer.byteLength(JSON.stringify(this.deliveryContent(queued)), 'utf8')
+      if (ordinaryLimit !== undefined && deliveryBytes > ordinaryLimit) {
+        throw new TeamError(
+          `ordinary Team message exceeds ${ordinaryLimit} bytes; submit Task results for Lead acceptance and pass accepted results through direct Task prerequisites`,
+          'TEAM_MESSAGE_TOO_LARGE',
+        )
+      }
+      if (deliveryBytes > this.maxMessageBytes) {
         throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
       await this.journal.appendAndFlush(root, 'team/message/queued', {

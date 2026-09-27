@@ -30,6 +30,15 @@ export interface TeamTaskExtensionHandle {
 export interface TeamTaskExtension {
   /** Stable identifier stored with each extension-owned Task event. */
   readonly id: string
+  /** Additional model tools supplied by this extension as Team capabilities. */
+  readonly teamToolNames?: readonly string[]
+  /**
+   * Validate a proposed member group against extension-owned policy while the
+   * native roster creation transaction is locked. Throw to reject creation.
+   * @param caller - exact live Team Lead creating the member.
+   * @param group - optional proposed group name.
+   */
+  validateMemberGroup?(caller: Agent, group: string | undefined): void
   /**
    * Whether this exact member currently owns a running product Attempt.
    * Controlled Team tool admission fails closed when this callback is absent.

@@ -173,6 +173,7 @@ const teamControlledModeSchema = z.object({
   requiredTaskExtensionId: z.string().min(1).max(200),
   permissionTableId: z.string().min(1).max(200),
   permissionRevision: z.string().min(1).max(200),
+  maxOrdinaryMessageBytes: positiveSafeInteger.optional(),
 }).strict() as z.ZodType<TeamControlledMode>
 const teamModeEventSchema = z.object({
   version: z.literal(1),

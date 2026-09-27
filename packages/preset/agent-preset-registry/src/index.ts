@@ -40,6 +40,7 @@ interface Generation {
   users: number
   retired: boolean
   revision: string | undefined
+  allowedTools: readonly string[] | undefined
 }
 interface Definition {
   config: PresetDefinition
@@ -93,6 +94,12 @@ export class AgentPresetRegistry extends TypertRemoteService {
   async register(definition: PresetDefinition): Promise<() => Promise<void>> {
     const context = this.ctx
     if (!definition.id.trim()) throw new Error('Preset id must not be empty')
+    if (definition.allowedTools !== undefined) {
+      if (definition.allowedTools.some(name => name.trim() === '' || name === 'run_code')
+        || new Set(definition.allowedTools).size !== definition.allowedTools.length) {
+        throw new Error(`Preset "${definition.id}" has invalid allowed tool names`)
+      }
+    }
     if (this.definitions.has(definition.id)) throw new Error(`Duplicate agent preset: ${definition.id}`)
     const record: Definition = { config: definition, context, ready: Promise.resolve() }
     this.definitions.set(definition.id, record)
@@ -120,11 +127,13 @@ export class AgentPresetRegistry extends TypertRemoteService {
       if (problem !== undefined) throw new Error(problem)
       const context = scope.ctx.extend({ baseUrl: record.context.baseUrl })
       const captured = snapshotJsonValue(record.config.plugins)
+      const allowedTools = record.config.allowedTools === undefined ? undefined : [...record.config.allowedTools]
       const revision = captured === undefined ? undefined : createHash('sha256')
-        .update(JSON.stringify({ id: record.config.id, plugins: captured }))
+        .update(JSON.stringify({ id: record.config.id, plugins: captured,
+          ...allowedTools === undefined ? {} : { allowedTools } }))
         .digest('hex')
       const mount = await mountPreset(context, record.config.id, captured ?? record.config.plugins)
-      const generation: Generation = { scope, key, mount, users: 0, retired: false, revision }
+      const generation: Generation = { scope, key, mount, users: 0, retired: false, revision, allowedTools }
       this.generations.set(key, generation)
       record.generation = generation
     } catch (error) {
@@ -377,10 +386,17 @@ export class AgentPresetRegistry extends TypertRemoteService {
   async acquireComposition(id?: string): Promise<PresetCompositionLease> {
     const generation = await this.retain(id)
     let disposed = false
+    const tools = this.owner.get('tools')
+    const inheritedToolNames = tools?.schemas(generation.key).map(tool => tool.name).filter(name => name !== 'run_code') ?? []
+    const presetToolNames = inheritedToolNames.filter(name =>
+      tools?.get(name, generation.key) !== tools?.get(name))
     return {
       id: generation.mount.presetId,
       revision: generation.revision,
       compositionRows: mountedCompositionRows(generation.mount.tree),
+      ...generation.allowedTools === undefined ? {} : { allowedTools: generation.allowedTools },
+      inheritedToolNames,
+      presetToolNames,
       // oxlint-disable-next-line typescript/require-await -- setup callers receive rejected promises for invalid leases.
       mount: async (ctx) => {
         if (disposed) throw new Error('Preset composition lease has been released')

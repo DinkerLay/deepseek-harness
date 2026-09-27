@@ -67,6 +67,7 @@ export class TeamService extends Service {
       requiredTaskExtensionId: z.string().required(),
       permissionTableId: z.string().required(),
       permissionRevision: z.string().required(),
+      maxOrdinaryMessageBytes: z.number().step(1).min(1),
     }), z.const(undefined)]),
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
@@ -90,7 +91,13 @@ export class TeamService extends Service {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
     this.config = {
-      ...config.controlledMode === undefined ? {} : { controlledMode: config.controlledMode },
+      ...config.controlledMode === undefined ? {} : { controlledMode: {
+        ...config.controlledMode,
+        ...config.controlledMode.maxOrdinaryMessageBytes === undefined ? {} : {
+          maxOrdinaryMessageBytes: positiveLimit('controlledMode.maxOrdinaryMessageBytes',
+            config.controlledMode.maxOrdinaryMessageBytes),
+        },
+      } },
       maxMembers: positiveLimit('maxMembers', config.maxMembers ?? DEFAULT_MAX_MEMBERS),
       maxActiveMembers: positiveLimit('maxActiveMembers', config.maxActiveMembers ?? DEFAULT_MAX_MEMBERS),
       maxTasks: positiveLimit('maxTasks', config.maxTasks ?? DEFAULT_MAX_TASKS),
@@ -114,6 +121,7 @@ export class TeamService extends Service {
       this.config.controlledMode !== undefined)
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
+      (caller, group) => { this.tasks.validateMemberGroup(caller, group) },
     )
     this.mailbox = new TeamMailbox(
       ctx,
@@ -139,6 +147,9 @@ export class TeamService extends Service {
     ctx.on('agent/created', async ({ agent, source }) => {
       await this.initializeControlledMode(agent, source)
       this.scheduleRecovery(agent)
+    })
+    ctx.on('subagent/continuable-admission', async (agent) => {
+      await this.roster.validateMemberTools(agent, this.tasks.extensionTeamToolNames())
     })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)

@@ -55,7 +55,7 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Task event |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
 | `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
-| `controlledMode` | unset | Immutable required Task writer and permission-table revision, written before a new Team opens its tools |
+| `controlledMode` | unset | Immutable required Task writer, permission-table revision, and optional ordinary-message byte limit, written before a new Team opens its tools |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -65,7 +65,7 @@ Ask the Lead to create a teammate: give it a unique lowercase name such as `revi
 
 An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, the teammate keeps the ordinary inherited composition.
 
-A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the roster checks the retained Preset generation before reserving the member; a declared delegation plugin is rejected, including when the child would inherit the Lead's Preset. The service replaces caller-authored first work with a fixed standby input that asks the member to reply only “Ready.” without tools or messages, and requires fresh context.
+A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the required Task extension validates the group before the roster reserves the member; an absent extension refuses creation. The roster also checks the retained Preset generation and rejects declared delegation plugins. A Preset `allowedTools` declaration masks inherited tools, rejects extra Preset-owned tools, and checks the final member catalog before initial or cold delivery. The service replaces caller-authored first work with a fixed standby input that asks the member to reply only “Ready.” without tools or messages, and requires fresh context.
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.
 
@@ -77,7 +77,7 @@ The Lead can retire a teammate after settling its unfinished tasks and pending m
 
 Any member can send a message to any other member or to the Lead. A live member receives it immediately; an offline member's messages queue and arrive when it resumes. Messages are never lost and never delivered twice.
 
-That peer rule is the official mode's behavior. A controlled Team persists its mode first and rejects teammate-to-teammate messages before mailbox admission; teammates may message only the Lead. An unmarked historical Team remains read-only when loaded by a controlled product composition.
+That peer rule is the official mode's behavior. A controlled Team persists its mode first and rejects teammate-to-teammate messages before mailbox admission; teammates may message only the Lead. Its mode can pin an ordinary-message byte limit without changing the Task-notice limit. An unmarked historical Team remains read-only when loaded by a controlled product composition.
 
 Every message uses Steer: a running target receives it at the nearest step boundary; an inactive target starts a turn if loaded or cold-resumes otherwise. The sender always sees the outcome — accepted by the target inbox, or retained as queued when delivery is temporarily unavailable. A queued message is already safely stored, so it must not be resent.
 
@@ -89,7 +89,7 @@ Any member can add a task with a title, details, optional dependencies on other 
 
 Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
 
-An optional Host Task extension can replace only the native create/update writer while keeping the same Team roster, Board, and Lead Session log. Without it, the official task tools retain their normal behavior. The installed extension receives a private commit handle; a batch checks current revisions and the final dependency DAG, then stores all Task snapshots, optional Team mailbox notices, and extension-owned JSON in one event. Under the same Team lock, the extension may instead return existing Task ids without another event or notice; only Tasks owned by that extension are admitted. The native projection ignores extension JSON but folds notices into the durable mailbox. Extension code must validate its own JSON when it replays the same event. A controlled tool adapter may query the extension's current running-Attempt admission; absence of that callback means standby.
+An optional Host Task extension can replace only the native create/update writer while keeping the same Team roster, Board, and Lead Session log. Without it, the official task tools retain their normal behavior. The installed extension receives a private commit handle; a batch checks current revisions and the final dependency DAG, then stores all Task snapshots, optional Team mailbox notices, and extension-owned JSON in one event. Under the same Team lock, the extension may instead return existing Task ids without another event or notice; only Tasks owned by that extension are admitted. The native projection ignores extension JSON but folds notices into the durable mailbox. Extension code must validate its own JSON when it replays the same event. A controlled tool adapter may query the extension's current running-Attempt admission; absence of that callback means standby. The extension can also validate a proposed member group and declare its Team tool names for final member-tool checking.
 
 A controlled Team accepts Task writes only from the extension id recorded in its mode event; unloading that writer never falls back to native Task mutation. An extension may irreversibly mark a completed result unavailable, so dependent Tasks stop reporting ready even while the historical completed Task remains visible.
 

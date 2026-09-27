@@ -19,6 +19,12 @@ export interface PresetCompositionLease extends AsyncDisposable {
   readonly revision: string | undefined
   /** Rows captured from the same retained generation used by mount(), avoiding an inventory/revision race. */
   readonly compositionRows: readonly AgentPresetCompositionRow[]
+  /** Captured Team-member tool allowance, absent when the Preset declares none. */
+  readonly allowedTools?: readonly string[]
+  /** Tool names visible through the retained Preset scope before Team tools are installed. */
+  readonly inheritedToolNames: readonly string[]
+  /** Names registered by the Preset rather than inherited from the Host. */
+  readonly presetToolNames: readonly string[]
   /**
    * Bind an unpublished, unbound Agent scope to this exact retained revision.
    * @param ctx - Agent factory setup context; never a live published Agent scope.
