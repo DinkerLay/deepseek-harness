@@ -63,6 +63,7 @@ export function registerAgentTeamUi(ctx: ClientContext): void {
         'agent-team.panel.task.action': { kind: 'single', scope: 'session' },
         'agent-team.panel.tasks.action': { kind: 'list', scope: 'session' },
         'agent-team.panel.tasks.graph': { kind: 'single', scope: 'session' },
+        'agent-team.panel.tasks.content': { kind: 'single', scope: 'session' },
       },
     }, TeamAction),
   )

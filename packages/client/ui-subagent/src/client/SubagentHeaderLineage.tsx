@@ -405,6 +405,8 @@ interface CatalogDropdownSharedProps extends SubagentCatalogInjected {
   useSessions: SubagentHeaderLineageProps['useSessions']
   useSessionStatus: SubagentHeaderLineageProps['useSessionStatus']
   t: TranslateNS<typeof NS>
+  /** Identify only the root header action for a product-specific presentation override. */
+  headerAction?: boolean
 }
 
 type CatalogDropdownProps = CatalogDropdownSharedProps & (
@@ -445,7 +447,7 @@ function catalogMenuPosition(trigger: HTMLButtonElement): CSSProperties {
 /** One trigger-plus-tree dropdown over the catalog rooted at `rootSessionId`. */
 function CatalogDropdown({
   rootSessionId, currentSessionId, displayTitle, openTitle, variant,
-  useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t,
+  useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t, headerAction,
 }: CatalogDropdownProps) {
   const ancestorSwitcher = variant === 'switcher' && openTitle !== undefined
   const projections = useSessions(state => state.projectionsBySession)
@@ -644,6 +646,7 @@ function CatalogDropdown({
   return (
     <div
       className={`${css.root} ${variant === 'switcher' ? css.switcherRoot : ''}`}
+      data-subagent-header-catalog={headerAction ? '' : undefined}
       ref={rootRef}
       onKeyDown={navigate}
       onMouseLeave={scheduleHoverClose}
@@ -751,6 +754,7 @@ export function SubagentCatalogAction({
       key={sessionId}
       rootSessionId={sessionId}
       variant="count"
+      headerAction
       useSessions={useSessions}
       useSessionStatus={useSessionStatus}
       openChild={openChild}

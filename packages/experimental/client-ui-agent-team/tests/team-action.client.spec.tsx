@@ -112,7 +112,12 @@ function bench(options: {
     }) as UseProjection,
     useSessions,
     useSessionStatus: bindSnapshotSelector(statuses),
-    renderSlot: options.renderSlot ?? (() => null),
+    renderSlot: ((key, owner, opts) => {
+      const rendered = options.renderSlot?.(key, owner, opts) ?? null
+      // The real slot renderer wraps the owner-provided fallback in a Fragment.
+      return key === 'agent-team.panel.tasks.content' && rendered === null
+        ? <>{opts?.fallback ?? null}</> : rendered
+    }) as TeamActionProps['renderSlot'],
     ...injected,
     t: makeTranslate(zh, commonZh),
   } as TeamActionProps
@@ -200,6 +205,41 @@ describe('TeamAction', () => {
     expect(screen.queryByText('Implement runtime')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Graph plugin' }))
     expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
+
+  it('uses an optional Task content slot while retaining the official Board fallback', () => {
+    const b = bench({ renderSlot: key => key === 'agent-team.panel.tasks.content'
+      ? <p>Product Task workspace</p> : null })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText('Product Task workspace')).toBeTruthy()
+    expect(document.querySelector('[data-team-action]')?.hasAttribute('data-team-projection-ready')).toBe(true)
+    expect(screen.queryByText('Implement runtime')).toBeNull()
+    const current = b.sessions.getSnapshot()
+    setProjection(b.sessions, SESSION, { members: [lead], tasks: [] })
+    expect(screen.getByText('Product Task workspace')).toBeTruthy()
+    expect(document.querySelector('[data-team-action]')?.hasAttribute('data-team-projection-ready')).toBe(false)
+    expect(current.projectionsBySession[SESSION]?.values.agentTeam?.tasks).toHaveLength(1)
+  })
+
+  it('renders the native empty Task notice when an unoccupied slot returns a fallback wrapper', () => {
+    const b = bench({ renderSlot: (key, _owner, opts) => key === 'agent-team.panel.tasks.content'
+      ? <>{opts?.fallback ?? null}</> : null })
+    setProjection(b.sessions, SESSION, { members: [lead], tasks: [] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText(zh.empty)).toBeTruthy()
+    expect(document.querySelector('[data-team-panel-body]')).not.toBeNull()
+  })
+
+  it('groups members only when a durable group label exists and keeps member navigation', () => {
+    const b = bench()
+    setProjection(b.sessions, SESSION, { members: [lead, { ...worker, group: 'collection' }], tasks: [] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText('collection')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /worker/u }))
+    expect(b.injected.openTeammate).toHaveBeenCalledWith(SESSION, WORKER)
   })
 
   it('renders the Lead projection and applies later projection frames without any user action', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
@@ -31,7 +31,8 @@ type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiri
 export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
   & PropsRenderSlots<'agent-team.panel.member.meta' | 'agent-team.panel.task.action'
-    | 'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'>
+    | 'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'
+    | 'agent-team.panel.tasks.content'>
 
 function statusKey(status: TeamTask['status']): TeamKey {
   switch (status) {
@@ -287,12 +288,47 @@ export function TeamAction({
   }, [open])
 
   const compact = team !== undefined && team.members.length === 1 && team.tasks.length === 0
+  const memberSections: Array<{ label?: string; members: TeamMemberProjection[] }> = []
+  if (team !== undefined) {
+    if (!team.members.some(member => member.group !== undefined)) {
+      memberSections.push({ members: team.members })
+    } else {
+      memberSections.push({ members: team.members.filter(member => member.role === 'lead') })
+      const grouped = new Map<string, TeamMemberProjection[]>()
+      for (const member of team.members) {
+        if (member.role === 'lead') continue
+        const label = member.group ?? t('group.ungrouped')
+        const members = grouped.get(label) ?? []
+        members.push(member)
+        grouped.set(label, members)
+      }
+      for (const [label, members] of grouped) memberSections.push({ label, members })
+    }
+  }
+  const nativeTaskContent = team === undefined ? null : team.tasks.length === 0
+    ? <p className={css.emptyNotice}>{t('empty')}</p>
+    : <>
+      <h3>
+        {t('tasks')}<span className={css.count}>{team.tasks.length}</span>
+        {renderSlot('agent-team.panel.tasks.action', {
+          view: team, active: graphOpen, openGraph: () => { setGraphOpen(value => !value) },
+        })}
+      </h3>
+      {graphOpen
+        ? renderSlot('agent-team.panel.tasks.graph', {
+          view: team, leadSessionId, closePanel: () => { changeOpen(false) },
+        })
+        : <div className={css.tasks}>{team.tasks.map(task => <TaskCard key={task.id} task={task}
+          leadSessionId={leadSessionId} closePanel={() => { changeOpen(false) }} renderSlot={renderSlot} t={t} />)}</div>}
+    </>
 
   return (
     <div
       ref={rootRef}
       className={css.root}
       data-team-action
+      data-team-projection-ready={team !== undefined && (team.members.length > 1 || team.tasks.length > 0)
+        ? '' : undefined}
       onMouseLeave={scheduleHoverClose}
     >
       <button
@@ -330,7 +366,7 @@ export function TeamAction({
             <button type="button" className={css.closeButton} aria-label={t('close')}
               onClick={() => { changeOpen(false) }}><IconCloseOutlineRegular size={16} /></button>
           </div>
-          <div className={css.body}>
+          <div className={css.body} data-team-panel-body>
             {error !== null && (
               <div className={css.error} role="alert"><StateDot state="error" />{error}</div>
             )}
@@ -351,48 +387,30 @@ export function TeamAction({
                     {team.members.length > 1 && <span className={css.count}>{team.members.length}</span>}
                   </h3>
                   <div className={css.roster}>
-                    {team.members.map(member => (
-                      <TeamMemberRow
-                        key={member.id}
-                        member={member}
-                        memberCount={team.members.length}
-                        leadSessionId={leadSessionId}
-                        sessionId={sessionId}
-                        useSessions={useSessions}
-                        useSessionStatus={useSessionStatus}
-                        openTeammate={openTeammate}
-                        renderSlot={renderSlot}
-                        onError={setError}
-                        t={t}
-                      />
-                    ))}
+                    {memberSections.map(({ label, members }, index) => <Fragment key={label ?? `lead-${index}`}>
+                      {label !== undefined && <h4 className={css.groupHeading}>{label}</h4>}
+                      {members.map(member => (
+                        <TeamMemberRow
+                          key={member.id}
+                          member={member}
+                          memberCount={team.members.length}
+                          leadSessionId={leadSessionId}
+                          sessionId={sessionId}
+                          useSessions={useSessions}
+                          useSessionStatus={useSessionStatus}
+                          openTeammate={openTeammate}
+                          renderSlot={renderSlot}
+                          onError={setError}
+                          t={t}
+                        />
+                      ))}
+                    </Fragment>)}
                   </div>
                 </section>
                 <section className={css.tasksPane}>
-                  {team.tasks.length === 0
-                    ? <p className={css.emptyNotice}>{t('empty')}</p>
-                    : (
-                      <>
-                        <h3>
-                          {t('tasks')}<span className={css.count}>{team.tasks.length}</span>
-                          {renderSlot('agent-team.panel.tasks.action', {
-                            view: team,
-                            active: graphOpen,
-                            openGraph: () => { setGraphOpen(value => !value) },
-                          })}
-                        </h3>
-                        {graphOpen
-                          ? renderSlot('agent-team.panel.tasks.graph', {
-                            view: team,
-                            leadSessionId,
-                            closePanel: () => { changeOpen(false) },
-                          })
-                          : <div className={css.tasks}>
-                            {team.tasks.map(task => <TaskCard key={task.id} task={task} leadSessionId={leadSessionId}
-                              closePanel={() => { changeOpen(false) }} renderSlot={renderSlot} t={t} />)}
-                          </div>}
-                      </>
-                    )}
+                  {renderSlot('agent-team.panel.tasks.content', {
+                    view: team, leadSessionId, closePanel: () => { changeOpen(false) },
+                  }, { fallback: nativeTaskContent })}
                 </section>
               </>
             )}
