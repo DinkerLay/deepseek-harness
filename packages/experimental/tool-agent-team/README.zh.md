@@ -104,7 +104,7 @@ kind: "package-reference"
 
 ### 策略与工具
 
-member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。十一个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
+member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。十一个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中；已持久保存的受控 Team 成员工具上限可以略过某个 member 作用域工具。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
 
 ### 按作用域注册与拆除
 

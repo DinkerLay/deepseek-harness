@@ -71,7 +71,7 @@
 | `event:team/message/cancelled` | event | `7e9638f6cd7c05e5251ad9379fe114fb7d62524031a332b7ea47f23fef25680c` | [`{ type: "team/message/cancelled" }`](#persistence-type-sha256-7e9638f6cd7c05e5251ad9379fe114fb7d62524031a332b7ea47f23fef25680c) |
 | `event:team/message/delivered` | event | `48f9c19417a1abbedfa59f4667bba36b93ac2db407adf5e84cb3ba0de30942cb` | [`{ type: "team/message/delivered" }`](#persistence-type-sha256-48f9c19417a1abbedfa59f4667bba36b93ac2db407adf5e84cb3ba0de30942cb) |
 | `event:team/message/queued` | event | `21fb6a90d5068f6a0003b7ab316ed2f56342477146a65c00db0f13c4d8df667d` | [`{ type: "team/message/queued" }`](#persistence-type-sha256-21fb6a90d5068f6a0003b7ab316ed2f56342477146a65c00db0f13c4d8df667d) |
-| `event:team/mode` | event | `00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77` | [`{ type: "team/mode" }`](#persistence-type-sha256-00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77) |
+| `event:team/mode` | event | `13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f` | [`{ type: "team/mode" }`](#persistence-type-sha256-13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f) |
 | `event:team/task` | event | `3eb23097413d1b87d812c4134f5d1e6987a4b033d7c61ad70e2e3045419885c6` | [`{ type: "team/task" }`](#persistence-type-sha256-3eb23097413d1b87d812c4134f5d1e6987a4b033d7c61ad70e2e3045419885c6) |
 | `event:team/task/transaction` | event | `e126c7c12171b0de5a89b2bfa7e258312ccc3f8cb04fb0030618550c74f23a50` | [`{ type: "team/task/transaction" }`](#persistence-type-sha256-e126c7c12171b0de5a89b2bfa7e258312ccc3f8cb04fb0030618550c74f23a50) |
 | `event:todo/write` | event | `b978cff734e62143eb56c9125423ec275405eda969802d42aaf73ecb987d3b26` | [`{ type: "todo/write" }`](#persistence-type-sha256-b978cff734e62143eb56c9125423ec275405eda969802d42aaf73ecb987d3b26) |
@@ -995,7 +995,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:425`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:435`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamextension--log-only"></a>
 
@@ -1015,7 +1015,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:441`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:451`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammember--log-only"></a>
 
@@ -1028,7 +1028,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:427`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:437`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammemberconfigured--log-only"></a>
 
@@ -1041,7 +1041,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMemberSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:429`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:439`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagecancelled--log-only"></a>
 
@@ -1060,7 +1060,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:459`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:469`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -1078,7 +1078,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:452`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:462`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -1091,7 +1091,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:450`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:460`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammode--log-only"></a>
 
@@ -1104,7 +1104,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:423`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:433`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -1117,7 +1117,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamTaskSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:431`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:441`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtasktransaction--log-only"></a>
 
@@ -1136,7 +1136,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[TeamId](subsystems/agent-team.zh.md) · [TeamMessageSnapshot](subsystems/agent-team.zh.md)
 
-来源：[`packages/experimental/agent-team/src/types.ts:433`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:443`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 
@@ -4949,7 +4949,7 @@ SHA-256: `ba06d87f1e1058cf72f74501b02d4b38738da24c62257f7890e460a9ef6ee322`
 | `target` | 未声明 | `applicationId`: `string`; `targetJson`: `string` | [`{ kind: "target" }`](#persistence-type-sha256-0ab879d862527f6da3fcf9c48c0152ba410628b0460300a159676b27352cf70d) |
 | `unlock` | 未声明 | 无 | [`{ kind: "unlock" }`](#persistence-type-sha256-205bcab5974e82beef9a7333952b23cc1f16432c60e6cbc1fe3e3df435ace94e) |
 
-<a id="persistence-type-sha256-5db382bb9356fef35b7a8bc1aac1fec00134d63eb999451487a7e2a10a7b09d6"></a>
+<a id="persistence-type-sha256-8a6259e32833c2270e262a9b4294e73db9d018abdd7f06b1237d8bb78c81c3bb"></a>
 
 <a id="persistence-type-packagesexperimentalagent-teamsrctypeststeamcontrolledmode"></a>
 
@@ -4957,14 +4957,15 @@ SHA-256: `ba06d87f1e1058cf72f74501b02d4b38738da24c62257f7890e460a9ef6ee322`
 
 ### `TeamControlledMode`
 
-SHA-256: `5db382bb9356fef35b7a8bc1aac1fec00134d63eb999451487a7e2a10a7b09d6`
+SHA-256: `8a6259e32833c2270e262a9b4294e73db9d018abdd7f06b1237d8bb78c81c3bb`
 
-来源：[`packages/experimental/agent-team/src/types.ts:307`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:315`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
 | `kind` | 必需 | `"controlled"` |
 | `maxOrdinaryMessageBytes` | 可选 | `number` |
+| `memberToolLimit` | 可选 | [`ToolRestriction`](#persistence-type-sha256-3cfc3a56502da1f8c6153c2c56657bab4b749056968634dd0991d325ec1c919f) |
 | `permissionRevision` | 必需 | `string` |
 | `permissionTableId` | 必需 | `string` |
 | `requiredTaskExtensionId` | 必需 | `string` |
@@ -5311,13 +5312,17 @@ SHA-256: `43e311235aa537df1bacdd92d144df8a952337a76e9ac892cdf670f1a797bad8`
 
 <a id="persistence-type-packagescoretoolssrcindextstoolrestriction"></a>
 
+<a id="persistence-type-packagesexperimentalagent-teamsrctypeststeammembertoollimit"></a>
+
+<a id="persistence-type-teammembertoollimit"></a>
+
 <a id="persistence-type-toolrestriction"></a>
 
 ### `ToolRestriction`
 
 SHA-256: `3cfc3a56502da1f8c6153c2c56657bab4b749056968634dd0991d325ec1c919f`
 
-来源：[`packages/core/tools/src/index.ts:700`](../packages/core/tools/src/index.ts)
+来源：[`packages/core/tools/src/index.ts:700`](../packages/core/tools/src/index.ts) · [`packages/experimental/agent-team/src/types.ts:307`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -5912,7 +5917,7 @@ SHA-256: `20a57544bbf204dacd1ae6beb2ab29444365c3c869f2afdf489dcdcbc3d9c8c5`
 
 SHA-256: `379997fad643a1fa75931052abefb3bc2e080767f61a83f2e3ca6ae2590118c9`
 
-来源：[`packages/experimental/agent-team/src/types.ts:441`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:451`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -6224,7 +6229,7 @@ SHA-256: `3e4e7683b0192c9f0e6a75c59076108f017892cdb302a98032c2632fd79c356f`
 
 SHA-256: `20c33d05656cc3fb6f032e79a9a858c1a6d4eac72d5330e45b05677846450bb4`
 
-来源：[`packages/experimental/agent-team/src/types.ts:437`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:447`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -6237,7 +6242,7 @@ SHA-256: `20c33d05656cc3fb6f032e79a9a858c1a6d4eac72d5330e45b05677846450bb4`
 
 SHA-256: `6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163`
 
-来源：[`packages/experimental/agent-team/src/types.ts:444`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:454`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -6403,7 +6408,7 @@ SHA-256: `5302e763151277614b97e77f00e3b326694c6c1247b916a20503c344dc970777`
 
 SHA-256: `caf7b94ee06948f73b17c2ad9449f9789687fc30c045c8b5f3b3c10a5dbf3a9f`
 
-来源：[`packages/experimental/agent-team/src/types.ts:433`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:443`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -7939,7 +7944,7 @@ SHA-256: `930a6567a10bb62ddd157bd8abdf4b182810c8c3b49d91309b3b009a5fed9731`
 
 SHA-256: `46c5de4cd527104160dcedf8650e91010c1cdbf978e57365ab9e5556a03826e7`
 
-来源：[`packages/experimental/agent-team/src/types.ts:429`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:439`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -7953,7 +7958,7 @@ SHA-256: `46c5de4cd527104160dcedf8650e91010c1cdbf978e57365ab9e5556a03826e7`
 
 SHA-256: `b1ebd5cda47d90d980bb05bffc3f970c51537b9aff15b3bc3d639811727741b1`
 
-来源：[`packages/experimental/agent-team/src/types.ts:427`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:437`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -7981,7 +7986,7 @@ SHA-256: `6bc8e51124d0874bc89e1d0ceff381a9c3cd0fc240667d69f841ce4f60f65fe5`
 
 SHA-256: `ea08ec1df0c33108fd03345b9af199cf04dea450aa045d3c683f216311403403`
 
-来源：[`packages/experimental/agent-team/src/types.ts:450`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:460`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -7995,7 +8000,7 @@ SHA-256: `ea08ec1df0c33108fd03345b9af199cf04dea450aa045d3c683f216311403403`
 
 SHA-256: `0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1`
 
-来源：[`packages/experimental/agent-team/src/types.ts:452`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:462`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -8010,7 +8015,7 @@ SHA-256: `0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1`
 
 SHA-256: `7e78ed670ff281b5b68829e83852302a6f31fc81433e985da3746f25dfab1107`
 
-来源：[`packages/experimental/agent-team/src/types.ts:459`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:469`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -8033,17 +8038,17 @@ SHA-256: `9890113e97dd3541787bfe6704f2b223d3a890b5325ca0acae2b0398909b413e`
 | `mode` | 必需 | [`SandboxMode`](#persistence-type-sha256-fab2bb09bc5e3b9db0685e8f5500b029af1a2b33e70bc703c1d5d0f596fbc1fd) |
 | `source` | 可选 | `"delegation"` |
 
-<a id="persistence-type-sha256-c6dfe342d415232f361ee19a57313f71e42048fc8508d907bac356dcebc4be4c"></a>
+<a id="persistence-type-sha256-c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b"></a>
 
 ### `{ mode, teamId, version }`
 
-SHA-256: `c6dfe342d415232f361ee19a57313f71e42048fc8508d907bac356dcebc4be4c`
+SHA-256: `c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b`
 
-来源：[`packages/experimental/agent-team/src/types.ts:423`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:433`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
-| `mode` | 必需 | [`TeamControlledMode`](#persistence-type-sha256-5db382bb9356fef35b7a8bc1aac1fec00134d63eb999451487a7e2a10a7b09d6) |
+| `mode` | 必需 | [`TeamControlledMode`](#persistence-type-sha256-8a6259e32833c2270e262a9b4294e73db9d018abdd7f06b1237d8bb78c81c3bb) |
 | `teamId` | 必需 | `string` |
 | `version` | 必需 | `1` |
 
@@ -8184,7 +8189,7 @@ SHA-256: `477614bca595a9e7adb5a1870be446b9a8684f3ba8950259d6289f2d3b74f028`
 
 SHA-256: `de793be4f7d671ed79c4b8c7ef9747a20480bfb8a3d1e968b5782ce0d5ac609b`
 
-来源：[`packages/experimental/agent-team/src/types.ts:431`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:441`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -8198,7 +8203,7 @@ SHA-256: `de793be4f7d671ed79c4b8c7ef9747a20480bfb8a3d1e968b5782ce0d5ac609b`
 
 SHA-256: `9a12cff08bd51e627f69c220087a23941e43300c241b5a50c4ef644293758ebc`
 
-来源：[`packages/experimental/agent-team/src/types.ts:425`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:435`](../packages/experimental/agent-team/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -9105,17 +9110,17 @@ SHA-256: `21fb6a90d5068f6a0003b7ab316ed2f56342477146a65c00db0f13c4d8df667d`
 | `time` | 必需 | `number` |
 | `type` | 必需 | `"team/message/queued"` |
 
-<a id="persistence-type-sha256-00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77"></a>
+<a id="persistence-type-sha256-13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f"></a>
 
 <a id="persistence-type-eventteammode"></a>
 
 ### `{ type: "team/mode" }`
 
-SHA-256: `00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77`
+SHA-256: `13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f`
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
-| `data` | 必需 | [`{ mode, teamId, version }`](#persistence-type-sha256-c6dfe342d415232f361ee19a57313f71e42048fc8508d907bac356dcebc4be4c) |
+| `data` | 必需 | [`{ mode, teamId, version }`](#persistence-type-sha256-c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b) |
 | `ignorable` | 可选 | `true` |
 | `seq` | 必需 | `number` |
 | `time` | 必需 | `number` |

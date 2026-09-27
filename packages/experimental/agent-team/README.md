@@ -55,7 +55,7 @@ With the tools installed, the model does the rest on request — for example, "c
 | `maxTaskExtensionBytes` | `262,144` | Maximum bytes of extension-owned JSON in one atomic Team event |
 | `maxMessageBytes` | `65,536` | Maximum size of one sent message |
 | `disposalTimeoutMs` | `5,000` | Time allowed for shutdown cleanup |
-| `controlledMode` | unset | Immutable required Task writer, permission-table revision, and optional ordinary-message byte limit, written before a new Team opens its tools |
+| `controlledMode` | unset | Immutable required Task writer and permission-table revision, with optional ordinary-message byte limit and member tool ceiling, written before a new Team opens its tools |
 | `defaultMemberPresetId` | unset | Product default Preset for new teammates without an explicit Preset; unset preserves Lead inheritance |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-agent-team) is the exhaustive source for every accepted field and its JSDoc.
@@ -67,6 +67,8 @@ Ask the Lead to create a teammate: give it a unique lowercase name such as `revi
 An optional `presetId` binds a teammate to a declared Agent Preset. The roster records its declaration revision, and cold continuation requires that same revision; a changed declaration leaves the member inactive instead of silently resuming with different tools or instructions. An explicit Preset requires the Agent Preset registry. Without `presetId`, a configured `defaultMemberPresetId` is used; otherwise the teammate keeps the ordinary inherited composition.
 
 A teammate may also carry an immutable `group` label without changing its name or Session identity. In controlled mode the required Task extension validates the group before the roster reserves the member; an absent extension refuses creation. The roster also checks the retained Preset generation and rejects declared delegation plugins. A Preset `allowedTools` declaration masks inherited tools, rejects extra Preset-owned tools, and checks the final member catalog before initial or cold delivery. The service replaces caller-authored first work with a fixed standby input that asks the member to reply only “Ready.” without tools or messages, and requires fresh context.
+
+A controlled Team may also pin `memberToolLimit.allow` and/or `memberToolLimit.deny` in its mode record. The ceiling intersects a Preset allowance for inherited tools. Native and extension-owned Team tools consult the same ceiling before registering in a teammate scope; the final catalog check refuses any extra scoped tool. A denied tool is absent from the catalog and direct calls fail through the normal tool runtime. Omitting the ceiling retains official Team behavior.
 
 The final member catalog check uses the same `@deepseek-ai/dsh-scope` runtime as Agent Loop. This package declares Scope as a peer dependency so its production bundle does not create a second scope identity; the built-library test checks that boundary. Missing catalog services or scope fail member admission rather than bypassing the Preset allowance.
 

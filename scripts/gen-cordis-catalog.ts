@@ -669,6 +669,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   TeamMessageId: 'agent-team.md',
   TeamMemberView: 'agent-team.md',
   TeamControlledMode: 'agent-team.md',
+  TeamMemberToolLimit: 'agent-team.md',
   TeamCompositionState: 'agent-team.md',
   TeamCompositionSnapshot: 'agent-team.md',
   TeamCompositionTransition: 'agent-team.md',

@@ -11,7 +11,7 @@ import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
-import { TeamRoster } from './roster.ts'
+import { TeamRoster, memberToolAllowed } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
 import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extension.ts'
@@ -22,6 +22,7 @@ import type {
   TeamCompositionState,
   TeamCompositionTransition,
   TeamControlledMode,
+  TeamMemberToolLimit,
   CreateTeamTaskRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -72,6 +73,10 @@ export class TeamService extends Service {
       permissionTableId: z.string().required(),
       permissionRevision: z.string().required(),
       maxOrdinaryMessageBytes: z.number().step(1).min(1),
+      memberToolLimit: z.union([z.object({
+        allow: z.union([z.array(z.string().min(1).max(200)), z.const(undefined)]),
+        deny: z.union([z.array(z.string().min(1).max(200)), z.const(undefined)]),
+      }) as z<TeamMemberToolLimit>, z.const(undefined)]),
     }), z.const(undefined)]),
     defaultMemberPresetId: z.string(),
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
@@ -192,6 +197,18 @@ export class TeamService extends Service {
    */
   controlledMode(agent: Agent): TeamControlledMode | undefined {
     return this.journal.state(this.roster.membership(agent).root).mode
+  }
+
+  /**
+   * Whether a persisted Team ceiling permits one member tool registration.
+   * @param agent - exact Team caller whose pinned mode supplies the ceiling.
+   * @param name - tool name checked before registration or direct use.
+   * @returns true when the member may see and call this tool.
+   */
+  memberToolAllowed(agent: Agent, name: string): boolean {
+    const membership = this.roster.membership(agent)
+    if (membership.role !== 'teammate') return true
+    return memberToolAllowed(this.journal.state(membership.root).mode?.memberToolLimit, name)
   }
 
   /**

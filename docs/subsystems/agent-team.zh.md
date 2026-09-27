@@ -29,9 +29,19 @@ interface TeamMemberSnapshot {
 
 每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
-产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订及可选的普通消息上限，并在入队前拒绝成员间直接消息。
+产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订、可选的普通消息上限和成员工具上限，并在入队前拒绝成员间直接消息。
 
 用户管理的组成记录另外跟踪动态、应用中或固定的成员策略。官方 Team 没有这条记录时保持动态。应用中持久保存产品目标并阻止普通成员增减；固定状态拒绝模型增员或退队。原生 Lead 日志还保留 Profile 关联和可选槽位 id，冷恢复不需要第二份成员表。
+
+```ts type-equiv
+/** Optional Team-wide ceiling on tools available to teammates. */
+interface TeamMemberToolLimit {
+  /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
+  readonly allow?: readonly string[]
+  /** Optional denylist; denial wins over an allowlist. */
+  readonly deny?: readonly string[]
+}
+```
 
 ```ts type-equiv
 /** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
@@ -46,6 +56,8 @@ interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
+  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 ```
 
@@ -238,6 +250,14 @@ membership(agent: Agent): TeamMembership
  * @returns the durable controlled-mode binding, or undefined for an official Team.
  */
 controlledMode(agent: Agent): TeamControlledMode | undefined
+
+/**
+ * Whether a persisted Team ceiling permits one member tool registration.
+ * @param agent - exact Team caller whose pinned mode supplies the ceiling.
+ * @param name - tool name checked before registration or direct use.
+ * @returns true when the member may see and call this tool.
+ */
+memberToolAllowed(agent: Agent, name: string): boolean
 
 /**
  * Read the durable Team composition policy; an untouched Team is dynamic.

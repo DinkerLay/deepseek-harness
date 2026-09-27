@@ -429,6 +429,11 @@
     },
     {
       "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMemberToolLimit",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
       "symbol": "TeamControlledMode",
       "source": "packages/experimental/agent-team/src/types.ts"
     },

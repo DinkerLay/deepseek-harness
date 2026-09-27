@@ -24,6 +24,7 @@ import type {
   TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMemberView,
+  TeamMemberToolLimit,
 } from './types.ts'
 import { requiredText } from './validation.ts'
 
@@ -38,6 +39,16 @@ const NATIVE_TEAM_TOOL_NAMES = new Set([
   'retire_teammate', 'team_message_cancel', 'team_task_create', 'team_task_list',
   'team_task_get', 'team_task_update',
 ])
+
+/**
+ * Apply a persisted Team ceiling to an inherited or locally registered member tool.
+ * @param limit - Team mode's optional allow and deny lists.
+ * @param name - exact tool name to test.
+ * @returns true when the tool is admitted by the Team ceiling.
+ */
+export function memberToolAllowed(limit: TeamMemberToolLimit | undefined, name: string): boolean {
+  return (limit?.allow === undefined || limit.allow.includes(name)) && !limit?.deny?.includes(name)
+}
 
 /** Fixed first input for a controlled teammate; caller-authored work is ignored. */
 function controlledStandbyPrompt(name: string, group: string | undefined, description: string) {
@@ -254,12 +265,15 @@ export class TeamRoster {
       throw new TeamError(`preset "${member.preset.id}" declaration changed; member tools cannot be admitted`,
         'TEAM_UNSAFE_PRESET')
     }
-    if (lease.allowedTools === undefined) return
-    const allowed = new Set([...lease.allowedTools, ...NATIVE_TEAM_TOOL_NAMES, ...extensionTeamToolNames])
+    const limit = this.journal.state(membership.root).mode?.memberToolLimit
+    if (lease.allowedTools === undefined && limit === undefined) return
+    const allowed = lease.allowedTools === undefined ? undefined
+      : new Set([...lease.allowedTools, ...NATIVE_TEAM_TOOL_NAMES, ...extensionTeamToolNames])
     const unexpected = tools.schemas(scope).map(tool => tool.name)
-      .filter(name => name !== 'run_code' && !allowed.has(name))
+      .filter(name => name !== 'run_code' && ((allowed !== undefined && !allowed.has(name))
+        || !memberToolAllowed(limit, name)))
     if (unexpected.length > 0) {
-      throw new TeamError(`member tool catalog contains tools outside preset allowance: ${unexpected.join(', ')}`,
+      throw new TeamError(`member tool catalog contains tools outside preset or Team allowance: ${unexpected.join(', ')}`,
         'TEAM_UNSAFE_PRESET')
     }
   }
@@ -388,7 +402,7 @@ export class TeamRoster {
     const description = requiredText(request.description, 'description', 200)
     const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
     let preset: ContinuablePresetBinding | undefined
-    let allowedTools: readonly string[] | undefined
+    let inheritedToolFilter: { allow?: readonly string[]; deny?: readonly string[] } | undefined
     const mode = this.journal.state(root).mode
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
@@ -421,7 +435,18 @@ export class TeamRoster {
             ...missing.map(tool => `missing ${tool}`), ...undeclared.map(tool => `undeclared ${tool}`),
           ].join(', ')}`, 'TEAM_UNSAFE_PRESET')
         }
-        allowedTools = [...lease.allowedTools]
+      }
+      const limit = mode?.memberToolLimit
+      const globalNames = new Set(lease.inheritedToolNames)
+      const globalAllow = lease.allowedTools === undefined && limit?.allow === undefined ? undefined
+        : [...globalNames].filter(name => (lease.allowedTools === undefined || lease.allowedTools.includes(name))
+          && memberToolAllowed(limit, name))
+      const globalDeny = limit?.deny?.filter(name => globalNames.has(name))
+      if (globalAllow !== undefined || globalDeny !== undefined) {
+        inheritedToolFilter = {
+          ...globalAllow === undefined ? {} : { allow: globalAllow },
+          ...globalDeny === undefined ? {} : { deny: globalDeny },
+        }
       }
       preset = { id: lease.id, revision: lease.revision }
     }
@@ -468,7 +493,7 @@ export class TeamRoster {
         request: {
           prompt: mode === undefined ? request.prompt : controlledStandbyPrompt(name, group, description),
           parent: root,
-          ...allowedTools === undefined ? {} : { toolFilter: { allow: allowedTools } },
+          ...inheritedToolFilter === undefined ? {} : { toolFilter: inheritedToolFilter },
         },
         ...preset === undefined ? {} : { preset },
         signal,

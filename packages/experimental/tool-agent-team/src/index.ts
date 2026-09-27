@@ -6,7 +6,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import type { InferValue, ToolDefinition, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -226,6 +226,10 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
   const controlledMember = config.controlledTasks && membership.role === 'teammate'
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
+  const registerTeamTool = (tool: ToolDefinition): () => void => membership.role === 'teammate'
+    && !ctx.agentTeams.memberToolAllowed(agent, tool.name)
+    ? () => {}
+    : scoped.tools.register(tool)
   try {
     // Product Presets omit these capabilities at composition time. The guard
     // remains monotonic if a custom or misconfigured Preset exposes one.
@@ -246,7 +250,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     }))
 
     if (!controlledMember) {
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'spawn_teammate',
         description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
         parameters: {
@@ -294,7 +298,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       })))
     }
 
-    register(scoped.tools.register(defineTool({
+    register(registerTeamTool(defineTool({
       name: 'send_message',
       description: 'Send one durable message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.',
       parameters: {
@@ -311,7 +315,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(scoped.tools.register(defineTool({
+    register(registerTeamTool(defineTool({
       name: 'list_agents',
       description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
@@ -322,7 +326,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     })))
 
     if (!controlledMember) {
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'wait_agent',
         description: 'Wait for the next teammate status, mailbox, or shared-task change after this call starts. This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.',
         parameters: {
@@ -359,7 +363,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     }
 
     if (!controlledMember) {
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'interrupt_agent',
         description: 'Interrupt one teammate\'s current turn while preserving its pending inbox. Team Lead only.',
         parameters: {
@@ -371,7 +375,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         },
       })))
 
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'retire_teammate',
         description: 'Remove a teammate from Team admission while retaining its Session history. Team Lead only; first resolve unfinished owned tasks and pending Team messages.',
         parameters: {
@@ -384,7 +388,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         },
       })))
 
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'team_message_cancel',
         description: 'Cancel undelivered messages to one teammate before retirement. Team Lead only; delivered messages and Session history stay intact.',
         parameters: {
@@ -402,7 +406,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     }
 
     if (!controlledMember) {
-      register(scoped.tools.register(defineTool({
+      register(registerTeamTool(defineTool({
         name: 'team_task_create',
         description: 'Create one unowned pending task on the shared Team task board.',
         parameters: {
@@ -427,7 +431,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       })))
     }
 
-    register(scoped.tools.register(defineTool({
+    register(registerTeamTool(defineTool({
       name: 'team_task_list',
       description: 'List shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
       parameters: {
@@ -459,7 +463,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(scoped.tools.register(defineTool({
+    register(registerTeamTool(defineTool({
       name: 'team_task_get',
       description: 'Read the complete latest value of one shared task before changing or executing it.',
       parameters: {
@@ -474,7 +478,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(scoped.tools.register(defineTool({
+    register(registerTeamTool(defineTool({
       name: 'team_task_update',
       description: config.reviewedTasks
         ? 'Compare-and-set a shared Task action. Submit results with team_task_submit_result; only the Lead accepts them.'

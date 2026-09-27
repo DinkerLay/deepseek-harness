@@ -17582,7 +17582,7 @@
       "kind": "event",
       "event": "team/mode",
       "surface": false,
-      "digest": "00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77",
+      "digest": "13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f",
       "schema": {
         "root": 0,
         "nodes": [
@@ -17596,7 +17596,7 @@
               },
               {
                 "name": "ignorable",
-                "type": 7,
+                "type": 9,
                 "optional": true
               },
               {
@@ -17611,7 +17611,7 @@
               },
               {
                 "name": "type",
-                "type": 8,
+                "type": 10,
                 "optional": false
               }
             ],
@@ -17627,12 +17627,12 @@
               },
               {
                 "name": "teamId",
-                "type": 5,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "version",
-                "type": 6,
+                "type": 8,
                 "optional": false
               }
             ],
@@ -17652,18 +17652,23 @@
                 "optional": true
               },
               {
-                "name": "permissionRevision",
+                "name": "memberToolLimit",
                 "type": 5,
+                "optional": true
+              },
+              {
+                "name": "permissionRevision",
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "permissionTableId",
-                "type": 5,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "requiredTaskExtensionId",
-                "type": 5,
+                "type": 7,
                 "optional": false
               }
             ],
@@ -17676,6 +17681,26 @@
           {
             "kind": "primitive",
             "type": "number"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allow",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "deny",
+                "type": 6,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 7
           },
           {
             "kind": "primitive",
@@ -23440,123 +23465,6 @@
   ],
   "types": [
     {
-      "digest": "00b787c699b0d246df4d82b410d8b8c6ae616193420546e14792f3f543097a77",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 7,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 8,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "mode",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "teamId",
-                "type": 5,
-                "optional": false
-              },
-              {
-                "name": "version",
-                "type": 6,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "kind",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "maxOrdinaryMessageBytes",
-                "type": 4,
-                "optional": true
-              },
-              {
-                "name": "permissionRevision",
-                "type": 5,
-                "optional": false
-              },
-              {
-                "name": "permissionTableId",
-                "type": 5,
-                "optional": false
-              },
-              {
-                "name": "requiredTaskExtensionId",
-                "type": 5,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "controlled"
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "literal",
-            "value": 1
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "literal",
-            "value": "team/mode"
-          }
-        ]
-      },
-      "names": [],
-      "sources": []
-    },
-    {
       "digest": "00caf3876ee2b7f72e83ab1fe10c3bba4c0e206192cd7cdeb4d0a61343ac7963",
       "schema": {
         "root": 0,
@@ -24532,7 +24440,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:452"
+        "packages/experimental/agent-team/src/types.ts:462"
       ]
     },
     {
@@ -27303,6 +27211,148 @@
           {
             "kind": "literal",
             "value": 3
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "13c2093d78a82a5a34827fb879328abaaf068464e2e2780117a89ad63b21194f",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 9,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 10,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "mode",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 8,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "kind",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "maxOrdinaryMessageBytes",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "memberToolLimit",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "permissionRevision",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "permissionTableId",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "requiredTaskExtensionId",
+                "type": 7,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "controlled"
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allow",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "deny",
+                "type": 6,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 7
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "literal",
+            "value": "team/mode"
           }
         ]
       },
@@ -33733,7 +33783,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:437"
+        "packages/experimental/agent-team/src/types.ts:447"
       ]
     },
     {
@@ -37824,7 +37874,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:441"
+        "packages/experimental/agent-team/src/types.ts:451"
       ]
     },
     {
@@ -38879,10 +38929,12 @@
         ]
       },
       "names": [
-        "packages/core/tools/src/index.ts#ToolRestriction"
+        "packages/core/tools/src/index.ts#ToolRestriction",
+        "packages/experimental/agent-team/src/types.ts#TeamMemberToolLimit"
       ],
       "sources": [
-        "packages/core/tools/src/index.ts:700"
+        "packages/core/tools/src/index.ts:700",
+        "packages/experimental/agent-team/src/types.ts:307"
       ]
     },
     {
@@ -45238,7 +45290,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:429"
+        "packages/experimental/agent-team/src/types.ts:439"
       ]
     },
     {
@@ -54200,63 +54252,6 @@
       "sources": []
     },
     {
-      "digest": "5db382bb9356fef35b7a8bc1aac1fec00134d63eb999451487a7e2a10a7b09d6",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "kind",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "maxOrdinaryMessageBytes",
-                "type": 2,
-                "optional": true
-              },
-              {
-                "name": "permissionRevision",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "permissionTableId",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "requiredTaskExtensionId",
-                "type": 3,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "controlled"
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          }
-        ]
-      },
-      "names": [
-        "packages/experimental/agent-team/src/types.ts#TeamControlledMode"
-      ],
-      "sources": [
-        "packages/experimental/agent-team/src/types.ts:307"
-      ]
-    },
-    {
       "digest": "5dd766ccd1702a1142ad8b4bd44f2242f8e8a6752669ad3de0a5d224329b1438",
       "schema": {
         "root": 0,
@@ -61829,7 +61824,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:444"
+        "packages/experimental/agent-team/src/types.ts:454"
       ]
     },
     {
@@ -64220,7 +64215,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:459"
+        "packages/experimental/agent-team/src/types.ts:469"
       ]
     },
     {
@@ -67015,6 +67010,88 @@
       "sources": []
     },
     {
+      "digest": "8a6259e32833c2270e262a9b4294e73db9d018abdd7f06b1237d8bb78c81c3bb",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "kind",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "maxOrdinaryMessageBytes",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "memberToolLimit",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "permissionRevision",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "permissionTableId",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "requiredTaskExtensionId",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "controlled"
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allow",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "deny",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 5
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          }
+        ]
+      },
+      "names": [
+        "packages/experimental/agent-team/src/types.ts#TeamControlledMode"
+      ],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:315"
+      ]
+    },
+    {
       "digest": "8a6e1ec9e8db346b0e02f027db73c07a94f067a26d40c1aef1abd09c47ce7ba0",
       "schema": {
         "root": 0,
@@ -69606,7 +69683,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:425"
+        "packages/experimental/agent-team/src/types.ts:435"
       ]
     },
     {
@@ -76117,7 +76194,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:427"
+        "packages/experimental/agent-team/src/types.ts:437"
       ]
     },
     {
@@ -78929,6 +79006,111 @@
       "sources": []
     },
     {
+      "digest": "c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "mode",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 7,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "kind",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "maxOrdinaryMessageBytes",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "memberToolLimit",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "permissionRevision",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "permissionTableId",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "requiredTaskExtensionId",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "controlled"
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allow",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "deny",
+                "type": 5,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 6
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          }
+        ]
+      },
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:433"
+      ]
+    },
+    {
       "digest": "c219efbdfd53b836786202ab4532913d555798f0a8615a4e9629736e3799fb70",
       "schema": {
         "root": 0,
@@ -79134,86 +79316,6 @@
       ],
       "sources": [
         "packages/util/values/src/index.ts:4"
-      ]
-    },
-    {
-      "digest": "c6dfe342d415232f361ee19a57313f71e42048fc8508d907bac356dcebc4be4c",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "mode",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "teamId",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "version",
-                "type": 5,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "kind",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "maxOrdinaryMessageBytes",
-                "type": 3,
-                "optional": true
-              },
-              {
-                "name": "permissionRevision",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "permissionTableId",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "requiredTaskExtensionId",
-                "type": 4,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "controlled"
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "literal",
-            "value": 1
-          }
-        ]
-      },
-      "names": [],
-      "sources": [
-        "packages/experimental/agent-team/src/types.ts:423"
       ]
     },
     {
@@ -79956,7 +80058,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:433"
+        "packages/experimental/agent-team/src/types.ts:443"
       ]
     },
     {
@@ -86979,7 +87081,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:431"
+        "packages/experimental/agent-team/src/types.ts:441"
       ]
     },
     {
@@ -90072,7 +90174,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:450"
+        "packages/experimental/agent-team/src/types.ts:460"
       ]
     },
     {

@@ -494,6 +494,38 @@ describe('Team identity and provisioning', () => {
     policy.dispose()
   })
 
+  it('pins a Team member ceiling and intersects it with a Preset allowance', async () => {
+    const { ctx, lead } = await setup(['hang'], { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      memberToolLimit: { allow: ['web_search', 'team_task_list'], deny: ['web_fetch'] },
+    } }, true)
+    for (const name of ['web_search', 'web_fetch']) {
+      ctx.tools.register({ name, description: name,
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+        execute: () => Promise.resolve(name),
+      })
+    }
+    await ctx.agentPresets.register({ id: 'limited', allowedTools: ['web_search', 'web_fetch'], plugins: [] })
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const started = await spawn(ctx, lead, 'limited-worker', { group: 'collectors', presetId: 'limited' })
+    const child = await waitRunning(ctx, started.member.id)
+    const scope = scopeOf(child.ctx)
+    expect(ctx.agentTeams.controlledMode(lead)?.memberToolLimit).toEqual({
+      allow: ['web_search', 'team_task_list'], deny: ['web_fetch'],
+    })
+    expect(ctx.tools.get('web_search', scope)).toBeDefined()
+    expect(ctx.tools.get('web_fetch', scope)).toBeUndefined()
+    expect((await ctx.tools.execute({ callId: ToolCallId('team-ceiling-direct'),
+      name: 'web_fetch', arguments: {}, agent: child, signal: SIGNAL })).isError).toBe(true)
+    const stored = await storedEvents(ctx, lead.id)
+    expect(stored.find(event => event.type === 'team/mode')?.data.mode.memberToolLimit?.deny).toEqual(['web_fetch'])
+    policy.dispose()
+  })
+
   it('rejects a fully initialized member catalog with an undeclared scoped tool before first delivery', async () => {
     const { ctx, lead } = await setup([], { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',

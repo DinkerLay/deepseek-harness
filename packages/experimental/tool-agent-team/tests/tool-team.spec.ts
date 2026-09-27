@@ -194,6 +194,29 @@ describe('dsh-tool-team', () => {
     await child.dispose()
   })
 
+  it('omits a Team-scoped member tool denied by the persisted Team ceiling', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      memberToolLimit: { deny: ['team_task_list'] },
+    }
+    const { ctx, lead } = await setup([], false, { controlledTasks: true }, [], { controlledMode: mode })
+    const memberId = SessionId('capped-member')
+    const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+      member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const child = await ctx.agents.create({ sessionId: memberId,
+      meta: { parentSession: lead.id }, agentOptions: {} })
+    const scope = scopeOf(child.agent.ctx)
+    expect(ctx.tools.schemas(scope).map(tool => tool.name)).not.toContain('team_task_list')
+    expect(ctx.tools.schemas(scope).map(tool => tool.name)).toContain('send_message')
+    expect(ctx.tools.schemas(scopeOf(lead.ctx)).map(tool => tool.name)).toContain('team_task_list')
+    expect((await execute(ctx, child.agent, 'team_task_list', {})).isError).toBe(true)
+    await child.dispose()
+  })
+
   it('selects controlled tools and guidance from the durable Team mode after config changes', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
       permissionTableId: 'test-policy', permissionRevision: 'revision-1' }

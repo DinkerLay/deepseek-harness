@@ -55,7 +55,7 @@ kind: "package-reference"
 | `maxTaskExtensionBytes` | `262,144` | 单次原子 Team 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
 | `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
-| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订及可选普通消息字节上限 |
+| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订，以及可选的普通消息字节上限与成员工具上限 |
 | `defaultMemberPresetId` | 未设置 | 未显式指定 Preset 时使用的产品默认成员 Preset；不设置则保留继承 Lead 的行为 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
@@ -67,6 +67,8 @@ kind: "package-reference"
 可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，优先使用已配置的 `defaultMemberPresetId`；否则保持普通的继承组合。
 
 teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前由必需的 Task 扩展校验组名；扩展缺席时拒绝创建。roster 还检查租约所保留的 Preset 代际，并拒绝声明的委派插件。Preset 的 `allowedTools` 声明会收窄继承工具、拒绝 Preset 自有的额外工具，并在首次或冷投递前核对成员的最终工具目录。服务端将调用者编写的首轮工作替换为固定待命输入，要求成员只回复“Ready.”、不调用工具或发消息，并要求 fresh 上下文。
+
+受控 Team 还可在模式记录中固定 `memberToolLimit.allow` 和／或 `memberToolLimit.deny`。继承工具同时遵守 Preset 允许清单与 Team 上限；原生和扩展的 Team 工具在 teammate 作用域注册前也检查同一上限，最终目录校验拒绝额外的同作用域工具。被禁止的工具不在目录中，直接调用由原有工具运行时拒绝。未配置上限时保留官方 Team 行为。
 
 最终成员工具目录核对与 Agent Loop 使用同一份 `@deepseek-ai/dsh-scope` 运行时。本包把 Scope 声明为 peer 依赖，避免生产 bundle 生成第二个作用域身份；构建产物测试核对此边界。目录服务或作用域缺失时，成员准入失败，不绕过 Preset 允许清单。
 

@@ -809,7 +809,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:327`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:337`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -846,6 +846,16 @@ export interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
+  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  readonly memberToolLimit?: TeamMemberToolLimit | undefined
+}
+
+/** Optional Team-wide ceiling on tools available to teammates. */
+export interface TeamMemberToolLimit {
+  /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
+  readonly allow?: readonly string[]
+  /** Optional denylist; denial wins over an allowlist. */
+  readonly deny?: readonly string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-agent-team -->

@@ -303,6 +303,14 @@ export interface TeamMessageSource {
   readonly senderName: string
 }
 
+/** Optional Team-wide ceiling on tools available to teammates. */
+export interface TeamMemberToolLimit {
+  /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
+  readonly allow?: readonly string[]
+  /** Optional denylist; denial wins over an allowlist. */
+  readonly deny?: readonly string[]
+}
+
 /** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
 export interface TeamControlledMode {
   /** Controlled collaboration admits only the configured product Task writer. */
@@ -315,6 +323,8 @@ export interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
+  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 
 declare module '@deepseek-ai/dsh-llm' {

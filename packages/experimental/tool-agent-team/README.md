@@ -104,7 +104,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 ### Policy and tools
 
-One `team:policy` section on the member scope states the shared coordination rules; its Task workflow wording and the `team_task_update` action enum follow `reviewedTasks`. The eleven tool registrations are declared in [`src/index.ts`](src/index.ts). Tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
+One `team:policy` section on the member scope states the shared coordination rules; its Task workflow wording and the `team_task_update` action enum follow `reviewedTasks`. The eleven tool registrations are declared in [`src/index.ts`](src/index.ts). Tool schemas are registered in scopes recognized as Team members at publication, except that a persisted controlled-Team member tool ceiling may omit a member-scoped tool. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
 
 ### Scoped registration and teardown
 

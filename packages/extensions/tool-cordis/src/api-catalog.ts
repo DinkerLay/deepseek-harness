@@ -335,6 +335,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the durable controlled-mode binding, or undefined for an official Team.',
       },
       {
+        signature: 'memberToolAllowed(agent: Agent, name: string): boolean',
+        description: 'Whether a persisted Team ceiling permits one member tool registration.',
+        parameters: [{ name: 'agent', description: 'exact Team caller whose pinned mode supplies the ceiling.' }, { name: 'name', description: 'tool name checked before registration or direct use.' }],
+        returns: 'true when the member may see and call this tool.',
+      },
+      {
         signature: 'composition(agent: Agent): TeamCompositionState',
         description: 'Read the durable Team composition policy; an untouched Team is dynamic.',
         parameters: [{ name: 'agent', description: 'exact live Team member whose root owns the policy.' }],
@@ -7407,7 +7413,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamControlledMode',
-    declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n}',
+    declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n    readonly memberToolLimit?: TeamMemberToolLimit | undefined;\n}',
   },
   {
     name: 'TeamExtensionRecord',
@@ -7452,6 +7458,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamMemberSnapshot',
     declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly slotId?: string;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
+  },
+  {
+    name: 'TeamMemberToolLimit',
+    declaration: 'export interface TeamMemberToolLimit {\n    readonly allow?: readonly string[];\n    readonly deny?: readonly string[];\n}',
   },
   {
     name: 'TeamMemberView',
