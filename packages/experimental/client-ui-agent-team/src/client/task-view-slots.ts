@@ -36,6 +36,13 @@ export interface TeamTaskContentOwner {
   readonly closePanel: () => void
 }
 
+/** Optional product controls in the native Team panel header. */
+export interface TeamPanelHeaderOwner {
+  readonly view?: TeamProjection
+  readonly leadSessionId: SessionId
+  readonly closePanel: () => void
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Optional name of the effective Agent Preset shown on a member card. */
@@ -48,5 +55,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'agent-team.panel.tasks.graph': { kind: 'single'; scope: 'session'; owner: TeamTaskGraphOwner }
     /** Product-owned Task body with native projection and exact Session navigation context. */
     'agent-team.panel.tasks.content': { kind: 'single'; scope: 'session'; owner: TeamTaskContentOwner }
+    /** Product composition controls without replacing the native Team panel. */
+    'agent-team.panel.header.actions': { kind: 'single'; scope: 'session'; owner: TeamPanelHeaderOwner }
   }
 }

@@ -76,6 +76,8 @@ Only the Lead can create teammates or interrupt them.
 
 The Lead can retire a teammate after settling its unfinished tasks and pending messages. Retirement stops the live child but retains its Session, roster row, and reserved name. Failed members may also retire. Retired members cannot receive new Team messages. `maxMembers` still counts every historical creation; `maxActiveMembers` frees a slot only after retirement completes.
 
+A trusted Host can persist a user-managed composition separately from the controlled collaboration mode. New and official Teams remain dynamic without a composition event. A fixed Team refuses ordinary model-created or retired members; an applying Team admits only changes carrying its current application id. The Host records an opaque application target, selected retirement ids and optional member `slotId` in the Lead Session, then reuses native retirement and provisioning. A stopped application retains every completed member change; a completed application records its Profile association and becomes fixed. The Host can lock or unlock without applying a Profile. The Task extension may mark a permission-table rebind in its own durable record so the native association becomes modified without interpreting that table.
+
 ### Messages between teammates
 
 Any member can send a message to any other member or to the Lead. A live member receives it immediately; an offline member's messages queue and arrive when it resumes. Messages are never lost and never delivered twice.
@@ -135,6 +137,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, service registration, recovery scheduling |
 | [`src/roster.ts`](src/roster.ts) | Team identity, membership resolution, provisioning, and roster teardown |
+| [`src/composition.ts`](src/composition.ts) | User-managed lock and recoverable application transitions |
 | [`src/mailbox.ts`](src/mailbox.ts) | Durable queue, target-local dispatch, acknowledgement, and recovery |
 | [`src/task-board.ts`](src/task-board.ts) | Task CAS commands, DAG validation, and derived views |
 | [`src/journal.ts`](src/journal.ts) | Serialized Lead-log transactions and commit notification |
@@ -150,7 +153,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; official Teams have no creation event, and durable state begins with the first member, message, or task record. A controlled product writes `team/mode` first. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
 
-Unconfigured members retain the `team/member` version 2 record. A member with a Preset or group uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding or group.
+Unconfigured members retain the `team/member` version 2 record. A member with a Preset, group, or Profile slot uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding, group, or slot id.
 
 ### Durable mailbox
 
@@ -174,11 +177,11 @@ The same handle's `commitRecord()` writes a `team/extension` event with an opaqu
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/extension`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/composition`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/extension`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 14 rebuilds checkpoints from earlier cache versions from the Session log, including the extension-record identity index; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 15 rebuilds checkpoints from earlier cache versions from the Session log, including composition and the extension-record identity index; the Session format version is unchanged.
 
 ### Disposal
 
@@ -214,7 +217,7 @@ The [Web UI](../client-ui-agent-team/README.md) reads the shared Session project
 
 #### What the model sees
 
-Each delivered peer message is a user-role message. A short first text block names its stable message id and sender; the sender's original content blocks follow unchanged. Roster, task, and mailbox records are log-only and never enter derived model history.
+Each delivered peer message is a user-role message. A short first text block names its stable message id and sender; the sender's original content blocks follow unchanged. Composition, roster, task, and mailbox records are log-only and never enter derived model history.
 
 #### Token effect
 

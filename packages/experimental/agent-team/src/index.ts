@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { TeamActivity } from './activity.ts'
+import { applyCompositionTransition, compositionOf } from './composition.ts'
 import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -17,6 +18,9 @@ import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extensio
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   Config,
+  TeamCompositionSnapshot,
+  TeamCompositionState,
+  TeamCompositionTransition,
   TeamControlledMode,
   CreateTeamTaskRequest,
   SendTeamMessageRequest,
@@ -191,6 +195,68 @@ export class TeamService extends Service {
   }
 
   /**
+   * Read the durable Team composition policy; an untouched Team is dynamic.
+   * @param agent - exact live Team member whose root owns the policy.
+   * @returns a detached current policy value.
+   */
+  composition(agent: Agent): TeamCompositionState {
+    return structuredClone(compositionOf(this.journal.state(this.roster.membership(agent).root).composition))
+  }
+
+  /**
+   * Read one detached Team snapshot while native roster and Task writes are serialized.
+   * @param caller - exact live Lead.
+   * @param read - bounded Host callback that must not enter another Team transaction.
+   * @returns the callback result from the same locked roster cut.
+   */
+  async readCompositionLocked<T>(
+    caller: Agent, read: (snapshot: TeamCompositionSnapshot) => T | Promise<T>,
+  ): Promise<T> {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead reads composition', 'TEAM_LEAD_REQUIRED')
+    const root = membership.root
+    return await this.journal.transact(root.id, async () => {
+      if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
+      return await read(this.compositionSnapshot(root))
+    })
+  }
+
+  /**
+   * Commit one Host-authored composition transition under the native Team lock.
+   * Model tools do not expose this method. The builder may decline with undefined.
+   * @param caller - exact live Lead used for the native Team identity.
+   * @param build - Host planner that checks its own policy against a detached current snapshot.
+   * @returns the committed policy, or the unchanged policy after a declined plan.
+   */
+  async commitComposition(
+    caller: Agent,
+    build: (snapshot: TeamCompositionSnapshot) => TeamCompositionTransition | undefined
+      | Promise<TeamCompositionTransition | undefined>,
+  ): Promise<TeamCompositionState> {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') throw new TeamError('only the Team Lead changes composition', 'TEAM_LEAD_REQUIRED')
+    const root = membership.root
+    return await this.journal.transact(root.id, async () => {
+      if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
+      const state = this.journal.assertWriteAdmission(root)
+      const transition = await build(this.compositionSnapshot(root))
+      if (transition === undefined) return structuredClone(compositionOf(state.composition))
+      const next = applyCompositionTransition(state.composition, transition, state.members)
+      await this.journal.appendAndFlush(root, 'team/composition', {
+        version: 1, teamId: membership.id, transition,
+      })
+      return structuredClone(next)
+    })
+  }
+
+  private compositionSnapshot(root: Agent): TeamCompositionSnapshot {
+    const state = this.journal.state(root)
+    return { composition: structuredClone(compositionOf(state.composition)),
+      members: structuredClone(state.members), tasks: structuredClone(state.tasks),
+      maxMembers: this.config.maxMembers, maxActiveMembers: this.config.maxActiveMembers }
+  }
+
+  /**
    * Read the configured teammate Preset used when a spawn request omits one.
    * @returns configured Preset id, or undefined to inherit the Lead.
    */
@@ -253,10 +319,11 @@ export class TeamService extends Service {
    * The member name and Session history remain available for audit.
    * @param caller - exact live Lead Agent.
    * @param targetName - immutable teammate name.
+   * @param applicationId - matching in-progress user application, absent for an ordinary dynamic Team.
    * @returns the retired roster row.
    */
-  async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView> {
-    return await this.roster.retire(caller, targetName)
+  async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView> {
+    return await this.roster.retire(caller, targetName, applicationId)
   }
 
   /**

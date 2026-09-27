@@ -6,6 +6,9 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
+  TeamCompositionState,
+  TeamCompositionTransition,
+  TeamCompositionView,
   TeamControlledMode,
   TeamId,
   TeamMemberProjection,
@@ -20,6 +23,7 @@ import type {
   TeamTaskTransactionUpdate,
   TeamTaskView,
 } from './types.ts'
+import { applyCompositionTransition, noteCompositionMemberChange, noteCompositionPermissionChange } from './composition.ts'
 import {
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
@@ -90,7 +94,40 @@ const teamMemberSnapshotSchema = z.object({
     id: z.string().min(1),
     revision: z.string().regex(/^[a-f0-9]{64}$/u),
   }).strict().optional(),
+  slotId: z.string().min(1).max(200).optional(),
 }).strict() as z.ZodType<TeamMemberSnapshot>
+
+const teamProfileAssociationSchema = z.object({
+  id: z.string().min(1).max(200), version: positiveSafeInteger, modified: z.boolean(),
+}).strict()
+const teamCompositionApplicationSchema = z.object({
+  id: z.string().min(1).max(200), profileId: z.string().min(1).max(200),
+  profileVersion: positiveSafeInteger, targetJson: z.string().min(1),
+  retiringMemberIds: z.array(sessionIdSchema), previousPhase: z.enum(['dynamic', 'fixed']),
+  changed: z.boolean(), diagnostic: z.string().min(1).max(2_000).optional(),
+}).strict()
+const teamCompositionStateSchema = z.object({
+  phase: z.enum(['dynamic', 'applying', 'fixed']),
+  profile: teamProfileAssociationSchema.optional(),
+  application: teamCompositionApplicationSchema.optional(),
+  appliedTargetJson: z.string().min(1).optional(),
+}).strict() as z.ZodType<TeamCompositionState>
+const teamCompositionTransitionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('begin'), applicationId: z.string().min(1).max(200),
+    profileId: z.string().min(1).max(200), profileVersion: positiveSafeInteger,
+    targetJson: z.string().min(1), retiringMemberIds: z.array(sessionIdSchema),
+    previousPhase: z.enum(['dynamic', 'fixed']) }).strict(),
+  z.object({ kind: z.literal('target'), applicationId: z.string().min(1).max(200), targetJson: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('diagnostic'), applicationId: z.string().min(1).max(200),
+    message: z.string().min(1).max(2_000) }).strict(),
+  z.object({ kind: z.literal('finish'), applicationId: z.string().min(1).max(200) }).strict(),
+  z.object({ kind: z.literal('stop'), applicationId: z.string().min(1).max(200) }).strict(),
+  z.object({ kind: z.literal('lock') }).strict(),
+  z.object({ kind: z.literal('unlock') }).strict(),
+]) as z.ZodType<TeamCompositionTransition>
+const teamCompositionEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema, transition: teamCompositionTransitionSchema,
+}).strict() as z.ZodType<SessionEventMap['team/composition']>
 
 const teamTaskSnapshotSchema = z.object({
   id: teamTaskIdSchema,
@@ -152,6 +189,7 @@ const teamExtensionEventSchema = z.object({
   teamId: teamIdSchema,
   extension: z.object({ id: z.string().min(1), recordId: z.string().min(1), dataJson: z.string() }).strict(),
   notices: z.array(teamMessageSnapshotSchema).optional(),
+  affectsComposition: z.literal(true).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/extension']>
 
 const teamMessageQueuedEventSchema = z.object({
@@ -196,6 +234,7 @@ const teamModeEventSchema = z.object({
 export interface TeamState {
   readonly id: TeamId
   readonly mode?: TeamControlledMode
+  readonly composition?: TeamCompositionState
   readonly members: readonly TeamMemberSnapshot[]
   readonly tasks: readonly TeamTaskSnapshot[]
   /** Durable event-derived writer identity for Tasks claimed by an extension. */
@@ -241,6 +280,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
   mode: teamControlledModeSchema.optional(),
+  composition: teamCompositionStateSchema.optional(),
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
   taskWriters: z.array(z.object({ taskId: teamTaskIdSchema, writerId: z.string().min(1) }).strict()),
@@ -261,6 +301,7 @@ const teamProjectionEntrySchema = z.object({
 /** Whether one event belongs to the Team domain. */
 export type TeamEventType =
   | 'team/mode'
+  | 'team/composition'
   | 'team/member'
   | 'team/member/configured'
   | 'team/task'
@@ -280,6 +321,7 @@ type TeamSessionEvent = SessionEvent<TeamEventType>
  */
 export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
   return event.type === 'team/mode'
+    || event.type === 'team/composition'
     || event.type === 'team/member'
     || event.type === 'team/member/configured'
     || event.type === 'team/task'
@@ -304,6 +346,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
   switch (event.type) {
     case 'team/mode':
       return { ...event, data: parsePersisted(event.type, teamModeEventSchema, event.data) }
+    case 'team/composition':
+      return { ...event, data: parsePersisted(event.type, teamCompositionEventSchema, event.data) }
     case 'team/member':
       return { ...event, data: parsePersisted(event.type, teamMemberEventSchema, event.data) }
     case 'team/member/configured':
@@ -332,7 +376,8 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    const expectedVersion = event.type === 'team/mode' || event.type === 'team/task/transaction'
+    const expectedVersion = event.type === 'team/mode' || event.type === 'team/composition'
+      || event.type === 'team/task/transaction'
       || event.type === 'team/extension' ? 1
       : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
@@ -360,6 +405,8 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       }
       return { ...state, mode: event.data.mode }
     }
+    case 'team/composition':
+      return { ...state, composition: applyCompositionTransition(state.composition, event.data.transition, state.members) }
     case 'team/member':
     case 'team/member/configured': {
       const member: TeamMemberSnapshot = event.data.member
@@ -374,7 +421,8 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       } else {
         if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context
           || prior.group !== member.group
-          || prior.preset?.id !== member.preset?.id || prior.preset?.revision !== member.preset?.revision) {
+          || prior.preset?.id !== member.preset?.id || prior.preset?.revision !== member.preset?.revision
+          || prior.slotId !== member.slotId) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
         const provisioningExit = prior.phase === 'provisioning'
@@ -385,7 +433,9 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
         }
       }
-      return { ...state, members: replaceAt(state.members, index, member) }
+      const composition = noteCompositionMemberChange(state.composition, prior, member)
+      return { ...state, members: replaceAt(state.members, index, member),
+        ...composition === undefined ? {} : { composition } }
     }
     case 'team/task': {
       const task = event.data.task
@@ -452,7 +502,10 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         }
         seen.add(notice.id)
       }
+      const composition = event.data.affectsComposition === true
+        ? noteCompositionPermissionChange(state.composition) : state.composition
       return { ...state, extensionRecords: [...state.extensionRecords, { writerId: id, recordId, dataJson }],
+        ...composition === undefined ? {} : { composition },
         messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
     case 'team/message/queued': {
@@ -502,6 +555,7 @@ const teamMemberProjectionSchema = z.object({
   phase: z.enum(['provisioning', 'active', 'failed', 'retiring', 'retired']),
   group: z.string().min(1).max(64).optional(),
   preset: z.object({ id: z.string().min(1), revision: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().optional(),
+  slotId: z.string().min(1).max(200).optional(),
   error: z.string().optional(),
 }).strict() as z.ZodType<TeamMemberProjection>
 
@@ -522,6 +576,14 @@ const teamTaskViewSchema = z.object({
 const teamProjectionSchema = z.object({
   members: z.array(teamMemberProjectionSchema),
   tasks: z.array(teamTaskViewSchema),
+  composition: z.object({
+    phase: z.enum(['dynamic', 'applying', 'fixed']),
+    profile: teamProfileAssociationSchema.optional(),
+    application: z.object({
+      id: z.string(), profileId: z.string(), profileVersion: positiveSafeInteger,
+      diagnostic: z.string().optional(),
+    }).strict().optional(),
+  }).strict().optional(),
   failure: z.string().optional(),
 }).strict() as z.ZodType<TeamProjection>
 
@@ -539,14 +601,27 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
       phase: member.phase,
       ...member.group === undefined ? {} : { group: member.group },
       ...member.preset === undefined ? {} : { preset: member.preset },
+      ...member.slotId === undefined ? {} : { slotId: member.slotId },
       ...member.error === undefined ? {} : { error: member.error },
     })
+  }
+  const composition: TeamCompositionView | undefined = state.composition === undefined ? undefined : {
+    phase: state.composition.phase,
+    ...state.composition.profile === undefined ? {} : { profile: state.composition.profile },
+    ...state.composition.application === undefined ? {} : { application: {
+      id: state.composition.application.id,
+      profileId: state.composition.application.profileId,
+      profileVersion: state.composition.application.profileVersion,
+      ...state.composition.application.diagnostic === undefined ? {}
+        : { diagnostic: state.composition.application.diagnostic },
+    } },
   }
   return {
     members,
     tasks: state.tasks
       .filter(task => task.status !== 'deleted')
       .map(task => projectTaskView(state, task)),
+    ...composition === undefined ? {} : { composition },
     ...state.failure === undefined ? {} : { failure: state.failure },
   }
 }
@@ -560,7 +635,7 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
  * @returns the roster and non-deleted task board, plus any projection failure.
  */
 export function teamProjectionView(state: TeamProjectionState): TeamProjection {
-  if (state.failure !== undefined) return buildTeamProjection(state)
+  if (state.failure !== undefined || state.composition !== undefined) return buildTeamProjection(state)
   let byTasks = teamProjectionViews.get(state.members)
   if (byTasks === undefined) {
     byTasks = new WeakMap()
@@ -577,7 +652,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 14,
+  stateVersion: 15,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

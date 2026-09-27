@@ -80,6 +80,46 @@ export const CLIENT_NOTES: readonly string[] = [
 // detection is told to skip the data rather than the file.
 export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
   {
+    key: 'agent-team.panel.header.actions',
+    kind: 'single',
+    scope: 'session',
+    summary: 'Product composition controls without replacing the native Team panel.',
+    doc: 'Product composition controls without replacing the native Team panel.',
+    registerOptions: [],
+    ownerProps: [
+      '/** Optional product controls in the native Team panel header. */\nexport interface TeamPanelHeaderOwner {\n  readonly view?: TeamProjection\n  readonly leadSessionId: SessionId\n  readonly closePanel: () => void\n}',
+    ],
+    ownerPropsReferences: [
+      'SessionId',
+      'TeamProjection',
+    ],
+    standardProps: [
+      'useResource: UseResource',
+      'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
+      'usePanelInfo: UsePanelInfo',
+      'useSessions: UseSessions',
+      'useSessionStatus: UseSessionStatus',
+      'useSessionRetainInfo: UseSessionRetainInfo',
+      'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
+      'useChat: UseChat',
+      'useConversation: UseConversation',
+      'useInput: SnapshotSelectorHook<InputState>',
+      'inputActions: InputActions',
+      'useSession: SessionSnapshotSelector',
+      'sessionId: SessionId',
+      'useProjection: UseProjection',
+      'useTrajectory: UseTrajectory',
+    ],
+    keyDomain: '',
+    hookContext: '',
+    slotInject: '',
+    declaredBy: 'an entry in \'conversation.session.header.actions\' (experimental-client-ui-agent-team), so it exists while that entry is mounted',
+    occupants: [],
+    replaceRisk: 'none',
+    example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.header.actions\', () => ctx.slots.register(\n      { name: \'agent-team.panel.header.actions\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:59',
+  },
+  {
     key: 'agent-team.panel.member.meta',
     kind: 'single',
     scope: 'session',
@@ -116,7 +156,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.member.meta\', () => ctx.slots.register(\n      { name: \'agent-team.panel.member.meta\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:42',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:49',
   },
   {
     key: 'agent-team.panel.task.action',
@@ -156,7 +196,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.task.action\', () => ctx.slots.register(\n      { name: \'agent-team.panel.task.action\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:44',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:51',
   },
   {
     key: 'agent-team.panel.tasks.action',
@@ -214,7 +254,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.tasks.action\', () => ctx.slots.register(\n      { name: \'agent-team.panel.tasks.action\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:46',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:53',
   },
   {
     key: 'agent-team.panel.tasks.content',
@@ -254,7 +294,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.tasks.content\', () => ctx.slots.register(\n      { name: \'agent-team.panel.tasks.content\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:50',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:57',
   },
   {
     key: 'agent-team.panel.tasks.graph',
@@ -294,7 +334,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'agent-team.panel.tasks.graph\', () => ctx.slots.register(\n      { name: \'agent-team.panel.tasks.graph\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:48',
+    source: 'packages/experimental/client-ui-agent-team/src/client/task-view-slots.ts:55',
   },
   {
     key: 'conversation.approval.detail',

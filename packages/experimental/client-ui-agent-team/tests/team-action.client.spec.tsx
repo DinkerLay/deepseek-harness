@@ -222,6 +222,16 @@ describe('TeamAction', () => {
     expect(current.projectionsBySession[SESSION]?.values.agentTeam?.tasks).toHaveLength(1)
   })
 
+  it('mounts optional product controls in the native panel header without changing the roster', () => {
+    const b = bench({ renderSlot: key => key === 'agent-team.panel.header.actions'
+      ? <button type="button">Profile controls</button> : null })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByRole('button', { name: 'Profile controls' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /worker/u })).toBeTruthy()
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
+
   it('renders the native empty Task notice when an unoccupied slot returns a fallback wrapper', () => {
     const b = bench({ renderSlot: (key, _owner, opts) => key === 'agent-team.panel.tasks.content'
       ? <>{opts?.fallback ?? null}</> : null })

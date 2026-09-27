@@ -129,7 +129,13 @@ function spawn(
   ctx: Context,
   lead: Agent,
   name: string,
-  options: { context?: 'fresh' | 'fork'; provider?: string; presetId?: string; group?: string } = {},
+  options: { context?: 'fresh' | 'fork'
+    provider?: string
+    presetId?: string
+    group?: string
+    expectedPresetRevision?: string
+    applicationId?: string
+    slotId?: string } = {},
 ) {
   const context = options.context ?? 'fresh'
   return ctx.agentTeams.spawnTeammate(lead, {
@@ -140,6 +146,9 @@ function spawn(
     provider: options.provider ?? (context === 'fork' ? 'fork' : 'spawn'),
     ...options.presetId === undefined ? {} : { presetId: options.presetId },
     ...options.group === undefined ? {} : { group: options.group },
+    ...options.expectedPresetRevision === undefined ? {} : { expectedPresetRevision: options.expectedPresetRevision },
+    ...options.applicationId === undefined ? {} : { applicationId: options.applicationId },
+    ...options.slotId === undefined ? {} : { slotId: options.slotId },
     signal: SIGNAL,
   })
 }
@@ -157,6 +166,52 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
 }
 
 describe('Team identity and provisioning', () => {
+  it('keeps the official Team dynamic until a Host composition operation locks it', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    expect(ctx.agentTeams.composition(lead)).toEqual({ phase: 'dynamic' })
+    const before = lead.session.snapshotEvents().filter(event => event.type === 'team/composition')
+    expect(before).toHaveLength(0)
+    await ctx.agentTeams.commitComposition(lead, (snapshot) => {
+      expect(snapshot.composition.phase).toBe('dynamic')
+      return { kind: 'lock' }
+    })
+    await expect(spawn(ctx, lead, 'locked-member')).rejects.toMatchObject({ code: 'TEAM_COMPOSITION_LOCKED' })
+    await ctx.agentTeams.commitComposition(lead, () => ({ kind: 'unlock' }))
+    const member = await spawn(ctx, lead, 'unlocked-member')
+    expect(member.member.name).toBe('unlocked-member')
+    expect(ctx.agentTeams.composition(lead).phase).toBe('dynamic')
+  })
+
+  it('allows only the matching application to retire and provision members', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const old = await spawn(ctx, lead, 'old-member')
+    await ctx.agentTeams.commitComposition(lead, snapshot => ({ kind: 'begin', applicationId: 'apply-1',
+      profileId: 'stock', profileVersion: 1, targetJson: '{}',
+      retiringMemberIds: [old.member.id], previousPhase: snapshot.composition.phase as 'dynamic' }))
+    await expect(spawn(ctx, lead, 'unauthorized')).rejects.toMatchObject({ code: 'TEAM_COMPOSITION_APPLYING' })
+    await expect(ctx.agentTeams.retireTeammate(lead, 'old-member'))
+      .rejects.toMatchObject({ code: 'TEAM_COMPOSITION_APPLYING' })
+    await ctx.agentTeams.retireTeammate(lead, 'old-member', 'apply-1')
+    const next = await spawn(ctx, lead, 'new-member', { applicationId: 'apply-1', slotId: 'slot-1' })
+    expect(durable(lead).members.find(member => member.id === next.member.id)?.slotId).toBe('slot-1')
+    await ctx.agentTeams.commitComposition(lead, () => ({ kind: 'finish', applicationId: 'apply-1' }))
+    expect(ctx.agentTeams.composition(lead)).toMatchObject({ phase: 'fixed',
+      profile: { id: 'stock', version: 1, modified: false } })
+    await expect(ctx.agentTeams.retireTeammate(lead, 'new-member'))
+      .rejects.toMatchObject({ code: 'TEAM_COMPOSITION_LOCKED' })
+  })
+
+  it('refuses a Profile member when the expected Preset declaration changed', async () => {
+    const { ctx, lead } = await setup([], {}, true)
+    await ctx.agentTeams.commitComposition(lead, snapshot => ({ kind: 'begin', applicationId: 'apply-preset',
+      profileId: 'preset-profile', profileVersion: 1, targetJson: '{}', retiringMemberIds: [],
+      previousPhase: snapshot.composition.phase as 'dynamic' }))
+    await expect(spawn(ctx, lead, 'revision-worker', { applicationId: 'apply-preset', slotId: 'slot-1',
+      presetId: 'reviewer', expectedPresetRevision: '0'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'TEAM_PRESET_UNAVAILABLE' })
+    expect(durable(lead).members).toEqual([])
+  })
+
   it('rejects missing and failed authoritative Team projections', async () => {
     const first = await setup([])
     const journal = teamInternals(first.ctx).journal
@@ -1183,6 +1238,20 @@ describe('Team shared task DAG', () => {
     expect(lead.session.snapshotEvents().filter(event => event.type === 'team/extension')).toHaveLength(1)
     expect(durable(lead).pendingMessages.map(notice => notice.id)).toContain(TeamMessageId('proposal-notice-1'))
     await expect(handle.commitRecord(lead, () => ({ recordId: 'proposal-1', dataJson: '{}' })))
+      .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    const selfNotice = TeamMessageId('permission-notice-lead')
+    await handle.commitRecord(lead, () => ({ recordId: 'permission-1', dataJson: '{}',
+      affectsComposition: true, notices: [{ id: selfNotice, senderId: lead.id,
+        senderName: 'lead', targetId: lead.id, content: content('Permissions changed') }] }))
+    const binding = lead.session.snapshotEvents().find(event => event.type === 'team/extension'
+      && event.data.extension.recordId === 'permission-1')
+    expect(binding?.type === 'team/extension' && binding.data.affectsComposition).toBe(true)
+    expect(binding?.type === 'team/extension' && binding.data.notices?.[0]?.id).toBe(selfNotice)
+    await expect(handle.commit(lead, snapshot => ({ updates: [{ previousRevision: null,
+      task: { id: TeamTaskId(`task-${snapshot.nextTaskNumber}`), revision: 1,
+        subject: 'self notice', description: 'forbidden', status: 'pending', blockedBy: [], writeScopes: [] } }],
+    dataJson: '{}', notices: [{ id: TeamMessageId('ordinary-self'), senderId: lead.id,
+      senderName: 'lead', targetId: lead.id, content: content('Not a permission binding') }] })))
       .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
     handle.dispose()
   })

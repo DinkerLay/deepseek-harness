@@ -62,7 +62,7 @@ The eleven tools group into five capabilities:
 - **Create a teammate** — `spawn_teammate` takes a name, a description, the initial task, and an optional `preset_id` for a declared specialist; only the Lead can call it.
 - **Send messages** — `send_message` steers a running member at its nearest step boundary, starts or resumes an inactive member.
 - **Retire a teammate** — `team_message_cancel` settles undelivered mail, then `retire_teammate` removes a member from Team admission while preserving its history; only the Lead can call them.
-- **See and wait** — `list_agents` returns each member’s `target` and availability; `wait_agent` waits for the next team change; `interrupt_agent` stops a teammate's current turn (Lead only).
+- **See and wait** — `list_agents` returns each member’s `target`, availability, and optional applied Profile slot id; `wait_agent` waits for the next team change; `interrupt_agent` stops a teammate's current turn (Lead only).
 - **Manage the task board** — `team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update` add, browse, read, and update shared tasks.
 
 Creation and listing results identify members by `target`, with no member Session ID. Use that value in message and interrupt calls or the task tools’ `owner` parameter; task `ownerName` uses the same value. `inactive` means no turn is executing, whether the member is loaded or must be resumed; it does not describe task completion or outcome. `provisioning` and `failed` describe member creation. In the default mode any member can message any other member and use the task board; only the Lead creates and interrupts teammates. Task updates keep the domain's owner and revision checks, so an outdated edit is rejected instead of overwriting newer work.

@@ -20,6 +20,8 @@ interface TeamMemberSnapshot {
   readonly group?: string
   /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
   readonly preset?: TeamPresetBinding
+  /** Profile role that provisioned this member; immutable with the member identity. */
+  readonly slotId?: string
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -28,6 +30,8 @@ interface TeamMemberSnapshot {
 每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
 产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订及可选的普通消息上限，并在入队前拒绝成员间直接消息。
+
+用户管理的组成记录另外跟踪动态、应用中或固定的成员策略。官方 Team 没有这条记录时保持动态。应用中持久保存产品目标并阻止普通成员增减；固定状态拒绝模型增员或退队。原生 Lead 日志还保留 Profile 关联和可选槽位 id，冷恢复不需要第二份成员表。
 
 ```ts type-equiv
 /** Immutable root-Session policy for a controlled Team, persisted before Team tools are admitted. */
@@ -122,6 +126,7 @@ interface TeamTaskTransactionUpdate {
 interface TeamTaskTransactionSnapshot {
   readonly tasks: readonly TeamTaskSnapshot[]
   readonly members: readonly TeamMemberSnapshot[]
+  readonly composition?: TeamCompositionState
   readonly nextTaskNumber: number
 }
 ```
@@ -164,6 +169,7 @@ interface TeamMemberProjection {
   readonly phase: TeamMemberPhase
   readonly group?: string
   readonly preset?: TeamPresetBinding
+  readonly slotId?: string
   readonly error?: string
 }
 ```
@@ -194,6 +200,8 @@ interface TeamTaskView {
 interface TeamProjection {
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
+  /** Absent for an untouched official Team, which remains dynamic. */
+  readonly composition?: TeamCompositionView
   readonly failure?: string
 }
 ```
@@ -230,6 +238,30 @@ membership(agent: Agent): TeamMembership
  * @returns the durable controlled-mode binding, or undefined for an official Team.
  */
 controlledMode(agent: Agent): TeamControlledMode | undefined
+
+/**
+ * Read the durable Team composition policy; an untouched Team is dynamic.
+ * @param agent - exact live Team member whose root owns the policy.
+ * @returns a detached current policy value.
+ */
+composition(agent: Agent): TeamCompositionState
+
+/**
+ * Read one detached Team snapshot while native roster and Task writes are serialized.
+ * @param caller - exact live Lead.
+ * @param read - bounded Host callback that must not enter another Team transaction.
+ * @returns the callback result from the same locked roster cut.
+ */
+async readCompositionLocked<T>( caller: Agent, read: (snapshot: TeamCompositionSnapshot) => T | Promise<T>, ): Promise<T>
+
+/**
+ * Commit one Host-authored composition transition under the native Team lock.
+ * Model tools do not expose this method. The builder may decline with undefined.
+ * @param caller - exact live Lead used for the native Team identity.
+ * @param build - Host planner that checks its own policy against a detached current snapshot.
+ * @returns the committed policy, or the unchanged policy after a declined plan.
+ */
+async commitComposition( caller: Agent, build: (snapshot: TeamCompositionSnapshot) => TeamCompositionTransition | undefined | Promise<TeamCompositionTransition | undefined>, ): Promise<TeamCompositionState>
 
 /**
  * Read the configured teammate Preset used when a spawn request omits one.
@@ -279,9 +311,10 @@ async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<Spawn
  * The member name and Session history remain available for audit.
  * @param caller - exact live Lead Agent.
  * @param targetName - immutable teammate name.
+ * @param applicationId - matching in-progress user application, absent for an ordinary dynamic Team.
  * @returns the retired roster row.
  */
-async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>
+async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView>
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.

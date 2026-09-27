@@ -335,6 +335,7 @@ export class TeamTaskBoard {
       const plan = build({
         tasks: structuredClone(state.tasks),
         members: structuredClone(state.members),
+        ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
         nextTaskNumber: state.nextTaskNumber,
       })
       if ('existingTaskIds' in plan) {
@@ -430,6 +431,7 @@ export class TeamTaskBoard {
         .map(({ recordId, dataJson }) => ({ recordId, dataJson }))
       const plan = build({
         tasks: structuredClone(state.tasks), members: structuredClone(state.members),
+        ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
         nextTaskNumber: state.nextTaskNumber, records: structuredClone(records),
       })
       if ('skip' in plan) return { recordId: '', committed: false, hasNotices: false }
@@ -449,10 +451,11 @@ export class TeamTaskBoard {
       try { JSON.parse(plan.dataJson) } catch {
         throw new TeamError('Team extension data must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
       }
-      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [])
+      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [], caller.id === root.id)
       await this.journal.appendAndFlush(root, 'team/extension', {
         version: 1, teamId: TeamId(root.id), extension: { id: extensionId, recordId, dataJson: plan.dataJson },
         ...notices.length === 0 ? {} : { notices },
+        ...plan.affectsComposition === true ? { affectsComposition: true as const } : {},
       })
       return { recordId, committed: true, hasNotices: notices.length > 0 }
     })
@@ -465,12 +468,14 @@ export class TeamTaskBoard {
     caller: Agent,
     root: Agent,
     proposed: readonly TeamMessageSnapshot[],
+    allowLeadSelf = false,
   ): TeamMessageSnapshot[] {
     const notices = proposed.map(notice => structuredClone(notice))
     const seen = new Set<string>()
     const sender = this.membershipOf(caller)
     for (const notice of notices) {
-      if (notice.senderId !== caller.id || notice.senderName !== sender.name || notice.targetId === caller.id) {
+      if (notice.senderId !== caller.id || notice.senderName !== sender.name
+        || notice.targetId === caller.id && !(allowLeadSelf && caller.id === root.id)) {
         throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
       }
       if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {

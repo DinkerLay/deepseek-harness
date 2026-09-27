@@ -5,7 +5,7 @@ import { registerAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
 export type { TeamActionInjected, TeamActionProps } from './TeamAction.tsx'
-export type { TeamTaskViewActionOwner, TeamTaskGraphOwner, TeamTaskContentOwner } from './task-view-slots.ts'
+export type { TeamTaskViewActionOwner, TeamTaskGraphOwner, TeamTaskContentOwner, TeamPanelHeaderOwner } from './task-view-slots.ts'
 export type { TeamKey } from './locales.ts'
 
 /**

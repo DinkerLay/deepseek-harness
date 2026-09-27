@@ -335,6 +335,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the durable controlled-mode binding, or undefined for an official Team.',
       },
       {
+        signature: 'composition(agent: Agent): TeamCompositionState',
+        description: 'Read the durable Team composition policy; an untouched Team is dynamic.',
+        parameters: [{ name: 'agent', description: 'exact live Team member whose root owns the policy.' }],
+        returns: 'a detached current policy value.',
+      },
+      {
+        signature: 'async readCompositionLocked<T>( caller: Agent, read: (snapshot: TeamCompositionSnapshot) => T | Promise<T>, ): Promise<T>',
+        description: 'Read one detached Team snapshot while native roster and Task writes are serialized.',
+        parameters: [{ name: 'caller', description: 'exact live Lead.' }, { name: 'read', description: 'bounded Host callback that must not enter another Team transaction.' }],
+        returns: 'the callback result from the same locked roster cut.',
+      },
+      {
+        signature: 'async commitComposition( caller: Agent, build: (snapshot: TeamCompositionSnapshot) => TeamCompositionTransition | undefined | Promise<TeamCompositionTransition | undefined>, ): Promise<TeamCompositionState>',
+        description: 'Commit one Host-authored composition transition under the native Team lock. Model tools do not expose this method. The builder may decline with undefined.',
+        parameters: [{ name: 'caller', description: 'exact live Lead used for the native Team identity.' }, { name: 'build', description: 'Host planner that checks its own policy against a detached current snapshot.' }],
+        returns: 'the committed policy, or the unchanged policy after a declined plan.',
+      },
+      {
         signature: 'defaultMemberPresetId(): string | undefined',
         description: 'Read the configured teammate Preset used when a spawn request omits one.',
         parameters: [],
@@ -371,9 +389,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active roster row.',
       },
       {
-        signature: 'async retireTeammate(caller: Agent, targetName: string): Promise<TeamMemberView>',
+        signature: 'async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView>',
         description: 'Retire a teammate after its assignments and pending messages are settled. The member name and Session history remain available for audit.',
-        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'targetName', description: 'immutable teammate name.' }],
+        parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'targetName', description: 'immutable teammate name.' }, { name: 'applicationId', description: 'matching in-progress user application, absent for an ordinary dynamic Team.' }],
         returns: 'the retired roster row.',
       },
       {
@@ -7065,7 +7083,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly group?: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly group?: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly expectedPresetRevision?: string;\n    readonly applicationId?: string;\n    readonly slotId?: string;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -7372,6 +7390,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TableValueOf<S extends DomainSpec, N extends keyof S[\'tables\']> = S[\'tables\'][N] extends DomainTableSpec<string, infer V> ? V : never;',
   },
   {
+    name: 'TeamCompositionApplication',
+    declaration: 'export interface TeamCompositionApplication {\n    readonly id: string;\n    readonly profileId: string;\n    readonly profileVersion: number;\n    readonly targetJson: string;\n    readonly retiringMemberIds: readonly SessionId[];\n    readonly previousPhase: \'dynamic\' | \'fixed\';\n    readonly changed: boolean;\n    readonly diagnostic?: string;\n}',
+  },
+  {
+    name: 'TeamCompositionSnapshot',
+    declaration: 'export interface TeamCompositionSnapshot {\n    readonly composition: TeamCompositionState;\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly maxMembers: number;\n    readonly maxActiveMembers: number;\n}',
+  },
+  {
+    name: 'TeamCompositionState',
+    declaration: 'export interface TeamCompositionState {\n    readonly phase: \'dynamic\' | \'applying\' | \'fixed\';\n    readonly profile?: TeamProfileAssociation;\n    readonly application?: TeamCompositionApplication;\n    readonly appliedTargetJson?: string;\n}',
+  },
+  {
+    name: 'TeamCompositionTransition',
+    declaration: 'export type TeamCompositionTransition = {\n    readonly kind: \'begin\';\n    readonly applicationId: string;\n    readonly profileId: string;\n    readonly profileVersion: number;\n    readonly targetJson: string;\n    readonly retiringMemberIds: readonly SessionId[];\n    readonly previousPhase: \'dynamic\' | \'fixed\';\n} | {\n    readonly kind: \'target\';\n    readonly applicationId: string;\n    readonly targetJson: string;\n} | {\n    readonly kind: \'diagnostic\';\n    readonly applicationId: string;\n    readonly message: string;\n} | {\n    readonly kind: \'finish\';\n    readonly applicationId: string;\n} | {\n    readonly kind: \'stop\';\n    readonly applicationId: string;\n} | {\n    readonly kind: \'lock\';\n} | {\n    readonly kind: \'unlock\';\n};',
+  },
+  {
     name: 'TeamControlledMode',
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n}',
   },
@@ -7401,7 +7435,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamExtensionRecordWritePlan',
-    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
+    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamMessageSnapshot[];\n    readonly affectsComposition?: true;\n}',
   },
   {
     name: 'TeamId',
@@ -7417,11 +7451,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberSnapshot',
-    declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
+    declaration: 'export interface TeamMemberSnapshot {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly context: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly slotId?: string;\n    readonly phase: TeamMemberPhase;\n    readonly error?: string;\n}',
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly slotId?: string;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
   },
   {
     name: 'TeamMessageId',
@@ -7434,6 +7468,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamPresetBinding',
     declaration: 'export interface TeamPresetBinding {\n    readonly id: string;\n    readonly revision: string;\n}',
+  },
+  {
+    name: 'TeamProfileAssociation',
+    declaration: 'export interface TeamProfileAssociation {\n    readonly id: string;\n    readonly version: number;\n    readonly modified: boolean;\n}',
   },
   {
     name: 'TeamTaskAction',
@@ -7473,7 +7511,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionSnapshot',
-    declaration: 'export interface TeamTaskTransactionSnapshot {\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly nextTaskNumber: number;\n}',
+    declaration: 'export interface TeamTaskTransactionSnapshot {\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly composition?: TeamCompositionState;\n    readonly nextTaskNumber: number;\n}',
   },
   {
     name: 'TeamTaskTransactionUpdate',

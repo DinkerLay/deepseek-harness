@@ -32,7 +32,7 @@ export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
   & PropsRenderSlots<'agent-team.panel.member.meta' | 'agent-team.panel.task.action'
     | 'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'
-    | 'agent-team.panel.tasks.content'>
+    | 'agent-team.panel.tasks.content' | 'agent-team.panel.header.actions'>
 
 function statusKey(status: TeamTask['status']): TeamKey {
   switch (status) {
@@ -363,6 +363,10 @@ export function TeamAction({
         >
           <div className={css.panelHeader}>
             <strong>{t('trigger')}</strong>
+            {renderSlot('agent-team.panel.header.actions', {
+              ...team === undefined ? {} : { view: team },
+              leadSessionId, closePanel: () => { changeOpen(false) },
+            })}
             <button type="button" className={css.closeButton} aria-label={t('close')}
               onClick={() => { changeOpen(false) }}><IconCloseOutlineRegular size={16} /></button>
           </div>

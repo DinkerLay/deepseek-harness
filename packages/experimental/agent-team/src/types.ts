@@ -71,6 +71,8 @@ export interface TeamMemberSnapshot {
   readonly group?: string
   /** Explicit composition captured for creation and cold recovery; omission inherits the Lead preset. */
   readonly preset?: TeamPresetBinding
+  /** Profile role that provisioned this member; immutable with the member identity. */
+  readonly slotId?: string
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -86,6 +88,7 @@ export interface TeamMemberView {
   readonly context?: 'fresh' | 'fork'
   readonly group?: string
   readonly preset?: TeamPresetBinding
+  readonly slotId?: string
   readonly model?: string
   readonly diagnostics: string[]
 }
@@ -118,6 +121,7 @@ export interface TeamTaskTransactionUpdate {
 export interface TeamTaskTransactionSnapshot {
   readonly tasks: readonly TeamTaskSnapshot[]
   readonly members: readonly TeamMemberSnapshot[]
+  readonly composition?: TeamCompositionState
   readonly nextTaskNumber: number
 }
 
@@ -135,6 +139,7 @@ export interface TeamExtensionRecordSnapshot extends TeamTaskTransactionSnapshot
 /** One new record, optionally enqueueing notices in the same event. */
 export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {
   readonly notices?: readonly TeamMessageSnapshot[]
+  readonly affectsComposition?: true
 }
 
 /** Return an earlier record without appending another event. */
@@ -189,6 +194,7 @@ export interface TeamMemberProjection {
   readonly phase: TeamMemberPhase
   readonly group?: string
   readonly preset?: TeamPresetBinding
+  readonly slotId?: string
   readonly error?: string
 }
 
@@ -200,8 +206,70 @@ export interface TeamMemberProjection {
 export interface TeamProjection {
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
+  /** Absent for an untouched official Team, which remains dynamic. */
+  readonly composition?: TeamCompositionView
   readonly failure?: string
 }
+
+/** Durable user-managed association, independent of whether the Team is locked. */
+export interface TeamProfileAssociation {
+  readonly id: string
+  readonly version: number
+  readonly modified: boolean
+}
+
+/** One recoverable Profile application; targetJson belongs to the outer product. */
+export interface TeamCompositionApplication {
+  readonly id: string
+  readonly profileId: string
+  readonly profileVersion: number
+  readonly targetJson: string
+  readonly retiringMemberIds: readonly SessionId[]
+  readonly previousPhase: 'dynamic' | 'fixed'
+  readonly changed: boolean
+  readonly diagnostic?: string
+}
+
+/** Native Team composition policy folded from the Lead Session. */
+export interface TeamCompositionState {
+  readonly phase: 'dynamic' | 'applying' | 'fixed'
+  readonly profile?: TeamProfileAssociation
+  readonly application?: TeamCompositionApplication
+  /** Last successfully applied target; only the owning product interprets this JSON. */
+  readonly appliedTargetJson?: string
+}
+
+/** Detached native state offered to an authenticated Host composition operation under the Team lock. */
+export interface TeamCompositionSnapshot {
+  readonly composition: TeamCompositionState
+  readonly members: readonly TeamMemberSnapshot[]
+  readonly tasks: readonly TeamTaskSnapshot[]
+  readonly maxMembers: number
+  readonly maxActiveMembers: number
+}
+
+/** Client-safe portion of native composition policy. */
+export interface TeamCompositionView {
+  readonly phase: TeamCompositionState['phase']
+  readonly profile?: TeamProfileAssociation
+  readonly application?: Pick<TeamCompositionApplication, 'id' | 'profileId' | 'profileVersion' | 'diagnostic'>
+}
+
+/** Host-only transition proposed under the Team lock. */
+export type TeamCompositionTransition =
+  | { readonly kind: 'begin'
+    readonly applicationId: string
+    readonly profileId: string
+    readonly profileVersion: number
+    readonly targetJson: string
+    readonly retiringMemberIds: readonly SessionId[]
+    readonly previousPhase: 'dynamic' | 'fixed' }
+  | { readonly kind: 'target'; readonly applicationId: string; readonly targetJson: string }
+  | { readonly kind: 'diagnostic'; readonly applicationId: string; readonly message: string }
+  | { readonly kind: 'finish'; readonly applicationId: string }
+  | { readonly kind: 'stop'; readonly applicationId: string }
+  | { readonly kind: 'lock' }
+  | { readonly kind: 'unlock' }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
@@ -287,6 +355,11 @@ export interface SpawnTeammateRequest {
   readonly provider: string
   /** Declared Preset to bind instead of inheriting the Lead composition. */
   readonly presetId?: string
+  /** Expected declaration revision for a Profile slot; mismatch rejects before creation. */
+  readonly expectedPresetRevision?: string
+  /** Only a matching in-progress application may create a member while applying. */
+  readonly applicationId?: string
+  readonly slotId?: string
   readonly signal: AbortSignal
 }
 
@@ -348,6 +421,8 @@ declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** Immutable controlled-mode policy written before a new Lead can use Team tools. */
     'team/mode': { version: 1; teamId: TeamId; mode: TeamControlledMode }
+    /** User-managed composition policy, persisted before the next roster mutation. */
+    'team/composition': { version: 1; teamId: TeamId; transition: TeamCompositionTransition }
     /** Whole teammate lifecycle value, stored only in the Team Lead Session. */
     'team/member': { version: 2; teamId: TeamId; member: TeamMemberLegacySnapshot }
     /** Explicit-Preset or extended-lifecycle member value, without changing the released version-two event. */
@@ -368,6 +443,8 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       extension: { id: string; recordId: string; dataJson: string }
       notices?: TeamMessageSnapshot[]
+      /** A product permission-table change invalidates any associated Profile. */
+      affectsComposition?: true
     }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }

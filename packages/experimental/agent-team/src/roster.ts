@@ -11,6 +11,7 @@ import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ContinuablePresetBinding, ContinuableStart } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
+import { compositionOf } from './composition.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
@@ -75,6 +76,24 @@ export function resolveActiveMember(
     throw new TeamError(`active teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
   }
   return { id: member.id, name }
+}
+
+function assertRosterChange(state: TeamState, applicationId: string | undefined, retiringId?: SessionId): void {
+  const composition = compositionOf(state.composition)
+  if (composition.phase === 'fixed') {
+    throw new TeamError('Team composition is locked; the user must unlock it first', 'TEAM_COMPOSITION_LOCKED')
+  }
+  if (composition.phase === 'applying') {
+    if (applicationId === undefined || composition.application?.id !== applicationId) {
+      throw new TeamError('Profile application controls Team membership until it finishes or stops',
+        'TEAM_COMPOSITION_APPLYING')
+    }
+    if (retiringId !== undefined && !composition.application.retiringMemberIds.includes(retiringId)) {
+      throw new TeamError('member is not selected for this Profile application', 'TEAM_COMPOSITION_APPLYING')
+    }
+  } else if (applicationId !== undefined) {
+    throw new TeamError('Profile application is not in progress', 'TEAM_COMPOSITION_APPLYING')
+  }
 }
 
 /** Owns Team identities and the lifecycle of rostered continuable children. */
@@ -178,6 +197,7 @@ export class TeamRoster {
         provider: member.provider,
         context: member.context,
         ...member.preset === undefined ? {} : { preset: member.preset },
+        ...member.slotId === undefined ? {} : { slotId: member.slotId },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -263,9 +283,10 @@ export class TeamRoster {
    * Unfinished assignments and undelivered mail must be settled first.
    * @param caller - exact live Lead Agent authorizing removal.
    * @param targetName - immutable teammate name.
+   * @param applicationId - matching in-progress application for an applying Team.
    * @returns the retired roster row after its live activation is stopped.
    */
-  async retire(caller: Agent, targetName: string): Promise<TeamMemberView> {
+  async retire(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView> {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can retire teammates', 'TEAM_LEAD_REQUIRED')
     const root = membership.root
@@ -276,6 +297,7 @@ export class TeamRoster {
       const state = this.journal.state(root)
       const current = state.members.find(candidate => candidate.name === name)
       if (current === undefined) throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+      assertRosterChange(state, applicationId, current.id)
       if (current.phase === 'retired' || current.phase === 'retiring') return current
       if (current.phase !== 'active' && current.phase !== 'failed') {
         throw new TeamError(`teammate "${name}" is not active or failed`, 'TEAM_MEMBER_NOT_ACTIVE')
@@ -371,7 +393,8 @@ export class TeamRoster {
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
     }
-    if (request.presetId !== undefined || this.defaultMemberPresetId !== undefined || mode !== undefined) {
+    if (request.presetId !== undefined || request.expectedPresetRevision !== undefined
+      || this.defaultMemberPresetId !== undefined || mode !== undefined) {
       const registry = this.ctx.get('agentPresets')
       if (registry === undefined) throw new TeamError('explicit teammate preset requires the Agent Preset registry', 'TEAM_PRESET_UNAVAILABLE')
       const selectedId = request.presetId ?? this.defaultMemberPresetId
@@ -379,6 +402,10 @@ export class TeamRoster {
       await using lease = await registry.acquireComposition(selectedId)
       if (lease.revision === undefined) {
         throw new TeamError(`preset "${lease.id}" has no durable declaration revision`, 'TEAM_PRESET_UNAVAILABLE')
+      }
+      if (request.expectedPresetRevision !== undefined && lease.revision !== request.expectedPresetRevision) {
+        throw new TeamError(`preset "${lease.id}" declaration differs from the requested Profile revision`,
+          'TEAM_PRESET_UNAVAILABLE')
       }
       if (mode !== undefined && lease.compositionRows.some(row =>
         row.enabled !== false && DELEGATION_PRESET_MODULES.has(row.moduleName))) {
@@ -407,11 +434,16 @@ export class TeamRoster {
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
       ...preset === undefined ? {} : { preset },
+      ...request.slotId === undefined ? {} : { slotId: requiredText(request.slotId, 'slotId', 200) },
       phase: 'provisioning',
     }
 
     await this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
+      assertRosterChange(state, request.applicationId)
+      if ((request.slotId === undefined) !== (request.applicationId === undefined)) {
+        throw new TeamError('Profile members need both an application and a slot id', 'TEAM_INVALID_ARGUMENT')
+      }
       this.validateMemberGroup(caller, group)
       if (state.members.some(member => member.name === name)) {
         throw new TeamError(`teammate name "${name}" was already used in this Team`, 'TEAM_MEMBER_NAME_TAKEN')
@@ -621,6 +653,7 @@ export class TeamRoster {
       provider: member.provider,
       context: member.context,
       ...member.preset === undefined ? {} : { preset: member.preset },
+      ...member.slotId === undefined ? {} : { slotId: member.slotId },
       ...live?.options.model === undefined ? {} : { model: live.options.model },
       diagnostics: [],
     }
@@ -628,7 +661,7 @@ export class TeamRoster {
 
   /** Keep the released version-two event exact; use a new event for explicit compositions. */
   private async appendMember(root: Agent, member: TeamMemberSnapshot): Promise<void> {
-    if (member.preset === undefined && member.group === undefined
+    if (member.preset === undefined && member.group === undefined && member.slotId === undefined
       && (member.phase === 'provisioning' || member.phase === 'active' || member.phase === 'failed')) {
       const legacy: TeamMemberLegacySnapshot = {
         id: member.id,

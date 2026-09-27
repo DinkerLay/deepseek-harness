@@ -321,11 +321,24 @@ describe('dsh-tool-team', () => {
         expect(schema?.properties).toHaveProperty('target')
         expect(schema?.properties).not.toHaveProperty('id')
         expect(schema?.properties).not.toHaveProperty('name')
+        expect(schema?.properties).toHaveProperty('slotId')
         expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired'])
       }
       expect(ctx.agentTeams.listMembers(lead)).toEqual([member])
     },
   )
+
+  it('serializes an applied Profile slot without rejecting list_agents output', async () => {
+    const { ctx, lead } = await setup([])
+    vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValue([{ id: lead.id, name: 'lead', role: 'lead',
+      status: 'inactive', diagnostics: [] }, { id: SessionId('slot-member'), name: 'researcher',
+      role: 'teammate', status: 'inactive', slotId: 'stock-collection', diagnostics: [] }])
+    const result = await execute(ctx, lead, 'list_agents', {})
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(text(result))).toContainEqual(expect.objectContaining({
+      target: 'researcher', slotId: 'stock-collection',
+    }))
+  })
 
   it('passes a selected Preset to native roster creation and exposes its binding', async () => {
     const { ctx, lead } = await setup([])

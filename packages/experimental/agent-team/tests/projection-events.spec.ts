@@ -90,6 +90,35 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it('replays composition policy, slot identity, and Profile modification from one Team log', () => {
+    const begin = event('team/composition', { version: 1, teamId: TEAM, transition: {
+      kind: 'begin', applicationId: 'apply-1', profileId: 'stock', profileVersion: 1,
+      targetJson: '{"roles":[]}', retiringMemberIds: [], previousPhase: 'dynamic',
+    } }, SessionSeq(0))
+    const provision = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ slotId: 'collector' }) }, SessionSeq(1))
+    const active = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ slotId: 'collector', phase: 'active' }) }, SessionSeq(2))
+    const finish = event('team/composition', { version: 1, teamId: TEAM,
+      transition: { kind: 'finish', applicationId: 'apply-1' } }, SessionSeq(3))
+    const state = project(ROOT, [begin, provision, active, finish])
+    expect(state.failure).toBeUndefined()
+    expect(teamProjectionView(state)).toMatchObject({
+      composition: { phase: 'fixed', profile: { id: 'stock', version: 1, modified: false } },
+      members: [{ name: 'lead' }, { name: 'worker-a', slotId: 'collector' }],
+    })
+    const rebinding = event('team/extension', { version: 1, teamId: TEAM,
+      extension: { id: 'product', recordId: 'binding-1', dataJson: '{}' }, affectsComposition: true,
+    }, SessionSeq(4))
+    expect(teamProjectionView(project(ROOT, [begin, provision, active, finish, rebinding]))
+      .composition?.profile?.modified).toBe(true)
+    const changedSlot = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ phase: 'retiring', slotId: 'different' }) }, SessionSeq(5))
+    expect(project(ROOT, [begin, provision, active, finish, changedSlot]).failure)
+      .toMatch(/immutable identity fields/)
+    expect(teamProjectionView(project(ROOT, [])).composition).toBeUndefined()
+  })
+
   it('makes an invalidated completed result permanently unavailable to dependent Tasks', () => {
     const source = task({ status: 'completed' })
     const dependent = task({ id: TeamTaskId('task-2'), blockedBy: [source.id] })

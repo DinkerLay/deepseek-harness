@@ -86,6 +86,7 @@ const MEMBER_VIEW_SCHEMA = {
     status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed', 'retiring', 'retired'] },
     description: { type: 'string' },
     group: { type: 'string' },
+    slotId: { type: 'string' },
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
     preset: {
