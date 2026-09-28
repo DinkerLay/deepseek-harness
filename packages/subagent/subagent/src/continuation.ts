@@ -483,6 +483,7 @@ export class SubagentContinuationManager {
         }
       }
       const messageId = this.submitAdmitted(activation, content, options, parent)
+      if (commit !== undefined) activation.observer.initialInput(messageId)
       commit?.()
       activation.announced = true
       return messageId

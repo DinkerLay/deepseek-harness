@@ -41,7 +41,7 @@ export interface SubagentSettlementNoticeFacts {
   /** Direct parent's log position when this Activation was published. */
   readonly parentStartSeq: SessionLogOffsetType
   readonly events: readonly SessionEvent[]
-  /** This Activation consumed exactly the child's first accepted non-inherited input. */
+  /** A fresh child consumed only its creation prompt; cold-resumed Activations report false. */
   readonly firstInputOnly: boolean
 }
 

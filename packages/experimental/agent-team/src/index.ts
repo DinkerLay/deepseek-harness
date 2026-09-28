@@ -168,7 +168,8 @@ export class TeamService extends Service {
         || event.type === 'tool/ptc-dispatch-start')) {
         const output = facts.output
         const texts = output?.flatMap(block => block.type === 'text' ? [block.text] : [])
-        if (output !== undefined && texts?.length === output.length
+        if (output !== undefined && output.every(block => block.type === 'text' || block.type === 'reasoning')
+          && texts !== undefined && texts.length > 0
           && /^ready\.?$/iu.test(texts.join('').trim())) return 'suppress'
       }
       return await this.tasks.assessSettlementNotice(root, facts)

@@ -9,6 +9,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService from '@deepseek-ai/dsh-subagent'
@@ -167,13 +168,28 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
 
 describe('controlled member settlement notices', () => {
   it('omits only the first pure standby reply and keeps later completed runs visible', async () => {
+    const reasonedReady: StreamChunk[] = [
+      { type: 'block-start', index: 0, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 0, text: 'I am on standby.' },
+      { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'I am on standby.' } },
+      { type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'Ready.' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'Ready.' } },
+      { type: 'usage', usage: { inputTokens: 10, outputTokens: 6 } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ]
     const { ctx, lead } = await setup([
-      textResponse('Ready.'), textResponse('Work finished.'), textResponse('Lead noticed completion'),
+      reasonedReady, textResponse('Work finished.'), textResponse('Lead noticed completion'),
     ], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
       permissionTableId: 'test-policy', permissionRevision: 'revision-1' } }, true)
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
       validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    ctx.on('agent/created', ({ agent }) => {
+      if (agent.id === lead.id) return
+      agent.inject(createUserMessage({ content: [{ type: 'text', text: 'Agent instructions' }],
+        source: { kind: 'agent-instructions', form: 'instructions', changes: [] } }))
+    })
     const observed: Array<{ firstInputOnly: boolean; events: readonly SessionEvent[] }> = []
     ctx.subagents.registerSettlementNoticePolicy((facts) => {
       observed.push({ firstInputOnly: facts.firstInputOnly, events: facts.events })
@@ -183,10 +199,9 @@ describe('controlled member settlement notices', () => {
     ctx.on('subagent/end', (info) => { settled.push(info.id) })
     const member = await spawn(ctx, lead, 'standby-worker', { group: 'collectors' })
     await vi.waitFor(() => { expect(settled).toContain(member.member.id) })
-    expect(observed.map(fact => ({ firstInputOnly: fact.firstInputOnly,
-      sources: fact.events.flatMap(event => event.type === 'user/message' ? [event.data.source.kind] : []) }))).toEqual([
-      { firstInputOnly: true, sources: ['user', 'runtime-context'] },
-    ])
+    expect(observed[0]?.firstInputOnly).toBe(true)
+    expect(observed[0]?.events.flatMap(event => event.type === 'user/message'
+      ? [event.data.source.kind] : [])).toContain('agent-instructions')
     expect(lead.session.snapshotEvents().filter(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled')).toHaveLength(0)
     expect(lead.inbox.nextTurn.filter(message => message.source.kind === 'subagent-settled')).toHaveLength(0)

@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import { foldConsumedWork } from '@deepseek-ai/dsh-agent'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
@@ -53,6 +53,8 @@ export interface ActivationObserver {
    * @param child - the resident child agent, whose log suffix bounds this epoch.
    */
   start(child: Agent): void
+  /** Mark the accepted creation prompt; a later cold Activation has no such process-local claim. */
+  initialInput(messageId: MessageId): void
   /**
    * Snapshot the child-dependent terminal facts while the child is still
    * registered, because handle disposal unregisters it and consumers resolve it
@@ -190,7 +192,8 @@ export function createActivationObserver(
   // would report a previous epoch's answer when this one opened no turn.
   let boundary: SessionLogOffsetType = SessionLogOffset(0)
   let parentBoundary: SessionLogOffsetType = SessionLogOffset(0)
-  const ignoredInputSources = new Set<string>(['runtime-context'])
+  let initialInputId: MessageId | undefined
+  const injectedContextSources = new Set<string>(['agent-instructions', 'runtime-context', 'skill-catalog'])
   // Assigned by `capture()`, which the disposal path always runs before
   // `settle()`; a resident epoch therefore always has its facts by then.
   let captured: ActivationTerminal = { stopReason: 'completed' }
@@ -205,20 +208,23 @@ export function createActivationObserver(
       parentBoundary = parent.session.seq
       emit('subagent/start', identity, parent)
     },
+    initialInput: (messageId): void => { initialInputId = messageId },
     capture: (child: Agent): void => {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Activation suffix capture is not a new history read.
       const own = child.session.snapshotEvents(boundary)
-      const first = child.session.snapshotEvents(child.session.inheritedEventCount)
-        .flatMap(event => event.type === 'agent/inbox/spliced'
-          ? event.data.inserted.filter(message => !ignoredInputSources.has(message.source.kind)) : [])[0]
+      const admitted = own.flatMap(event => event.type === 'agent/inbox/spliced'
+        ? event.data.inserted.filter(message => !injectedContextSources.has(message.source.kind)) : [])
+      const admittedIds = new Set(admitted.map(message => message.id))
       const inputs = own.flatMap(event => event.type === 'user/message'
-        && !ignoredInputSources.has(event.data.source.kind) ? [event.data] : [])
+        && admittedIds.has(event.data.id) ? [event.data] : [])
       const output = finalAssistantOutput(own)
       captured = {
         stopReason: epochStopReason(own),
         ...output === undefined ? {} : { output },
         notice: { runId: identity.runId, startSeq: boundary, endSeq: child.session.seq,
           parentStartSeq: parentBoundary, events: own,
-          firstInputOnly: inputs.length === 1 && first?.id === inputs[0]?.id },
+          firstInputOnly: initialInputId !== undefined && inputs.length === 1
+            && initialInputId === inputs[0]?.id },
       }
     },
     terminal,

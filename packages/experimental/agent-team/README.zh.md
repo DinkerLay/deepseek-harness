@@ -70,7 +70,7 @@ teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session
 
 受控 Team 还可在模式记录中固定 `memberToolLimit.allow` 和／或 `memberToolLimit.deny`。继承工具同时遵守 Preset 允许清单与 Team 上限；原生和扩展的 Team 工具在 teammate 作用域注册前也检查同一上限，最终目录校验拒绝额外的同作用域工具。被禁止的工具不在目录中，直接调用由原有工具运行时拒绝。未配置上限时保留官方 Team 行为。
 
-受控 Team 不把纯首轮“Ready.”结束通知送进 Lead 对话；绑定的 Task 扩展可以用持久通知核算后续正常结束的运行。失败或无法核算的运行仍按原生方式提醒，官方 Team 不注册这项策略。
+受控 Team 在新建过程仍保有初始提示 ID 时，不把纯首轮“Ready.”结束通知送进 Lead 对话；若冷恢复中断导致无法确认这个 ID，则照送。绑定的 Task 扩展可以用持久通知核算后续正常结束的运行。失败或无法核算的运行仍按原生方式提醒，官方 Team 不注册这项策略。
 
 最终成员工具目录核对与 Agent Loop 使用同一份 `@deepseek-ai/dsh-scope` 运行时。本包把 Scope 声明为 peer 依赖，避免生产 bundle 生成第二个作用域身份；构建产物测试核对此边界。目录服务或作用域缺失时，成员准入失败，不绕过 Preset 允许清单。
 
