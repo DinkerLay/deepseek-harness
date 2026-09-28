@@ -289,8 +289,17 @@ describe('dsh-tool-team', () => {
     await child.dispose()
   })
 
-  it('denies direct delegation calls even when an unsafe composition exposes the tool', async () => {
-    const { ctx, lead, fiber } = await setup([], false, {}, ['subagent', 'workflow'])
+  it('keeps direct delegation available in the official Team composition', async () => {
+    const { ctx, lead } = await setup([], false, {}, ['subagent', 'workflow'])
+    expect((await execute(ctx, lead, 'subagent', {})).isError).toBe(false)
+    expect((await execute(ctx, lead, 'workflow', {})).isError).toBe(false)
+  })
+
+  it('denies direct delegation calls when a controlled composition exposes the tool', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+    const { ctx, lead, fiber } = await setup([], false, { controlledTasks: true },
+      ['subagent', 'workflow'], { controlledMode: mode })
     const visible = () => ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
     expect(ctx.tools.schemas().map(schema => schema.name)).toContain('subagent')
     expect(visible()).toContain('subagent')

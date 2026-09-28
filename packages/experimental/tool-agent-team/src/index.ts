@@ -231,10 +231,12 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     ? () => {}
     : scoped.tools.register(tool)
   try {
-    // Product Presets omit these capabilities at composition time. The guard
-    // remains monotonic if a custom or misconfigured Preset exposes one.
-    register(scoped.tools.guard(exec => BYPASS_DELEGATION_NAMES.has(exec.name)
-      ? `Team members must delegate through Agent Team, not ${exec.name}` : undefined))
+    // Product Presets omit these capabilities at composition time. Controlled
+    // Teams also reject execution if a custom or misconfigured Preset exposes one.
+    if (config.controlledTasks) {
+      register(scoped.tools.guard(exec => BYPASS_DELEGATION_NAMES.has(exec.name)
+        ? `Team members must delegate through Agent Team, not ${exec.name}` : undefined))
+    }
     if (controlledMember) {
       register(scoped.tools.guard(exec => !STANDBY_TOOLS.has(exec.name)
         && !ctx.agentTeams.standbyToolNames(agent).includes(exec.name)

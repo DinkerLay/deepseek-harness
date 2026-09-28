@@ -69,7 +69,7 @@ kind: "package-reference"
 
 默认情况下，模型看到原生的「领取并完成」Task 流程。产品组合可以设置 `reviewedTasks: true`，改为引导成员提交结果、由 Lead 验收，并从面向模型的 `team_task_update` 操作枚举中移除 `complete` 和 `reopen`。持久的受控模式即使在配置变化后仍选用受控指引和按角色装配的工具：teammate 能看到 Team 查询、消息和放弃任务的动作，没有进行中的产品 Attempt 时其他工具被拒绝。受控指引要求 Lead 用直接 Task 前置传递已验收结果，而不是普通消息；在最终答复前结算包括 Lead 自己名下的 Task；获授权的成员需要新素材时自行派活。受控 Team 服务拒绝成员私聊。任何模式下，服务端 Task 策略都是最终裁决。
 
-放弃 Task 只取消对应 Attempt，不会中断成员正在执行的轮次，也不会撤销文件副作用。需要停止工作时，Lead 先调用 `interrupt_agent`，确认成员转为空闲，再放弃 Task；Task 写入方会拒绝迟到结果。作用域内的单调 guard 还会拒绝 Team 成员直接调用 `subagent`、`subagent_fork`、`subagent_codex`、`subagent_claude_code`、`workflow` 和 `ralph`。guard 能阻止执行，但不能隐藏 Preset 在同一 Agent scope 中装配的工具；产品 bundle 必须不装配这些插件行，才能让模型工具目录也看不到它们。
+放弃 Task 只取消对应 Attempt，不会中断成员正在执行的轮次，也不会撤销文件副作用。需要停止工作时，Lead 先调用 `interrupt_agent`，确认成员转为空闲，再放弃 Task；Task 写入方会拒绝迟到结果。在受控 Team 中，作用域内的 guard 还会拒绝直接调用 `subagent`、`subagent_fork`、`subagent_codex`、`subagent_claude_code`、`workflow` 和 `ralph`。guard 能阻止执行，但不能隐藏 Preset 在同一 Agent scope 中装配的工具；产品 bundle 必须不装配这些插件行，才能让模型工具目录也看不到它们。未标记的官方 Team 保持默认的委派行为。
 
 ### 成功与失败的表现
 
