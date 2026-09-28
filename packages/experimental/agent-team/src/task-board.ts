@@ -1,6 +1,7 @@
 /** Shared Team task DAG commands and runtime-enriched views. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type { TeamMembership } from './roster.ts'
 import { TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
@@ -80,6 +81,21 @@ export class TeamTaskBoard {
    */
   hasRunningAttempt(caller: Agent): boolean {
     return this.extension?.writer.hasRunningAttempt?.(caller) ?? false
+  }
+
+  /**
+   * Let only the bound product writer account for a controlled member's completed run.
+   * @param root - exact live Lead whose pinned mode selects the Task writer.
+   * @param facts - flushed child-log interval for this one Activation.
+   * @returns an explicit notice decision, or undefined when the native notice must remain.
+   */
+  async assessSettlementNotice(
+    root: Agent, facts: SubagentSettlementNoticeFacts,
+  ): Promise<'send' | 'suppress' | undefined> {
+    const mode = this.journal.state(root).mode
+    const extension = this.extension
+    if (mode === undefined || extension?.writer.id !== mode.requiredTaskExtensionId) return undefined
+    return await extension.writer.assessSettlementNotice?.(facts)
   }
 
   /**

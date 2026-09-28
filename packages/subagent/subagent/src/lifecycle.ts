@@ -23,7 +23,9 @@ import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import { finalAssistantOutput } from './assistant-output.ts'
 import { SubagentRunId } from './types.ts'
-import type { SubagentResult, SubagentRun, SubagentRunEndInfo, SubagentRunInfo } from './types.ts'
+import type {
+  SubagentResult, SubagentRun, SubagentRunEndInfo, SubagentRunInfo, SubagentSettlementNoticeFacts,
+} from './types.ts'
 
 /**
  * How one Activation's residency epoch ended, as both the terminal lifecycle
@@ -34,6 +36,9 @@ export interface ActivationTerminal {
   readonly stopReason: SubagentResult['stopReason']
   /** The epoch's final assistant content, absent when it produced none or failed. */
   readonly output?: readonly ContentBlock[]
+  /** Captured child-log interval for optional parent-notice policies. */
+  readonly notice?: Omit<SubagentSettlementNoticeFacts,
+    'parentSessionId' | 'childSessionId' | 'stopReason' | 'output'>
 }
 
 /**
@@ -184,6 +189,8 @@ export function createActivationObserver(
   // from the suffix it actually produced — never the whole session, which
   // would report a previous epoch's answer when this one opened no turn.
   let boundary: SessionLogOffsetType = SessionLogOffset(0)
+  let parentBoundary: SessionLogOffsetType = SessionLogOffset(0)
+  const ignoredInputSources = new Set<string>(['runtime-context'])
   // Assigned by `capture()`, which the disposal path always runs before
   // `settle()`; a resident epoch therefore always has its facts by then.
   let captured: ActivationTerminal = { stopReason: 'completed' }
@@ -191,19 +198,27 @@ export function createActivationObserver(
   // output: an answer this harness could not durably release is not a result.
   const terminal = (failure: unknown): ActivationTerminal => failure === undefined
     ? captured
-    : { stopReason: 'error' }
+    : { stopReason: 'error', ...captured.notice === undefined ? {} : { notice: captured.notice } }
   return {
     start: (child: Agent): void => {
       boundary = child.session.seq
+      parentBoundary = parent.session.seq
       emit('subagent/start', identity, parent)
     },
     capture: (child: Agent): void => {
-      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       const own = child.session.snapshotEvents(boundary)
+      const first = child.session.snapshotEvents(child.session.inheritedEventCount)
+        .flatMap(event => event.type === 'agent/inbox/spliced'
+          ? event.data.inserted.filter(message => !ignoredInputSources.has(message.source.kind)) : [])[0]
+      const inputs = own.flatMap(event => event.type === 'user/message'
+        && !ignoredInputSources.has(event.data.source.kind) ? [event.data] : [])
       const output = finalAssistantOutput(own)
       captured = {
         stopReason: epochStopReason(own),
         ...output === undefined ? {} : { output },
+        notice: { runId: identity.runId, startSeq: boundary, endSeq: child.session.seq,
+          parentStartSeq: parentBoundary, events: own,
+          firstInputOnly: inputs.length === 1 && first?.id === inputs[0]?.id },
       }
     },
     terminal,

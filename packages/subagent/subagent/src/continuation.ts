@@ -44,6 +44,7 @@ import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
 import type { ActivationObserver } from './lifecycle.ts'
+import type { SubagentSettlementNoticeFacts } from './types.ts'
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
@@ -72,6 +73,8 @@ interface ContinuationHost {
   prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
+  /** Admit one parent-visible settlement notice after the child has flushed its final state. */
+  sendSettlementNotice(facts: SubagentSettlementNoticeFacts): Promise<boolean>
 }
 
 /**
@@ -92,6 +95,7 @@ export class SubagentContinuationManager {
       ctx,
       (provider, childId, parent) => host.observeActivation(provider, childId, parent),
       maxActiveSubagents,
+      facts => host.sendSettlementNotice(facts),
     )
   }
 

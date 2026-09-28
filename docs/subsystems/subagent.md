@@ -199,7 +199,7 @@ interface ContinuableStart {
 }
 ```
 
-When a resident Activation settles, the manager delivers one notice to the child's durable direct parent describing how that epoch ended and carrying the nonempty text blocks from its final assistant output, or `It left no closing message.` when none remain. That delivery is unconditional for every child whose id a caller received, happens before the ownership release that would let the parent be judged settled, and reaches a resident parent through the same waking Agent delivery as an Agent message. A parent whose own lineage is already tearing down receives it without a wake, because waking an idle Agent starts a turn rather than queueing work. Its source has a distinct kind so a transcript never presents a runtime account as something the child wrote.
+When a resident Activation settles, the manager normally delivers one notice to the child's durable direct parent describing how that epoch ended and carrying the nonempty text blocks from its final assistant output, or `It left no closing message.` when none remain. An optional `registerSettlementNoticePolicy()` registration receives the flushed child-log interval, parent-log starting position, stop reason, and final output before that delivery. One explicit suppress decision omits only the parent notice; absent, failed, timed-out, or conflicting decisions deliver it. The decision occurs before the ownership release that would let the parent be judged settled. A parent whose own lineage is already tearing down receives an admitted notice without a wake. Its source has a distinct kind so a transcript never presents a runtime account as something the child wrote.
 
 ```ts type-equiv
 /**
@@ -511,6 +511,14 @@ resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
  * @throws when continuation services are unavailable or materialization fails.
  */
 async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
+
+/**
+ * Register one optional parent-notice policy for continuable Activations.
+ * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+ * @param policy - runtime-only policy re-registered by its owner after a restart.
+ * @returns disposer for the registration effect.
+ */
+registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void
 
 /**
  * Steer one model-authored message to the sender's direct parent or direct

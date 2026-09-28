@@ -16,7 +16,7 @@ import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { deliverSubagentPrompt, type HostPromptDeliverer } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { MockAdapter, maxTokensResponse, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, { TeamError, TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
 import { TeamRuntimeLifecycle } from '../src/lifecycle.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
@@ -164,6 +164,99 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
     return agent!
   }, { timeout: 5_000 })
 }
+
+describe('controlled member settlement notices', () => {
+  it('omits only the first pure standby reply and keeps later completed runs visible', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('Ready.'), textResponse('Work finished.'), textResponse('Lead noticed completion'),
+    ], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const observed: Array<{ firstInputOnly: boolean; events: readonly SessionEvent[] }> = []
+    ctx.subagents.registerSettlementNoticePolicy((facts) => {
+      observed.push({ firstInputOnly: facts.firstInputOnly, events: facts.events })
+      return undefined
+    })
+    const settled: SessionId[] = []
+    ctx.on('subagent/end', (info) => { settled.push(info.id) })
+    const member = await spawn(ctx, lead, 'standby-worker', { group: 'collectors' })
+    await vi.waitFor(() => { expect(settled).toContain(member.member.id) })
+    expect(observed.map(fact => ({ firstInputOnly: fact.firstInputOnly,
+      sources: fact.events.flatMap(event => event.type === 'user/message' ? [event.data.source.kind] : []) }))).toEqual([
+      { firstInputOnly: true, sources: ['user', 'runtime-context'] },
+    ])
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled')).toHaveLength(0)
+    expect(lead.inbox.nextTurn.filter(message => message.source.kind === 'subagent-settled')).toHaveLength(0)
+
+    await ctx.agentTeams.sendMessage(lead, {
+      target: 'standby-worker', content: content('continue'), signal: SIGNAL,
+    })
+    await vi.waitFor(() => { expect(settled).toHaveLength(2) })
+    await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled')).toBe(true) })
+    writer.dispose()
+  })
+
+  it('keeps the official Team standby settlement without a controlled mode', async () => {
+    const { ctx, lead } = await setup([textResponse('Ready.'), textResponse('Lead noticed completion')])
+    const member = await spawn(ctx, lead, 'official-worker')
+    await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled'
+      && event.data.source.senderSessionId === member.member.id)).toBe(true) })
+  })
+
+  it('delegates later completed runs to the bound product Task reader', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('Ready.'), textResponse('Work is recorded elsewhere'),
+    ], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1' } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const observed: string[] = []
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined,
+      assessSettlementNotice: (facts) => { observed.push(facts.runId); return 'suppress' },
+      create: unavailable, update: unavailable })
+    const settled: SessionId[] = []
+    ctx.on('subagent/end', (info) => { settled.push(info.id) })
+    const member = await spawn(ctx, lead, 'accounted-worker', { group: 'collectors' })
+    await vi.waitFor(() => { expect(settled).toHaveLength(1) })
+    await ctx.agentTeams.sendMessage(lead, {
+      target: 'accounted-worker', content: content('continue'), signal: SIGNAL,
+    })
+    await vi.waitFor(() => { expect(settled).toHaveLength(2) })
+    expect(observed).toHaveLength(1)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled')).toHaveLength(0)
+    expect(member.member.name).toBe('accounted-worker')
+    writer.dispose()
+  })
+
+  it.each([
+    { description: 'different final output', script: [textResponse('Not ready.'), textResponse('Lead noticed')] },
+    { description: 'a standby tool call', script: [toolCallResponse('standby-list', 'list_agents', {}),
+      textResponse('Ready.'), textResponse('Lead noticed')] },
+    { description: 'an incomplete first run', script: [maxTokensResponse('Ready.'),
+      textResponse('Lead noticed')] },
+    { description: 'no closing text', script: [[{ type: 'finish' as const, reason: { kind: 'stop' as const } }],
+      textResponse('Lead noticed')] },
+  ])('keeps the first settlement after $description', async ({ script }) => {
+    const { ctx, lead } = await setup(script, { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+    } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const member = await spawn(ctx, lead, 'unusual-standby', { group: 'collectors' })
+    await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled'
+      && event.data.source.senderSessionId === member.member.id)).toBe(true) })
+    writer.dispose()
+  })
+})
 
 describe('Team identity and provisioning', () => {
   it('keeps the official Team dynamic until a Host composition operation locks it', async () => {

@@ -62,6 +62,8 @@ import type {
   SubagentRun,
   SubagentRunEndInfo,
   SubagentRunInfo,
+  SubagentSettlementNoticeFacts,
+  SubagentSettlementNoticePolicy,
   SubagentSendMessageOptions,
   SubagentStartRequest,
 } from './types.ts'
@@ -97,6 +99,8 @@ export type {
   SubagentProvider,
   SubagentResult,
   SubagentRun,
+  SubagentSettlementNoticeFacts,
+  SubagentSettlementNoticePolicy,
   SubagentSendMessageOptions,
   SubagentStartRequest,
   SubagentStopReason,
@@ -203,6 +207,8 @@ export interface Config {
   maxActiveSubagents: Volatile<number>
   /** Default delegation depth for tools without an explicit limit; defaults to 1. */
   maxDepth: Volatile<number>
+  /** Bound one optional settlement-notice policy evaluation; defaults to one second. */
+  settlementNoticePolicyTimeoutMs: Volatile<number>
 }
 
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
@@ -210,8 +216,10 @@ export class SubagentRuntime extends TypertRemoteService {
   static Config = z.object({
     maxDepth: z.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(1).volatile(),
     maxActiveSubagents: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(8).volatile(),
+    settlementNoticePolicyTimeoutMs: z.number().step(1).min(1).max(60_000).default(1_000).volatile(),
   })
   private providers = new Map<string, SubagentProvider>()
+  private readonly settlementNoticePolicies = new Map<symbol, SubagentSettlementNoticePolicy>()
   private continuations: SubagentContinuationManager | undefined
   /**
    * The contained lifecycle-edge publisher. Built here because scoped dispatch
@@ -227,6 +235,7 @@ export class SubagentRuntime extends TypertRemoteService {
       const manager = new SubagentContinuationManager(childCtx, {
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
+        sendSettlementNotice: facts => this.sendSettlementNotice(facts),
       }, () => this.config.maxActiveSubagents.get())
       this.continuations = manager
       childCtx.effect(() => () => {
@@ -269,6 +278,37 @@ export class SubagentRuntime extends TypertRemoteService {
    */
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
     return this.requireContinuations().startContinuable(spec)
+  }
+
+  /**
+   * Register one optional parent-notice policy for continuable Activations.
+   * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+   * @param policy - runtime-only policy re-registered by its owner after a restart.
+   * @returns disposer for the registration effect.
+   */
+  registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void {
+    const registration = Symbol()
+    this.settlementNoticePolicies.set(registration, policy)
+    return () => { this.settlementNoticePolicies.delete(registration) }
+  }
+
+  /** Decide only whether to copy a settled child into its parent's inbox. */
+  private async sendSettlementNotice(facts: SubagentSettlementNoticeFacts): Promise<boolean> {
+    if (this.settlementNoticePolicies.size === 0) return true
+    const decisions = await Promise.all([...this.settlementNoticePolicies.values()].map(async (policy) => {
+      const timeout = Promise.withResolvers<'send'>()
+      const timer = setTimeout(() => { timeout.resolve('send') }, this.config.settlementNoticePolicyTimeoutMs.get())
+      try {
+        return await Promise.race([Promise.resolve().then(() => policy(facts)), timeout.promise])
+      } catch {
+        this.ctx.logger.warn('subagent settlement-notice policy failed; delivering the notice')
+        return 'send' as const
+      } finally {
+        clearTimeout(timer)
+      }
+    }))
+    const claimed = decisions.filter(decision => decision !== undefined)
+    return claimed.length !== 1 || claimed[0] !== 'suppress'
   }
 
   /**

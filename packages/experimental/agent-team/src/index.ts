@@ -156,6 +156,24 @@ export class TeamService extends Service {
       },
     )
 
+    ctx.effect(() => ctx.subagents.registerSettlementNoticePolicy(async (facts) => {
+      const root = ctx.agents.get(facts.parentSessionId)
+      if (root === undefined) return undefined
+      const state = this.journal.state(root)
+      if (state.mode?.kind !== 'controlled'
+        || !state.members.some(member => member.id === facts.childSessionId
+          && (member.phase === 'provisioning' || member.phase === 'active'))) return undefined
+      if (facts.stopReason !== 'completed') return undefined
+      if (facts.firstInputOnly && !facts.events.some(event => event.type === 'tool/call'
+        || event.type === 'tool/ptc-dispatch-start')) {
+        const output = facts.output
+        const texts = output?.flatMap(block => block.type === 'text' ? [block.text] : [])
+        if (output !== undefined && texts?.length === output.length
+          && /^ready\.?$/iu.test(texts.join('').trim())) return 'suppress'
+      }
+      return await this.tasks.assessSettlementNotice(root, facts)
+    }), 'agentTeams.settlementNoticePolicy()')
+
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('agent/created', async ({ agent, source }) => {
       await this.initializeControlledMode(agent, source)

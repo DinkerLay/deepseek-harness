@@ -2621,6 +2621,78 @@ function settlementNotices(agent: Agent): { sender: string; text: string; summar
   })
 }
 
+describe('continuable settlement-notice policy', () => {
+  it('uses one Activation log interval and re-evaluates on cold continuation', async () => {
+    const { ctx, parent } = await setup([
+      textResponse('first'), textResponse('second'), textResponse('parent acknowledgement'),
+    ])
+    const observed: Array<{ runId: string; firstInputOnly: boolean; start: number; end: number }> = []
+    const dispose = ctx.subagents.registerSettlementNoticePolicy((facts) => {
+      observed.push({ runId: facts.runId, firstInputOnly: facts.firstInputOnly,
+        start: facts.startSeq, end: facts.endSeq })
+      return facts.firstInputOnly ? 'suppress' : undefined
+    })
+    const child = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, child.childId)
+    expect(settlementNotices(parent)).toEqual([])
+    await queuePrompt(ctx, parent, child.childId, message('continue'))
+    await waitNoActivation(ctx, child.childId)
+    expect(observed).toHaveLength(2)
+    expect(observed[0]).toMatchObject({ firstInputOnly: true })
+    expect(observed[1]).toMatchObject({ firstInputOnly: false })
+    expect(observed[0]?.runId).not.toBe(observed[1]?.runId)
+    expect(observed.every(item => item.end > item.start)).toBe(true)
+    await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+    dispose()
+  })
+
+  it('delivers when registered policies disagree or one fails', async () => {
+    const { ctx, parent } = await setup([
+      textResponse('first'), textResponse('parent acknowledgement'),
+      textResponse('second'), textResponse('parent acknowledgement'),
+    ])
+    const suppress = ctx.subagents.registerSettlementNoticePolicy(() => 'suppress')
+    const conflict = ctx.subagents.registerSettlementNoticePolicy(() => 'send')
+    const first = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, first.childId)
+    await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+    conflict()
+    suppress()
+    const failed = ctx.subagents.registerSettlementNoticePolicy(() => { throw new Error('policy failed') })
+    const second = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, second.childId)
+    await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(2) })
+    failed()
+  })
+
+  it('delivers when a settlement-notice policy does not finish in time', async () => {
+    const { ctx, parent } = await setup([
+      textResponse('child answer'), textResponse('parent acknowledgement'),
+    ])
+    await subagentConfigs.get(ctx)!.update({ settlementNoticePolicyTimeoutMs: 10 })
+    const pending = Promise.withResolvers<'suppress'>()
+    const dispose = ctx.subagents.registerSettlementNoticePolicy(() => pending.promise)
+    const child = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, child.childId)
+    await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+    dispose()
+  })
+
+  it('delivers when the internal notice dispatcher itself fails', async () => {
+    const { ctx, parent } = await setup([
+      textResponse('child answer'), textResponse('parent acknowledgement'),
+    ])
+    Reflect.set(ctx.subagents, 'sendSettlementNotice', async () => { throw new Error('dispatcher unavailable') })
+    try {
+      const child = await ctx.subagents.startContinuable(startSpec(parent))
+      await waitNoActivation(ctx, child.childId)
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+    } finally {
+      Reflect.deleteProperty(ctx.subagents, 'sendSettlementNotice')
+    }
+  })
+})
+
 describe('continuable adjacent-Agent delivery', () => {
   it('rejects a stale sender before resolving either adjacent target', async () => {
     const { ctx, parent } = await setup([])

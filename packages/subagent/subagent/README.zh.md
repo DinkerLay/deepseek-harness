@@ -52,6 +52,8 @@ kind: "package-reference"
 
 每次新建或冷恢复 Activation 前都会读取当前 `maxActiveSubagents`。调高后已有树可接纳更多子代理；调低后驻留子代理继续运行，使用量降至上限以下前拒绝新接纳。
 
+`settlementNoticePolicyTimeoutMs` 默认 `1,000` 毫秒，接受 `1` 到 `60,000` 的整数。未返回的运行时策略最多只能让 child 结算等待这段时间；超时仍发送原生父级通知。
+
 容量耗尽时，新建或冷恢复以 `ACTIVATION_LIMIT_REACHED` 拒绝（浏览器消息返回 `subagent/delivery-unavailable`）：等待子代理完成，或继续使用现有代理。接纳不会排队，避免等待后代的父代理又等待自己占用的名额。名额仅存在于当前进程，不限制累计 Session 历史或 token 用量。
 
 ### 一次性与可继续子级
@@ -112,7 +114,7 @@ kind: "package-reference"
 
 ### 可继续流程
 
-管理器预留 child 身份、解析持久化描述符、创建（或冷恢复）child、把它安装进 Activation 并提交提示词。模型编写的消息通过固定 Steer 调度跨一条 parent/child 边；浏览器人类 prompt 通过内部适配器选择 Queue 或 best-effort Steer，其他 host 协议仍可保留 Queue 以创建独立轮次。Session queue command 仅根据 child 自身的 continuable descriptor 准入在线 subagent-owned Agent。Settlement 会等待 Agent 活动结束、Inbox 为空且没有所拥有子级，再在准入开放时 flush 最终 Session 状态。管理器随后在 child lock 内重新验证 wake generation、Session 序号、Inbox 与所拥有子级；`Agent.runMaintenance()` 的同步 task 入口会占用 idle 阶段，并在同一个 JavaScript turn 内关闭私有 subagent Inbox，然后才释放句柄。直接 child 不存在 Activation 时会从持久化会话冷恢复。当驻留 Activation 结算时，管理器会在 parent 自身的轮次流中告知该 child 的直接 parent。
+管理器预留 child 身份、解析持久化描述符、创建（或冷恢复）child、把它安装进 Activation 并提交提示词。模型编写的消息通过固定 Steer 调度跨一条 parent/child 边；浏览器人类 prompt 通过内部适配器选择 Queue 或 best-effort Steer，其他 host 协议仍可保留 Queue 以创建独立轮次。Session queue command 仅根据 child 自身的 continuable descriptor 准入在线 subagent-owned Agent。Settlement 会等待 Agent 活动结束、Inbox 为空且没有所拥有子级，再在准入开放时 flush 最终 Session 状态。管理器随后在 child lock 内重新验证 wake generation、Session 序号、Inbox 与所拥有子级；`Agent.runMaintenance()` 的同步 task 入口会占用 idle 阶段，并在同一个 JavaScript turn 内关闭私有 subagent Inbox，然后才释放句柄。直接 child 不存在 Activation 时会从持久化会话冷恢复。默认情况下，管理器会在 Activation 结算时告知该 child 的直接 parent；由 effect 持有的运行时策略只能省略这条父级消息，不改 child 日志或生命周期事件。策略缺席、失败、超时或冲突时仍发送。
 
 本地子级创建成功时，父 Session 追加一条 `subagent/catalog` 事实。一次性创建在提供方返回后记录；可继续创建在初始 inbox 准入后、返回子级 id 前记录。失败会释放子级，不发布补偿性目录事件。一次性目录追加失败时会处理 run 的结果拒绝，并保留目录错误；资源释放失败会单独记录。`subagentCatalog` projection 排除 fork 继承的事实，通过 Session 观察和客户端快照中的 `projections.values.subagentCatalog` 暴露直接子级列表。每个 child 的 `subagentTiming` projection 会累加 descriptor 之后的耗时，并记录最近一个已结束轮次是否以 `completed` 结束；新轮次打开时会清除该完成状态。无效的自身 catalog payload（包括不支持的版本）会使 projection 恢复失败。projection 状态版本变更会从持久日志重新折叠缓存行。目录视图对 D 条事实以 O(D) 时间保留父目录事件顺序，其不可变存储和检查点校验使用 [`dsh-chunked-list`](../../util/chunked-list/README.zh.md)。[父目录决策](../../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 说明排序、持久化成本和替代方案。Catalog 载荷 v0 记录已知模式，v1 还接受未知模式，读取器支持两版。历史迁移在 descriptor 不可用时根据可读子 header 追加 v1 `subagent/catalog`；正常创建保留 v0。其 `mode: 'unknown'` 投影让子会话保持可见，但不表示支持继续执行；已有完整条目仍具有权威性。
 
@@ -155,7 +157,7 @@ kind: "package-reference"
 
 #### Token 影响
 
-父级请求中，每个已结算的 Activation 一条通知，长度取决于子级的最终文本。如果子级先发送自己的消息再结算，父级请求会同时承担两者。
+默认情况下，每个已结算的 Activation 会在父级请求中产生一条通知，长度取决于子级的最终文本。已安装的结束通知策略可以省略这份副本；child 自己发送的消息与持久业务通知不受影响。
 
 #### KV Cache 影响
 

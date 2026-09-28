@@ -2908,6 +2908,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when continuation services are unavailable or materialization fails.'],
       },
       {
+        signature: 'registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void',
+        description: 'Register one optional parent-notice policy for continuable Activations. Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.',
+        parameters: [{ name: 'policy', description: 'runtime-only policy re-registered by its owner after a restart.' }],
+        returns: 'disposer for the registration effect.',
+      },
+      {
         signature: 'async sendMessage( sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions, ): Promise<MessageId>',
         description: 'Steer one model-authored message to the sender\'s direct parent or direct continuable child. A running target admits it at the nearest step boundary; an idle target starts a turn, and an absent direct child cold-resumes from persistence. The service derives durable sender attribution from the exact live sender. Caller cancellation stops only pre-acceptance work.',
         parameters: [{ name: 'sender', description: 'exact live Agent authorizing and originating the message.' }, { name: 'targetId', description: 'durable direct-parent or direct-child session id.' }, { name: 'content', description: 'model-authored content to deliver.' }, { name: 'options', description: 'caller cancellation before inbox acceptance.' }],
@@ -7273,11 +7279,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promi /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
     declaration: 'export interface SubagentSendMessageOptions {\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'SubagentSettlementNoticeFacts',
+    declaration: 'export interface SubagentSettlementNoticeFacts {\n    readonly runId: SubagentRunId;\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly stopReason: SubagentStopReason;\n    readonly output?: readonly ContentBlock[];\n    readonly startSeq: SessionLogOffsetType;\n    readonly endSeq: SessionLogOffsetType;\n    readonly parentStartSeq: SessionLogOffsetType;\n    readonly events: readonly SessionEvent[];\n    readonly firstInputOnly: boolean;\n}',
+  },
+  {
+    name: 'SubagentSettlementNoticePolicy',
+    declaration: 'export type SubagentSettlementNoticePolicy = (facts: SubagentSettlementNoticeFacts) => \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;',
   },
   {
     name: 'SubagentStartRequest',
@@ -7489,7 +7503,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    readonly standbyToolNames?: readonly string[];\n    claimableTaskIds?(caller: Agent): readonly TeamTaskId[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    readonly standbyToolNames?: readonly string[];\n    claimableTaskIds?(caller: Agent): readonly TeamTaskId[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',

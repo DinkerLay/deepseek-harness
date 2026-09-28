@@ -199,7 +199,7 @@ interface ContinuableStart {
 }
 ```
 
-当驻留 Activation 结算时，管理器会向该 child 持久化的直接 parent 投递一条通知，说明该 epoch 如何结束，并携带其最终 assistant 输出中的非空文本块；若没有剩余的非空文本，则携带 `It left no closing message.`。对每个调用方拿到过 id 的 child，这条投递都是无条件的；它发生在会让 parent 被判定为已结算的所有权释放之前，并通过与 Agent 消息相同的唤醒 Agent 投递到达驻留 parent。若 parent 自身所在的谱系已在拆卸中，这条通知会以不唤醒的方式送达，因为唤醒一个 idle Agent 是开启一个轮次，而不是排队等待工作。其来源信息使用一个独立的 kind，因此 transcript（文本记录）绝不会把运行时的记账呈现为 child 自己写下的内容。
+当驻留 Activation 结算时，管理器通常会向该 child 持久化的直接 parent 投递一条通知，说明该 epoch 如何结束，并携带其最终 assistant 输出中的非空文本块；若没有剩余的非空文本，则携带 `It left no closing message.`。可选的 `registerSettlementNoticePolicy()` 注册会在投递前取得已 flush 的 child 日志区间、parent 日志起点、结束原因和最终输出。唯一明确的省略决定只取消父级通知；策略缺席、失败、超时或冲突时照送。判断发生在会让 parent 被判定为已结算的所有权释放之前。若 parent 自身所在的谱系已在拆卸中，已准入的通知会以不唤醒的方式送达。其来源信息使用独立 kind，因此 transcript 不会把运行时记账呈现为 child 自己写下的内容。
 
 ```ts type-equiv
 /**
@@ -515,6 +515,14 @@ resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
  * @throws when continuation services are unavailable or materialization fails.
  */
 async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
+
+/**
+ * Register one optional parent-notice policy for continuable Activations.
+ * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+ * @param policy - runtime-only policy re-registered by its owner after a restart.
+ * @returns disposer for the registration effect.
+ */
+registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void
 
 /**
  * Steer one model-authored message to the sender's direct parent or direct

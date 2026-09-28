@@ -70,6 +70,8 @@ A teammate may also carry an immutable `group` label without changing its name o
 
 A controlled Team may also pin `memberToolLimit.allow` and/or `memberToolLimit.deny` in its mode record. The ceiling intersects a Preset allowance for inherited tools. Native and extension-owned Team tools consult the same ceiling before registering in a teammate scope; the final catalog check refuses any extra scoped tool. A denied tool is absent from the catalog and direct calls fail through the normal tool runtime. Omitting the ceiling retains official Team behavior.
 
+The controlled Team omits a pure first-turn “Ready.” settlement from the Lead conversation; its bound Task extension may account for later completed runs using durable notices. Failed or unaccounted runs retain the ordinary Subagent notice, and official Teams do not register this policy.
+
 The final member catalog check uses the same `@deepseek-ai/dsh-scope` runtime as Agent Loop. This package declares Scope as a peer dependency so its production bundle does not create a second scope identity; the built-library test checks that boundary. Missing catalog services or scope fail member admission rather than bypassing the Preset allowance.
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.

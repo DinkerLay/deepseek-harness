@@ -38,6 +38,7 @@ import { SubagentError } from './error.ts'
 import { SubagentInbox } from './inbox.ts'
 import type { SubagentDelivery } from './inbox.ts'
 import type { ActivationObserver, ActivationTerminal } from './lifecycle.ts'
+import type { SubagentSettlementNoticeFacts } from './types.ts'
 
 /** Process-local slots shared through uninterrupted continuable parent links. */
 class ActivationPool {
@@ -210,6 +211,7 @@ export class ContinuableActivationRegistry {
       parent: Agent,
     ) => ActivationObserver,
     private readonly maxActiveSubagents: () => number,
+    private readonly sendSettlementNotice: (facts: SubagentSettlementNoticeFacts) => Promise<boolean>,
   ) {
     // Ordinary Cordis owner effects unwind in reverse registration order, which
     // cannot express the dynamic child graph. Register the private scope's
@@ -880,18 +882,33 @@ export class ContinuableActivationRegistry {
     }
     this.resident.delete(childId)
     activation.releaseSlot()
-    this.notifySettlement(activation, activation.observer.terminal(failure))
+    await this.notifySettlement(activation, activation.observer.terminal(failure))
     this.releaseOwnership(childId)
     activation.observer.settle(failure)
     if (failure !== undefined) throw failure
   }
 
   /** Tell the durable direct parent how this Activation ended. */
-  private notifySettlement(activation: Activation, terminal: ActivationTerminal): void {
+  private async notifySettlement(activation: Activation, terminal: ActivationTerminal): Promise<void> {
     if (!activation.announced) return
     try {
       const parent = this.ctx.agents.get(activation.parentSession)
       if (parent === undefined) return
+      let shouldSend = true
+      if (terminal.notice !== undefined) {
+        try {
+          shouldSend = await this.sendSettlementNotice({
+            ...terminal.notice,
+            stopReason: terminal.stopReason,
+            ...terminal.output === undefined ? {} : { output: terminal.output },
+            parentSessionId: activation.parentSession,
+            childSessionId: activation.childId,
+          })
+        } catch {
+          this.ctx.logger.warn(`subagent "${activation.childId}" settlement policy failed; delivering the notice`)
+        }
+      }
+      if (!shouldSend) return
       const message = createSettlementMessage(activation.childId, terminal)
       if (this.closingTeardownFor(parent) !== undefined) {
         parent.inject(message)

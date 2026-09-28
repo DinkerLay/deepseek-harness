@@ -1,6 +1,7 @@
 /** Host-only interface for one optional product Task writer over the native Board. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type {
   CreateTeamTaskRequest,
   TeamExtensionRecordPlan,
@@ -58,6 +59,14 @@ export interface TeamTaskExtension {
    * @returns whether non-standby tools may be used.
    */
   hasRunningAttempt?(caller: Agent): boolean
+  /**
+   * Read product work and durable Lead notices after one controlled member Activation.
+   * Absence or an undecidable result preserves the native settlement notice.
+   * @param facts - durable child-log interval captured before the child Agent was released.
+   * @returns whether this product's work is covered or still needs a Lead reminder.
+   */
+  assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): 'send' | 'suppress' | undefined
+    | Promise<'send' | 'suppress' | undefined>
   /**
    * Handle native Task creation without writing a version-two Task event.
    * @param caller - exact live Team member.

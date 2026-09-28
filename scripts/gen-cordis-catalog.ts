@@ -608,6 +608,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SubagentProvider: 'subagent.md',
   SubagentRun: 'subagent.md',
   SubagentRuntime: 'subagent.md',
+  SubagentSettlementNoticeFacts: 'subagent.md',
+  SubagentSettlementNoticePolicy: 'subagent.md',
   SubagentStartRequest: 'subagent.md',
   AssembleContext: 'system-prompt.md',
   PromptContext: 'system-prompt.md',

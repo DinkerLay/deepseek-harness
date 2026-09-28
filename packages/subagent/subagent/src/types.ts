@@ -12,7 +12,7 @@
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import type { ObjectJsonSchema, ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentDescriptorData } from './descriptor.ts'
 import type { ContinuablePresetBinding } from './continuable-preset.ts'
@@ -28,6 +28,27 @@ export type SubagentRunId = Branded<'SubagentRunId'>
 export function SubagentRunId(id: string): SubagentRunId {
   return id as SubagentRunId
 }
+
+/** Durable child-log facts captured before one continuable Activation releases its Agent. */
+export interface SubagentSettlementNoticeFacts {
+  readonly runId: SubagentRunId
+  readonly parentSessionId: SessionId
+  readonly childSessionId: SessionId
+  readonly stopReason: SubagentStopReason
+  readonly output?: readonly ContentBlock[]
+  readonly startSeq: SessionLogOffsetType
+  readonly endSeq: SessionLogOffsetType
+  /** Direct parent's log position when this Activation was published. */
+  readonly parentStartSeq: SessionLogOffsetType
+  readonly events: readonly SessionEvent[]
+  /** This Activation consumed exactly the child's first accepted non-inherited input. */
+  readonly firstInputOnly: boolean
+}
+
+/** An optional runtime policy; abstention and unavailable policy preserve normal delivery. */
+export type SubagentSettlementNoticePolicy = (
+  facts: SubagentSettlementNoticeFacts,
+) => 'send' | 'suppress' | undefined | Promise<'send' | 'suppress' | undefined>
 
 /** What a caller asks for when starting a continuable background child. */
 export interface ContinuableStartSpec {
