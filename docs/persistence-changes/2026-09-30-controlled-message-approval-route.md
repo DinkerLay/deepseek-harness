@@ -27,20 +27,20 @@ id: 2026-09-30-controlled-message-approval-route
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-09-16-session-format-v4"
-    after: "9f5dfa3c6203608ec3bc997b980a376cc70b257827441bacce0e3b5031dcefea"
+    previous: "2026-09-21-user-question-reply"
+    after: "54cbd7060d44933df08a9ffb0ae7ae60009763e4f76af8053ae5b1295a99e363"
     decision: same-version
   - root: "event:approval/answerer-route"
     previous: null
     after: "e2132c2019606bae31b5b8a81527c37060b113d0176777d4bb028ed996a07247"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "aac3cc5a61549f2079eeec662eb6321f29f97497f0f33c655e6377cad93ab533"
+    previous: "2026-09-21-user-question-reply"
+    after: "be04be000a1f8a8e469682713c2ea03f3d0e8b26a9bcfe8304060e7db810f60c"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-09-16-session-format-v4"
-    after: "356c9f41eaa4755c9f450fad5721e0fe5f7a78a17b86449d366dbd10096abd2d"
+    previous: "2026-09-21-user-question-reply"
+    after: "edc3291037a93b162a16c9f702e3ea7fa49afdbc78beeb4e657d70f4de6c74de"
     decision: same-version
   - root: "event:team/extension"
     previous: "2026-09-27-team-composition-profile"
@@ -55,8 +55,8 @@ changes:
     after: "77fcdef5ff7e52848e901c043a5632ac1edb572a6e124a1f5c6c14b02dfa1658"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "0b17dc916666f156326d62a2242c5455742d4935833e54065e68bde2fbe89ee8"
+    previous: "2026-09-21-user-question-reply"
+    after: "6eba80fd2ef925a22f87c05998929d6bf01e4a45d1d9b32ef87a13f0b222ead4"
     decision: same-version
 ```
 
