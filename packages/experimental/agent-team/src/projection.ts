@@ -147,6 +147,7 @@ const teamMessageSnapshotSchema = z.object({
   senderName: z.string(),
   targetId: sessionIdSchema,
   content: z.array(contentBlockSchema),
+  contentParts: z.array(z.enum(['sender', 'fact'])).optional(),
 }).strict() as z.ZodType<TeamMessageSnapshot>
 
 const teamEventSelectorSchema = z.object({
@@ -433,7 +434,9 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
           && (member.phase === 'active' || member.phase === 'failed')
         const retirementStart = (prior.phase === 'active' || prior.phase === 'failed') && member.phase === 'retiring'
         const retirementEnd = prior.phase === 'retiring' && member.phase === 'retired'
-        if (!provisioningExit && !retirementStart && !retirementEnd) {
+        const registeredStartFailure = state.mode !== undefined && prior.phase === 'active' && member.phase === 'failed'
+          && !state.messages.some(message => message.targetId === member.id && state.delivered.includes(message.id))
+        if (!provisioningExit && !retirementStart && !retirementEnd && !registeredStartFailure) {
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
         }
       }
@@ -561,6 +564,7 @@ const teamMemberProjectionSchema = z.object({
   preset: z.object({ id: z.string().min(1), revision: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().optional(),
   slotId: z.string().min(1).max(200).optional(),
   error: z.string().optional(),
+  executionStarted: z.boolean().optional(),
 }).strict() as z.ZodType<TeamMemberProjection>
 
 const teamTaskViewSchema = z.object({
@@ -603,6 +607,8 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
       name: member.name,
       role: 'teammate',
       phase: member.phase,
+      ...state.mode === undefined ? {} : { executionStarted: state.messages.some(message =>
+        message.targetId === member.id && state.delivered.includes(message.id)) },
       ...member.group === undefined ? {} : { group: member.group },
       ...member.preset === undefined ? {} : { preset: member.preset },
       ...member.slotId === undefined ? {} : { slotId: member.slotId },
@@ -639,7 +645,7 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
  * @returns the roster and non-deleted task board, plus any projection failure.
  */
 export function teamProjectionView(state: TeamProjectionState): TeamProjection {
-  if (state.failure !== undefined || state.composition !== undefined) return buildTeamProjection(state)
+  if (state.failure !== undefined || state.composition !== undefined || state.mode !== undefined) return buildTeamProjection(state)
   let byTasks = teamProjectionViews.get(state.members)
   if (byTasks === undefined) {
     byTasks = new WeakMap()
@@ -656,7 +662,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 15,
+  stateVersion: 16,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

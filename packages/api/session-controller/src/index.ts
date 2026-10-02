@@ -79,6 +79,8 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
+  /** Additional durable event names that make a Session nonblank without a model turn. */
+  readonly nonBlankEventTypes?: string[]
 }
 
 /** Host integrations replaceable by direct unit tests. */
@@ -113,6 +115,7 @@ export class SessionController extends TypertRemoteService {
 
   static Config: z<Config> = z.object({
     nativeOpen: z.boolean(),
+    nonBlankEventTypes: z.array(z.string().min(1)),
   })
 
   private readonly agents: ApiSessionAgentController
@@ -149,7 +152,7 @@ export class SessionController extends TypertRemoteService {
       await Promise.allSettled([...this.promotions])
     }, 'session-controller.promotions')
     this.history = new SessionHistoryController(ctx, (observation) => { this.promote(observation) })
-    this.listState = new ApiSessionList(ctx)
+    this.listState = new ApiSessionList(ctx, config.nonBlankEventTypes)
     this.fileApplications = internals.fileApplications ?? nativeFileApplications
     this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication
     this.openPath = internals.openPath ?? openNativeAssociatedPath

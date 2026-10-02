@@ -32,11 +32,27 @@ import type { Volatile } from '@deepseek-ai/cordis'
 
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { z as zod } from 'zod'
 import type {} from '@deepseek-ai/dsh-attachment'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
-import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId, MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-session-projection'
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap { subagentInputReceipts: readonly string[] }
+}
+
+function registerInputReceipts(ctx: Context): void {
+  ctx.inject(['sessionProjections'], (scope) => {
+    const projections = scope.sessionProjections
+    projections.register({ key: 'subagentInputReceipts', stateVersion: 1,
+      stateSchema: zod.array(zod.string()), init: () => [],
+      apply: (state, event) => event.type === 'session/end-seed' ? []
+        : event.type === 'user/message' ? [...state, event.data.id] : state })
+  })
+}
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
@@ -64,6 +80,7 @@ import type {
   SubagentRunInfo,
   SubagentSettlementNoticeFacts,
   SubagentSettlementNoticePolicy,
+  SubagentSettlementNoticeWording,
   SubagentSendMessageOptions,
   SubagentStartRequest,
 } from './types.ts'
@@ -101,6 +118,7 @@ export type {
   SubagentRun,
   SubagentSettlementNoticeFacts,
   SubagentSettlementNoticePolicy,
+  SubagentSettlementNoticeWording,
   SubagentSendMessageOptions,
   SubagentStartRequest,
   SubagentStopReason,
@@ -219,7 +237,10 @@ export class SubagentRuntime extends TypertRemoteService {
     settlementNoticePolicyTimeoutMs: z.number().step(1).min(1).max(60_000).default(1_000).volatile(),
   })
   private providers = new Map<string, SubagentProvider>()
-  private readonly settlementNoticePolicies = new Map<symbol, SubagentSettlementNoticePolicy>()
+  private readonly settlementNoticePolicies = new Map<symbol, {
+    decide: SubagentSettlementNoticePolicy
+    wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined
+  }>()
   private continuations: SubagentContinuationManager | undefined
   /**
    * The contained lifecycle-edge publisher. Built here because scoped dispatch
@@ -230,6 +251,7 @@ export class SubagentRuntime extends TypertRemoteService {
 
   constructor(ctx: Context, private config: Config) {
     super(ctx, 'subagents')
+    registerInputReceipts(ctx)
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
@@ -281,34 +303,89 @@ export class SubagentRuntime extends TypertRemoteService {
   }
 
   /**
+   * Deliver a stable host input once, creating or resuming its reserved child.
+   * Completion confirms durable input receipt, not completion of model work.
+   * @param spec - creation inputs with a caller-reserved child id.
+   * @param input - immutable host message with a retry-stable identity.
+   * @returns the child and durably recorded input identities.
+   */
+  async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId },
+    input: UserMessage): Promise<ContinuableStart> {
+    return this.requireContinuations().deliverContinuableInput(spec, input)
+  }
+
+  /**
+   * Align a live direct child's sandbox and permission selection with its parent.
+   * Approval remains child-owned; unchanged values append no events.
+   * @param parent - exact live direct parent supplying current permission state.
+   * @param child - exact live child initialized before its next operation.
+   */
+  synchronizeContinuablePermissions(parent: Agent, child: Agent): void {
+    const agents = this.ctx.get('agents')
+    if (agents?.get(parent.id) !== parent || agents.get(child.id) !== child
+      || child.session.header.parentSession !== parent.id) {
+      throw new SubagentError('permission synchronization requires the exact live direct parent and child', 'UNAUTHORIZED')
+    }
+    const sandbox = this.ctx.get('sandboxPolicy')
+    const permissions = this.ctx.get('permissionPresets')
+    if (sandbox === undefined || permissions === undefined) {
+      throw new SubagentError('permission synchronization requires sandbox policy and permission presets', 'NOT_RESUMABLE')
+    }
+    const mode = sandbox.overrideOf(parent.session) ?? sandbox.defaultMode
+    if (sandbox.overrideOf(child.session) !== mode) child.session.append('sandbox/mode', { mode, source: 'delegation' })
+    const preset = permissions.current(parent.session)
+    const recorded = this.ctx.get('sessionProjections')?.stateOf(child.session, 'permissions')?.preset ?? undefined
+    if (recorded !== preset) child.session.append('permission/preset', { preset })
+  }
+
+  /**
    * Register one optional parent-notice policy for continuable Activations.
-   * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+   * Unclaimed, conflicting, failed, or timed-out decisions preserve delivery;
+   * one unambiguous wording provider still names the child on that path.
    * @param policy - runtime-only policy re-registered by its owner after a restart.
+   * @param wording - optional synchronous wording retained when decision evaluation times out.
    * @returns disposer for the registration effect.
    */
-  registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void {
+  registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy,
+    wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void {
     const registration = Symbol()
-    this.settlementNoticePolicies.set(registration, policy)
+    this.settlementNoticePolicies.set(registration, { decide: policy, ...wording === undefined ? {} : { wording } })
     return () => { this.settlementNoticePolicies.delete(registration) }
   }
 
-  /** Decide only whether to copy a settled child into its parent's inbox. */
-  private async sendSettlementNotice(facts: SubagentSettlementNoticeFacts): Promise<boolean> {
-    if (this.settlementNoticePolicies.size === 0) return true
-    const decisions = await Promise.all([...this.settlementNoticePolicies.values()].map(async (policy) => {
+  /** Decide whether and how to copy a settled child into its parent's inbox. */
+  private async sendSettlementNotice(facts: SubagentSettlementNoticeFacts):
+  Promise<'send' | 'suppress' | SubagentSettlementNoticeWording> {
+    if (this.settlementNoticePolicies.size === 0) return 'send'
+    const registrations = [...this.settlementNoticePolicies.values()]
+    const assessments = await Promise.all(registrations.map(async (registration) => {
+      let wording: SubagentSettlementNoticeWording | undefined
+      try { wording = registration.wording?.(facts) } catch {
+        this.ctx.logger.warn('subagent settlement-notice wording failed; using native wording')
+      }
       const timeout = Promise.withResolvers<'send'>()
       const timer = setTimeout(() => { timeout.resolve('send') }, this.config.settlementNoticePolicyTimeoutMs.get())
       try {
-        return await Promise.race([Promise.resolve().then(() => policy(facts)), timeout.promise])
+        const decision = await Promise.race([Promise.resolve().then(() => registration.decide(facts)), timeout.promise])
+        return { decision, wording }
       } catch {
         this.ctx.logger.warn('subagent settlement-notice policy failed; delivering the notice')
-        return 'send' as const
+        return { decision: 'send' as const, wording }
       } finally {
         clearTimeout(timer)
       }
     }))
-    const claimed = decisions.filter(decision => decision !== undefined)
-    return claimed.length !== 1 || claimed[0] !== 'suppress'
+    const claimed = assessments.filter(assessment => assessment.decision !== undefined)
+    const only = claimed[0]
+    if (claimed.length !== 1 || only === undefined) {
+      const wordings = assessments.flatMap(assessment => assessment.wording === undefined
+        ? [] : [assessment.wording])
+      const onlyWording = wordings[0]
+      return wordings.length === 1 && onlyWording !== undefined ? onlyWording : 'send'
+    }
+    const { decision, wording } = only
+    return decision === 'suppress' ? 'suppress' : typeof decision === 'object' ? decision
+      : wording ?? 'send'
   }
 
   /**

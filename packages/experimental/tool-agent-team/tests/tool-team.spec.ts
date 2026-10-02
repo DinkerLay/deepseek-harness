@@ -153,26 +153,33 @@ async function waitNoAgent(ctx: Context, id: SessionId): Promise<void> {
 describe('dsh-tool-team', () => {
   it('uses default-on controlled guidance and hides Lead-only tools from a teammate', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
     const { ctx, lead } = await setup([], false,
       { controlledTasks: true, reviewedTasks: true }, [], { controlledMode: mode })
     const leadTools = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
     expect(leadTools).toContain('spawn_teammate')
     expect(leadTools).toContain('team_task_create')
-    expect(renderPrompt(await assembly(ctx, lead))).toContain('Agent Team is available by default')
-    expect(renderPrompt(await assembly(ctx, lead))).not.toContain('without waiting for the user')
+    expect(ctx.tools.get('spawn_teammate', scopeOf(lead.ctx))?.parameters.properties)
+      .not.toHaveProperty('description')
+    const leadPrompt = renderPrompt(await assembly(ctx, lead))
+    expect(leadPrompt).toContain('Agent Team is available by default')
+    expect(leadPrompt).toContain('user-provided conditions and acceptance criteria')
+    expect(leadPrompt).toContain('accepted indirect upstream result needs no redundant direct edge')
+    expect(leadPrompt).not.toContain('source material')
+    expect(leadPrompt).not.toContain('without waiting for the user')
     const captured = vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockResolvedValue({ member: {
       id: SessionId('controlled-created'), name: 'collector', role: 'teammate',
       status: 'inactive', group: 'collectors', diagnostics: [],
     } })
     const spawned = await execute(ctx, lead, 'spawn_teammate', {
-      name: 'collector', description: 'Gather public evidence', group: 'collectors',
+      name: 'collector', group: 'collectors',
     })
     expect(spawned.isError).toBe(false)
     expect(captured).toHaveBeenCalledWith(lead, expect.objectContaining({
       name: 'collector', group: 'collectors', context: 'fresh',
     }))
     expect(captured.mock.calls[0]?.[1]?.prompt).toEqual([])
+    expect(captured.mock.calls[0]?.[1]).not.toHaveProperty('description')
     const memberId = SessionId('controlled-member')
     const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
       provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
@@ -183,7 +190,11 @@ describe('dsh-tool-team', () => {
     const child = await ctx.agents.create({ sessionId: memberId,
       meta: { parentSession: lead.id }, agentOptions: {} })
     const memberTools = ctx.tools.schemas(scopeOf(child.agent.ctx)).map(schema => schema.name)
-    expect(renderPrompt(await assembly(ctx, child.agent))).toContain('On your first turn, only confirm readiness')
+    const memberPrompt = renderPrompt(await assembly(ctx, child.agent))
+    expect(memberPrompt).toContain('Registration does not start work')
+    expect(memberPrompt).toContain('direct or transitive DAG upstream Tasks')
+    expect(memberPrompt).toContain('apply to a claim broadcast while busy')
+    expect(memberPrompt).not.toContain('source material')
     expect(memberTools).toContain('team_task_list')
     expect(memberTools).toContain('send_message')
     expect(memberTools).not.toContain('spawn_teammate')
@@ -194,32 +205,10 @@ describe('dsh-tool-team', () => {
     await child.dispose()
   })
 
-  it('omits a Team-scoped member tool denied by the persisted Team ceiling', async () => {
-    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
-      memberToolLimit: { deny: ['team_task_list'] },
-    }
-    const { ctx, lead } = await setup([], false, { controlledTasks: true }, [], { controlledMode: mode })
-    const memberId = SessionId('capped-member')
-    const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
-      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
-    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
-    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
-      member: { ...member, phase: 'active' } })
-    await ctx.sessions.flush(lead.session)
-    const child = await ctx.agents.create({ sessionId: memberId,
-      meta: { parentSession: lead.id }, agentOptions: {} })
-    const scope = scopeOf(child.agent.ctx)
-    expect(ctx.tools.schemas(scope).map(tool => tool.name)).not.toContain('team_task_list')
-    expect(ctx.tools.schemas(scope).map(tool => tool.name)).toContain('send_message')
-    expect(ctx.tools.schemas(scopeOf(lead.ctx)).map(tool => tool.name)).toContain('team_task_list')
-    expect((await execute(ctx, child.agent, 'team_task_list', {})).isError).toBe(true)
-    await child.dispose()
-  })
 
   it('selects controlled tools and guidance from the durable Team mode after config changes', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
     const { ctx, lead } = await setup([], false,
       { controlledTasks: false, reviewedTasks: false }, [], { controlledMode: mode })
     const names = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
@@ -227,7 +216,7 @@ describe('dsh-tool-team', () => {
     expect(ctx.tools.get('team_task_update', scopeOf(lead.ctx))?.parameters)
       .toMatchObject({ properties: { action: { enum: ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'] } } })
     expect(renderPrompt(await assembly(ctx, lead))).toContain('The shared Task Board is the authoritative collaboration channel')
-    expect(renderPrompt(await assembly(ctx, lead))).toContain('a chat answer does not complete it')
+    expect(renderPrompt(await assembly(ctx, lead))).toContain('a chat answer does not complete a Task')
   })
 
   it('keeps recruitment independent of controlled mode and preserves the official default', async () => {
@@ -238,7 +227,7 @@ describe('dsh-tool-team', () => {
     expect(renderPrompt(await assembly(autonomousNative.ctx, autonomousNative.lead)))
       .toContain('without waiting for an explicit Team request')
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
     const product = await setup([], false, { controlledTasks: true, autonomousDelegation: true }, [],
       { controlledMode: mode })
     const prompt = renderPrompt(await assembly(product.ctx, product.lead))
@@ -249,11 +238,11 @@ describe('dsh-tool-team', () => {
       .toContain('Create teammates only when the user explicitly asks')
   })
 
-  it('denies non-Team tools on standby and rechecks the installed Attempt admission', async () => {
+  it('does not block a controlled member ordinary tool without a running Attempt', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
     const { ctx, lead } = await setup([], false, { controlledTasks: true, reviewedTasks: true },
-      ['web_search', 'team_task_claim_open'], { controlledMode: mode })
+      ['web_search'], { controlledMode: mode })
     const id = SessionId('standby-member')
     const member = { id, name: 'standby-member', description: 'Research', group: 'collectors',
       provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
@@ -262,30 +251,36 @@ describe('dsh-tool-team', () => {
       member: { ...member, phase: 'active' } })
     await ctx.sessions.flush(lead.session)
     const child = await ctx.agents.create({ sessionId: id, meta: { parentSession: lead.id }, agentOptions: {} })
-    expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
-    expect((await execute(ctx, child.agent, 'team_task_claim_open', {})).isError).toBe(true)
-    expect((await execute(ctx, child.agent, 'team_task_list', {})).isError).toBe(false)
-    let running = true
-    const unavailable = async (): Promise<never> => { throw new Error('unused') }
-    const released = { id: TeamTaskId('task-1'), revision: 2, subject: 'Open test',
-      description: 'Open test', status: 'pending' as const, blockedBy: [], writeScopes: [],
-      ready: true, writeScopeWarnings: [] }
-    const handle = ctx.agentTeams.installTaskExtension({
-      id: 'test-writer', hasRunningAttempt: () => running,
-      standbyToolNames: ['team_task_claim_open'],
-      claimableTaskIds: () => [TeamTaskId('task-2')],
-      create: unavailable, update: async () => released,
-    })
     expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(false)
-    const release = await execute(ctx, child.agent, 'team_task_update', {
+    await child.dispose()
+  })
+
+  it('returns opaque product next-action hints after a controlled member releases work', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
+    const { ctx, lead } = await setup([], false, { controlledTasks: true, reviewedTasks: true }, [],
+      { controlledMode: mode })
+    const id = SessionId('hint-member')
+    const member = { id, name: 'hint-member', description: 'Worker', group: 'collectors',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+      member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const child = await ctx.agents.create({ sessionId: id, meta: { parentSession: lead.id }, agentOptions: {} })
+    const task = { id: TeamTaskId('task-1'), revision: 2, subject: 'Released', description: 'Released',
+      status: 'pending' as const, blockedBy: [], writeScopes: [], ready: true, writeScopeWarnings: [] }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-writer',
+      releaseHints: () => ['Claim broadcast broadcast-1 is available.'],
+      create: async () => task, update: async () => task })
+    const result = await execute(ctx, child.agent, 'team_task_update', {
       task_id: 'task-1', expected_revision: 1, action: 'release',
     })
-    expect(release.isError).toBe(false)
-    expect(JSON.parse(text(release))).toMatchObject({ availableOpenTaskIds: ['task-2'] })
-    running = false
-    expect((await execute(ctx, child.agent, 'web_search', {})).isError).toBe(true)
-    expect((await execute(ctx, child.agent, 'team_task_claim_open', {})).isError).toBe(false)
-    handle.dispose()
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(text(result))).toMatchObject({ suggestedActions: [
+      'Claim broadcast broadcast-1 is available.',
+    ] })
+    writer.dispose()
     await child.dispose()
   })
 
@@ -295,34 +290,13 @@ describe('dsh-tool-team', () => {
     expect((await execute(ctx, lead, 'workflow', {})).isError).toBe(false)
   })
 
-  it('denies direct delegation calls when a controlled composition exposes the tool', async () => {
+  it('does not guard a controlled Agent ordinary tool by its name', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
-    const { ctx, lead, fiber } = await setup([], false, { controlledTasks: true },
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
+    const { ctx, lead } = await setup([], false, { controlledTasks: true },
       ['subagent', 'workflow'], { controlledMode: mode })
-    const visible = () => ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
-    expect(ctx.tools.schemas().map(schema => schema.name)).toContain('subagent')
-    expect(visible()).toContain('subagent')
-    expect(visible()).toContain('workflow')
-    expect((await execute(ctx, lead, 'subagent', {})).isError).toBe(true)
-
-    ctx.tools.register(defineContentToolFixture({
-      name: 'ralph', description: 'Late-loaded delegation capability.', parameters: {},
-      async execute() { return [{ type: 'text', text: 'late bypass ran' }] },
-    }))
-    expect(visible()).toContain('ralph')
-    expect((await execute(ctx, lead, 'ralph', {})).isError).toBe(true)
-
-    lead.ctx.tools.register(defineContentToolFixture({
-      name: 'subagent_fork', description: 'Agent-local delegation capability.', parameters: {},
-      async execute() { return [{ type: 'text', text: 'local bypass ran' }] },
-    }))
-    expect(visible()).toContain('subagent_fork')
-    expect((await execute(ctx, lead, 'subagent_fork', {})).isError).toBe(true)
-
-    await fiber.dispose()
-    expect(visible()).toEqual(expect.arrayContaining(['subagent', 'workflow', 'ralph', 'subagent_fork']))
     expect((await execute(ctx, lead, 'subagent', {})).isError).toBe(false)
+    expect((await execute(ctx, lead, 'workflow', {})).isError).toBe(false)
   })
 
   it.each(['running', 'inactive', 'provisioning', 'failed'] as const)(
@@ -330,7 +304,7 @@ describe('dsh-tool-team', () => {
       const { ctx, lead } = await setup([])
       const member = {
         id: SessionId('private-member-session'), name: 'reviewer', role: 'teammate' as const,
-        status, description: 'review changes', diagnostics: [],
+        status, description: 'review changes', executionStarted: false, diagnostics: [],
       }
       vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockResolvedValue({ member })
       vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValue([member])
@@ -360,16 +334,18 @@ describe('dsh-tool-team', () => {
     },
   )
 
-  it('serializes an applied Profile slot without rejecting list_agents output', async () => {
+  it.each([false, true])('omits executionStarted=%s from the Profile slot tool result', async (executionStarted) => {
     const { ctx, lead } = await setup([])
     vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValue([{ id: lead.id, name: 'lead', role: 'lead',
       status: 'inactive', diagnostics: [] }, { id: SessionId('slot-member'), name: 'researcher',
-      role: 'teammate', status: 'inactive', slotId: 'stock-collection', diagnostics: [] }])
+      role: 'teammate', status: 'inactive', slotId: 'stock-collection', executionStarted, diagnostics: [] }])
     const result = await execute(ctx, lead, 'list_agents', {})
     expect(result.isError).toBe(false)
     expect(JSON.parse(text(result))).toContainEqual(expect.objectContaining({
       target: 'researcher', slotId: 'stock-collection',
     }))
+    expect(JSON.parse(text(result))).not.toContainEqual(expect.objectContaining({ executionStarted }))
+    expect(ctx.agentTeams.listMembers(lead)[1]).toHaveProperty('executionStarted', executionStarted)
   })
 
   it('passes a selected Preset to native roster creation and exposes its binding', async () => {

@@ -172,6 +172,11 @@ export class ReactLoopAgent implements Agent {
     this.send(input, 'next-step', false)
   }
 
+  wakePending(): void {
+    if (this.inbox.nextTurn.length === 0 && this.inbox.nextStep.length === 0) return
+    this.wakeDriver(this.phase.kind !== 'idle' && this.phase.abort.signal.aborted)
+  }
+
   cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
     if (!options.keepInbox) {
       this.inbox.clear()

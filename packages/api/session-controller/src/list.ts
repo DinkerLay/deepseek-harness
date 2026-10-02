@@ -1,6 +1,7 @@
 /** Cold-safe Session list and search projection. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { createHash } from 'node:crypto'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -40,13 +41,15 @@ const imageLimitsSchema = z.object({
  * Advance the Session-list metadata projection by one committed event.
  * @param state - metadata before the event.
  * @param event - next committed Session event.
+ * @param nonBlankEventTypes - optional deployment-owned meaningful event names.
  * @returns the original or advanced metadata value.
  */
 export function applySessionListMetadata(
   state: SessionListMetadata,
   event: SessionEvent,
+  nonBlankEventTypes: ReadonlySet<string> = new Set(),
 ): SessionListMetadata {
-  const blank = state.blank && event.type !== 'turn/start'
+  const blank = state.blank && event.type !== 'turn/start' && !nonBlankEventTypes.has(event.type)
   const lastPromptAt = event.type === 'user/message' && event.data.source.kind === 'user'
     ? event.time
     : state.lastPromptAt
@@ -74,15 +77,23 @@ export function truncateUnicodeCodePoints(value: string, maximum: number): strin
 
 /** Owns list projection registration, bounded cold summaries, and authorized search. */
 export class ApiSessionList {
-  /** @param ctx - Host context carrying Session, query, persistence, and projection services. */
-  constructor(private readonly ctx: Context) {
+  /**
+   * @param ctx - Host context carrying Session, query, persistence, and projection services.
+   * @param nonBlankEventTypes - additional meaningful event names; omission preserves turn-only classification.
+   */
+  constructor(private readonly ctx: Context, nonBlankEventTypes: readonly string[] = []) {
+    const eventNames = [...new Set(nonBlankEventTypes)].sort()
+    const meaningful = new Set(eventNames)
+    // Cache identities include the deployment fold policy, not only its serialized state fields.
+    const stateVersion = eventNames.length === 0 ? 1
+      : Number.parseInt(createHash('sha256').update(JSON.stringify(eventNames)).digest('hex').slice(0, 12), 16) + 2
     ctx.sessionProjections.register<'sessionListMetadata', SessionListMetadata>({
       key: 'sessionListMetadata',
       stateSchema: sessionListMetadataSchema,
       init: () => ({ blank: true, lastPromptAt: null }),
-      apply: applySessionListMetadata,
+      apply: (state, event) => applySessionListMetadata(state, event, meaningful),
       wire: { viewSchema: sessionListMetadataSchema, view: state => state },
-      stateVersion: 1,
+      stateVersion,
     })
     ctx.inject(['attachments'], (attachmentCtx) => {
       ctx.sessionProjections.register<'imageLimits', null>({

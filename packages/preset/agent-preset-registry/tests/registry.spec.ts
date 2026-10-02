@@ -14,6 +14,23 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
 async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
 
 describe('declarative preset revisions', () => {
+  it('keeps inherited tools available across Preset selection', async () => {
+    const ctx = await setup()
+    for (const name of ['global-first', 'global-second']) {
+      ctx.tools.register({ name, description: name,
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+        execute: () => Promise.resolve(name),
+      })
+    }
+    await declare(ctx, contribution('first'))
+    await declare(ctx, contribution('second'))
+    const agent = await agentOn(ctx, 'restricted-lead', 'first')
+    expect(ctx.tools.schemas(agent).map(tool => tool.name).sort()).toEqual(['first', 'global-first', 'global-second'])
+    await ctx.agentPresets.select(agent, 'second')
+    expect(ctx.tools.schemas(agent).map(tool => tool.name).sort()).toEqual(['global-first', 'global-second', 'second'])
+  })
+
   it('eagerly scopes tool and prompt registrations and shares one revision across Agents', async () => {
     const ctx = await setup()
     await declare(ctx, contribution('standard'))

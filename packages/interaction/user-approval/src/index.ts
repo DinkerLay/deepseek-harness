@@ -7,6 +7,8 @@
 import { randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { z as zod } from 'zod'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -42,13 +44,15 @@ declare module '@deepseek-ai/dsh-session/types' {
       /** Marks an override seeded into a child at delegation. */
       source?: 'delegation'
     }
+    /** Optional Host route binding; ordinary Sessions do not write it. */
+    'approval/answerer-route': { readonly version: 1; readonly routeId: ApprovalAnswererRouteId }
   }
 }
 
-import { ApprovalRequestId } from './types.ts'
+import { ApprovalRequestId, ApprovalAnswererRouteId } from './types.ts'
 import type { ApprovalOutcome, ApprovalRequestEvent } from './types.ts'
 
-export { ApprovalRequestId } from './types.ts'
+export { ApprovalRequestId, ApprovalAnswererRouteId } from './types.ts'
 export type { ApprovalOutcome } from './types.ts'
 
 /** Every {@link ApprovalOutcome}, for runtime normalization of answerer returns. */
@@ -131,6 +135,22 @@ export interface ApprovalRequest extends ApprovalRequestEvent {
   readonly signal?: AbortSignal
 }
 
+/** Current Host-resolved answerer and display data, independent of product policy. */
+export interface ApprovalAnswererRoute {
+  readonly agent: Agent
+  readonly displaySubject: string
+  readonly taskId?: string
+  /** Optional provider-owned lookup of the exact operation in the origin's log. */
+  readonly operation?: ApprovalRequestEvent['originOperation']
+}
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap { approvalAnswererRoute: ApprovalAnswererRouteId | null }
+}
+
+/** Optional call identity passed only when resolving an actual question. */
+export type ApprovalRouteQuestion = Readonly<Pick<ApprovalRequest, 'callId' | 'toolName'>>
+
 /** Plugin config. All optional — `static Config` supplies the defaults. */
 export interface Config {
   /**
@@ -148,14 +168,23 @@ export interface Config {
  * changes to the model through the runtime-context snapshot and switch notices.
  */
 export class ApprovalService extends Service {
+  private readonly routes = new Map<ApprovalAnswererRouteId, {
+    resolver: (origin: Agent, question?: ApprovalRouteQuestion) => ApprovalAnswererRoute | undefined
+    controller: AbortController
+  }>()
   static Config: z<Config> = z.object({
     policy: z.union(['ask', 'never'] as const).default('ask'),
   })
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'approval')
+    ctx.inject(['sessionProjections'], (scope) => {
+      scope.sessionProjections.register({ key: 'approvalAnswererRoute', stateVersion: 1,
+        stateSchema: zod.string().transform(ApprovalAnswererRouteId).nullable(), init: () => null,
+        apply: (state, event) => event.type === 'approval/answerer-route' ? event.data.routeId : state })
+    })
 
-    const effective = (agent: Agent): ApprovalPolicy => this.effectivePolicy(agent.session)
+    const effective = (agent: Agent): ApprovalPolicy => this.effectivePolicy(agent)
 
     // The complete current value travels after retained history, so switching
     // policy does not rewrite the stable system-prompt cache prefix.
@@ -182,7 +211,7 @@ export class ApprovalService extends Service {
    * @param policy - the new effective policy.
    */
   setPolicy(agent: Agent, policy: ApprovalPolicy): void {
-    const previous = this.effectivePolicy(agent.session)
+    const previous = this.ownPolicy(agent.session)
     if (previous === policy) return
     setApprovalPolicy(agent.session, policy)
     agent.inject(createUserMessage({
@@ -228,7 +257,7 @@ export class ApprovalService extends Service {
       ...req.callId !== undefined ? { callId: req.callId } : {},
       ...req.reason !== undefined ? { reason: req.reason } : {},
     })
-    const outcome = await this.decide(req, session)
+    const outcome = await this.decide(req, id)
     session.append('approval/decided', { id, outcome })
     return outcome
   }
@@ -240,8 +269,78 @@ export class ApprovalService extends Service {
    * @param session - the exact accepted session whose policy applies.
    * @returns the policy every ask for this session resolves under right now.
    */
-  private effectivePolicy(session: Session): ApprovalPolicy {
+  private ownPolicy(session: Session): ApprovalPolicy {
     return this.overrideOf(session) ?? this.config.policy ?? 'ask'
+  }
+
+  /**
+   * Register an optional answerer lookup for its effect lifetime.
+   * @param id - stable Host-owned route identity.
+   * @param resolver - synchronous current-answerer lookup; undefined fails closed.
+   * @returns disposer that also withdraws requests using this registration.
+   */
+  registerAnswererRoute(id: ApprovalAnswererRouteId,
+    resolver: (origin: Agent, question?: ApprovalRouteQuestion) => ApprovalAnswererRoute | undefined): () => Promise<void> | undefined {
+    return this.ctx.effect(() => {
+      if (this.routes.has(id)) throw new Error(`approval answerer route ${id} is already registered`)
+      const controller = new AbortController()
+      this.routes.set(id, { resolver, controller })
+      return () => { this.routes.delete(id); controller.abort(new Error('approval answerer route disposed')) }
+    }, 'approval.answererRoute()')
+  }
+
+  /**
+   * Bind an entered Session before its first model operation.
+   * @param agent - exact originating Agent.
+   * @param id - registered Host route identity.
+   */
+  bindAnswererRoute(agent: Agent, id: ApprovalAnswererRouteId): void {
+    if (!this.routes.has(id)) throw new Error(`approval answerer route ${id} is unavailable`)
+    const previous = this.routeOf(agent)
+    if (previous === id) return
+    if (previous !== undefined) throw new Error('approval Session is already bound to another answerer route')
+    agent.session.append('approval/answerer-route', { version: 1, routeId: id })
+  }
+
+  /**
+   * Read the durable answerer binding from projected state.
+   * @param agent - originating Agent.
+   * @returns its route binding, if any.
+   */
+  routeOf(agent: Agent): ApprovalAnswererRouteId | undefined {
+    return this.ctx.get('sessionProjections')?.stateOf(agent.session, 'approvalAnswererRoute') ?? undefined
+  }
+
+  /**
+   * Resolve the current interactive answerer.
+   * @param agent - originating Agent.
+   * @returns the routed answerer, or undefined.
+   */
+  answererOf(agent: Agent): Agent | undefined { return this.resolveRoute(agent)?.target.agent }
+
+  /**
+   * Read the policy used by both request decisions and model-facing statements.
+   * @param agent - originating Agent.
+   * @returns its own policy, or the current answerer's policy; unavailable routes use never.
+   */
+  effectivePolicy(agent: Agent): ApprovalPolicy {
+    if (this.routeOf(agent) === undefined) return this.ownPolicy(agent.session)
+    const routed = this.resolveRoute(agent)
+    return routed === undefined ? 'never' : this.ownPolicy(routed.target.agent.session)
+  }
+
+  private resolveRoute(agent: Agent, question?: ApprovalRouteQuestion): { target: ApprovalAnswererRoute; signal: AbortSignal } | undefined {
+    const id = this.routeOf(agent)
+    if (id === undefined) return undefined
+    const route = this.routes.get(id)
+    if (route === undefined || route.controller.signal.aborted) return undefined
+    try {
+      const target = route.resolver(agent, question)
+      if (target === undefined || target.agent === agent) return undefined
+      const agents = this.ctx.get('agents')
+      if (agents !== undefined && agents.get(target.agent.id) !== target.agent) return undefined
+      return { target, signal: route.controller.signal }
+    } catch { return undefined }
   }
 
   /**
@@ -264,28 +363,44 @@ export class ApprovalService extends Service {
    * @param session - the request agent's session used for policy lookup.
    * @returns the normalized closed outcome.
    */
-  private async decide(req: ApprovalRequest, session: Session): Promise<ApprovalOutcome> {
-    const signal = req.signal
+  private async decide(req: ApprovalRequest, id: ApprovalRequestId): Promise<ApprovalOutcome> {
+    const binding = this.routeOf(req.agent)
+    const resolved = binding === undefined ? undefined : this.resolveRoute(req.agent, req)
+    const routed = resolved === undefined ? undefined : { ...resolved,
+      signal: AbortSignal.any([resolved.signal, ...req.signal === undefined ? [] : [req.signal]]) }
+    const signal = routed?.signal ?? req.signal
     if (signal?.aborted) return 'cancelled'
     // The 'never' policy is decided HERE, before any dispatch: a listener
     // registered with `prepend: true` after this service mounts would sit
     // ahead of any gate LISTENER, so a listener-shaped gate cannot keep the
     // documented promise that 'never' rejects deterministically regardless
     // of registration order — only the service's own request path can.
-    if (this.effectivePolicy(session) === 'never') return 'rejected'
+    if (binding !== undefined && routed === undefined) return 'rejected'
+    const answerer = routed?.target.agent ?? req.agent
+    if (this.ownPolicy(answerer.session) === 'never') return 'rejected'
+    const operation = routed?.target.operation
+    const forwarded: ApprovalRequest = routed === undefined ? req : {
+      ...req, agent: answerer, originSessionId: req.agent.id, approvalRequestId: id,
+      ...req.callId === undefined ? {} : { originCallId: req.callId },
+      displaySubject: routed.target.displaySubject,
+      ...routed.target.taskId === undefined ? {} : { taskId: routed.target.taskId },
+      ...operation === undefined ? {} : { originOperation: operation },
+      signal: routed.signal,
+    }
     // Enter the promise chain BEFORE dispatching: a listener that throws
     // SYNCHRONOUSLY (before its first await) must land in the same rejection
     // path as an async one — `Promise.resolve(call())` would let it escape
     // the containment into the caller.
     const answer: Promise<ApprovalOutcome> = Promise.resolve().then(
       () => this.ctx.waterfall(
-        scopeTarget(req.agent, req.agent), 'approval/request', req,
+        scopeTarget(answerer, answerer), 'approval/request', forwarded,
         () => Promise.resolve<ApprovalOutcome>('unavailable'),
       ),
     ).then(
       // Normalize a rogue (non-vocabulary) answerer return to the fail-closed
       // outcome instead of leaking it into callers' closed-union switches.
-      outcome => OUTCOMES.includes(outcome) ? outcome : 'unavailable',
+      outcome => routed !== undefined && operation === undefined && outcome === 'allowed-once'
+        ? 'rejected' : OUTCOMES.includes(outcome) ? outcome : 'unavailable',
       // A throwing answerer must fail the QUESTION closed, not the caller's
       // tool call open — the seam contains its callbacks.
       () => 'unavailable',

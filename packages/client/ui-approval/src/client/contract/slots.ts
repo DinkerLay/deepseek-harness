@@ -1,6 +1,7 @@
 /** Approval composer and optional correlated-detail contracts. */
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ApprovalRequestEvent } from '@deepseek-ai/dsh-user-approval/types'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
@@ -50,6 +51,10 @@ export interface ApprovalDetailOwnerProps {
 
 /** Client-visible fields of an approval request projected through Remote Events. */
 export interface ApprovalPresentationRequest {
+  readonly originSessionId?: SessionId
+  readonly displaySubject?: string
+  readonly taskId?: string
+  readonly originOperation?: ApprovalRequestEvent['originOperation']
   /** Tool requesting the decision. */
   readonly toolName: string
   /** Tool call correlated with the request. */
@@ -72,6 +77,14 @@ export type ApprovalInteractionKind = 'approval'
 
 /** One answerable Client presentation of a pending Host waterfall. */
 export class PendingApproval {
+  /** Session whose recorded operation is being answered through another Agent. */
+  readonly originSessionId: SessionId | undefined
+  /** Host-resolved subject shown beside a routed request. */
+  readonly displaySubject: string | undefined
+  /** Optional task hint supplied by the routing integration. */
+  readonly taskId: string | undefined
+  /** Host-copied parameters from the originating Session's recorded operation. */
+  readonly originOperation: ApprovalRequestEvent['originOperation']
   /** Domain discriminator used by Session pending-interaction consumers. */
   readonly kind: 'approval'
   /** Opaque render identity and one-shot remount axis. */
@@ -103,6 +116,10 @@ export class PendingApproval {
     nextApprovalKey += 1
     this.key = `approval:${String(nextApprovalKey)}`
     this.toolName = request.toolName
+    this.originSessionId = request.originSessionId
+    this.displaySubject = request.displaySubject
+    this.taskId = request.taskId
+    this.originOperation = request.originOperation
     this.callId = request.callId
     this.reason = request.reason
     this.displayReason = request.displayReason
@@ -137,6 +154,9 @@ export class PendingApproval {
    */
   answer(outcome: ApprovalDecision): Promise<void> {
     return settlePendingComposer(() => {
+      if (outcome === 'allowed-once' && this.originSessionId !== undefined && this.originOperation === undefined) {
+        throw new Error('routed approval requires the original operation details')
+      }
       this.finish(() => { this.#resolve(outcome) })
     }, 'pending approval settlement failed')
   }

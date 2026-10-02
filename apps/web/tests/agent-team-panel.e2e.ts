@@ -81,7 +81,7 @@ describe('web e2e: Agent Teams panel', () => {
     await scaffold?.close()
   })
 
-  it('rejects a direct delegation call from the assembled Web Team Lead', async () => {
+  it('leaves the official Preset delegation schema unchanged when Team is mounted', async () => {
     const lead = scaffold.ctx.agents.list()[0]
     if (lead === undefined) throw new Error('connected Team workspace did not create a Lead')
     const result = await scaffold.ctx.tools.execute({
@@ -89,8 +89,11 @@ describe('web e2e: Agent Teams panel', () => {
       arguments: {}, agent: lead, signal: new AbortController().signal,
     })
     expect(result.isError).toBe(true)
-    expect(result.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''))
-      .toContain('Team members must delegate through Agent Team')
+    const error = result.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('')
+    expect(error).toContain('invalid arguments')
+    expect(error).toContain('description')
+    expect(error).toContain('prompt')
+    expect(error).not.toContain('Team members must delegate through Agent Team')
   })
 
   it('displays agent-owned task changes through a read-only board without a refresh action', async () => {

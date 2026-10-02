@@ -86,6 +86,8 @@ ctx.tools.register(defineTool({
 
 工具的 `projectContent` 在执行后策略之前安装执行期间准备的图文内容。策略仍可替换或阻止这些内容；`finalizeContent` 保留为策略之后的最终内容处理。
 
+Host 集成可在执行前策略之前注册操作准备处理。准备处理可用 `ToolRunContext.wrapDispatch()` 捕获操作局部状态；即使调用等待审批后才执行，捕获的包装仍作用于那一次主体。注册随释放撤销，不改变可见工具。
+
 ### Host 展示描述
 
 工具可以为 Host 本地消费方保留纯函数 `presentCall()` 与 `presentResult()` 方法。内置 Web Client 不消费这些值，而是通过 `tool.call.toolview` 选择 renderer，并从原始调用参数、结果内容、失败状态与持久 metadata 派生 card props。[Client 派生展示决策](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.zh.md)负责该 transport 拆分。

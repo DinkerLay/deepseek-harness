@@ -249,6 +249,11 @@ interface ToolRunContext extends ToolExecution {
    * conclude the enclosing run.
    */
   concludeTurn(): void
+  /**
+   * Capture an execution-scoped dispatch wrapper before policy evaluation.
+   * @param wrapper - Host wrapper that delegates once to the captured dispatch.
+   */
+  wrapDispatch?(wrapper: (next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>): void
 }
 ```
 
@@ -593,6 +598,14 @@ executionMode(exec: ToolExecutionInput): ToolExecutionMode
  * @returns the materialized final result.
  */
 async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
+
+/**
+ * Register optional per-execution preparation before all policy listeners.
+ * With no registration the native pipeline retains its original dispatch timing.
+ * @param prepare - trusted Host initialization for this exact execution.
+ * @returns the registration disposer.
+ */
+registerExecutionPreparation(prepare: (exec: ToolRunContext) => void | Promise<void>): () => Promise<void> | undefined
 ```
 
 Types: [ScopeKey](scope.md)

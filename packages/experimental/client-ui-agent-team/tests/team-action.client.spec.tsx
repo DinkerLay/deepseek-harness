@@ -252,6 +252,20 @@ describe('TeamAction', () => {
     expect(b.injected.openTeammate).toHaveBeenCalledWith(SESSION, WORKER)
   })
 
+  it('keeps an unstarted member visible without opening a nonexistent execution Session', () => {
+    const b = bench()
+    setProjection(b.sessions, SESSION, { members: [lead, { ...worker, executionStarted: false }], tasks: [] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const row = screen.getByRole('button', { name: /worker.*未启动/u })
+    expect(row).toHaveProperty('disabled', true)
+    fireEvent.click(row)
+    expect(b.injected.openTeammate).not.toHaveBeenCalled()
+    setProjection(b.sessions, SESSION, { members: [lead, { ...worker, executionStarted: true }], tasks: [] })
+    fireEvent.click(screen.getByRole('button', { name: /worker.*未运行/u }))
+    expect(b.injected.openTeammate).toHaveBeenCalledWith(SESSION, WORKER)
+  })
+
   it('renders the Lead projection and applies later projection frames without any user action', async () => {
     const b = bench()
     render(<TeamAction {...b.props} />)

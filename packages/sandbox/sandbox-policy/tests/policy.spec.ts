@@ -43,6 +43,26 @@ async function policyContext(ctx: Context, activeSession: Session): Promise<stri
 }
 
 describe('SandboxPolicyService', () => {
+  it('keeps a captured operation policy while a later operation uses the newly selected mode', async () => {
+    const ctx = await mounted({ mode: 'workspace-write' })
+    const current = session('captured-operation', '/workspace')
+    const snapshot = ctx.sandboxPolicy.capture(current)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const operation = ctx.sandboxPolicy.withSnapshot(snapshot, async () => {
+      entered.resolve(undefined)
+      await release.promise
+      return ctx.sandboxPolicy.resolve({ session: current })
+    })
+    await entered.promise
+    setSandboxMode(current, 'danger-full-access')
+    expect(ctx.sandboxPolicy.resolve({ session: current }).mode).toBe('danger-full-access')
+    expect(ctx.sandboxPolicy.capture(current).mode).toBe('danger-full-access')
+    release.resolve(undefined)
+    expect((await operation).mode).toBe('workspace-write')
+    await ctx.fiber.dispose()
+  })
+
   it('defaults to read-only under the process cwd', async () => {
     const ctx = await mounted()
     expect(ctx.sandboxPolicy.defaultMode).toBe('read-only')

@@ -208,6 +208,22 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
 
 /**
+ * Capture current standing policy independently of an enclosing operation.
+ * @param session - Session whose current mode and immutable workspace apply.
+ * @returns immutable policy for the new operation.
+ */
+capture(session: Session): SandboxExecutionPolicy
+
+/**
+ * Resolve one operation under its captured policy despite later mode changes.
+ * Explicit approved overrides retain priority over the standing snapshot.
+ * @param policy - immutable policy captured for this operation.
+ * @param operation - enforcing provider calls belonging to this operation.
+ * @returns the operation's result.
+ */
+withSnapshot<T>(policy: SandboxExecutionPolicy, operation: () => Promise<T>): Promise<T>
+
+/**
  * Read the session override without applying the deployment default.
  * @param session - session whose log supplies the override.
  * @returns the last logged mode, or `undefined` without one.

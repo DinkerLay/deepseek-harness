@@ -432,6 +432,11 @@ export interface ToolRunContext extends ToolExecution {
    * conclude the enclosing run.
    */
   concludeTurn(): void
+  /**
+   * Capture an execution-scoped dispatch wrapper before policy evaluation.
+   * @param wrapper - Host wrapper that delegates once to the captured dispatch.
+   */
+  wrapDispatch?(wrapper: (next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>): void
 }
 
 /** Registry-owned live execution object; public pipeline views stay readonly. */
@@ -822,6 +827,9 @@ export class ToolRuntime extends Service {
 
   /** Context deferred by a running tool body, keyed by its scheduler-owned execution. */
   private deferredContexts = new WeakMap<ToolRunContext, UserMessage[]>()
+  private dispatchWrappers = new WeakMap<ToolRunContext,
+    Array<(next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>>>()
+  private executionPreparers = new Map<symbol, (exec: ToolRunContext) => void | Promise<void>>()
   /** Executions whose tool body declared the current turn complete. */
   private concludingExecutions = new WeakSet<ToolExecution>()
   /** Original caller cancellation, kept outside the wrapper-mutable execution object. */
@@ -1390,6 +1398,7 @@ export class ToolRuntime extends Service {
 
   private createExecution(exec: ToolExecutionInput): ScheduledToolPreparation | { kind: 'ready'; exec: MutableToolRunContext } {
     const deferredContexts: UserMessage[] = []
+    const dispatchWrappers: Array<(next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>> = []
     const token = createExecutionToken()
     const callId = exec.callId
     const rootCallId = exec.rootCallId ?? callId
@@ -1422,6 +1431,9 @@ export class ToolRuntime extends Service {
       concludeTurn(): void {
         concludingExecutions.add(this as unknown as ToolExecution)
       },
+      wrapDispatch(wrapper: (next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>): void {
+        dispatchWrappers.push(wrapper)
+      },
     }
     // Capture the finalizer BEFORE argument materialization: the
     // `finalizeContent` contract snapshots the callback when the call starts,
@@ -1444,6 +1456,7 @@ export class ToolRuntime extends Service {
       }
       const execution: MutableToolRunContext = { ...base, arguments: deepFreeze(detached) }
       this.deferredContexts.set(execution, deferredContexts)
+      this.dispatchWrappers.set(execution, dispatchWrappers)
       this.contentFinalizers.set(execution, finalizerFor())
       if (!collapsed) this.contentProjectors.set(execution, capturedProjector)
       this.cancellationStates.set(execution, {
@@ -1490,6 +1503,20 @@ export class ToolRuntime extends Service {
     return this.prepareExecution(input, prepared => prepared)
   }
 
+  /**
+   * Register optional per-execution preparation before all policy listeners.
+   * With no registration the native pipeline retains its original dispatch timing.
+   * @param prepare - trusted Host initialization for this exact execution.
+   * @returns the registration disposer.
+   */
+  registerExecutionPreparation(prepare: (exec: ToolRunContext) => void | Promise<void>): () => Promise<void> | undefined {
+    const id = Symbol()
+    return this.ctx.effect(() => {
+      this.executionPreparers.set(id, prepare)
+      return () => { this.executionPreparers.delete(id) }
+    }, 'tools.executionPreparation()')
+  }
+
   private async prepareExecution<T>(
     input: ToolExecutionInput,
     next: (prepared: ScheduledToolPreparation) => T | PromiseLike<T>,
@@ -1502,6 +1529,7 @@ export class ToolRuntime extends Service {
     }
     try {
       const carrier = scopeTarget(this, exec.agent)
+      for (const prepare of this.executionPreparers.values()) await prepare(exec)
       const gate = await this.ctx.waterfall(
         carrier, 'tools/pre-execute', exec,
         () => Promise.resolve<PreToolDecision>({ kind: 'allow' }),
@@ -1602,10 +1630,13 @@ export class ToolRuntime extends Service {
     try {
       const mutableExec = exec as MutableToolRunContext
       const carrier = scopeTarget(this, exec.agent)
-      const result = await this.ctx.waterfall(
-        carrier, 'tools/execute', mutableExec,
-        () => this.dispatchToolBody(mutableExec),
-      )
+      let dispatch = (): Promise<ToolExecutionResult> => this.ctx.waterfall(
+        carrier, 'tools/execute', mutableExec, () => this.dispatchToolBody(mutableExec))
+      for (const wrapper of (this.dispatchWrappers.get(exec) ?? []).toReversed()) {
+        const next = dispatch
+        dispatch = () => wrapper(next)
+      }
+      const result = await dispatch()
       const normalized = this.normalizeDispatchResult(exec, result)
       const deferredContexts = this.deferredContexts.get(exec)
       /* v8 ignore next -- dispatch only receives executions minted by this registry's prepare stage */

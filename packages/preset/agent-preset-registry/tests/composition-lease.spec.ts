@@ -12,18 +12,16 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
 async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
 
 describe('creation composition lease', () => {
-  it('captures a declared tool allowance in the Preset revision and scope inventory', async () => {
+  it('captures the Preset display name with its declaration revision', async () => {
     const ctx = await setup()
-    const first = await declare(ctx, { ...contribution('standard'), allowedTools: ['standard'] })
+    const first = await declare(ctx, { ...contribution('standard'), name: 'Standard display' })
     const original = await ctx.agentPresets.acquireComposition('standard')
-    expect(original.allowedTools).toEqual(['standard'])
-    expect(original.inheritedToolNames).toContain('standard')
-    expect(original.presetToolNames).toContain('standard')
+    expect(original.name).toBe('Standard display')
     await first.dispose()
     await declare(ctx, contribution('standard'))
     await using replacement = await ctx.agentPresets.acquireComposition('standard')
-    expect(replacement.allowedTools).toBeUndefined()
-    expect(replacement.revision).not.toBe(original.revision)
+    expect(replacement.name).toBeUndefined()
+    expect(replacement.revision).toBe(original.revision)
     await original[Symbol.asyncDispose]()
   })
   it('keeps a portable declaration revision across resolver base URLs', async () => {

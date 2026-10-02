@@ -29,12 +29,12 @@ interface TeamMemberSnapshot {
 
 Every member starts in `provisioning` and reaches `active` or `failed`. The Lead can move an active or failed member through `retiring` to `retired` after settling assignments and mail; the Session and immutable name remain. A configured member retains its Preset id and declaration revision across creation and cold continuation. Roster `running`/`inactive` status is derived separately and never rewrites this record.
 
-A product composition may persist one immutable controlled-mode record before opening Team tools. The official composition leaves it absent. A controlled Team keeps its required Task writer, permission-table revision, optional ordinary-message limit, and optional member tool ceiling across restarts; member-to-member direct messages are rejected before queueing.
+A product composition may persist one immutable controlled-mode record before opening Team tools. The official composition leaves it absent. A controlled Team keeps its required Task writer, permission-table revision, and optional ordinary-message limit across restarts; member-to-member direct messages are rejected before queueing. The released member-tool-limit fields remain in the persistence definition only.
 
 A user-managed composition record separately tracks dynamic, applying, or fixed roster policy. The official Team remains dynamic without this record. Applying persists an opaque product target and blocks ordinary member changes; fixed rejects model-driven member creation and retirement. The native Lead log also retains the Profile association and the optional slot id, so cold recovery does not need a second member store.
 
 ```ts type-equiv
-/** Optional Team-wide ceiling on tools available to teammates. */
+/** Retired tool-limit fields retained only to describe released persistent records. */
 interface TeamMemberToolLimit {
   /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
   readonly allow?: readonly string[]
@@ -56,7 +56,7 @@ interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
-  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  /** Retired field retained for the released persistence definition; runtime neither reads nor writes it. */
   readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 ```
@@ -73,6 +73,8 @@ interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+  /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
 }
 ```
 
@@ -97,6 +99,8 @@ interface TeamMessageSource {
   readonly messageId: TeamMessageId
   readonly senderId: SessionId
   readonly senderName: string
+  /** Attribution aligned with the delivered blocks, including system framing. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
 }
 ```
 
@@ -149,7 +153,7 @@ interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
-  readonly notices?: readonly TeamMessageSnapshot[]
+  readonly notices?: readonly TeamExtensionNotice[]
 }
 ```
 
@@ -183,6 +187,8 @@ interface TeamMemberProjection {
   readonly preset?: TeamPresetBinding
   readonly slotId?: string
   readonly error?: string
+  /** Controlled-only state derived from durable input delivery receipts. */
+  readonly executionStarted?: boolean
 }
 ```
 
@@ -252,14 +258,6 @@ membership(agent: Agent): TeamMembership
 controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
- * Whether a persisted Team ceiling permits one member tool registration.
- * @param agent - exact Team caller whose pinned mode supplies the ceiling.
- * @param name - tool name checked before registration or direct use.
- * @returns true when the member may see and call this tool.
- */
-memberToolAllowed(agent: Agent, name: string): boolean
-
-/**
  * Read the durable Team composition policy; an untouched Team is dynamic.
  * @param agent - exact live Team member whose root owns the policy.
  * @returns a detached current policy value.
@@ -290,25 +288,11 @@ async commitComposition( caller: Agent, build: (snapshot: TeamCompositionSnapsho
 defaultMemberPresetId(): string | undefined
 
 /**
- * Read the installed Task writer's running-Attempt admission for one exact member.
+ * Read product-owned next-action hints after a controlled member releases work.
  * @param agent - exact live Team member.
- * @returns whether the member has a running product Attempt.
+ * @returns text supplied by the installed extension without Team interpretation.
  */
-hasRunningAttempt(agent: Agent): boolean
-
-/**
- * Read extension-declared standby tools; each tool still owns its authorization check.
- * @param agent - exact live Team member.
- * @returns additional tool names admitted during standby.
- */
-standbyToolNames(agent: Agent): readonly string[]
-
-/**
- * Read product-owned open offers after a controlled member releases work.
- * @param agent - exact live Team member.
- * @returns claimable Task ids supplied by the installed extension.
- */
-claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[]
+releaseHints(agent: Agent): readonly string[]
 
 /**
  * List the runtime-enriched roster visible to one Team member.

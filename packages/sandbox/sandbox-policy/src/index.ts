@@ -21,6 +21,7 @@
  */
 
 import { isAbsolute } from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import z from '@deepseek-ai/schemastery'
@@ -108,6 +109,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
  * mode log and immutable cwd travel together to every enforcing capability.
  */
 export class SandboxPolicyService extends Service {
+  private readonly snapshots = new AsyncLocalStorage<ReadonlyMap<string, SandboxExecutionPolicy>>()
   // Inline schema call: the config catalog walks `static Config` statically.
   static Config: z<Config> = z.object({
     mode: z.union(['read-only', 'workspace-write', 'danger-full-access'] as const).default('read-only'),
@@ -163,11 +165,36 @@ export class SandboxPolicyService extends Service {
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
+    const snapshot = session === undefined ? undefined : this.snapshots.getStore()?.get(session.id)
     return {
-      mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
+      mode: request.mode ?? snapshot?.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }
+  }
+
+  /**
+   * Capture current standing policy independently of an enclosing operation.
+   * @param session - Session whose current mode and immutable workspace apply.
+   * @returns immutable policy for the new operation.
+   */
+  capture(session: Session): SandboxExecutionPolicy {
+    return Object.freeze({ mode: this.overrideOf(session) ?? this.defaultMode,
+      workspaceRoot: resolveWorkspaceRoot(session.header.cwd ?? this.workspaceRoot), sessionId: session.id })
+  }
+
+  /**
+   * Resolve one operation under its captured policy despite later mode changes.
+   * Explicit approved overrides retain priority over the standing snapshot.
+   * @param policy - immutable policy captured for this operation.
+   * @param operation - enforcing provider calls belonging to this operation.
+   * @returns the operation's result.
+   */
+  withSnapshot<T>(policy: SandboxExecutionPolicy, operation: () => Promise<T>): Promise<T> {
+    if (policy.sessionId === undefined) return operation()
+    const snapshots = new Map(this.snapshots.getStore())
+    snapshots.set(policy.sessionId, policy)
+    return this.snapshots.run(snapshots, operation)
   }
 
   /**

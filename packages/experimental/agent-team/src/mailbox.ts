@@ -5,7 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
@@ -14,6 +14,7 @@ import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
+import type { TeamState } from './projection.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
@@ -22,13 +23,56 @@ import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
   TeamMessageSnapshot,
+  TeamMessageSource,
 } from './types.ts'
+
+/** Complete content delivered to a Team target, including stable sender attribution.
+ * @param message - durable Team notice.
+ * @param state - optional Team projection used to include controlled startup framing.
+ * @returns the sender-framed content blocks admitted to the target inbox.
+ */
+export function teamMessageDeliveryContent(message: TeamMessageSnapshot, state?: TeamState): ContentBlock[] {
+  const member = state?.mode === undefined ? undefined : state.members.find(candidate => candidate.id === message.targetId)
+  const unstarted = member !== undefined && !state?.messages.some(candidate =>
+    candidate.targetId === member.id && state.delivered.includes(candidate.id))
+  return [
+    ...unstarted ? [{ type: 'text' as const, text: `<system-reminder>
+You are teammate "${member.name}" in group "${member.group ?? 'unassigned'}". Your Team Lead is "lead".
+Work only on an assigned running Task. Without one, coordinate but do not research, run commands, or edit files. A Lead message or broadcast does not assign work. Apply to claim broadcasts and wait for Lead approval and assignment.
+Read accepted DAG upstream results through the Task Board. Submit results for Lead acceptance; ordinary messages, broadcasts and comments never replace results. Send blockers and questions only to lead. Follow the Task requirements for scope, user conditions and acceptance criteria.
+</system-reminder>` }] : [],
+    { type: 'text', text: `Team message ${message.id} from ${message.senderName}:` },
+    ...structuredClone(message.content),
+  ]
+}
+
+/** UTF-8 bytes of the exact Team content admitted to the target inbox.
+ * @param message - durable Team notice.
+ * @param state - optional Team projection used to include controlled startup framing.
+ * @returns complete sender-framed delivery size.
+ */
+export function teamMessageDeliveryBytes(message: TeamMessageSnapshot, state?: TeamState): number {
+  return Buffer.byteLength(JSON.stringify(teamMessageDeliveryContent(message, state)), 'utf8')
+}
+
+/** Preserve author attribution while adding system-owned delivery framing. */
+function teamMessageSource(teamId: TeamId, message: TeamMessageSnapshot, state: TeamState): TeamMessageSource {
+  const framing = teamMessageDeliveryContent(message, state).length - message.content.length
+  const parts = message.contentParts?.length === message.content.length
+    ? [...message.contentParts] : message.content.map(() => 'fact' as const)
+  return { kind: 'team-message', teamId, messageId: message.id, senderId: message.senderId,
+    senderName: message.senderName,
+    ...state.mode === undefined ? {} : {
+      contentParts: [...Array.from({ length: framing }, () => 'fact' as const), ...parts],
+    } }
+}
 
 /** Owns every process-local state transition for the durable Team mailbox. */
 export class TeamMailbox {
   private readonly dispatchTails = new Map<SessionId, Promise<void>>()
   private readonly inFlightMessages = new Set<TeamMessageId>()
   private readonly inFlightDispatches = new Set<Promise<unknown>>()
+  private readonly retries = new Map<TeamMessageId, { attempts: number; timer?: ReturnType<typeof setTimeout> }>()
 
   /**
    * @param ctx - Team service context with Agent, Session, persistence, and subagent services.
@@ -45,7 +89,14 @@ export class TeamMailbox {
     private readonly lifecycle: TeamRuntimeLifecycle,
     private readonly maxPendingMessagesPerMember: number,
     private readonly maxMessageBytes: number,
-  ) {}
+    private readonly retryDelayMs: number,
+    private readonly maxRetries: number,
+  ) {
+    lifecycle.signal.addEventListener('abort', () => {
+      for (const retry of this.retries.values()) clearTimeout(retry.timer)
+      this.retries.clear()
+    }, { once: true })
+  }
 
   /**
    * Queue one durable peer message, then attempt immediate delivery.
@@ -172,16 +223,18 @@ export class TeamMailbox {
         senderName: membership.name,
         targetId: target.id,
         content,
+        ...state.mode === undefined ? {} : { contentParts: content.map(block =>
+          block.type === 'text' ? 'sender' as const : 'fact' as const) },
       }
       const ordinaryLimit = state.mode?.maxOrdinaryMessageBytes
-      const deliveryBytes = Buffer.byteLength(JSON.stringify(this.deliveryContent(queued)), 'utf8')
+      const deliveryBytes = teamMessageDeliveryBytes(queued)
       if (ordinaryLimit !== undefined && deliveryBytes > ordinaryLimit) {
         throw new TeamError(
-          `ordinary Team message exceeds ${ordinaryLimit} bytes; submit Task results for Lead acceptance and pass accepted results through direct Task prerequisites`,
+          `ordinary Team message exceeds ${ordinaryLimit} bytes; submit Task results for Lead acceptance and pass accepted results through Task prerequisites`,
           'TEAM_MESSAGE_TOO_LARGE',
         )
       }
-      if (deliveryBytes > this.maxMessageBytes) {
+      if (teamMessageDeliveryBytes(queued, state) > this.maxMessageBytes) {
         throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
       await this.journal.appendAndFlush(root, 'team/message/queued', {
@@ -278,6 +331,34 @@ export class TeamMailbox {
   /** Attempt one queued delivery after target-local ordering admits it. */
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
+      const state = this.journal.state(root)
+      const member = state.mode === undefined ? undefined : state.members.find(candidate => candidate.id === message.targetId)
+      if (member !== undefined) {
+        if (member.phase !== 'active') return false
+        try {
+          const registry = this.ctx.get('agentPresets')
+          if (registry === undefined || member.preset === undefined) throw new TeamError('registered member Preset is unavailable', 'TEAM_PRESET_UNAVAILABLE')
+          await using lease = await registry.acquireComposition(member.preset.id)
+          if (lease.revision !== member.preset.revision) throw new TeamError('registered member Preset revision changed; rebuild the member', 'TEAM_PRESET_UNAVAILABLE')
+        } catch (error: unknown) {
+          const entered = this.ctx.sessions.get(member.id)
+          if (state.messages.some(candidate => candidate.targetId === member.id && state.delivered.includes(candidate.id))
+            || entered !== undefined && (this.ctx.get('sessionProjections')
+              ?.stateOf(entered, 'subagentInputReceipts')?.length ?? 0) > 0) throw error
+          await this.roster.failRegisteredMember(root, member.id, errorMessage(error))
+          const notification = this.journal.state(root).messages.find(candidate => candidate.id === TeamMessageId(`team-start-failed-${member.id}`))
+          if (notification !== undefined) await this.tryDispatch(root, notification, signal)
+          return false
+        }
+        const input = createUserMessage({ content: teamMessageDeliveryContent(message, state),
+          source: teamMessageSource(TeamId(root.id), message, state) })
+        await this.ctx.subagents.deliverContinuableInput({ childId: member.id, provider: member.provider,
+          label: member.description, preset: member.preset,
+          request: { parent: root, prompt: [...input.content] }, signal,
+        }, Object.freeze({ ...input, id: brandString<MessageId>(message.id) }))
+        await this.markDelivered(root, message.id, message.targetId)
+        return true
+      }
       const target = message.targetId === root.id ? root : this.ctx.agents.get(message.targetId)
       if (target !== undefined && this.targetRecorded(target.session, message.id)) {
         return await this.checkpointDelivered(root, target.session, message.id)
@@ -289,7 +370,7 @@ export class TeamMailbox {
         senderId: message.senderId,
         senderName: message.senderName,
       }
-      const content = this.deliveryContent(message)
+      const content = teamMessageDeliveryContent(message)
       if (message.targetId === root.id) {
         const input = createUserMessage({ content, source })
         root.steer(input)
@@ -309,8 +390,37 @@ export class TeamMailbox {
         : await this.checkpointDelivered(root, target.session, message.id)
     } catch (error: unknown) {
       this.ctx.logger.warn(`team message "${message.id}" remains queued: ${errorMessage(error)}`)
+      if (!signal.aborted && this.journal.state(root).mode !== undefined) this.scheduleRetry(root, message)
       return false
     }
+  }
+
+  /** Retry unresolved controlled deliveries while their owning root remains live. */
+  private scheduleRetry(root: Agent, message: TeamMessageSnapshot): void {
+    if (this.lifecycle.disposed) return
+    const retry = this.retries.get(message.id) ?? { attempts: 0 }
+    if (retry.timer !== undefined) return
+    if (retry.attempts >= this.maxRetries) {
+      void this.trackDispatch(this.journal.transact(root.id, async () => {
+        const id = TeamMessageId(`team-start-incomplete-${message.id}`)
+        if (this.journal.state(root).messages.some(candidate => candidate.id === id)) return
+        await this.journal.appendAndFlush(root, 'team/message/queued', { version: 2, teamId: TeamId(root.id),
+          message: { id, senderId: root.id, senderName: 'lead', targetId: root.id,
+            content: [{ type: 'text', text: `Delivery of Team message ${message.id} remains unconfirmed after retries. Inspect its member and Tasks; cancel pending mail explicitly if needed.` }] } })
+      }).then(async () => {
+        const notice = this.journal.state(root).messages.find(candidate => candidate.id === TeamMessageId(`team-start-incomplete-${message.id}`))
+        if (notice !== undefined) await this.tryDispatch(root, notice, this.lifecycle.signal)
+      }).catch((error: unknown) => { this.ctx.logger.warn(`Team delivery retry notification failed: ${errorMessage(error)}`) }))
+      return
+    }
+    retry.attempts += 1
+    retry.timer = setTimeout(() => {
+      delete retry.timer
+      if (this.ctx.agents.get(root.id) !== root || this.lifecycle.disposed) return
+      void this.tryDispatch(root, message, this.lifecycle.signal)
+    }, this.retryDelayMs * retry.attempts)
+    retry.timer.unref()
+    this.retries.set(message.id, retry)
   }
 
   /** Flush one live target receipt before the Lead records its delivered edge. */
@@ -339,6 +449,9 @@ export class TeamMailbox {
         messageId,
         targetId,
       })
+      const retry = this.retries.get(messageId)
+      if (retry !== undefined) clearTimeout(retry.timer)
+      this.retries.delete(messageId)
     })
   }
 
@@ -348,14 +461,6 @@ export class TeamMailbox {
     const suffix = session.snapshotEvents(session.inheritedEventCount)
     return messageAccepted(suffix, message => message.source.kind === 'team-message'
       && message.source.messageId === messageId)
-  }
-
-  /** Frame peer content with stable sender and message identity for the receiving model. */
-  private deliveryContent(message: TeamMessageSnapshot): ContentBlock[] {
-    return [
-      { type: 'text', text: `Team message ${message.id} from ${message.senderName}:` },
-      ...structuredClone(message.content),
-    ]
   }
 
   /** Read an inactive target's durable log before cold resume; uncertainty keeps the mailbox queued. */

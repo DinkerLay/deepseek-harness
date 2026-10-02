@@ -18,9 +18,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { ReasoningEffortId, contentHasImage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId, MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, Session } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionObservation, SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import {
@@ -44,7 +44,7 @@ import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
 import type { ActivationObserver } from './lifecycle.ts'
-import type { SubagentSettlementNoticeFacts } from './types.ts'
+import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } from './types.ts'
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
@@ -55,7 +55,7 @@ import type {
 } from './types.ts'
 
 /** Inputs shared by model steering and human prompt delivery. */
-type ChildDeliveryOptions =
+type ChildDeliveryOptions = (
   | {
     readonly delivery: 'steer'
     /**
@@ -66,6 +66,7 @@ type ChildDeliveryOptions =
     readonly signal: AbortSignal
   }
   | { readonly delivery: 'queue'; readonly source: MessageSource; readonly signal: AbortSignal }
+  ) & { readonly messageId?: MessageId }
 
 /** Package-private hooks supplied by the owning service. */
 interface ContinuationHost {
@@ -74,7 +75,8 @@ interface ContinuationHost {
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
   /** Admit one parent-visible settlement notice after the child has flushed its final state. */
-  sendSettlementNotice(facts: SubagentSettlementNoticeFacts): Promise<boolean>
+  sendSettlementNotice(facts: SubagentSettlementNoticeFacts):
+  Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>
 }
 
 /**
@@ -85,6 +87,8 @@ interface ContinuationHost {
  */
 export class SubagentContinuationManager {
   private readonly activations: ContinuableActivationRegistry
+  private readonly inputDeliveries = new Map<SessionId, Promise<void>>()
+  private readonly acceptedInputs = new WeakMap<Activation, Set<MessageId>>()
 
   constructor(
     private readonly ctx: Context,
@@ -188,7 +192,8 @@ export class SubagentContinuationManager {
           isAdjacentAgentSendMessageTool(this.ctx.get('tools')?.get('send_message', activation.handle.agent))
             ? withContinuableReturnGuidance(parent.id, request.prompt)
             : request.prompt,
-          { source: { kind: 'user' }, signal: spec.signal, delivery: 'queue' },
+          { source: spec.initialSource ?? { kind: 'user' }, signal: spec.signal, delivery: 'queue',
+            ...spec.initialMessageId === undefined ? {} : { messageId: spec.initialMessageId } },
           parent,
           () => { establishCatalogChild(parent.session, childHeader, descriptor) },
         )
@@ -198,6 +203,131 @@ export class SubagentContinuationManager {
       releaseHold()
       throw error
     }
+  }
+
+  /**
+   * Start or resume a caller-reserved child and checkpoint one identified input.
+   * Concurrent callers share a child-local reservation without holding its
+   * execution lock while waiting for receipt or teardown.
+   * @param spec - creation inputs and reserved child identity.
+   * @param input - host-owned message whose id is stable across retries.
+   * @returns identities after the input has reached durable child history.
+   */
+  async deliverContinuableInput(
+    spec: ContinuableStartSpec & { readonly childId: SessionId },
+    input: UserMessage,
+  ): Promise<ContinuableStart> {
+    const { childId, signal } = spec
+    while (true) {
+      signal.throwIfAborted()
+      const settled = Promise.withResolvers<void>()
+      const reservation = await this.activations.locks.run<{ previous: Promise<void> | undefined }>(childId, () => {
+        this.activations.assertAdmitting(spec.request.parent)
+        const previous = this.inputDeliveries.get(childId)
+        if (previous !== undefined) return Promise.resolve({ previous })
+        this.inputDeliveries.set(childId, settled.promise)
+        return Promise.resolve({ previous: undefined })
+      })
+      if (reservation.previous !== undefined) {
+        await this.waitInputProgress(signal, reservation.previous)
+        continue
+      }
+      try {
+        while (true) {
+          signal.throwIfAborted()
+          const session = this.requireSessions().get(childId)
+          if (session !== undefined) {
+            this.activations.authorizeLineage(spec.request.parent, childId, session.header.parentSession)
+            await this.requireSessions().flush(session)
+            if (this.liveInputRecorded(session, input.id)) {
+              return { childId, messageId: input.id }
+            }
+          } else {
+            const stored = await this.requirePersistence().stat(childId, { signal })
+            if (stored !== undefined) {
+              using observed = await this.requireSessionQuery().observeSession(childId, { signal })
+              this.activations.authorizeLineage(spec.request.parent, childId, observed.header.parentSession)
+              if (this.inputRecorded(observed.events.slice(observed.inheritedEventCount), input.id)) {
+                return { childId, messageId: input.id }
+              }
+            }
+          }
+          const running = await this.activations.locks.run(childId, () => {
+            const activation = this.activations.get(childId)
+            return Promise.resolve(activation === undefined ? undefined : {
+              activation,
+              closing: activation.inbox.closing,
+              accepted: this.acceptedInputs.get(activation)?.has(input.id) === true,
+            })
+          })
+          if (running?.closing !== undefined) {
+            await this.waitInputProgress(signal, running.closing)
+            continue
+          }
+          if (running?.accepted) {
+            await this.waitForReceiptProgress(childId, input.id, signal)
+            continue
+          }
+          const stored = await this.requirePersistence().stat(childId, { signal })
+          if (stored === undefined && running === undefined) {
+            await this.startContinuable({ ...spec, initialSource: input.source,
+              initialMessageId: input.id, request: { ...spec.request, prompt: [...input.content] } })
+          } else {
+            await this.deliverToChild(spec.request.parent, childId, [...input.content], {
+              source: input.source, messageId: input.id, signal, delivery: 'steer',
+            })
+          }
+        }
+      } finally {
+        this.inputDeliveries.delete(childId)
+        settled.resolve()
+      }
+    }
+  }
+
+  /** Test a host-reserved input identity in the child's own persisted history. */
+  private requireSessions() {
+    const sessions = this.ctx.get('sessions')
+    if (sessions === undefined) throw new SubagentError('identified delivery requires the Session service', 'NOT_RESUMABLE')
+    return sessions
+  }
+
+  /** Test a host-reserved input identity in the child's own persisted history. */
+  private inputRecorded(events: readonly SessionEvent[], id: MessageId): boolean {
+    return events.some(event => event.type === 'user/message' && event.data.id === id)
+  }
+
+  private liveInputRecorded(session: Session, id: MessageId): boolean {
+    return this.ctx.get('sessionProjections')?.stateOf(session, 'subagentInputReceipts')?.includes(id) === true
+  }
+
+  /** Wait for a reservation or teardown without retaining the child's lock. */
+  private async waitInputProgress(signal: AbortSignal, progress: Promise<unknown>): Promise<void> {
+    signal.throwIfAborted()
+    const aborted = Promise.withResolvers<never>()
+    const onAbort = (): void => { aborted.reject(signal.reason) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try { await Promise.race([progress, aborted.promise]) }
+    finally { signal.removeEventListener('abort', onAbort) }
+  }
+
+  /** Observe log or residency progress; register before the receipt recheck. */
+  private async waitForReceiptProgress(childId: SessionId, messageId: MessageId, signal: AbortSignal): Promise<void> {
+    const progress = Promise.withResolvers<void>()
+    const stopEvent = this.ctx.on('session/event', (session) => {
+      if (session.id === childId) progress.resolve()
+    })
+    const stopDisposed = this.ctx.on('session/disposed', (session) => {
+      if (session.id === childId) progress.resolve()
+    })
+    try {
+      const session = this.requireSessions().get(childId)
+      if (session === undefined || this.activations.get(childId) === undefined) return
+      await this.requireSessions().flush(session)
+      if (this.activations.get(childId) === undefined
+        || this.liveInputRecorded(session, messageId)) return
+      await this.waitInputProgress(signal, progress.promise)
+    } finally { stopDisposed(); stopEvent() }
   }
 
   /**
@@ -506,16 +636,39 @@ export class SubagentContinuationManager {
     options: ChildDeliveryOptions,
     parent: Agent,
   ): MessageId {
+    if (options.messageId !== undefined && [...activation.handle.agent.inbox.nextTurn,
+      ...activation.handle.agent.inbox.nextStep].some(message => message.id === options.messageId)) {
+      const agent = activation.handle.agent
+      if (agent.wakePending === undefined) {
+        throw new SubagentError('continuable input recovery requires a driver that can wake its durable inbox', 'NOT_RESUMABLE')
+      }
+      agent.wakePending()
+      this.recordAcceptedInput(activation, options.messageId)
+      return options.messageId
+    }
     const message = options.source === undefined
       ? createAgentMessage(parent, content)
       : createUserMessage({ content, source: options.source })
-    return this.activations.submitAdmitted(
+    const identified = options.messageId === undefined ? message : Object.freeze({ ...message, id: options.messageId })
+    const messageId = this.activations.submitAdmitted(
       activation,
-      message,
+      identified,
       options.delivery,
       parent,
       options.signal,
     )
+    this.recordAcceptedInput(activation, messageId)
+    return messageId
+  }
+
+  /** Retain one accepted identity for both queued wake-up and ordinary delivery. */
+  private recordAcceptedInput(activation: Activation, messageId: MessageId): void {
+    let accepted = this.acceptedInputs.get(activation)
+    if (accepted === undefined) {
+      accepted = new Set()
+      this.acceptedInputs.set(activation, accepted)
+    }
+    accepted.add(messageId)
   }
 
   /** Refuse image content for a child whose fixed model accepts text only. */

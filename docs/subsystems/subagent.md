@@ -199,7 +199,7 @@ interface ContinuableStart {
 }
 ```
 
-When a resident Activation settles, the manager normally delivers one notice to the child's durable direct parent describing how that epoch ended and carrying the nonempty text blocks from its final assistant output, or `It left no closing message.` when none remain. An optional `registerSettlementNoticePolicy()` registration receives the flushed child-log interval, parent-log starting position, stop reason, and final output before that delivery. One explicit suppress decision omits only the parent notice; absent, failed, timed-out, or conflicting decisions deliver it. The decision occurs before the ownership release that would let the parent be judged settled. A parent whose own lineage is already tearing down receives an admitted notice without a wake. Its source has a distinct kind so a transcript never presents a runtime account as something the child wrote.
+When a resident Activation settles, the manager normally delivers one notice to the child's durable direct parent describing how that epoch ended and carrying the nonempty text blocks from its final assistant output, or `It left no closing message.` when none remain. An optional `registerSettlementNoticePolicy()` registration receives the flushed child-log interval, parent-log starting position, stop reason, and final output before that delivery. One explicit suppress decision omits only the parent notice; absent, failed, timed-out, or conflicting decisions deliver it. A synchronous wording callback may supply the parent-facing subject and detail even if the asynchronous decision times out; the notice source still identifies the exact child Session. The decision occurs before the ownership release that would let the parent be judged settled. A parent whose own lineage is already tearing down receives an admitted notice without a wake. Its source has a distinct kind so a transcript never presents a runtime account as something the child wrote.
 
 ```ts type-equiv
 /**
@@ -513,12 +513,31 @@ resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
 async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
 
 /**
+ * Deliver a stable host input once, creating or resuming its reserved child.
+ * Completion confirms durable input receipt, not completion of model work.
+ * @param spec - creation inputs with a caller-reserved child id.
+ * @param input - immutable host message with a retry-stable identity.
+ * @returns the child and durably recorded input identities.
+ */
+async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId }, input: UserMessage): Promise<ContinuableStart>
+
+/**
+ * Align a live direct child's sandbox and permission selection with its parent.
+ * Approval remains child-owned; unchanged values append no events.
+ * @param parent - exact live direct parent supplying current permission state.
+ * @param child - exact live child initialized before its next operation.
+ */
+synchronizeContinuablePermissions(parent: Agent, child: Agent): void
+
+/**
  * Register one optional parent-notice policy for continuable Activations.
- * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+ * Unclaimed, conflicting, failed, or timed-out decisions preserve delivery;
+ * one unambiguous wording provider still names the child on that path.
  * @param policy - runtime-only policy re-registered by its owner after a restart.
+ * @param wording - optional synchronous wording retained when decision evaluation times out.
  * @returns disposer for the registration effect.
  */
-registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void
+registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void
 
 /**
  * Steer one model-authored message to the sender's direct parent or direct
@@ -678,7 +697,7 @@ list(): string[]
 async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 ```
 
-Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [SessionId](core.md)
+Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [SessionId](core.md) · [UserMessage](session.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
 

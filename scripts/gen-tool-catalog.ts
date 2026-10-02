@@ -602,8 +602,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
         tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
         membership: () => membership,
         controlledMode: () => undefined,
-        hasRunningAttempt: () => false,
-      } satisfies Pick<TeamService, 'tryMembership' | 'membership' | 'controlledMode' | 'hasRunningAttempt'>
+      } satisfies Pick<TeamService, 'tryMembership' | 'membership' | 'controlledMode'>
       ctx.provide('agentTeams', Object.assign(Object.create(null), teamFixture) as TeamService)
       await ctx.plugin(Object.assign(async (inner: Context) => {
         agent = {

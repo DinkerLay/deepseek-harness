@@ -9,10 +9,10 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import SubagentService from '@deepseek-ai/dsh-subagent'
+import SubagentService, { SubagentRunId } from '@deepseek-ai/dsh-subagent'
+import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } from '@deepseek-ai/dsh-subagent'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { deliverSubagentPrompt, type HostPromptDeliverer } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
@@ -167,21 +167,11 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
 }
 
 describe('controlled member settlement notices', () => {
-  it('omits only the first pure standby reply and keeps later completed runs visible', async () => {
-    const reasonedReady: StreamChunk[] = [
-      { type: 'block-start', index: 0, blockType: 'reasoning' },
-      { type: 'reasoning-delta', index: 0, text: 'I am on standby.' },
-      { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'I am on standby.' } },
-      { type: 'block-start', index: 1, blockType: 'text' },
-      { type: 'text-delta', index: 1, text: 'Ready.' },
-      { type: 'block-end', index: 1, block: { type: 'text', text: 'Ready.' } },
-      { type: 'usage', usage: { inputTokens: 10, outputTokens: 6 } },
-      { type: 'finish', reason: { kind: 'stop' } },
-    ]
-    const { ctx, lead } = await setup([
-      reasonedReady, textResponse('Work finished.'), textResponse('Lead noticed completion'),
+  it('registers without a standby run and starts only on the first durable Team input', async () => {
+    const { ctx, lead, adapter } = await setup([
+      textResponse('Work finished.'), textResponse('Lead noticed completion'),
     ], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' } }, true)
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } }, true)
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
       validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
@@ -198,10 +188,9 @@ describe('controlled member settlement notices', () => {
     const settled: SessionId[] = []
     ctx.on('subagent/end', (info) => { settled.push(info.id) })
     const member = await spawn(ctx, lead, 'standby-worker', { group: 'collectors' })
-    await vi.waitFor(() => { expect(settled).toContain(member.member.id) })
-    expect(observed[0]?.firstInputOnly).toBe(true)
-    expect(observed[0]?.events.flatMap(event => event.type === 'user/message'
-      ? [event.data.source.kind] : [])).toContain('agent-instructions')
+    expect(adapter.requests).toHaveLength(0)
+    expect(await ctx.sessionPersistence.stat(member.member.id)).toBeUndefined()
+    expect(member.member.executionStarted).toBe(false)
     expect(lead.session.snapshotEvents().filter(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled')).toHaveLength(0)
     expect(lead.inbox.nextTurn.filter(message => message.source.kind === 'subagent-settled')).toHaveLength(0)
@@ -209,7 +198,10 @@ describe('controlled member settlement notices', () => {
     await ctx.agentTeams.sendMessage(lead, {
       target: 'standby-worker', content: content('continue'), signal: SIGNAL,
     })
-    await vi.waitFor(() => { expect(settled).toHaveLength(2) })
+    await vi.waitFor(() => { expect(settled).toHaveLength(1) })
+    expect(observed[0]?.events.flatMap(event => event.type === 'user/message'
+      ? [event.data.source.kind] : [])).toContain('team-message')
+    expect(ctx.agentTeams.listMembers(lead).find(candidate => candidate.id === member.member.id)?.executionStarted).toBe(true)
     await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled')).toBe(true) })
     writer.dispose()
@@ -221,13 +213,17 @@ describe('controlled member settlement notices', () => {
     await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled'
       && event.data.source.senderSessionId === member.member.id)).toBe(true) })
+    const notice = lead.session.snapshotEvents().find(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled')
+    expect(notice?.type === 'user/message' && notice.data.content[0]?.type === 'text'
+      ? notice.data.content[0].text : '').toContain('Background subagent')
   })
 
   it('delegates later completed runs to the bound product Task reader', async () => {
     const { ctx, lead } = await setup([
-      textResponse('Ready.'), textResponse('Work is recorded elsewhere'),
+      textResponse('Work is recorded elsewhere'),
     ], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' } }, true)
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } }, true)
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const observed: string[] = []
     const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
@@ -237,11 +233,10 @@ describe('controlled member settlement notices', () => {
     const settled: SessionId[] = []
     ctx.on('subagent/end', (info) => { settled.push(info.id) })
     const member = await spawn(ctx, lead, 'accounted-worker', { group: 'collectors' })
-    await vi.waitFor(() => { expect(settled).toHaveLength(1) })
     await ctx.agentTeams.sendMessage(lead, {
       target: 'accounted-worker', content: content('continue'), signal: SIGNAL,
     })
-    await vi.waitFor(() => { expect(settled).toHaveLength(2) })
+    await vi.waitFor(() => { expect(settled).toHaveLength(1) })
     expect(observed).toHaveLength(1)
     expect(lead.session.snapshotEvents().filter(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled')).toHaveLength(0)
@@ -257,20 +252,63 @@ describe('controlled member settlement notices', () => {
       textResponse('Lead noticed')] },
     { description: 'no closing text', script: [[{ type: 'finish' as const, reason: { kind: 'stop' as const } }],
       textResponse('Lead noticed')] },
-  ])('keeps the first settlement after $description', async ({ script }) => {
+  ])('keeps the first settlement after $description', async ({ description, script }) => {
     const { ctx, lead } = await setup(script, { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
     } }, true)
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
-      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+      validateMemberGroup: () => undefined, unsubmittedTaskIds: () => {
+        if (description === 'different final output') throw new Error('Task reader unavailable')
+        return [TeamTaskId('task-7')]
+      },
+      create: unavailable, update: unavailable })
     const member = await spawn(ctx, lead, 'unusual-standby', { group: 'collectors' })
+    await ctx.agentTeams.sendMessage(lead, { target: 'unusual-standby', content: content('Inspect the assigned Task'), signal: SIGNAL })
     await vi.waitFor(() => { expect(lead.session.snapshotEvents().some(event => event.type === 'user/message'
       && event.data.source.kind === 'subagent-settled'
       && event.data.source.senderSessionId === member.member.id)).toBe(true) })
+    const notice = lead.session.snapshotEvents().find(event => event.type === 'user/message'
+      && event.data.source.kind === 'subagent-settled')
+    expect(notice?.type === 'user/message' && notice.data.content[0]?.type === 'text'
+      ? notice.data.content[0].text : '').toContain('Teammate unusual-standby')
+    if (description !== 'different final output') {
+      expect(notice?.type === 'user/message' && notice.data.content[0]?.type === 'text'
+        ? notice.data.content[0].text : '').toContain('Unsubmitted Tasks: task-7')
+    }
     writer.dispose()
   })
+
+  it.each(['failed', 'retiring', 'retired'] as const)(
+    'keeps the teammate name when its roster phase is %s', async (phase) => {
+      const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+        requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+        permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } })
+      const childId = SessionId(`settled-${phase}`)
+      const member = { id: childId, name: `worker-${phase}`, description: 'Worker',
+        provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+      lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+      if (phase !== 'failed') lead.session.append('team/member/configured', {
+        version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'active' },
+      })
+      if (phase === 'retired') lead.session.append('team/member/configured', {
+        version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'retiring' },
+      })
+      lead.session.append('team/member/configured', {
+        version: 3, teamId: TeamId(lead.id), member: { ...member, phase },
+      })
+      const decide = Reflect.get(ctx.subagents, 'sendSettlementNotice') as (
+        facts: SubagentSettlementNoticeFacts,
+      ) => Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>
+      const result = await decide.call(ctx.subagents, {
+        runId: SubagentRunId(`run-${phase}`), parentSessionId: lead.id, childSessionId: childId,
+        stopReason: 'error', startSeq: SessionLogOffset(0), endSeq: SessionLogOffset(0),
+        parentStartSeq: SessionLogOffset(0), events: [], firstInputOnly: false,
+      })
+      expect(result).toMatchObject({ action: 'send', subject: `Teammate worker-${phase}` })
+    },
+  )
 })
 
 describe('Team identity and provisioning', () => {
@@ -391,6 +429,58 @@ describe('Team identity and provisioning', () => {
     await Promise.resolve()
   })
 
+  it('shows controlled request models without changing the official roster model contract', async () => {
+    for (const controlled of [false, true]) {
+      const { ctx, lead } = await setup([], controlled ? { controlledMode: {
+        kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+        permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
+      } } : {})
+      lead.session.append('request/header', {
+        header: { config: { provider: 'mock', model: 'lead-selected' } }, reason: 'initial',
+      })
+      const childId = SessionId('selected-model-child')
+      for (const phase of ['provisioning', 'active'] as const) {
+        lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id),
+          member: { id: childId, name: 'model-worker', description: 'Model metadata test',
+            provider: 'spawn', context: 'fresh', phase } })
+      }
+      const child = await ctx.agents.create({ sessionId: childId,
+        meta: { parentSession: lead.id }, agentOptions: { provider: 'mock', model: 'child-created' } })
+      child.agent.session.append('request/header', {
+        header: { config: { provider: 'mock', model: 'child-selected' } }, reason: 'initial',
+      })
+      const rows = ctx.agentTeams.listMembers(lead)
+      expect(rows[0]?.model).toBe(controlled ? 'lead-selected' : 'mock')
+      expect(rows[1]?.model).toBe(controlled ? 'child-selected' : 'child-created')
+      expect(lead.options.model).toBe('mock')
+      expect(child.agent.options.model).toBe('child-created')
+    }
+  })
+
+  it('uses the inherited model only before a controlled member starts', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
+    } })
+    lead.session.append('request/header', {
+      header: { config: { provider: 'mock', model: 'lead-selected' } }, reason: 'initial',
+    })
+    const childId = SessionId('stored-model-child')
+    for (const phase of ['provisioning', 'active'] as const) {
+      lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id),
+        member: { id: childId, name: 'stored-worker', description: 'Unloaded metadata test',
+          provider: 'spawn', context: 'fresh', phase } })
+    }
+    expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ model: 'lead-selected', executionStarted: false })
+    const messageId = TeamMessageId('model-test-delivery')
+    lead.session.append('team/message/queued', { version: 2, teamId: TeamId(lead.id),
+      message: { id: messageId, senderId: lead.id, senderName: 'lead', targetId: childId, content: content('Start') } })
+    lead.session.append('team/message/delivered', { version: 2, teamId: TeamId(lead.id), messageId, targetId: childId })
+    const row = ctx.agentTeams.listMembers(lead)[1]
+    expect(row).toMatchObject({ executionStarted: true })
+    expect(row).not.toHaveProperty('model')
+  })
+
   it('creates fresh and fork teammates with immutable names and bounded roster size', async () => {
     const { ctx, lead } = await setup([
       textResponse('lead answer'),
@@ -476,7 +566,7 @@ describe('Team identity and provisioning', () => {
 
   it('persists controlled mode before Team work and rejects member-to-member private messages', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1' }
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
     const { ctx, lead } = await setup([], { controlledMode: mode })
     expect(ctx.agentTeams.controlledMode(lead)).toEqual(mode)
     expect(lead.session.snapshotEvents().find(event => event.type.startsWith('team/'))?.type).toBe('team/mode')
@@ -519,17 +609,27 @@ describe('Team identity and provisioning', () => {
     const oversized = ctx.agentTeams.sendMessage(worker.agent, {
       target: 'lead', content: content('x'.repeat(1000)), signal: SIGNAL,
     })
-    await expect(oversized).rejects.toMatchObject({ code: 'TEAM_MESSAGE_TOO_LARGE' })
+    await expect(oversized).rejects.toMatchObject({ code: 'TEAM_MESSAGE_TOO_LARGE',
+      message: 'ordinary Team message exceeds 256 bytes; submit Task results for Lead acceptance and pass accepted results through Task prerequisites' })
     await expect(oversized).rejects.toThrow('submit Task results')
     expect(lead.session.snapshotEvents().filter(event => event.type === 'team/message/queued')).toHaveLength(0)
     expect(ctx.agentTeams.controlledMode(lead)?.maxOrdinaryMessageBytes).toBe(256)
     await worker.dispose()
   })
 
+  it('rejects a controlled deployment without a valid ordinary-message cap', async () => {
+    for (const value of [undefined, 0, -1, 1.5, Number.NaN]) {
+      await expect(setup([], { controlledMode: { kind: 'controlled',
+        requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+        permissionRevision: 'revision-1', maxOrdinaryMessageBytes: value } } as never)).rejects.toThrow()
+    }
+    await expect(setup([], {})).resolves.toBeDefined()
+  })
+
   it('generates the controlled first input in the service and rejects inherited context', async () => {
     const { ctx, lead } = await setup([textResponse('ready')], { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
     } }, true)
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
@@ -538,15 +638,26 @@ describe('Team identity and provisioning', () => {
       }, create: unavailable, update: unavailable })
     await expect(spawn(ctx, lead, 'fork-worker', { context: 'fork', presetId: 'reviewer' }))
       .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
-    const started = await spawn(ctx, lead, 'collector-one', { group: 'collectors', presetId: 'reviewer' })
+    const started = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'collector-one', group: 'collectors', presetId: 'reviewer',
+      prompt: [], context: 'fresh', provider: 'spawn', signal: SIGNAL,
+    })
+    expect(started.member.description).toBe('reviewer')
+    expect(await ctx.sessionPersistence.stat(started.member.id)).toBeUndefined()
+    const sent = await ctx.agentTeams.sendMessage(lead, {
+      target: 'collector-one', content: content('Consult the Task Board'), signal: SIGNAL,
+    })
     const events = await storedEvents(ctx, started.member.id)
     const first = events.find(event => event.type === 'user/message')
     const firstText = first?.type === 'user/message'
       ? first.data.content.filter(block => block.type === 'text').map(block => block.text).join('\n') : ''
-    expect(firstText).toContain('Remain on standby until a Task is assigned')
-    expect(firstText).toContain('Do not call any tool, including send_message')
+    expect(firstText).toContain('Work only on an assigned running Task')
+    expect(firstText).toContain('Consult the Task Board')
+    expect(first?.type === 'user/message' && first.data.source.kind === 'team-message'
+      ? first.data.source.messageId : undefined).toBe(sent.messageId)
     expect(firstText).toContain('collector-one')
     expect(firstText).toContain('collectors')
+    expect(firstText).not.toContain('Your responsibility')
     expect(firstText).not.toContain('collector-one initial')
     policy.dispose()
   })
@@ -554,7 +665,7 @@ describe('Team identity and provisioning', () => {
   it('fails closed before reserving a controlled member when the group policy is absent or rejects', async () => {
     const { ctx, lead } = await setup([], { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
     } }, true)
     await expect(spawn(ctx, lead, 'missing-policy', { group: 'collectors', presetId: 'reviewer' }))
       .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_UNAVAILABLE' })
@@ -569,126 +680,52 @@ describe('Team identity and provisioning', () => {
     policy.dispose()
   })
 
-  it('filters inherited tools by the member Preset and rejects extra Preset tools before provisioning', async () => {
+  it('keeps failed first-delivery mail for explicit cancellation before retirement', async () => {
+    const { ctx, lead, removeReviewer } = await setup([textResponse('Inspect the failed member')], { controlledMode: {
+      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
+    } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const member = await spawn(ctx, lead, 'changed-preset', { group: 'collectors', presetId: 'reviewer' })
+    await removeReviewer?.()
+    const result = await ctx.agentTeams.sendMessage(lead, {
+      target: 'changed-preset', content: content('Inspect the Task Board'), signal: SIGNAL,
+    })
+    expect(result.status).toBe('queued')
+    expect(ctx.agentTeams.listMembers(lead).find(row => row.id === member.member.id)?.status).toBe('failed')
+    expect(await ctx.sessionPersistence.stat(member.member.id)).toBeUndefined()
+    await expect(ctx.agentTeams.retireTeammate(lead, 'changed-preset')).rejects.toMatchObject({ code: 'TEAM_MEMBER_HAS_MESSAGES' })
+    expect(await ctx.agentTeams.cancelPendingMessages(lead, 'changed-preset', 'Rebuild with a new Preset')).toEqual([result.messageId])
+    expect((await ctx.agentTeams.retireTeammate(lead, 'changed-preset')).status).toBe('retired')
+    writer.dispose()
+  })
+
+  it('keeps inherited and Preset tools available to a controlled member', async () => {
     const { ctx, lead } = await setup(['hang'], { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
     } }, true)
-    ctx.tools.register({ name: 'unsafe_global', description: 'not for members',
+    ctx.tools.register({ name: 'global_tool', description: 'Host tool',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-      execute: () => Promise.resolve('unsafe'),
+      execute: () => Promise.resolve('global'),
     })
-    await ctx.agentPresets.register({ id: 'restricted', allowedTools: ['review_only'],
-      plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } }] })
-    await ctx.agentPresets.register({ id: 'unsafe-restricted', allowedTools: ['review_only'],
-      plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } },
-        { name: PRESET_TOOL, config: { tool: 'extra_tool' } }] })
+    await ctx.agentPresets.register({ id: 'tool-rich', plugins: [
+      { name: PRESET_TOOL, config: { tool: 'preset_tool' } },
+    ] })
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
       validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
-    await expect(spawn(ctx, lead, 'unsafe-worker', { group: 'collectors', presetId: 'unsafe-restricted' }))
-      .rejects.toMatchObject({ code: 'TEAM_UNSAFE_PRESET' })
-    expect(durable(lead).members).toEqual([])
-    const started = await spawn(ctx, lead, 'safe-worker', { group: 'collectors', presetId: 'restricted' })
+    const started = await spawn(ctx, lead, 'tool-rich-worker', { group: 'collectors', presetId: 'tool-rich' })
+    await ctx.agentTeams.sendMessage(lead, { target: 'tool-rich-worker', content: content('Consult the Task Board'), signal: SIGNAL })
     const child = await waitRunning(ctx, started.member.id)
     const scope = scopeOf(child.ctx)
-    expect(scope).toBeDefined()
-    expect(ctx.tools.get('review_only', scope)).toBeDefined()
-    expect(ctx.tools.get('unsafe_global', scope)).toBeUndefined()
-    const denied = await ctx.tools.execute({ callId: ToolCallId('restricted-member-direct'),
-      name: 'unsafe_global', arguments: {}, agent: child, signal: SIGNAL })
-    expect(denied.isError).toBe(true)
-    policy.dispose()
-  })
-
-  it('pins a Team member ceiling and intersects it with a Preset allowance', async () => {
-    const { ctx, lead } = await setup(['hang'], { controlledMode: {
-      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
-      memberToolLimit: { allow: ['web_search', 'team_task_list'], deny: ['web_fetch'] },
-    } }, true)
-    for (const name of ['web_search', 'web_fetch']) {
-      ctx.tools.register({ name, description: name,
-        parameters: { type: 'object', properties: {}, additionalProperties: false },
-        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-        execute: () => Promise.resolve(name),
-      })
-    }
-    await ctx.agentPresets.register({ id: 'limited', allowedTools: ['web_search', 'web_fetch'], plugins: [] })
-    const unavailable = async (): Promise<never> => { throw new Error('not used') }
-    const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
-      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
-    const started = await spawn(ctx, lead, 'limited-worker', { group: 'collectors', presetId: 'limited' })
-    const child = await waitRunning(ctx, started.member.id)
-    const scope = scopeOf(child.ctx)
-    expect(ctx.agentTeams.controlledMode(lead)?.memberToolLimit).toEqual({
-      allow: ['web_search', 'team_task_list'], deny: ['web_fetch'],
-    })
-    expect(ctx.tools.get('web_search', scope)).toBeDefined()
-    expect(ctx.tools.get('web_fetch', scope)).toBeUndefined()
-    expect((await ctx.tools.execute({ callId: ToolCallId('team-ceiling-direct'),
-      name: 'web_fetch', arguments: {}, agent: child, signal: SIGNAL })).isError).toBe(true)
-    const stored = await storedEvents(ctx, lead.id)
-    expect(stored.find(event => event.type === 'team/mode')?.data.mode.memberToolLimit?.deny).toEqual(['web_fetch'])
-    policy.dispose()
-  })
-
-  it('rejects a fully initialized member catalog with an undeclared scoped tool before first delivery', async () => {
-    const { ctx, lead } = await setup([], { controlledMode: {
-      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
-    } }, true)
-    await ctx.agentPresets.register({ id: 'restricted', allowedTools: ['review_only'],
-      plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } }] })
-    const unavailable = async (): Promise<never> => { throw new Error('not used') }
-    const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
-      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
-    ctx.on('agent/created', ({ agent }) => {
-      if (agent.id === lead.id) return
-      agent.ctx.tools.register({ name: 'unexpected_local', description: 'unapproved member tool',
-        parameters: { type: 'object', properties: {}, additionalProperties: false },
-        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-        execute: () => Promise.resolve('unexpected'),
-      })
-    })
-    await expect(spawn(ctx, lead, 'unsafe-local', { group: 'collectors', presetId: 'restricted' }))
-      .rejects.toMatchObject({ code: 'TEAM_UNSAFE_PRESET' })
-    expect(durable(lead).members).toMatchObject([{ name: 'unsafe-local', phase: 'failed' }])
-    const childId = durable(lead).members[0]?.id
-    if (childId !== undefined) await waitNoAgent(ctx, childId)
-    policy.dispose()
-  })
-
-  it('keeps the Preset tool restriction when a controlled member cold-resumes', async () => {
-    const { ctx, lead, adapter } = await setup([
-      textResponse('Ready.'), textResponse('Lead receives settlement'),
-      textResponse('Ready again.'), textResponse('Lead receives follow-up'),
-    ], { controlledMode: {
-      kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
-    } }, true)
-    ctx.tools.register({ name: 'unsafe_global', description: 'not for members',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
-      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-      execute: () => Promise.resolve('unsafe'),
-    })
-    await ctx.agentPresets.register({ id: 'restricted', allowedTools: ['review_only'],
-      plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } }] })
-    const unavailable = async (): Promise<never> => { throw new Error('not used') }
-    const policy = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
-      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
-    const started = await spawn(ctx, lead, 'restricted-worker', { group: 'collectors', presetId: 'restricted' })
-    await waitNoAgent(ctx, started.member.id)
-    const delivered = await ctx.agentTeams.sendMessage(lead, {
-      target: 'restricted-worker', content: content('continue'), signal: SIGNAL,
-    })
-    expect(delivered.status).toBe('accepted')
-    await waitNoAgent(ctx, started.member.id)
-    const restrictedRequests = adapter.requests.filter(request =>
-      request.tools?.some(tool => tool.name === 'review_only'))
-    expect(restrictedRequests.length).toBeGreaterThanOrEqual(2)
-    expect(restrictedRequests.every(request => !request.tools?.some(tool => tool.name === 'unsafe_global'))).toBe(true)
+    expect(ctx.tools.get('global_tool', scope)).toBeDefined()
+    expect(ctx.tools.get('preset_tool', scope)).toBeDefined()
+    expect((await ctx.tools.execute({ callId: ToolCallId('member-global-tool'),
+      name: 'global_tool', arguments: {}, agent: child, signal: SIGNAL })).isError).toBe(false)
     policy.dispose()
   })
 
@@ -738,7 +775,7 @@ describe('Team identity and provisioning', () => {
     await ctx.plugin(SubagentService)
     await ctx.plugin(TeamService, { controlledMode: {
       kind: 'controlled', requiredTaskExtensionId: 'test-writer',
-      permissionTableId: 'test-policy', permissionRevision: 'revision-1',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096,
     } })
     const rootId = SessionId('controlled-race')
     const entered = Promise.withResolvers<undefined>()
@@ -786,7 +823,7 @@ describe('Team identity and provisioning', () => {
     disposeProjection()
     await ctx.plugin(TeamService, { controlledMode: { kind: 'controlled',
       requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
-      permissionRevision: 'revision-1' } })
+      permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } })
     expect(ctx.agentTeams.controlledMode(lead)).toBeUndefined()
     expect(ctx.agentTeams.listTasks(lead)).toHaveLength(1)
     await expect(ctx.agentTeams.createTask(lead, { subject: 'New', description: 'Must not convert old Team' }))
@@ -798,21 +835,6 @@ describe('Team identity and provisioning', () => {
     expect(lead.session.snapshotEvents().filter(event => event.type === 'team/mode')).toEqual([])
   })
 
-  it('rejects an unsafe declared Preset before reserving a controlled teammate', async () => {
-    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
-      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
-      permissionRevision: 'revision-1' } }, true)
-    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockResolvedValue({
-      id: 'unsafe', revision: 'a'.repeat(64),
-      compositionRows: [{ entryId: 'delegation', moduleName: '@deepseek-ai/dsh-tool-subagent', enabled: true }],
-      inheritedToolNames: [], presetToolNames: [],
-      mount: async () => ({ id: 'unsafe' }),
-      [Symbol.asyncDispose]: async () => undefined,
-    })
-    await expect(spawn(ctx, lead, 'unsafe-worker', { presetId: 'unsafe' }))
-      .rejects.toMatchObject({ code: 'TEAM_UNSAFE_PRESET' })
-    expect(durable(lead).members).toEqual([])
-  })
 
   it('refuses an explicit Preset without the registry before reserving a member', async () => {
     const { ctx, lead } = await setup([])
@@ -1298,8 +1320,11 @@ describe('Team shared task DAG', () => {
     })
     const sender = await spawn(ctx, lead, 'debater', { group: 'debaters', presetId: 'reviewer' })
     const target = await spawn(ctx, lead, 'collector', { group: 'collectors', presetId: 'reviewer' })
+    await handle.commitRecord(lead, () => ({ recordId: 'start-debater', dataJson: '{}', notices: [{
+      id: TeamMessageId('start-debater-input'), senderId: lead.id, senderName: 'lead',
+      targetId: sender.member.id, content: content('Inspect the Task Board'),
+    }] }))
     const senderAgent = await waitRunning(ctx, sender.member.id)
-    await waitRunning(ctx, target.member.id)
     const noticeId = TeamMessageId('member-task-notice')
     await handle.commit(senderAgent, () => ({
       updates: [{ previousRevision: null, task: {
@@ -1414,6 +1439,47 @@ describe('Team shared task DAG', () => {
     expect(ctx.agentTeams.listTasks(lead)).toEqual([])
     expect(lead.session.snapshotEvents().filter(event => event.type === 'team/task/transaction')).toEqual([])
     handle.dispose()
+  })
+
+  it('checks marked extension notices against the complete ordinary-message limit atomically', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'notice-writer', permissionTableId: 'test-policy',
+      permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 180 },
+    maxMessageBytes: 2048, maxPendingMessagesPerMember: 1 })
+    vi.spyOn(teamInternals(ctx).mailbox, 'tryDispatch').mockResolvedValue(false)
+    for (const name of ['first', 'second']) {
+      const member = { id: SessionId(`notice-${name}`), name, description: name,
+        provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+      lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id), member })
+      lead.session.append('team/member', { version: 2, teamId: TeamId(lead.id),
+        member: { ...member, phase: 'active' } })
+    }
+    await ctx.sessions.flush(lead.session)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'notice-writer',
+      create: unavailable, update: unavailable })
+    const notices = [
+      { id: TeamMessageId('broadcast-first'), senderId: lead.id, senderName: 'lead',
+        targetId: SessionId('notice-first'), content: content('short'), ordinaryMessageLimit: true as const },
+      { id: TeamMessageId('broadcast-second'), senderId: lead.id, senderName: 'lead',
+        targetId: SessionId('notice-second'), content: content('x'.repeat(300)), ordinaryMessageLimit: true as const },
+    ]
+    await expect(writer.commitRecord(lead, () => ({ recordId: 'broadcast-1', dataJson: '{}', notices })))
+      .rejects.toMatchObject({ code: 'TEAM_MESSAGE_TOO_LARGE' })
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/extension')).toEqual([])
+    const accepted = [{ ...notices[0]!, content: content('short') },
+      { ...notices[1]!, content: content('short') }]
+    await writer.commitRecord(lead, () => ({ recordId: 'broadcast-1', dataJson: '{}', notices: accepted }))
+    const event = lead.session.snapshotEvents().find(item => item.type === 'team/extension')
+    expect(event?.type === 'team/extension' ? event.data.notices : []).toHaveLength(2)
+    expect(event?.type === 'team/extension' ? event.data.notices?.[0] : undefined)
+      .not.toHaveProperty('ordinaryMessageLimit')
+    await expect(writer.commitRecord(lead, () => ({ recordId: 'broadcast-2', dataJson: '{}',
+      notices: accepted.map(notice => ({ ...notice,
+        id: TeamMessageId(`again-${notice.id}`) })) })))
+      .rejects.toMatchObject({ code: 'TEAM_MAILBOX_FULL' })
+    expect(lead.session.snapshotEvents().filter(item => item.type === 'team/extension')).toHaveLength(1)
+    writer.dispose()
   })
 
   it('lets one outer writer atomically update the native Board without a second Team service', async () => {

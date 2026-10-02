@@ -55,26 +55,27 @@ kind: "package-reference"
 | `maxTaskExtensionBytes` | `262,144` | 单次原子 Team 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
 | `disposalTimeoutMs` | `5,000` | 关闭清理允许的时间 |
-| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订，以及可选的普通消息字节上限与成员工具上限 |
+| `controlledMode` | 未设置 | 在新 Team 开放工具前持久写入的不可变 Task 写入方、权限表修订和必填的普通消息字节上限 |
 | `defaultMemberPresetId` | 未设置 | 未显式指定 Preset 时使用的产品默认成员 Preset；不设置则保留继承 Lead 的行为 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 ### Teammate
 
-请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
+请 Lead 用唯一的小写名字（例如 `reviewer`）创建 teammate。官方模式下，请求还要描述其职责并选择 fresh 或 fork 上下文。受控模式从绑定的 Preset 取得显示标签，不接受调用方编写的职责，并使用 fresh 上下文。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
 
 可选的 `presetId` 会将 teammate 绑定到已声明的 Agent Preset。roster 记录声明修订值，冷恢复要求同一修订；声明变更时成员保持 inactive，不会悄悄使用不同的工具或指令继续。显式 Preset 要求安装 Agent Preset registry。不传 `presetId` 时，优先使用已配置的 `defaultMemberPresetId`；否则保持普通的继承组合。
 
-teammate 还可带有不可变的 `group` 标签，不改变其名字或 Session 身份。受控模式在预留成员前由必需的 Task 扩展校验组名；扩展缺席时拒绝创建。roster 还检查租约所保留的 Preset 代际，并拒绝声明的委派插件。Preset 的 `allowedTools` 声明会收窄继承工具、拒绝 Preset 自有的额外工具，并在首次或冷投递前核对成员的最终工具目录。服务端将调用者编写的首轮工作替换为固定待命输入，要求成员只回复“Ready.”、不调用工具或发消息，并要求 fresh 上下文。
+teammate 还可带有不可变的 `group` 标签，不改变名字或 Session 身份。受控模式在预留成员前由必需的 Task 扩展校验组名，扩展缺席时拒绝创建。roster 核对 Preset 修订、不检查工具，要求 fresh 上下文；登记时不创建执行 Session。首条 mailbox 投递才用身份说明和实际输入启动该 Session。持久输入身份使重试和重启不重复投递。
 
-受控 Team 还可在模式记录中固定 `memberToolLimit.allow` 和／或 `memberToolLimit.deny`。继承工具同时遵守 Preset 允许清单与 Team 上限；原生和扩展的 Team 工具在 teammate 作用域注册前也检查同一上限，最终目录校验拒绝额外的同作用域工具。被禁止的工具不在目录中，直接调用由原有工具运行时拒绝。未配置上限时保留官方 Team 行为。
 
-受控 Team 在新建过程仍保有初始提示 ID 时，不把纯首轮“Ready.”结束通知送进 Lead 对话；若冷恢复中断导致无法确认这个 ID，则照送。绑定的 Task 扩展可以用持久通知核算后续正常结束的运行。失败或无法核算的运行仍按原生方式提醒，官方 Team 不注册这项策略。
+绑定的 Task 扩展可以用持久业务通知核算已结束的运行。保留的通知在任何成员阶段都写明名字；扩展能回答时，只列出指派已被处理但尚未提交的 Task。登记不会产生待命模型回合；官方 Team 保留立即创建和原生 Subagent 措辞。
 
-最终成员工具目录核对与 Agent Loop 使用同一份 `@deepseek-ai/dsh-scope` 运行时。本包把 Scope 声明为 peer 依赖，避免生产 bundle 生成第二个作用域身份；构建产物测试核对此边界。目录服务或作用域缺失时，成员准入失败，不绕过 Preset 允许清单。
+本包把 `@deepseek-ai/dsh-scope` 声明为 peer 依赖，避免生产 bundle 与 Agent Loop 使用不同的作用域身份；构建产物测试核对此边界。
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
+
+受控 roster 查询显示最近已知请求的模型；成员尚未启动时显示继承的 Lead 模型。已启动成员的模型查不到时省略，不根据 Lead 推测。这只改变显示，不改变模型选择；官方 roster 行为不变。
 
 只有 Lead 可以创建 teammate 或中断它们。
 
@@ -86,7 +87,7 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 任何成员都可以向任何其他成员或 Lead 发送消息。live 成员会立即收到；离线成员的消息会排队，并在其恢复后到达。消息不会丢失，也不会重复投递。
 
-这是官方模式的成员消息规则。受控 Team 先持久写入模式记录，并在 mailbox 入队前拒绝 teammate 向其他 teammate 发消息；teammate 只能联系 Lead。模式记录可固定普通消息字节上限，不改变 Task 通知的上限。受控产品组合载入没有模式记录的历史 Team 时，该 Team 保持只读。
+这是官方模式的成员消息规则。受控 Team 先持久写入模式记录，并在 mailbox 入队前拒绝 teammate 向其他 teammate 发消息；teammate 只能联系 Lead。模式记录必须固定普通消息字节上限，不改变 Task 通知的上限。受控产品组合载入没有模式记录的历史 Team 时，该 Team 保持只读。
 
 每条消息都使用 Steer：running target 在最近的步骤边界收到消息，inactive target 在已加载时启动一个轮次，否则冷恢复。发送方始终能看到结果——target inbox 已接受，或在投递暂时不可用时保留为 queued。排队的消息已经安全存储，因此绝不能重发。
 
@@ -98,7 +99,7 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
 
-可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一 Team roster、Board 和 Lead Session 日志。未安装扩展时，官方任务工具保持原行为。安装的扩展取得私有提交句柄；批次检查当前修订和最终依赖 DAG，再用单个事件保存所有 Task 快照、可选 Team mailbox 通知与扩展自有 JSON。扩展也可在同一 Team 锁内返回已有 Task 的 id，不追加事件或通知；只允许返回归该扩展所有的 Task。原生投影忽略扩展 JSON，但把通知折叠进持久 mailbox。扩展代码回放同一事件时必须自行校验 JSON。受控工具适配器可查询扩展对当前进行中 Attempt 的准入判断；未提供回调时按待命处理。扩展还可校验待创建成员的组名，并声明其 Team 工具名供最终成员工具目录核对。
+可选的 Host Task 扩展只替换原生 create/update 写入方，仍使用同一份 Team 成员表、任务板和 Lead Session 日志。没有扩展时，官方任务工具保留原有行为。扩展获得私有提交句柄；批量操作校验当前修订与最终依赖图，再用一条事件存储所有 Task 快照、可选的 Team mailbox 通知和扩展自有 JSON。同一把 Team 锁下，扩展也可以只返回已有 Task id，不再追加事件或通知；只有归该扩展所有的 Task 可以写入。原生投影忽略扩展 JSON，但会把通知折叠进持久 mailbox。扩展回放事件时自行校验其 JSON。扩展可以校验拟建成员的组名；每个产品 Team 或 Task 操作在自己的入口检查授权。
 
 受控 Team 只接受模式事件中指定的扩展 id 写入 Task；卸载该写入方后不会退回原生 Task 修改。扩展可给已完成结果设置不可撤销的不可用标记，使下游 Task 不再显示 ready，同时保留历史已完成 Task 可查。
 
@@ -173,7 +174,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 `installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新、扩展 JSON 与可选 Team 通知；原生投影在发布前检查连续修订、顺序数字 id、mailbox 身份和最终无环图。flush 后待投递通知沿用原生 mailbox 投递与冷恢复路径。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。
 
-同一句柄上的 `commitRecord()` 写入 `team/extension` 事件：包含不透明的写入方作用域记录 ID 和 JSON，以及可选 Team 通知，但不修改任务板。它的同步构造器在同一把锁内看到脱离原状态的 Team 快照和该写入方的持久记录，也可以返回已有记录 ID 而不重复写事件。原生投影拒绝重复身份，并将通知折叠到已有邮箱。扩展自行校验和解释自己的 JSON；官方 Team 组合不写这类扩展记录。扩展还可以声明额外的待命工具名，但每个产品工具仍负责执行时授权。
+同一句柄上的 `commitRecord()` 写入 `team/extension` 事件：包含不透明的写入方作用域记录 ID 和 JSON，以及可选 Team 通知，但不修改任务板。它的同步构造器在同一把锁内看到脱离原状态的 Team 快照和该写入方的持久记录，也可以返回已有记录 ID 而不重复写事件。原生投影拒绝重复身份，并将通知折叠到已有邮箱。扩展自行校验和解释自己的 JSON；官方 Team 组合不写这类扩展记录。 扩展通知可以用临时准入标记要求遵守受控普通消息字节上限；Team 在写入前校验每名收件人的完整投递内容，持久通知中不保留该标记。扩展还可以在受控成员放弃工作后提供不透明的下一步建议文本。
 
 ### 等待与中断
 

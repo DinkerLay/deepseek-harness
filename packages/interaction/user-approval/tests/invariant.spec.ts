@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import { ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
+import { ApprovalAnswererRouteId, ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
 import * as ApprovalInvariant from '@deepseek-ai/dsh-user-approval/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
+const contexts: Context[] = []
+afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
+
 async function setup(): Promise<Context> {
   const ctx = new Context()
+  contexts.push(ctx)
   await ctx.plugin(SessionStore)
   await ctx.plugin(InvariantRegistry)
   await ctx.plugin(ApprovalInvariant)
@@ -30,6 +34,7 @@ describe('approval invariants', () => {
 
   it('rebuilds an unmatched question from an existing session', async () => {
     const ctx = new Context()
+    contexts.push(ctx)
     await ctx.plugin(SessionStore)
     const session = ctx.sessions.create()
     session.append('turn/start', { turn: 1 })
@@ -74,6 +79,7 @@ describe('approval invariants', () => {
 
   it('rejects an unenclosed audit event when replaying an existing session', async () => {
     const ctx = new Context()
+    contexts.push(ctx)
     await ctx.plugin(SessionStore)
     const session = ctx.sessions.create()
     startTurn(session)
@@ -102,5 +108,21 @@ describe('approval invariants', () => {
       .toThrow(/unknown outcome/)
     expect(() => session.append('approval/policy', { policy: 'always' as never }))
       .toThrow(/unknown policy/)
+  })
+
+  it('validates durable answerer route data independently of an open turn', async () => {
+    const ctx = await setup()
+    const session = ctx.sessions.create()
+    expect(() => session.append('approval/answerer-route', {
+      version: 1, routeId: ApprovalAnswererRouteId('valid-host-route'),
+    })).not.toThrow()
+    for (const data of [
+      { version: 2, routeId: ApprovalAnswererRouteId('unsupported-version') },
+      { version: 1, routeId: 17 },
+      { version: 1, routeId: ApprovalAnswererRouteId('') },
+    ]) {
+      expect(() => session.append('approval/answerer-route', data as never))
+        .toThrow(/requires version 1 and a nonempty Host route id/)
+    }
   })
 })

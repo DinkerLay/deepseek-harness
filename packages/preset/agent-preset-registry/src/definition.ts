@@ -7,8 +7,6 @@ export interface PresetDefinition {
   readonly name?: string
   readonly description?: string
   readonly order?: number
-  /** Optional tool names permitted when this Preset runs as a Team member. */
-  readonly allowedTools?: readonly string[]
   readonly plugins: readonly (Omit<EntryOptions, 'id' | 'disabled'> & { id?: string; disabled?: EntryOptions['disabled'] | JsExpr })[]
 }
 

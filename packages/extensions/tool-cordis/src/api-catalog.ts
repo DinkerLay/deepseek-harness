@@ -335,12 +335,6 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the durable controlled-mode binding, or undefined for an official Team.',
       },
       {
-        signature: 'memberToolAllowed(agent: Agent, name: string): boolean',
-        description: 'Whether a persisted Team ceiling permits one member tool registration.',
-        parameters: [{ name: 'agent', description: 'exact Team caller whose pinned mode supplies the ceiling.' }, { name: 'name', description: 'tool name checked before registration or direct use.' }],
-        returns: 'true when the member may see and call this tool.',
-      },
-      {
         signature: 'composition(agent: Agent): TeamCompositionState',
         description: 'Read the durable Team composition policy; an untouched Team is dynamic.',
         parameters: [{ name: 'agent', description: 'exact live Team member whose root owns the policy.' }],
@@ -365,22 +359,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'configured Preset id, or undefined to inherit the Lead.',
       },
       {
-        signature: 'hasRunningAttempt(agent: Agent): boolean',
-        description: 'Read the installed Task writer\'s running-Attempt admission for one exact member.',
+        signature: 'releaseHints(agent: Agent): readonly string[]',
+        description: 'Read product-owned next-action hints after a controlled member releases work.',
         parameters: [{ name: 'agent', description: 'exact live Team member.' }],
-        returns: 'whether the member has a running product Attempt.',
-      },
-      {
-        signature: 'standbyToolNames(agent: Agent): readonly string[]',
-        description: 'Read extension-declared standby tools; each tool still owns its authorization check.',
-        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
-        returns: 'additional tool names admitted during standby.',
-      },
-      {
-        signature: 'claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[]',
-        description: 'Read product-owned open offers after a controlled member releases work.',
-        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
-        returns: 'claimable Task ids supplied by the installed extension.',
+        returns: 'text supplied by the installed extension without Team interpretation.',
       },
       {
         signature: 'listMembers(agent: Agent): TeamMemberView[]',
@@ -478,6 +460,35 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'req', description: 'the pending decision (agent, tool identity, reason, signal).' }],
         returns: 'the closed outcome; `\'allowed-once\'` is the only grant.',
         throws: ['when no turn is open or either audit event fails before the session append commit point.'],
+      },
+      {
+        signature: 'registerAnswererRoute(id: ApprovalAnswererRouteId, resolver: (origin: Agent, question?: ApprovalRouteQuestion) => ApprovalAnswererRoute | undefined): () => Promise<void> | undefined',
+        description: 'Register an optional answerer lookup for its effect lifetime.',
+        parameters: [{ name: 'id', description: 'stable Host-owned route identity.' }, { name: 'resolver', description: 'synchronous current-answerer lookup; undefined fails closed.' }],
+        returns: 'disposer that also withdraws requests using this registration.',
+      },
+      {
+        signature: 'bindAnswererRoute(agent: Agent, id: ApprovalAnswererRouteId): void',
+        description: 'Bind an entered Session before its first model operation.',
+        parameters: [{ name: 'agent', description: 'exact originating Agent.' }, { name: 'id', description: 'registered Host route identity.' }],
+      },
+      {
+        signature: 'routeOf(agent: Agent): ApprovalAnswererRouteId | undefined',
+        description: 'Read the durable answerer binding from projected state.',
+        parameters: [{ name: 'agent', description: 'originating Agent.' }],
+        returns: 'its route binding, if any.',
+      },
+      {
+        signature: 'answererOf(agent: Agent): Agent | undefined',
+        description: 'Resolve the current interactive answerer.',
+        parameters: [{ name: 'agent', description: 'originating Agent.' }],
+        returns: 'the routed answerer, or undefined.',
+      },
+      {
+        signature: 'effectivePolicy(agent: Agent): ApprovalPolicy',
+        description: 'Read the policy used by both request decisions and model-facing statements.',
+        parameters: [{ name: 'agent', description: 'originating Agent.' }],
+        returns: 'its own policy, or the current answerer\'s policy; unavailable routes use never.',
       },
       {
         signature: 'overrideOf(session: Session): ApprovalPolicy | undefined',
@@ -617,6 +628,37 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'request', description: 'the key, the method, the surface, and the cancel signal.' }],
         returns: '`authorized` once the flow\'s record is committed during this attempt and observed, or `cancelled` when the human declined or the caller withdrew.',
         throws: ['{AuthorizationError} code `NO_FLOW` when nothing claims the key, `UNKNOWN_METHOD` when the named method is not one the flow offers, `ALREADY_IN_FLIGHT` when an attempt is already running for the key, or `NOT_COMMITTED` when the flow resolved without committing a record during the attempt.'],
+      },
+    ],
+  },
+  {
+    key: 'autoReviewSources',
+    summary: 'Runtime-only parent-input attribution; no registration preserves native review roles.',
+    description: 'Runtime-only parent-input attribution; no registration preserves native review roles.',
+    methods: [
+      {
+        signature: 'registerParentInputPolicy(policy: AutoParentInputPolicy): () => Promise<void> | undefined',
+        description: 'Register one optional input attribution policy for its effect lifetime.',
+        parameters: [{ name: 'policy', description: 'per-agent source classification; undefined abstains.' }],
+        returns: 'the registration disposer.',
+      },
+      {
+        signature: 'registerExecutionPolicy(policy: (exec: ToolExecution) => AutoExecutionPolicy | undefined): () => Promise<void> | undefined',
+        description: 'Register an optional execution-bound permission selection.',
+        parameters: [{ name: 'policy', description: 'captured selection for the exact pending execution; undefined abstains.' }],
+        returns: 'disposer for the registration.',
+      },
+      {
+        signature: 'executionPolicy(exec: ToolExecution): AutoExecutionPolicy | undefined',
+        description: 'Read the captured selection; failed or conflicting owners require final review.',
+        parameters: [{ name: 'exec', description: 'exact pending execution.' }],
+        returns: 'one selection, or undefined for the native Session-based selection.',
+      },
+      {
+        signature: 'classify(agent: Agent, source: MessageSource, content: readonly ContentBlock[]): readonly boolean[] | undefined',
+        description: 'Read one unambiguous attribution; conflicting or failed claims grant none.',
+        parameters: [{ name: 'agent', description: 'current child being reviewed.' }, { name: 'source', description: 'durable input source.' }, { name: 'content', description: 'retained blocks to classify.' }],
+        returns: 'instruction flags, or undefined when no policy claims the input.',
       },
     ],
   },
@@ -1879,6 +1921,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the fully resolved per-call mode and absolute workspace root.',
       },
       {
+        signature: 'capture(session: Session): SandboxExecutionPolicy',
+        description: 'Capture current standing policy independently of an enclosing operation.',
+        parameters: [{ name: 'session', description: 'Session whose current mode and immutable workspace apply.' }],
+        returns: 'immutable policy for the new operation.',
+      },
+      {
+        signature: 'withSnapshot<T>(policy: SandboxExecutionPolicy, operation: () => Promise<T>): Promise<T>',
+        description: 'Resolve one operation under its captured policy despite later mode changes. Explicit approved overrides retain priority over the standing snapshot.',
+        parameters: [{ name: 'policy', description: 'immutable policy captured for this operation.' }, { name: 'operation', description: 'enforcing provider calls belonging to this operation.' }],
+        returns: 'the operation\'s result.',
+      },
+      {
         signature: 'overrideOf(session: Session): SandboxMode | undefined',
         description: 'Read the session override without applying the deployment default.',
         parameters: [{ name: 'session', description: 'session whose log supplies the override.' }],
@@ -2908,9 +2962,20 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when continuation services are unavailable or materialization fails.'],
       },
       {
-        signature: 'registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void',
-        description: 'Register one optional parent-notice policy for continuable Activations. Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.',
-        parameters: [{ name: 'policy', description: 'runtime-only policy re-registered by its owner after a restart.' }],
+        signature: 'async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId }, input: UserMessage): Promise<ContinuableStart>',
+        description: 'Deliver a stable host input once, creating or resuming its reserved child. Completion confirms durable input receipt, not completion of model work.',
+        parameters: [{ name: 'spec', description: 'creation inputs with a caller-reserved child id.' }, { name: 'input', description: 'immutable host message with a retry-stable identity.' }],
+        returns: 'the child and durably recorded input identities.',
+      },
+      {
+        signature: 'synchronizeContinuablePermissions(parent: Agent, child: Agent): void',
+        description: 'Align a live direct child\'s sandbox and permission selection with its parent. Approval remains child-owned; unchanged values append no events.',
+        parameters: [{ name: 'parent', description: 'exact live direct parent supplying current permission state.' }, { name: 'child', description: 'exact live child initialized before its next operation.' }],
+      },
+      {
+        signature: 'registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void',
+        description: 'Register one optional parent-notice policy for continuable Activations. Unclaimed, conflicting, failed, or timed-out decisions preserve delivery; one unambiguous wording provider still names the child on that path.',
+        parameters: [{ name: 'policy', description: 'runtime-only policy re-registered by its owner after a restart.' }, { name: 'wording', description: 'optional synchronous wording retained when decision evaluation times out.' }],
         returns: 'disposer for the registration effect.',
       },
       {
@@ -3347,6 +3412,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Execute through pre-policy, guards, around-dispatch, post-policy, definition-owned content finalization, and final notification. Tool and listener failures resolve as materialized error results; an invisible tool reports `UNKNOWN_TOOL`. The returned outcome is the same lossless, frozen snapshot final observers receive. Cancellation arriving after entry and before final result materialization skips a not-yet-started body with `ABORTED_BEFORE_DISPATCH` or replaces a successful started outcome with `ABORTED`; already-started work is still drained and may retain a tool-owned structured error.',
         parameters: [{ name: 'exec', description: 'the typed same-process call input. The registry assigns its correlation token before policy begins.' }],
         returns: 'the materialized final result.',
+      },
+      {
+        signature: 'registerExecutionPreparation(prepare: (exec: ToolRunContext) => void | Promise<void>): () => Promise<void> | undefined',
+        description: 'Register optional per-execution preparation before all policy listeners. With no registration the native pipeline retains its original dispatch timing.',
+        parameters: [{ name: 'prepare', description: 'trusted Host initialization for this exact execution.' }],
+        returns: 'the registration disposer.',
       },
     ],
   },
@@ -4546,6 +4617,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ApiSessionAgentResult = {\n    readonly agent: Agent;\n} | {\n    readonly error: ApiSessionAgentError;\n};',
   },
   {
+    name: 'ApprovalAnswererRoute',
+    declaration: 'export interface ApprovalAnswererRoute {\n    readonly agent: Agent;\n    readonly displaySubject: string;\n    readonly taskId?: string;\n    readonly operation?: ApprovalRequestEvent[\'originOperation\'];\n}',
+  },
+  {
+    name: 'ApprovalAnswererRouteId',
+    declaration: 'export type ApprovalAnswererRouteId = Branded<\'ApprovalAnswererRouteId\'>;',
+  },
+  {
     name: 'ApprovalOutcome',
     declaration: 'export type ApprovalOutcome = \'allowed-once\' | \'rejected\' | \'cancelled\' | \'unavailable\';',
   },
@@ -4559,7 +4638,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ApprovalRequestEvent',
-    declaration: 'export interface ApprovalRequestEvent {\n    readonly agent: Agent;\n    readonly toolName: string;\n    readonly callId?: ToolCallId;\n    readonly reason?: string;\n    readonly displayReason?: {\n        readonly en: string;\n        readonly [locale: string]: string;\n    };\n    readonly signal?: AbortSignal;\n}',
+    declaration: 'export interface ApprovalRequestEvent {\n    readonly agent: Agent;\n    readonly toolName: string;\n    readonly callId?: ToolCallId;\n    readonly reason?: string;\n    readonly displayReason?: {\n        readonly en: string;\n        readonly [locale: string]: string;\n    };\n    readonly signal?: AbortSignal;\n    readonly originSessionId?: SessionId;\n    readonly approvalRequestId?: ApprovalRequestId;\n    readonly originCallId?: ToolCallId;\n    readonly displaySubject?: string;\n    readonly taskId?: string;\n    readonly originOperation?: {\n        readonly name: string;\n        readonly arguments: string;\n    };\n}',
+  },
+  {
+    name: 'ApprovalRouteQuestion',
+    declaration: 'export type ApprovalRouteQuestion = Readonly<Pick<ApprovalRequest, \'callId\' | \'toolName\'>>;',
   },
   {
     name: 'ArchiveSessionOptions',
@@ -4692,6 +4775,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationStatus',
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
+  },
+  {
+    name: 'AutoExecutionPolicy',
+    declaration: 'export interface AutoExecutionPolicy {\n    readonly review: boolean;\n    readonly finalDenial: boolean;\n}',
+  },
+  {
+    name: 'AutoParentInputPolicy',
+    declaration: 'export type AutoParentInputPolicy = (agent: Agent, source: MessageSource, content: readonly ContentBlock[]) => readonly boolean[] | undefined;',
   },
   {
     name: 'BackendRegistry',
@@ -4895,7 +4986,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ContinuableStartSpec',
-    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly initialSource?: MessageSource;\n    readonly initialMessageId?: MessageId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'ContinuableSubagentDescriptorData',
@@ -5806,6 +5897,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface MessageRoleMap {\n    system: SystemMessage;\n    developer: DeveloperMessage;\n    user: UserMessage;\n    assistant: AssistantMessage;\n    tool: ToolResultMessage;\n}',
   },
   {
+    name: 'MessageSource',
+    declaration: 'export type MessageSource = MessageSourceMap[keyof MessageSourceMap];',
+  },
+  {
     name: 'MessageSourceMap',
     declaration: 'export interface MessageSourceMap {\n    user: {\n        kind: \'user\';\n    };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    \'system-prompt\': SystemPromptMessageSource;\n}',
   },
@@ -6007,11 +6102,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetCompositionLease',
-    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    readonly allowedTools?: readonly string[];\n    readonly inheritedToolNames: readonly string[];\n    readonly presetToolNames: readonly string[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly name?: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
   },
   {
     name: 'PresetDefinition',
-    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly allowedTools?: readonly string[];\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
+    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
   },
   {
     name: 'PresetOption',
@@ -7095,7 +7190,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly group?: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly expectedPresetRevision?: string;\n    readonly applicationId?: string;\n    readonly slotId?: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description?: string;\n    readonly group?: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly presetId?: string;\n    readonly expectedPresetRevision?: string;\n    readonly applicationId?: string;\n    readonly slotId?: string;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -7279,7 +7374,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promi /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    inter /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
@@ -7291,7 +7386,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentSettlementNoticePolicy',
-    declaration: 'export type SubagentSettlementNoticePolicy = (facts: SubagentSettlementNoticeFacts) => \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;',
+    declaration: 'export type SubagentSettlementNoticePolicy = (facts: SubagentSettlementNoticeFacts) => \'send\' | \'suppress\' | SubagentSettlementNoticeWording | undefined | Promise<\'send\' | \'suppress\' | SubagentSettlementNoticeWording | undefined>;',
+  },
+  {
+    name: 'SubagentSettlementNoticeWording',
+    declaration: 'export interface SubagentSettlementNoticeWording {\n    readonly action: \'send\';\n    readonly subject?: string;\n    readonly detail?: string;\n}',
   },
   {
     name: 'SubagentStartRequest',
@@ -7430,6 +7529,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n    readonly memberToolLimit?: TeamMemberToolLimit | undefined;\n}',
   },
   {
+    name: 'TeamExtensionNotice',
+    declaration: 'export interface TeamExtensionNotice extends TeamMessageSnapshot {\n    readonly ordinaryMessageLimit?: true;\n}',
+  },
+  {
     name: 'TeamExtensionRecord',
     declaration: 'export interface TeamExtensionRecord {\n    readonly recordId: string;\n    readonly dataJson: string;\n}',
   },
@@ -7455,7 +7558,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamExtensionRecordWritePlan',
-    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamMessageSnapshot[];\n    readonly affectsComposition?: true;\n}',
+    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly affectsComposition?: true;\n}',
   },
   {
     name: 'TeamId',
@@ -7479,7 +7582,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberView',
-    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly slotId?: string;\n    readonly model?: string;\n    readonly diagnostics: string[];\n}',
+    declaration: 'export interface TeamMemberView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly role: \'lead\' | \'teammate\';\n    readonly status: \'running\' | \'inactive\' | \'provisioning\' | \'failed\' | \'retiring\' | \'retired\';\n    readonly description?: string;\n    readonly provider?: string;\n    readonly context?: \'fresh\' | \'fork\';\n    readonly group?: string;\n    readonly preset?: TeamPresetBinding;\n    readonly slotId?: string;\n    readonly model?: string;\n    readonly diagnostics: string[];\n    readonly executionStarted?: boolean;\n}',
   },
   {
     name: 'TeamMessageId',
@@ -7487,7 +7590,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMessageSnapshot',
-    declaration: 'export interface TeamMessageSnapshot {\n    readonly id: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly targetId: SessionId;\n    readonly content: ContentBlock[];\n}',
+    declaration: 'export interface TeamMessageSnapshot {\n    readonly id: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly targetId: SessionId;\n    readonly content: ContentBlock[];\n    readonly contentParts?: readonly (\'sender\' | \'fact\')[];\n}',
   },
   {
     name: 'TeamPresetBinding',
@@ -7503,7 +7606,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly teamToolNames?: readonly string[];\n    readonly standbyToolNames?: readonly string[];\n    claimableTaskIds?(caller: Agent): readonly TeamTaskId[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    hasRunningAttempt?(caller: Agent): boolean;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
@@ -7543,7 +7646,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionWritePlan',
-    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamMessageSnapshot[];\n}',
+    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamExtensionNotice[];\n}',
   },
   {
     name: 'TeamTaskView',
@@ -7787,11 +7890,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRunContext',
-    declaration: 'export interface ToolRunContext extends ToolExecution {\n    deferContext(context: UserMessage): void;\n    concludeTurn(): void;\n}',
+    declaration: 'export interface ToolRunContext extends ToolExecution {\n    deferContext(context: UserMessage): void;\n    concludeTurn(): void;\n    wrapDispatch?(wrapper: (next: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>): void;\n}',
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n    registerExecutionPreparation(prepare: (exec: ToolRunContext) => void | Promise<void>): () => Promise<void> | undefined;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',

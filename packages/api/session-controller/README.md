@@ -90,6 +90,7 @@ A successful `selectModel` response acknowledges the Session-local selection wit
 | Field | Default | Meaning |
 |---|---:|---|
 | `nativeOpen` | platform-detected | Whether Session workspace paths can be handed to a native desktop opener |
+| `nonBlankEventTypes` | omitted | Additional durable event names that make a prepared Session nonblank before its first model turn; cached metadata is invalidated when this policy changes |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-api-session-controller) is the exhaustive source for accepted fields and their JSDoc.
 

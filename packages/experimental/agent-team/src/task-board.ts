@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type { TeamMembership } from './roster.ts'
 import { TeamError } from './error.ts'
+import { teamMessageDeliveryBytes } from './mailbox.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamState } from './projection.ts'
 import { resolveActiveMember } from './roster.ts'
@@ -16,6 +17,7 @@ import type {
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   CreateTeamTaskRequest,
+  TeamExtensionNotice,
   TeamMessageSnapshot,
   TeamTaskSnapshot,
   TeamTaskTransactionUpdate,
@@ -75,15 +77,6 @@ export class TeamTaskBoard {
   }
 
   /**
-   * Read product Attempt admission without approximating it from native Task status.
-   * @param caller - exact live member whose tools are being admitted.
-   * @returns whether the installed writer reports a running Attempt.
-   */
-  hasRunningAttempt(caller: Agent): boolean {
-    return this.extension?.writer.hasRunningAttempt?.(caller) ?? false
-  }
-
-  /**
    * Let only the bound product writer account for a controlled member's completed run.
    * @param root - exact live Lead whose pinned mode selects the Task writer.
    * @param facts - flushed child-log interval for this one Activation.
@@ -96,6 +89,19 @@ export class TeamTaskBoard {
     const extension = this.extension
     if (mode === undefined || extension?.writer.id !== mode.requiredTaskExtensionId) return undefined
     return await extension.writer.assessSettlementNotice?.(facts)
+  }
+
+  /**
+   * Read optional product Task ids for one member's native settlement wording.
+   * @param root - exact live Lead with the pinned Task extension.
+   * @param facts - one member Activation's durable identity and log interval.
+   * @returns started but unsubmitted Task ids, or undefined without an answering product writer.
+   */
+  async unsubmittedTaskIds(root: Agent, facts: SubagentSettlementNoticeFacts): Promise<readonly TeamTaskId[] | undefined> {
+    const mode = this.journal.state(root).mode
+    const extension = this.extension
+    if (mode === undefined || extension?.writer.id !== mode.requiredTaskExtensionId) return undefined
+    return await extension.writer.unsubmittedTaskIds?.(facts)
   }
 
   /**
@@ -116,28 +122,13 @@ export class TeamTaskBoard {
     extension.writer.validateMemberGroup(caller, group)
   }
 
-  /** Read the installed extension's Team tool names for final member admission.
-   * @returns names supplied by the installed extension's Team tool adapter.
-   */
-  extensionTeamToolNames(): readonly string[] {
-    return this.extension?.writer.teamToolNames ?? []
-  }
-
   /**
-   * Extra extension capabilities visible in controlled member standby.
-   * @returns extension-declared tool names, or an empty list.
-   */
-  extensionStandbyToolNames(): readonly string[] {
-    return this.extension?.writer.standbyToolNames ?? []
-  }
-
-  /**
-   * Product-owned ready offers for a controlled member after release.
+   * Product-owned next-action hints after a controlled member releases work.
    * @param caller - exact live member.
-   * @returns extension-supplied claimable Task ids.
+   * @returns extension-supplied text without native Team interpretation.
    */
-  extensionClaimableTaskIds(caller: Agent): readonly TeamTaskId[] {
-    return this.extension?.writer.claimableTaskIds?.(caller) ?? []
+  extensionReleaseHints(caller: Agent): readonly string[] {
+    return this.extension?.writer.releaseHints?.(caller) ?? []
   }
 
   /**
@@ -483,13 +474,14 @@ export class TeamTaskBoard {
     state: TeamState,
     caller: Agent,
     root: Agent,
-    proposed: readonly TeamMessageSnapshot[],
+    proposed: readonly TeamExtensionNotice[],
     allowLeadSelf = false,
   ): TeamMessageSnapshot[] {
-    const notices = proposed.map(notice => structuredClone(notice))
+    const notices: TeamMessageSnapshot[] = proposed.map(({ ordinaryMessageLimit: _limit, ...notice }) =>
+      structuredClone(notice))
     const seen = new Set<string>()
     const sender = this.membershipOf(caller)
-    for (const notice of notices) {
+    for (const [index, notice] of notices.entries()) {
       if (notice.senderId !== caller.id || notice.senderName !== sender.name
         || notice.targetId === caller.id && !(allowLeadSelf && caller.id === root.id)) {
         throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
@@ -509,8 +501,13 @@ export class TeamTaskBoard {
       if (pending >= this.maxPendingMessagesPerMember) {
         throw new TeamError('Task notice target has too many pending messages', 'TEAM_MAILBOX_FULL')
       }
-      const framed = [{ type: 'text', text: `Team message ${notice.id} from ${notice.senderName}:` }, ...notice.content]
-      if (Buffer.byteLength(JSON.stringify(framed), 'utf8') > this.maxMessageBytes) {
+      const bytes = teamMessageDeliveryBytes(notice)
+      const ordinaryLimit = proposed[index]?.ordinaryMessageLimit === true
+        ? state.mode?.maxOrdinaryMessageBytes : undefined
+      if (ordinaryLimit !== undefined && bytes > ordinaryLimit) {
+        throw new TeamError(`ordinary Team message exceeds ${ordinaryLimit} bytes; submit Task results for Lead acceptance and pass accepted results through Task prerequisites`, 'TEAM_MESSAGE_TOO_LARGE')
+      }
+      if (teamMessageDeliveryBytes(notice, state) > this.maxMessageBytes) {
         throw new TeamError(`Task notice "${notice.id}" exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
     }

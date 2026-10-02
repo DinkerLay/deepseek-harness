@@ -47,6 +47,8 @@ Auto reviews every supported call once before its body, including each started P
 
 A final denial uses the ordinary tool card. The collapsed row identifies Auto review; expanded output states that the body did not execute and displays the optional reason. [The Web permission package](../../client/ui-permission-presets/README.md) owns picker interaction, and [the tool UI](../../client/ui-tool/README.md) owns reason display.
 
+Host integrations can register optional per-block parent-input attribution and an execution-bound Auto selection through `ctx.autoReviewSources`. With no registrations the native source roles and permission selection remain unchanged. Selected text blocks may carry direct-parent instructions while adjacent quoted blocks remain facts; unavailable or conflicting attribution grants none. An execution selection can keep its denial final without changing Session approval policy.
+
 -----
 
 <a id="understand-the-implementation"></a>

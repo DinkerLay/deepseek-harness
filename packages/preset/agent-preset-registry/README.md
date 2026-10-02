@@ -49,9 +49,9 @@ The registry writes no declarations. The `read` Remote renders one declarationâ€
 
 Host code preparing a new Agent can retain one composition with `acquireComposition(id)`, then call the leaseâ€™s `mount(agentCtx)` inside the Agent factory setup callback. The lease keeps the selected revision even if its declaration is replaced or removed during preparation. Release the lease on success or failure; a mounted Agent keeps its own reference. A released lease, closed or already bound scope, or published Agent cannot receive a new binding through this interface. This process-local lease neither persists old revisions nor relaxes the started-session selection guard.
 
-The lease also exposes `compositionRows`, optional `allowedTools`, and the inherited and preset-owned tool names from that same retained generation. A caller can inspect enabled plugins and validate the tool allowance before creating an Agent without racing a separately queried declaration against the revision it will mount.
+The lease also exposes the captured display `name` and `compositionRows` from that same retained generation. A caller can inspect the enabled plugin rows before creating an Agent without racing a separately queried declaration against the revision it will mount. The registry does not filter a bound Agent's tools.
 
-The lease revision hashes the preset ID, captured JSON child plugins, and any `allowedTools` declaration, not the resolver's absolute base URL. A declaration that itself contains an absolute plugin URL still contains that machine path in its digest; use package specifiers for portable bindings. The digest identifies a declaration, not plugin binaries or evaluated environment values. Recovery must reject an unavailable or changed revision rather than substitute a current same-named definition.
+The lease revision hashes the preset ID and captured JSON child plugins, not the resolver's absolute base URL. A declaration that itself contains an absolute plugin URL still contains that machine path in its digest; use package specifiers for portable bindings. The digest identifies a declaration, not plugin binaries or evaluated environment values. Recovery must reject an unavailable or changed revision rather than substitute a current same-named definition.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

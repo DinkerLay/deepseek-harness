@@ -47,6 +47,8 @@ Auto 在每个受支持调用的 body 执行前审查一次，包括每个已开
 
 最终拒绝使用普通工具卡片。折叠行标识 Auto review；展开输出说明 body 未执行，并显示可选理由。[Web 权限包](../../client/ui-permission-presets/README.zh.md)拥有选择器交互，[工具 UI](../../client/ui-tool/README.zh.md)拥有理由展示。
 
+Host 集成可经 `ctx.autoReviewSources` 注册可选的逐块上级输入归属和操作级 Auto 选择。没有注册时，原生来源角色与权限选择不变。选中的文本块可以承载直接上级指令，相邻引用块仍为资料；归属不可用或冲突时不增加权限。操作选择可让拒绝保持最终结果，不改变 Session 的审批策略。
+
 -----
 
 <a id="understand-the-implementation"></a>

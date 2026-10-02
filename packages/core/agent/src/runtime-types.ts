@@ -239,6 +239,12 @@ declare module './types.ts' {
    * @param message - identified injected context and the source that supplied it.
    */
     inject(message: UserMessage): void
+
+    /**
+     * Wake already queued input without inserting another message. The default
+     * AgentLoop supports this for durable inbox recovery; other drivers may omit it.
+     */
+    wakePending?(): void
   }
 }
 

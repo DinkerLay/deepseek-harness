@@ -8,7 +8,7 @@
  * @module @deepseek-ai/dsh-experimental-auto-review
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-instructions'
 import {
@@ -72,6 +72,93 @@ type ReviewSourceRole =
   | 'constraint'
   | 'checkpoint'
   | 'fact'
+
+/** Optional Host attribution for individual retained input blocks. */
+export type AutoParentInputPolicy = (agent: Agent, source: MessageSource,
+  content: readonly ContentBlock[]) => readonly boolean[] | undefined
+
+/** Optional execution-bound Auto selection supplied by a permission owner. */
+export interface AutoExecutionPolicy {
+  readonly review: boolean
+  readonly finalDenial: boolean
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context { autoReviewSources: AutoReviewSources }
+}
+
+/** Runtime-only parent-input attribution; no registration preserves native review roles. */
+export class AutoReviewSources extends Service {
+  private readonly policies = new Map<symbol, AutoParentInputPolicy>()
+  private readonly executions = new Map<symbol, (exec: ToolExecution) => AutoExecutionPolicy | undefined>()
+
+  /** @param ctx - owning Auto plugin context. */
+  constructor(ctx: Context) { super(ctx, 'autoReviewSources') }
+
+  /**
+   * Register one optional input attribution policy for its effect lifetime.
+   * @param policy - per-agent source classification; undefined abstains.
+   * @returns the registration disposer.
+   */
+  registerParentInputPolicy(policy: AutoParentInputPolicy): () => Promise<void> | undefined {
+    const id = Symbol()
+    return this.ctx.effect(() => {
+      this.policies.set(id, policy)
+      return () => { this.policies.delete(id) }
+    }, 'autoReviewSources.parentInputPolicy()')
+  }
+
+  /**
+   * Register an optional execution-bound permission selection.
+   * @param policy - captured selection for the exact pending execution; undefined abstains.
+   * @returns disposer for the registration.
+   */
+  registerExecutionPolicy(policy: (exec: ToolExecution) => AutoExecutionPolicy | undefined): () => Promise<void> | undefined {
+    const id = Symbol()
+    return this.ctx.effect(() => {
+      this.executions.set(id, policy)
+      return () => { this.executions.delete(id) }
+    }, 'autoReviewSources.executionPolicy()')
+  }
+
+  /**
+   * Read the captured selection; failed or conflicting owners require final review.
+   * @param exec - exact pending execution.
+   * @returns one selection, or undefined for the native Session-based selection.
+   */
+  executionPolicy(exec: ToolExecution): AutoExecutionPolicy | undefined {
+    let result: AutoExecutionPolicy | undefined
+    for (const policy of this.executions.values()) {
+      let candidate: AutoExecutionPolicy | undefined
+      try { candidate = policy(exec) }
+      catch { return { review: true, finalDenial: true } }
+      if (candidate === undefined) continue
+      if (result !== undefined) return { review: true, finalDenial: true }
+      result = candidate
+    }
+    return result
+  }
+
+  /**
+   * Read one unambiguous attribution; conflicting or failed claims grant none.
+   * @param agent - current child being reviewed.
+   * @param source - durable input source.
+   * @param content - retained blocks to classify.
+   * @returns instruction flags, or undefined when no policy claims the input.
+   */
+  classify(agent: Agent, source: MessageSource, content: readonly ContentBlock[]): readonly boolean[] | undefined {
+    let result: readonly boolean[] | undefined
+    for (const policy of this.policies.values()) {
+      let candidate: readonly boolean[] | undefined
+      try { candidate = policy(agent, source, content) }
+      catch { return content.map(() => false) }
+      if (candidate === undefined) continue
+      if (result !== undefined || candidate.length !== content.length) return content.map(() => false)
+      result = candidate
+    }
+    return result
+  }
+}
 
 interface HistoricalUserMessage {
   readonly kind: 'user-message'
@@ -244,11 +331,13 @@ function filteredUserEntries(
   content: readonly ContentBlock[],
   initialPromptSeq: SessionEvent['seq'] | undefined,
   parentSession: string | undefined,
+  attributed?: readonly boolean[],
 ): HistoricalUserMessage[] {
-  return content.map(block => ({
+  return content.map((block, index) => ({
     kind: 'user-message',
     role: block.type === 'text'
-      ? textRole(source, seq, initialPromptSeq, parentSession)
+      ? attributed === undefined ? textRole(source, seq, initialPromptSeq, parentSession)
+        : attributed[index] === true ? 'direct-parent-instruction' : 'fact'
       : 'fact',
     source,
     content: [block],
@@ -358,7 +447,7 @@ function ptcAction(
  * @param exec - immutable pending execution.
  * @returns the exact route and four data sections paired with {@link REVIEW_POLICY}.
  */
-function snapshotAutoReview(agent: Agent, exec: ToolExecution): ReviewSnapshot {
+function snapshotAutoReview(agent: Agent, exec: ToolExecution, sources?: AutoReviewSources): ReviewSnapshot {
   const { session } = agent
   // The reviewer's risk inputs are the whole action history: earlier native calls
   // and PTC starts carry the authorizations and duplicate identities this call is
@@ -442,6 +531,7 @@ function snapshotAutoReview(agent: Agent, exec: ToolExecution): ReviewSnapshot {
           event.data.content,
           initialPromptSeq,
           session.header.parentSession,
+          sources?.classify(agent, event.data.source, event.data.content),
         ))
       }
       continue
@@ -621,7 +711,7 @@ async function classifyRisk(
   exec: ToolExecution,
   signal: AbortSignal,
 ): Promise<AutoReviewDecision> {
-  const snapshot = snapshotAutoReview(agent, exec)
+  const snapshot = snapshotAutoReview(agent, exec, ctx.get('autoReviewSources'))
   // This review prompt is sent only through ctx.llm.stream and never enters a Session log.
   const options: GenerateOptions = deepFreeze({
     provider: snapshot.provider,
@@ -676,6 +766,7 @@ function failed(exec: ToolExecution, error: unknown): PreToolDecision {
 
 /** Install the Auto preset and its prepended per-call review gate. */
 export function apply(ctx: Context): void {
+  new AutoReviewSources(ctx)
   // Retain the injected service while this context drains on disposal.
   const permissionPresets = ctx.permissionPresets
   let accepting = true
@@ -688,7 +779,8 @@ export function apply(ctx: Context): void {
       if (agent === undefined || (exec.parent === undefined && exec.name === RUN_CODE_NAME)) {
         return next()
       }
-      if (permissionPresets.current(agent.session) !== AUTO_PRESET) {
+      const captured = ctx.get('autoReviewSources')?.executionPolicy(exec)
+      if (!(captured?.review ?? permissionPresets.current(agent.session) === AUTO_PRESET)) {
         return next()
       }
       if (!accepting || lifecycle.signal.aborted) {
@@ -707,7 +799,8 @@ export function apply(ctx: Context): void {
         if (!review.ok) return failed(exec, review.error)
         const { decision } = review
         // The permission owner pins an approval policy into every published Session.
-        if (decision.decision === 'deny' && ctx.approval.overrideOf(agent.session) === 'never') {
+        if (decision.decision === 'deny' && (captured?.finalDenial
+          ?? ctx.approval.overrideOf(agent.session) === 'never')) {
           return denied(exec, decision.reason)
         }
         const downstream = await next()

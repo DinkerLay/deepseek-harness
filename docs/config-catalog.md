@@ -141,7 +141,7 @@ export type Config = PresetDefinition
 
 - `inject`: `loader` · `sessionProjections`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/preset/agent-preset-registry/src/preset.ts:38`](../packages/preset/agent-preset-registry/src/preset.ts)
+- `source`: [`packages/preset/agent-preset-registry/src/preset.ts:34`](../packages/preset/agent-preset-registry/src/preset.ts)
 
 ```ts config-catalog
 /** Registry selection policy. */
@@ -229,6 +229,8 @@ export interface Config {
 export interface Config {
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
+  /** Additional durable event names that make a Session nonblank without a model turn. */
+  readonly nonBlankEventTypes?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-api-session-controller -->
@@ -807,13 +809,21 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:337`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:351`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
 export interface Config {
-  /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
-  readonly controlledMode?: TeamControlledMode | undefined
+  /** Initial delay between controlled-mail receipt retries; successive attempts multiply it. */
+  readonly messageRetryDelayMs?: number
+  /** Maximum same-process retries before a durable Lead warning. */
+  readonly maxMessageRetries?: number
+  /** Product opt-in; requires an ordinary-message byte cap. Official Teams leave this unset. */
+  readonly controlledMode?: Omit<TeamControlledMode, 'memberToolLimit' | 'maxOrdinaryMessageBytes'>
+    & {
+      /** Required UTF-8 byte cap for ordinary member messages in a new controlled Team. */
+      readonly maxOrdinaryMessageBytes: number
+    } | undefined
   /** Optional product default for members without an explicit Preset; official Teams inherit the Lead. */
   readonly defaultMemberPresetId?: string
   /** Maximum immutable teammate names retained by one Team. */
@@ -844,11 +854,11 @@ export interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
-  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  /** Retired field retained for the released persistence definition; runtime neither reads nor writes it. */
   readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 
-/** Optional Team-wide ceiling on tools available to teammates. */
+/** Retired tool-limit fields retained only to describe released persistent records. */
 export interface TeamMemberToolLimit {
   /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
   readonly allow?: readonly string[]
@@ -2480,7 +2490,7 @@ export interface Config {
 
 - `inject`: `sessionProjections`
 - `refs`: [`SandboxMode`](subsystems/sandbox.md)
-- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:71`](../packages/sandbox/sandbox-policy/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:72`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3099,7 +3109,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 ## `@deepseek-ai/dsh-subagent`
 
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:205`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:223`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */
@@ -3997,7 +4007,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tools`
 
 - `inject`: `systemPrompt`
-- `source`: [`packages/core/tools/src/index.ts:674`](../packages/core/tools/src/index.ts)
+- `source`: [`packages/core/tools/src/index.ts:679`](../packages/core/tools/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: how the registered tools are presented to the model. */
@@ -4050,7 +4060,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-user-approval`
 
-- `source`: [`packages/interaction/user-approval/src/index.ts:135`](../packages/interaction/user-approval/src/index.ts)
+- `source`: [`packages/interaction/user-approval/src/index.ts:155`](../packages/interaction/user-approval/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. All optional — `static Config` supplies the defaults. */

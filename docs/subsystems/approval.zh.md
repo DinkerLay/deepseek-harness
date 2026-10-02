@@ -132,6 +132,42 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
 async request(req: ApprovalRequest): Promise<ApprovalOutcome>
 
 /**
+ * Register an optional answerer lookup for its effect lifetime.
+ * @param id - stable Host-owned route identity.
+ * @param resolver - synchronous current-answerer lookup; undefined fails closed.
+ * @returns disposer that also withdraws requests using this registration.
+ */
+registerAnswererRoute(id: ApprovalAnswererRouteId, resolver: (origin: Agent, question?: ApprovalRouteQuestion) => ApprovalAnswererRoute | undefined): () => Promise<void> | undefined
+
+/**
+ * Bind an entered Session before its first model operation.
+ * @param agent - exact originating Agent.
+ * @param id - registered Host route identity.
+ */
+bindAnswererRoute(agent: Agent, id: ApprovalAnswererRouteId): void
+
+/**
+ * Read the durable answerer binding from projected state.
+ * @param agent - originating Agent.
+ * @returns its route binding, if any.
+ */
+routeOf(agent: Agent): ApprovalAnswererRouteId | undefined
+
+/**
+ * Resolve the current interactive answerer.
+ * @param agent - originating Agent.
+ * @returns the routed answerer, or undefined.
+ */
+answererOf(agent: Agent): Agent | undefined
+
+/**
+ * Read the policy used by both request decisions and model-facing statements.
+ * @param agent - originating Agent.
+ * @returns its own policy, or the current answerer's policy; unavailable routes use never.
+ */
+effectivePolicy(agent: Agent): ApprovalPolicy
+
+/**
  * Read the session override without applying the configured default.
  * @param session - session whose log supplies the override.
  * @returns the last logged policy, or `undefined` without one.

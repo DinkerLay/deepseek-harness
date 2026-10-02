@@ -54,4 +54,12 @@ describe('continuable settlement content', () => {
       second,
     ])
   })
+
+  it('uses supplied wording while keeping the exact child id in durable attribution', () => {
+    const message = createSettlementMessage(childId, { stopReason: 'error' },
+      { action: 'send', subject: 'Teammate analyst', detail: 'Unsubmitted Tasks: task-7.' })
+    expect(message.content[0]).toEqual({ type: 'text',
+      text: 'Teammate analyst failed before it finished. Unsubmitted Tasks: task-7.' })
+    expect(message.source).toMatchObject({ kind: 'subagent-settled', senderSessionId: childId })
+  })
 })

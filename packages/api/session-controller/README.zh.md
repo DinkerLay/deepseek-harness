@@ -90,6 +90,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 | 字段 | 默认值 | 含义 |
 |---|---:|---|
 | `nativeOpen` | 平台探测 | 是否能把 Session 工作区路径交给原生桌面打开器 |
+| `nonBlankEventTypes` | 省略 | 在首次模型回合前将已准备 Session 标为非空白的额外持久事件名；策略变化时缓存元数据失效 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-api-session-controller)是所有受支持字段及其 JSDoc 的完整来源。
 

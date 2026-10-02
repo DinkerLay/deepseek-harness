@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { resolveChildAgentOptions } from '../src/child-agent.ts'
+import { resolveChildAgentOptions, resolveChildDepth } from '../src/child-agent.ts'
 
 function parentAgent(): Agent {
   const id = SessionId('parent')
@@ -19,6 +19,23 @@ function parentAgent(): Agent {
 }
 
 describe('child Agent options', () => {
+  it('rejects an overflowing durable delegation depth', () => {
+    const parent = parentAgent()
+    const deepest: Agent = { ...parent, session: Session.create(parent.id, undefined, {
+      ...parent.session.header, delegationDepth: Number.MAX_SAFE_INTEGER,
+    }) }
+    expect(() => resolveChildDepth(deepest, undefined)).toThrow(RangeError)
+  })
+
+  it('does not preserve creation-time effort after a logged route omits it', () => {
+    const parent = parentAgent()
+    parent.session.append('request/header', { reason: 'initial', header: {
+      config: { provider: 'current-provider', model: 'current-model' },
+    } })
+    expect(resolveChildAgentOptions(parent, undefined, 1)).toEqual({
+      provider: 'current-provider', model: 'current-model', maxTokens: 512, subagentDepth: 1,
+    })
+  })
   it('inherits the parent effort while the exact route is unchanged', () => {
     expect(resolveChildAgentOptions(parentAgent(), undefined, 1)).toEqual({
       provider: 'parent-provider',

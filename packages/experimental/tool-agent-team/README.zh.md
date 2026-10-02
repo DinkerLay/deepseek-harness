@@ -59,7 +59,7 @@ kind: "package-reference"
 
 十一个工具分为五类能力：
 
-- **创建 teammate**——`spawn_teammate` 接收名字、描述、初始任务及可选的专业 Preset `preset_id`；只有 Lead 可以调用它。
+- **创建 teammate**——官方模式的 `spawn_teammate` 接收名字、描述、初始任务及可选的 Preset `preset_id`；受控模式接收名字、可选分组与 Preset，不接收调用方编写的职责或首个任务。只有 Lead 可以调用它。
 - **发送消息**——`send_message` 在最近的步骤边界对运行中的成员进行 steering（中途引导）、启动或恢复非活动成员。
 - **让 teammate 退队**——`team_message_cancel` 结算未投递消息，`retire_teammate` 保留历史并停止成员参与 Team；只有 Lead 可以调用。
 - **查看与等待**——`list_agents` 返回各成员的 `target`、可用状态和可选的已应用 Profile 槽位 id；`wait_agent` 等待下一次团队变化；`interrupt_agent` 停止 teammate 的当前轮次（仅限 Lead）。
@@ -67,11 +67,13 @@ kind: "package-reference"
 
 创建和列表结果使用 `target` 标识成员，不包含成员 Session ID。可将该值用于消息和中断调用，或任务工具的 `owner` 参数；任务的 `ownerName` 使用相同值。`inactive` 表示没有轮次在执行，包括已加载和需要恢复的成员；它不表示任务完成或结果。`provisioning` 与 `failed` 描述成员创建状态。默认模式下，任何成员都可以给其他成员发消息并使用任务板；只有 Lead 可以创建与中断 teammate。任务更新保留领域的 owner 与 revision 校验，因此过期的编辑会被拒绝，而不是覆盖更新的成果。
 
-默认情况下，模型看到原生的「领取并完成」Task 流程。产品组合可以设置 `reviewedTasks: true`，改为引导成员提交结果、由 Lead 验收，并从面向模型的 `team_task_update` 操作枚举中移除 `complete` 和 `reopen`。持久的受控模式即使在配置变化后仍选用受控指引和按角色装配的工具：teammate 能看到 Team 查询、消息和放弃任务的动作，没有进行中的产品 Attempt 时其他工具被拒绝。受控指引要求 Lead 用直接 Task 前置传递已验收结果，而不是普通消息；在最终答复前结算包括 Lead 自己名下的 Task；获授权的成员需要新素材时自行派活。受控 Team 服务拒绝成员私聊。任何模式下，服务端 Task 策略都是最终裁决。
+默认情况下，模型看到原生的「领取并完成」Task 流程。产品组合可以设置 `reviewedTasks: true`，改为引导成员提交结果、由 Lead 验收，并从面向模型的 `team_task_update` 操作枚举中移除 `complete` 和 `reopen`。持久的受控模式即使在配置变化后仍选用受控指引和按席位装配的 Team 工具；普通 Preset 工具不因 Task 状态被拦截。受控指引要求 Lead 在每个 Task 写清用户条件与验收标准，用前置路径表达需要的其他 Task 结果，并在最终答复前结算包括 Lead 自己名下的 Task。成员可读已验收的间接上游结果，需要追加输入时按授权自行派活。受控 Team 服务拒绝成员私聊。每个服务端 Task 操作在自己的入口检查授权。
 
-放弃 Task 只取消对应 Attempt，不会中断成员正在执行的轮次，也不会撤销文件副作用。需要停止工作时，Lead 先调用 `interrupt_agent`，确认成员转为空闲，再放弃 Task；Task 写入方会拒绝迟到结果。在受控 Team 中，作用域内的 guard 还会拒绝直接调用 `subagent`、`subagent_fork`、`subagent_codex`、`subagent_claude_code`、`workflow` 和 `ralph`。guard 能阻止执行，但不能隐藏 Preset 在同一 Agent scope 中装配的工具；产品 bundle 必须不装配这些插件行，才能让模型工具目录也看不到它们。未标记的官方 Team 保持默认的委派行为。
+放弃 Task 只取消对应 Attempt，不会中断成员正在执行的轮次，也不会撤销文件副作用。需要停止工作时，Lead 先调用 `interrupt_agent`，确认成员转为空闲，再放弃 Task；Task 写入方会拒绝迟到结果。Team 不检查或拦截普通工具名；产品 bundle 自己的 Preset 不装配委派插件行。未标记的官方 Team 保持默认的委派行为。
 
 ### 成功与失败的表现
+
+成员表工具只返回已声明的模型字段。原生运行时的启动／导航标记继续供 Client 使用，不进入创建或列表工具的结果。
 
 发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning 时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
 
@@ -104,7 +106,7 @@ kind: "package-reference"
 
 ### 策略与工具
 
-member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。十一个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中；已持久保存的受控 Team 成员工具上限可以略过某个 member 作用域工具。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
+member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。十一个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
 
 ### 按作用域注册与拆除
 
@@ -133,7 +135,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的初始任务，Team 服务会提供包含成员名字、分组、职责、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务，Team 服务会提供包含成员名字、分组、Preset 标签、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
 
 #### Token 影响
 

@@ -11,7 +11,7 @@ import css from './ApprovalPanel.module.css'
  */
 export function ApprovalPanel(props: ApprovalComposerProps) {
   const approval = props.matched
-  const detail = approval.callId === undefined
+  const detail = approval.originSessionId !== undefined || approval.callId === undefined
     ? null
     : props.renderSlot('conversation.approval.detail', { callId: approval.callId })
   const reason = approval.displayReason === undefined ? approval.reason : props.resolveReason(approval.displayReason)
@@ -29,12 +29,13 @@ function ApprovalFlow({ pending, reason, detail, t }: {
   const active = useRef(true)
   const composing = useRef(false)
   const compositionEnded = useRef(false)
+  const canAllow = pending.originSessionId === undefined || pending.originOperation !== undefined
   useEffect(() => {
     active.current = true
     return () => { active.current = false }
   }, [])
   const answer = (outcome: 'allowed-once' | 'rejected'): void => {
-    if (waiting.current || !pending.answerable) return
+    if (waiting.current || !pending.answerable || outcome === 'allowed-once' && !canAllow) return
     waiting.current = true
     setAnswered(true)
     void pending.answer(outcome).catch(() => {
@@ -72,13 +73,21 @@ function ApprovalFlow({ pending, reason, detail, t }: {
           aria-label={t('detail.aria')}
         >
           <div className={css.headline}>{reason ?? t('escalation', { toolName: pending.toolName })}</div>
+          {pending.originSessionId !== undefined && <div className={css.origin}>
+            <strong>{t('origin', { subject: pending.displaySubject ?? pending.originSessionId,
+              task: pending.taskId ?? t('unknownTask') })}</strong>
+            {pending.originOperation === undefined ? <p>{t('unavailableOperation')}</p> : <>
+              <div>{pending.originOperation.name}</div>
+              <pre className={css.parameters}>{pending.originOperation.arguments}</pre>
+            </>}
+          </div>}
           {detail !== null && <div className={css.command}>{detail}</div>}
         </div>
         <div className={css.actionRow}>
           <Button variant="outline" className={css.reject} disabled={answered} onClick={() => { answer('rejected') }}>
             {t('reject')}
           </Button>
-          <Button variant="primary" disabled={answered} onClick={() => { answer('allowed-once') }}>
+          <Button variant="primary" disabled={answered || !canAllow} onClick={() => { answer('allowed-once') }}>
             {t('allowOnce')}
           </Button>
         </div>

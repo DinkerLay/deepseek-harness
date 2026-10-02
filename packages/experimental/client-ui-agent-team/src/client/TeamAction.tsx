@@ -96,8 +96,9 @@ function TeamMemberRow({
     ? (running ?? summaryRunning) === true ? 'running' : 'inactive'
     : member.phase
   const isCurrent = member.id === sessionId
+  const unstarted = member.phase === 'active' && member.executionStarted === false
   const highlightCurrent = isCurrent && memberCount > 1
-  const inert = isCurrent || status === 'failed' || status === 'provisioning'
+  const inert = isCurrent || unstarted || status === 'failed' || status === 'provisioning'
     || status === 'retiring' || status === 'retired'
   const presetId = typeof preset === 'string' ? preset
     : member.preset?.id ?? (typeof leadPreset === 'string' ? leadPreset : undefined)
@@ -129,7 +130,7 @@ function TeamMemberRow({
             {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
           </span>
           <small>
-            {t(memberStatusKey(status))}
+            {t(unstarted ? 'memberStatus.unstarted' : memberStatusKey(status))}
             {(presetMeta === null || presetMeta === undefined) && presetId !== undefined && (
               <span className={css.memberModel}>{` · ${t('preset')}: ${presetId}`}</span>
             )}

@@ -199,7 +199,7 @@ interface ContinuableStart {
 }
 ```
 
-当驻留 Activation 结算时，管理器通常会向该 child 持久化的直接 parent 投递一条通知，说明该 epoch 如何结束，并携带其最终 assistant 输出中的非空文本块；若没有剩余的非空文本，则携带 `It left no closing message.`。可选的 `registerSettlementNoticePolicy()` 注册会在投递前取得已 flush 的 child 日志区间、parent 日志起点、结束原因和最终输出。唯一明确的省略决定只取消父级通知；策略缺席、失败、超时或冲突时照送。判断发生在会让 parent 被判定为已结算的所有权释放之前。若 parent 自身所在的谱系已在拆卸中，已准入的通知会以不唤醒的方式送达。其来源信息使用独立 kind，因此 transcript 不会把运行时记账呈现为 child 自己写下的内容。
+当驻留 Activation 结算时，管理器通常会向该 child 持久化的直接 parent 投递一条通知，说明该 epoch 如何结束，并携带其最终 assistant 输出中的非空文本块；若没有剩余的非空文本，则携带 `It left no closing message.`。可选的 `registerSettlementNoticePolicy()` 注册会在投递前取得已 flush 的 child 日志区间、parent 日志起点、结束原因和最终输出。唯一明确的省略决定只取消父级通知；策略缺席、失败、超时或冲突时照送。同步的措辞回调可提供面向 parent 的称呼与补充说明，即使异步判断超时也保留；通知来源仍标识准确的 child Session。判断发生在会让 parent 被判定为已结算的所有权释放之前。若 parent 自身所在的谱系已在拆卸中，已准入的通知会以不唤醒的方式送达。其来源信息使用独立 kind，因此 transcript 不会把运行时记账呈现为 child 自己写下的内容。
 
 ```ts type-equiv
 /**
@@ -517,12 +517,31 @@ resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
 async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
 
 /**
+ * Deliver a stable host input once, creating or resuming its reserved child.
+ * Completion confirms durable input receipt, not completion of model work.
+ * @param spec - creation inputs with a caller-reserved child id.
+ * @param input - immutable host message with a retry-stable identity.
+ * @returns the child and durably recorded input identities.
+ */
+async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId }, input: UserMessage): Promise<ContinuableStart>
+
+/**
+ * Align a live direct child's sandbox and permission selection with its parent.
+ * Approval remains child-owned; unchanged values append no events.
+ * @param parent - exact live direct parent supplying current permission state.
+ * @param child - exact live child initialized before its next operation.
+ */
+synchronizeContinuablePermissions(parent: Agent, child: Agent): void
+
+/**
  * Register one optional parent-notice policy for continuable Activations.
- * Unclaimed, conflicting, failed, or timed-out decisions preserve normal delivery.
+ * Unclaimed, conflicting, failed, or timed-out decisions preserve delivery;
+ * one unambiguous wording provider still names the child on that path.
  * @param policy - runtime-only policy re-registered by its owner after a restart.
+ * @param wording - optional synchronous wording retained when decision evaluation times out.
  * @returns disposer for the registration effect.
  */
-registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy): () => void
+registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void
 
 /**
  * Steer one model-authored message to the sender's direct parent or direct
@@ -682,7 +701,7 @@ list(): string[]
 async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 ```
 
-Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageId](llm-streaming.zh.md) · [SessionId](core.zh.md)
+Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageId](llm-streaming.zh.md) · [SessionId](core.zh.md) · [UserMessage](session.zh.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
 

@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { Activation, ContinuableActivationRegistry } from '../src/continuation-activation.ts'
 import type SubagentContinuationManager from '../src/continuation.ts'
 
@@ -27,4 +28,14 @@ export function dropContinuationActivation(ctx: Context, childId: SessionId): vo
     resident: Map<SessionId, Activation>
   }
   registry.resident.delete(childId)
+}
+
+/** Invoke the owner's receipt watcher to isolate residency changes before its recheck. */
+export async function waitForInputReceipt(ctx: Context, childId: SessionId, messageId: MessageId, signal: AbortSignal): Promise<void> {
+  const manager = continuationManager(ctx)
+  const wait: unknown = Reflect.get(manager, 'waitForReceiptProgress')
+  if (typeof wait !== 'function') throw new Error('expected the continuation receipt watcher')
+  const pending: unknown = Reflect.apply(wait, manager, [childId, messageId, signal])
+  if (!(pending instanceof Promise)) throw new Error('expected an asynchronous receipt watcher')
+  await pending
 }

@@ -43,6 +43,10 @@ async function answerApproval(
   const sessionId = ctx.sessions.scopeOf(owner)
   if (sessionId === undefined) return next()
   const pending = new PendingApproval(sessionId, {
+    ...request.originSessionId === undefined ? {} : { originSessionId: request.originSessionId },
+    ...request.displaySubject === undefined ? {} : { displaySubject: request.displaySubject },
+    ...request.taskId === undefined ? {} : { taskId: request.taskId },
+    ...request.originOperation === undefined ? {} : { originOperation: request.originOperation },
     toolName: request.toolName,
     ...(request.callId === undefined
       ? {}

@@ -38,7 +38,7 @@ import { SubagentError } from './error.ts'
 import { SubagentInbox } from './inbox.ts'
 import type { SubagentDelivery } from './inbox.ts'
 import type { ActivationObserver, ActivationTerminal } from './lifecycle.ts'
-import type { SubagentSettlementNoticeFacts } from './types.ts'
+import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } from './types.ts'
 
 /** Process-local slots shared through uninterrupted continuable parent links. */
 class ActivationPool {
@@ -211,7 +211,8 @@ export class ContinuableActivationRegistry {
       parent: Agent,
     ) => ActivationObserver,
     private readonly maxActiveSubagents: () => number,
-    private readonly sendSettlementNotice: (facts: SubagentSettlementNoticeFacts) => Promise<boolean>,
+    private readonly sendSettlementNotice: (facts: SubagentSettlementNoticeFacts) =>
+    Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>,
   ) {
     // Ordinary Cordis owner effects unwind in reverse registration order, which
     // cannot express the dynamic child graph. Register the private scope's
@@ -894,10 +895,10 @@ export class ContinuableActivationRegistry {
     try {
       const parent = this.ctx.agents.get(activation.parentSession)
       if (parent === undefined) return
-      let shouldSend = true
+      let decision: 'send' | 'suppress' | SubagentSettlementNoticeWording = 'send'
       if (terminal.notice !== undefined) {
         try {
-          shouldSend = await this.sendSettlementNotice({
+          decision = await this.sendSettlementNotice({
             ...terminal.notice,
             stopReason: terminal.stopReason,
             ...terminal.output === undefined ? {} : { output: terminal.output },
@@ -908,8 +909,9 @@ export class ContinuableActivationRegistry {
           this.ctx.logger.warn(`subagent "${activation.childId}" settlement policy failed; delivering the notice`)
         }
       }
-      if (!shouldSend) return
-      const message = createSettlementMessage(activation.childId, terminal)
+      if (decision === 'suppress') return
+      const message = createSettlementMessage(activation.childId, terminal,
+        typeof decision === 'object' ? decision : undefined)
       if (this.closingTeardownFor(parent) !== undefined) {
         parent.inject(message)
         return

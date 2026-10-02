@@ -259,6 +259,118 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('native review request', () => {
+  it('keeps source extensions disabled by default and attributes only selected retained blocks', async () => {
+    const { ctx, adapter } = await harness([
+      decisionChunks('{"risk":"low","decision":"allow"}'),
+      decisionChunks('{"risk":"low","decision":"allow"}'),
+    ])
+    registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, 'attributed-input')
+    appendHeader(session, [{ name: 'probe', description: 'probe', parameters: { type: 'object' } }])
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [
+      { type: 'text', text: 'Parent-authored scope' },
+      { type: 'text', text: 'Quoted upstream material' },
+    ] }), { surfaceOp: 'append' })
+    const first = ToolCallId('source-first')
+    appendAssistant(session, [{ type: 'tool-call', id: first, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, first, 'probe', '{}')
+    await ctx.tools.execute({ agent, signal: new AbortController().signal, callId: first, name: 'probe', arguments: {} })
+    const before = requestSections(adapter.requests[0]!).FILTERED_HISTORY
+    expect(JSON.stringify(before)).not.toContain('direct-parent-instruction')
+    const remove = ctx.autoReviewSources.registerParentInputPolicy((subject, _source, blocks) =>
+      subject === agent && blocks.length === 2 ? [true, false] : undefined)
+    const second = ToolCallId('source-second')
+    appendAssistant(session, [{ type: 'tool-call', id: second, name: 'probe', arguments: '{}' }], 1, 2)
+    appendNativeCall(session, second, 'probe', '{}', 1, 2)
+    await ctx.tools.execute({ agent, signal: new AbortController().signal, callId: second, name: 'probe', arguments: {} })
+    const after = requestSections(adapter.requests[1]!).FILTERED_HISTORY as Array<{ role: string; content: ContentBlock[] }>
+    expect(after.find(entry => entry.content[0]?.type === 'text' && entry.content[0].text === 'Parent-authored scope')?.role)
+      .toBe('direct-parent-instruction')
+    expect(after.find(entry => entry.content[0]?.type === 'text' && entry.content[0].text === 'Quoted upstream material')?.role)
+      .toBe('fact')
+    await remove()
+    expect(ctx.autoReviewSources.classify(agent, { kind: 'user' }, [{ type: 'text', text: 'Parent-authored scope' }])).toBeUndefined()
+  })
+
+  it('uses an execution-bound Auto selection and keeps its denial final', async () => {
+    const { ctx } = await harness([decisionChunks('{"risk":"medium","decision":"deny"}')])
+    const probe = registerProbe(ctx)
+    const session = ctx.sessions.create(SessionId('captured-auto'), { meta: { cwd: '/workspace' } })
+    const agent = agentFor(session)
+    appendHeader(session, [{ name: 'probe', description: 'probe', parameters: { type: 'object' } }])
+    session.append('turn/start', { turn: 1 })
+    const callId = ToolCallId('captured-call')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, callId, 'probe', '{}')
+    let questions = 0
+    ctx.on('approval/request', async () => { questions += 1; return 'allowed-once' })
+    ctx.autoReviewSources.registerExecutionPolicy(() => ({ review: true, finalDenial: true }))
+    const result = await ctx.tools.execute({ agent, signal: new AbortController().signal, callId, name: 'probe', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(probe.runs()).toBe(0)
+    expect(questions).toBe(0)
+  })
+
+  it('grants no instruction attribution for failed, conflicting, or incomplete registrations', async () => {
+    const { ctx } = await harness([])
+    const { agent } = autoSession(ctx, 'attribution-registration-failures')
+    const source = { kind: 'user' as const }
+    const blocks: readonly ContentBlock[] = [{ type: 'text', text: 'Parent instruction' },
+      { type: 'text', text: 'Reference material' }]
+    const abstain = ctx.autoReviewSources.registerParentInputPolicy(() => undefined)
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toBeUndefined()
+    const selected = ctx.autoReviewSources.registerParentInputPolicy(() => [true, false])
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toEqual([true, false])
+    const conflict = ctx.autoReviewSources.registerParentInputPolicy(() => [false, true])
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toEqual([false, false])
+    await conflict()
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toEqual([true, false])
+    await selected()
+    const incomplete = ctx.autoReviewSources.registerParentInputPolicy(() => [true])
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toEqual([false, false])
+    await incomplete()
+    const failed = ctx.autoReviewSources.registerParentInputPolicy(() => { throw new Error('owner unavailable') })
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toEqual([false, false])
+    await failed()
+    await abstain()
+    expect(ctx.autoReviewSources.classify(agent, source, blocks)).toBeUndefined()
+  })
+
+  it.each(['abstain', 'conflict', 'failure'] as const)('keeps captured review denial final after %s', async (kind) => {
+    const { ctx, adapter } = await harness([decisionChunks('{"risk":"medium","decision":"deny"}')])
+    const probe = registerProbe(ctx)
+    const session = ctx.sessions.create(SessionId(`execution-registration-${kind}`), { meta: { cwd: '/workspace' } })
+    const agent = agentFor(session)
+    appendHeader(session, [{ name: 'probe', description: 'probe', parameters: { type: 'object' } }])
+    session.append('turn/start', { turn: 1 })
+    const callId = ToolCallId(`captured-${kind}`)
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, callId, 'probe', '{}')
+    const disposers = kind === 'abstain' ? [
+      ctx.autoReviewSources.registerExecutionPolicy(() => undefined),
+      ctx.autoReviewSources.registerExecutionPolicy(() => ({ review: true, finalDenial: true })),
+    ] : kind === 'conflict' ? [
+      ctx.autoReviewSources.registerExecutionPolicy(() => ({ review: false, finalDenial: false })),
+      ctx.autoReviewSources.registerExecutionPolicy(() => ({ review: false, finalDenial: false })),
+    ] : [ctx.autoReviewSources.registerExecutionPolicy(() => { throw new Error('permission owner unavailable') })]
+    let questions = 0
+    ctx.on('approval/request', async () => { questions += 1; return 'allowed-once' })
+    const result = await ctx.tools.execute({ agent, signal: new AbortController().signal, callId, name: 'probe', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(adapter.requests).toHaveLength(1)
+    expect(probe.runs()).toBe(0)
+    expect(questions).toBe(0)
+    for (const remove of disposers) await remove()
+    const retry = ToolCallId(`after-disposal-${kind}`)
+    appendAssistant(session, [{ type: 'tool-call', id: retry, name: 'probe', arguments: '{}' }], 1, 2)
+    appendNativeCall(session, retry, 'probe', '{}', 1, 2)
+    const ordinary = await ctx.tools.execute({ agent, signal: new AbortController().signal, callId: retry, name: 'probe', arguments: {} })
+    expect(ordinary.isError).toBe(false)
+    expect(probe.runs()).toBe(1)
+    expect(adapter.requests).toHaveLength(1)
+  })
+
   it('uses the latest route and exactly the filtered logged five-section input', async () => {
     const { ctx, adapter } = await harness([
       reasoningDecisionChunks('{"risk":"low","decision":"allow"}'),

@@ -52,6 +52,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 `request(req)` names the agent, tool, optional call id and reason, and an abort signal. Optional `displayReason` supplies localized presentation text without changing the logged reason. It requires an open turn: an idle or between-turn caller throws before auditing anything. Aborting withdraws the question — the request settles `cancelled` and a late answer is discarded. A failure that prevents either audit append from committing rejects instead of returning an unlogged decision.
 
 ### What the model and user see
+Host integrations can bind an optional answerer route before the first model operation. Decisions and policy statements then use the current answerer's policy; the origin retains its audit. Routed presentations carry the original operation supplied from the origin log, and missing details prohibit a grant. Disposing the route withdraws pending questions. Browser disconnection alone does not decide a question; transport can replay it on reconnect.
 
 The model sees only the asking consumer's eventual tool outcome — allowed, rejected, cancelled, or unavailable — plus the current policy in the runtime-context snapshot; the audit events and the human permission UI are not model context. A `never` switch is announced to the model by a sourced user message, and both policies contribute their complete current meaning to the snapshot.
 

@@ -53,6 +53,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 A session's mode can be switched at runtime through a UI policy control or an explicit switch; the switch is recorded in the session log and takes effect on the session's next confined call. The switch survives restart through replay, and each session keeps its own mode — two sessions never see each other's state. A switched session keeps its immutable workspace cwd as the writable boundary.
 
+Host integrations may capture the current policy and run an operation with `withSnapshot()`. Later standing-mode changes do not alter that operation; an explicit approved per-call mode still takes precedence. Operations outside the captured asynchronous scope use the current Session policy.
+
 ### Failures and recovery
 
 An invalid configured mode is rejected when the plugin loads, so a typo fails loud instead of silently changing policy. A session without a cwd, and agentless calls, fall back to the configured workspace root; a call with an approved explicit mode uses that mode for exactly that call.

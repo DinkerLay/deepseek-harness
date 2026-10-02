@@ -29,12 +29,12 @@ interface TeamMemberSnapshot {
 
 每个 member 都从 `provisioning` 开始，并到达 `active` 或 `failed`。结算任务与消息后，Lead 可将 active 或 failed 成员经 `retiring` 转为 `retired`；Session 与不可变名字仍保留。已配置成员的 Preset id 和声明修订值在创建与冷恢复之间保持不变。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
 
-产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订、可选的普通消息上限和成员工具上限，并在入队前拒绝成员间直接消息。
+产品组合可以在开放 Team 工具前持久写入不可变的受控模式记录；官方组合不写此记录。受控 Team 在重启后保留指定的 Task 写入方、权限表修订和可选的普通消息上限，并在入队前拒绝成员间直接消息。已发布的成员工具上限字段只保留在持久定义中。
 
 用户管理的组成记录另外跟踪动态、应用中或固定的成员策略。官方 Team 没有这条记录时保持动态。应用中持久保存产品目标并阻止普通成员增减；固定状态拒绝模型增员或退队。原生 Lead 日志还保留 Profile 关联和可选槽位 id，冷恢复不需要第二份成员表。
 
 ```ts type-equiv
-/** Optional Team-wide ceiling on tools available to teammates. */
+/** Retired tool-limit fields retained only to describe released persistent records. */
 interface TeamMemberToolLimit {
   /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
   readonly allow?: readonly string[]
@@ -56,7 +56,7 @@ interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
-  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  /** Retired field retained for the released persistence definition; runtime neither reads nor writes it. */
   readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 ```
@@ -73,6 +73,8 @@ interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+  /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
 }
 ```
 
@@ -97,6 +99,8 @@ interface TeamMessageSource {
   readonly messageId: TeamMessageId
   readonly senderId: SessionId
   readonly senderName: string
+  /** Attribution aligned with the delivered blocks, including system framing. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
 }
 ```
 
@@ -149,7 +153,7 @@ interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
-  readonly notices?: readonly TeamMessageSnapshot[]
+  readonly notices?: readonly TeamExtensionNotice[]
 }
 ```
 
@@ -183,6 +187,8 @@ interface TeamMemberProjection {
   readonly preset?: TeamPresetBinding
   readonly slotId?: string
   readonly error?: string
+  /** Controlled-only state derived from durable input delivery receipts. */
+  readonly executionStarted?: boolean
 }
 ```
 
@@ -252,14 +258,6 @@ membership(agent: Agent): TeamMembership
 controlledMode(agent: Agent): TeamControlledMode | undefined
 
 /**
- * Whether a persisted Team ceiling permits one member tool registration.
- * @param agent - exact Team caller whose pinned mode supplies the ceiling.
- * @param name - tool name checked before registration or direct use.
- * @returns true when the member may see and call this tool.
- */
-memberToolAllowed(agent: Agent, name: string): boolean
-
-/**
  * Read the durable Team composition policy; an untouched Team is dynamic.
  * @param agent - exact live Team member whose root owns the policy.
  * @returns a detached current policy value.
@@ -290,25 +288,11 @@ async commitComposition( caller: Agent, build: (snapshot: TeamCompositionSnapsho
 defaultMemberPresetId(): string | undefined
 
 /**
- * Read the installed Task writer's running-Attempt admission for one exact member.
+ * Read product-owned next-action hints after a controlled member releases work.
  * @param agent - exact live Team member.
- * @returns whether the member has a running product Attempt.
+ * @returns text supplied by the installed extension without Team interpretation.
  */
-hasRunningAttempt(agent: Agent): boolean
-
-/**
- * Read extension-declared standby tools; each tool still owns its authorization check.
- * @param agent - exact live Team member.
- * @returns additional tool names admitted during standby.
- */
-standbyToolNames(agent: Agent): readonly string[]
-
-/**
- * Read product-owned open offers after a controlled member releases work.
- * @param agent - exact live Team member.
- * @returns claimable Task ids supplied by the installed extension.
- */
-claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[]
+releaseHints(agent: Agent): readonly string[]
 
 /**
  * List the runtime-enriched roster visible to one Team member.

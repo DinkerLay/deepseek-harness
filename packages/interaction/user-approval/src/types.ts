@@ -9,12 +9,24 @@ import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent/types'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 /**
  * Pairs one `approval/asked` audit event with its `approval/decided`.
  * Service-issued (one fresh id per {@link ApprovalService.request} call).
  */
 export type ApprovalRequestId = Branded<'ApprovalRequestId'>
+
+/** Host-registered identity of an optional interactive answerer route. */
+export type ApprovalAnswererRouteId = Branded<'ApprovalAnswererRouteId'>
+
+/** Brand a stable Host answerer-route name.
+ * @param id - stable Host route name.
+ * @returns the branded route identity.
+ */
+export function ApprovalAnswererRouteId(id: string): ApprovalAnswererRouteId {
+  return id as ApprovalAnswererRouteId
+}
 
 /**
  * Brand a string as an {@link ApprovalRequestId}.
@@ -73,6 +85,18 @@ export interface ApprovalRequestEvent {
   readonly displayReason?: { readonly en: string; readonly [locale: string]: string }
   /** Cancellation lifetime of the pending request. */
   readonly signal?: AbortSignal
+  /** Origin of a routed request; the waterfall Agent remains its answerer. */
+  readonly originSessionId?: SessionId
+  /** Identity of the audit pair in the originating Session. */
+  readonly approvalRequestId?: ApprovalRequestId
+  /** Exact originating native or PTC-bound call. */
+  readonly originCallId?: ToolCallId
+  /** Trusted Host subject label. */
+  readonly displaySubject?: string
+  /** Optional product-owned work label; absence means attribution is unknown. */
+  readonly taskId?: string
+  /** Exact operation copied from the origin's durable call; absent disables routed grants. */
+  readonly originOperation?: { readonly name: string; readonly arguments: string }
 }
 
 declare module '@deepseek-ai/cordis' {

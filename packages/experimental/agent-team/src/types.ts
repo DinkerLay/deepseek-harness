@@ -91,6 +91,8 @@ export interface TeamMemberView {
   readonly slotId?: string
   readonly model?: string
   readonly diagnostics: string[]
+  /** Controlled-only receipt-derived execution state; not a durable member field. */
+  readonly executionStarted?: boolean
 }
 
 /** Durable task lifecycle. */
@@ -138,7 +140,7 @@ export interface TeamExtensionRecordSnapshot extends TeamTaskTransactionSnapshot
 
 /** One new record, optionally enqueueing notices in the same event. */
 export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {
-  readonly notices?: readonly TeamMessageSnapshot[]
+  readonly notices?: readonly TeamExtensionNotice[]
   readonly affectsComposition?: true
 }
 
@@ -159,7 +161,7 @@ export interface TeamTaskTransactionWritePlan {
   readonly updates: readonly TeamTaskTransactionUpdate[]
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
-  readonly notices?: readonly TeamMessageSnapshot[]
+  readonly notices?: readonly TeamExtensionNotice[]
 }
 
 /** Return an earlier committed Task result without appending an event. */
@@ -196,6 +198,8 @@ export interface TeamMemberProjection {
   readonly preset?: TeamPresetBinding
   readonly slotId?: string
   readonly error?: string
+  /** Controlled-only state derived from durable input delivery receipts. */
+  readonly executionStarted?: boolean
 }
 
 /**
@@ -285,6 +289,14 @@ export interface TeamMessageSnapshot {
   readonly senderName: string
   readonly targetId: SessionId
   readonly content: ContentBlock[]
+  /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
+}
+
+/** Extension-only admission hint stripped before a Team notice is persisted. */
+export interface TeamExtensionNotice extends TeamMessageSnapshot {
+  /** Count the complete delivered content against a controlled Team's ordinary-message limit. */
+  readonly ordinaryMessageLimit?: true
 }
 
 /** Lead-authorized cancellation of one undelivered Team message. */
@@ -301,9 +313,11 @@ export interface TeamMessageSource {
   readonly messageId: TeamMessageId
   readonly senderId: SessionId
   readonly senderName: string
+  /** Attribution aligned with the delivered blocks, including system framing. */
+  readonly contentParts?: readonly ('sender' | 'fact')[]
 }
 
-/** Optional Team-wide ceiling on tools available to teammates. */
+/** Retired tool-limit fields retained only to describe released persistent records. */
 export interface TeamMemberToolLimit {
   /** Optional allowlist over inherited, Preset-local, and Team-scoped member tools. */
   readonly allow?: readonly string[]
@@ -323,7 +337,7 @@ export interface TeamControlledMode {
   readonly permissionRevision: string
   /** Optional per-Team UTF-8 byte cap for ordinary member messages. */
   readonly maxOrdinaryMessageBytes?: number
-  /** Optional Team-wide ceiling on member tools; omitted in the official composition. */
+  /** Retired field retained for the released persistence definition; runtime neither reads nor writes it. */
   readonly memberToolLimit?: TeamMemberToolLimit | undefined
 }
 
@@ -335,8 +349,16 @@ declare module '@deepseek-ai/dsh-llm' {
 
 /** Team-service deployment limits. */
 export interface Config {
-  /** Product opt-in. Official Team composition leaves this unset and retains native behavior. */
-  readonly controlledMode?: TeamControlledMode | undefined
+  /** Initial delay between controlled-mail receipt retries; successive attempts multiply it. */
+  readonly messageRetryDelayMs?: number
+  /** Maximum same-process retries before a durable Lead warning. */
+  readonly maxMessageRetries?: number
+  /** Product opt-in; requires an ordinary-message byte cap. Official Teams leave this unset. */
+  readonly controlledMode?: Omit<TeamControlledMode, 'memberToolLimit' | 'maxOrdinaryMessageBytes'>
+    & {
+      /** Required UTF-8 byte cap for ordinary member messages in a new controlled Team. */
+      readonly maxOrdinaryMessageBytes: number
+    } | undefined
   /** Optional product default for members without an explicit Preset; official Teams inherit the Lead. */
   readonly defaultMemberPresetId?: string
   /** Maximum immutable teammate names retained by one Team. */
@@ -358,7 +380,8 @@ export interface Config {
 /** Input for creating one durable teammate. */
 export interface SpawnTeammateRequest {
   readonly name: string
-  readonly description: string
+  /** Required in the official Team; controlled Teams derive a label from the selected Preset. */
+  readonly description?: string
   readonly group?: string
   readonly prompt: ContentBlock[]
   readonly context: 'fresh' | 'fork'

@@ -11,7 +11,7 @@ import { TeamJournal } from './journal.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
-import { TeamRoster, memberToolAllowed } from './roster.ts'
+import { TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
 import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extension.ts'
@@ -22,7 +22,6 @@ import type {
   TeamCompositionState,
   TeamCompositionTransition,
   TeamControlledMode,
-  TeamMemberToolLimit,
   CreateTeamTaskRequest,
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -72,13 +71,11 @@ export class TeamService extends Service {
       requiredTaskExtensionId: z.string().required(),
       permissionTableId: z.string().required(),
       permissionRevision: z.string().required(),
-      maxOrdinaryMessageBytes: z.number().step(1).min(1),
-      memberToolLimit: z.union([z.object({
-        allow: z.union([z.array(z.string().min(1).max(200)), z.const(undefined)]),
-        deny: z.union([z.array(z.string().min(1).max(200)), z.const(undefined)]),
-      }) as z<TeamMemberToolLimit>, z.const(undefined)]),
+      maxOrdinaryMessageBytes: z.number().step(1).min(1).required(),
     }), z.const(undefined)]),
     defaultMemberPresetId: z.string(),
+    messageRetryDelayMs: z.number().step(1).min(1).default(500),
+    maxMessageRetries: z.number().step(1).min(1).default(5),
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
@@ -104,13 +101,16 @@ export class TeamService extends Service {
     this.config = {
       ...config.defaultMemberPresetId === undefined ? {} : { defaultMemberPresetId: config.defaultMemberPresetId },
       ...config.controlledMode === undefined ? {} : { controlledMode: {
-        ...config.controlledMode,
-        ...config.controlledMode.maxOrdinaryMessageBytes === undefined ? {} : {
-          maxOrdinaryMessageBytes: positiveLimit('controlledMode.maxOrdinaryMessageBytes',
-            config.controlledMode.maxOrdinaryMessageBytes),
-        },
+        kind: config.controlledMode.kind,
+        requiredTaskExtensionId: config.controlledMode.requiredTaskExtensionId,
+        permissionTableId: config.controlledMode.permissionTableId,
+        permissionRevision: config.controlledMode.permissionRevision,
+        maxOrdinaryMessageBytes: positiveLimit('controlledMode.maxOrdinaryMessageBytes',
+          config.controlledMode.maxOrdinaryMessageBytes),
       } },
       maxMembers: positiveLimit('maxMembers', config.maxMembers ?? DEFAULT_MAX_MEMBERS),
+      messageRetryDelayMs: positiveLimit('messageRetryDelayMs', config.messageRetryDelayMs ?? 500),
+      maxMessageRetries: positiveLimit('maxMessageRetries', config.maxMessageRetries ?? 5),
       maxActiveMembers: positiveLimit('maxActiveMembers', config.maxActiveMembers ?? DEFAULT_MAX_MEMBERS),
       maxTasks: positiveLimit('maxTasks', config.maxTasks ?? DEFAULT_MAX_TASKS),
       maxPendingMessagesPerMember: positiveLimit(
@@ -143,6 +143,8 @@ export class TeamService extends Service {
       this.lifecycle,
       this.config.maxPendingMessagesPerMember,
       this.config.maxMessageBytes,
+      this.config.messageRetryDelayMs,
+      this.config.maxMessageRetries,
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
@@ -160,28 +162,31 @@ export class TeamService extends Service {
       const root = ctx.agents.get(facts.parentSessionId)
       if (root === undefined) return undefined
       const state = this.journal.state(root)
-      if (state.mode?.kind !== 'controlled'
-        || !state.members.some(member => member.id === facts.childSessionId
-          && (member.phase === 'provisioning' || member.phase === 'active'))) return undefined
-      if (facts.stopReason !== 'completed') return undefined
-      if (facts.firstInputOnly && !facts.events.some(event => event.type === 'tool/call'
-        || event.type === 'tool/ptc-dispatch-start')) {
-        const output = facts.output
-        const texts = output?.flatMap(block => block.type === 'text' ? [block.text] : [])
-        if (output !== undefined && output.every(block => block.type === 'text' || block.type === 'reasoning')
-          && texts !== undefined && texts.length > 0
-          && /^ready\.?$/iu.test(texts.join('').trim())) return 'suppress'
-      }
-      return await this.tasks.assessSettlementNotice(root, facts)
+      const member = state.mode?.kind === 'controlled'
+        ? state.members.find(candidate => candidate.id === facts.childSessionId) : undefined
+      if (member === undefined) return undefined
+      const taskIds = await this.tasks.unsubmittedTaskIds(root, facts)
+      const notice = { action: 'send' as const, subject: `Teammate ${member.name}`,
+        ...taskIds === undefined || taskIds.length === 0 ? {} : {
+          detail: `Unsubmitted Tasks: ${taskIds.join(', ')}.`,
+        } }
+      if (facts.stopReason !== 'completed' || member.phase !== 'provisioning'
+        && member.phase !== 'active' || taskIds !== undefined && taskIds.length > 0) return notice
+      return await this.tasks.assessSettlementNotice(root, facts) === 'suppress' ? 'suppress' : notice
+    }, (facts) => {
+      const root = ctx.agents.get(facts.parentSessionId)
+      if (root === undefined) return undefined
+      const state = this.journal.state(root)
+      const member = state.mode?.kind === 'controlled'
+        ? state.members.find(candidate => candidate.id === facts.childSessionId) : undefined
+      if (member === undefined) return undefined
+      return { action: 'send', subject: `Teammate ${member.name}` }
     }), 'agentTeams.settlementNoticePolicy()')
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('agent/created', async ({ agent, source }) => {
       await this.initializeControlledMode(agent, source)
       this.scheduleRecovery(agent)
-    })
-    ctx.on('subagent/continuable-admission', async (agent) => {
-      await this.roster.validateMemberTools(agent, this.tasks.extensionTeamToolNames())
     })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)
@@ -216,18 +221,6 @@ export class TeamService extends Service {
    */
   controlledMode(agent: Agent): TeamControlledMode | undefined {
     return this.journal.state(this.roster.membership(agent).root).mode
-  }
-
-  /**
-   * Whether a persisted Team ceiling permits one member tool registration.
-   * @param agent - exact Team caller whose pinned mode supplies the ceiling.
-   * @param name - tool name checked before registration or direct use.
-   * @returns true when the member may see and call this tool.
-   */
-  memberToolAllowed(agent: Agent, name: string): boolean {
-    const membership = this.roster.membership(agent)
-    if (membership.role !== 'teammate') return true
-    return memberToolAllowed(this.journal.state(membership.root).mode?.memberToolLimit, name)
   }
 
   /**
@@ -301,33 +294,13 @@ export class TeamService extends Service {
   }
 
   /**
-   * Read the installed Task writer's running-Attempt admission for one exact member.
+   * Read product-owned next-action hints after a controlled member releases work.
    * @param agent - exact live Team member.
-   * @returns whether the member has a running product Attempt.
+   * @returns text supplied by the installed extension without Team interpretation.
    */
-  hasRunningAttempt(agent: Agent): boolean {
+  releaseHints(agent: Agent): readonly string[] {
     this.roster.membership(agent)
-    return this.tasks.hasRunningAttempt(agent)
-  }
-
-  /**
-   * Read extension-declared standby tools; each tool still owns its authorization check.
-   * @param agent - exact live Team member.
-   * @returns additional tool names admitted during standby.
-   */
-  standbyToolNames(agent: Agent): readonly string[] {
-    this.roster.membership(agent)
-    return this.tasks.extensionStandbyToolNames()
-  }
-
-  /**
-   * Read product-owned open offers after a controlled member releases work.
-   * @param agent - exact live Team member.
-   * @returns claimable Task ids supplied by the installed extension.
-   */
-  claimableOpenTaskIds(agent: Agent): readonly TeamTaskId[] {
-    this.roster.membership(agent)
-    return this.tasks.extensionClaimableTaskIds(agent)
+    return this.tasks.extensionReleaseHints(agent)
   }
 
   /**

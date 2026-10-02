@@ -322,6 +322,9 @@ function panelProps(
     escalation: `Tool ${pending.toolName} asks`,
     reject: 'Reject',
     allowOnce: 'Allow once',
+    origin: `Member ${pending.displaySubject ?? pending.originSessionId} · Task ${pending.taskId ?? 'undetermined'}`,
+    unknownTask: 'undetermined',
+    unavailableOperation: 'Original operation is unavailable',
   }
   return {
     matched: pending,
@@ -332,6 +335,27 @@ function panelProps(
 }
 
 describe('ApprovalPanel', () => {
+  it('shows the routed member operation and keeps an unresolved operation ungrantable', async () => {
+    const missing = new PendingApproval(id('lead'), {
+      toolName: 'bash', originSessionId: id('member'), displaySubject: 'worker',
+    })
+    const view = render(<ApprovalPanel {...panelProps(missing)} />)
+    expect(screen.getByRole('button', { name: 'Allow once' })).toHaveProperty('disabled', true)
+    expect(screen.getByText(/worker/u)).toBeTruthy()
+    await expect(missing.answer('allowed-once')).rejects.toThrow('original operation')
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    await expect(missing.result).resolves.toBe('rejected')
+    const ready = new PendingApproval(id('lead'), {
+      toolName: 'bash', originSessionId: id('member'), displaySubject: 'worker', taskId: 'task-1',
+      originOperation: { name: 'bash', arguments: '{"command":"echo member"}' },
+    })
+    view.rerender(<ApprovalPanel {...panelProps(ready)} />)
+    expect(screen.getByText(/echo member/u)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Allow once' })).toHaveProperty('disabled', false)
+    fireEvent.click(screen.getByRole('button', { name: 'Allow once' }))
+    await expect(ready.result).resolves.toBe('allowed-once')
+  })
+
   it('renders fallback copy without detail and returns rejection', async () => {
     const pending = new PendingApproval(id('s1'), { toolName: 'bash' })
     const props = panelProps(pending)

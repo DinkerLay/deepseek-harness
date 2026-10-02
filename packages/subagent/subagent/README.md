@@ -27,6 +27,8 @@ Use `dsh-subagent` to delegate work to named child agents, collect their results
 
 This package is the contract every delegation setup shares. You enable it by mounting the service together with one or more provider backends and the model-facing delegation tool; from then on, an agent can delegate work and the service routes each request to the named provider.
 
+Trusted Hosts can use `deliverContinuableInput()` with a reserved child id and stable input id. It creates or resumes the child and returns only after durable input receipt; retries do not insert another copy. Restored pending input uses the driver's optional `wakePending()` support. The runtime releases the child lock while awaiting receipt or teardown. `synchronizeContinuablePermissions()` explicitly aligns a live direct child's sandbox and permission selection with its parent while retaining the child's approval policy; ordinary delegation does not call it.
+
 ### Enabling delegation
 
 Mount the service with a provider and the delegation tool. The provider registers under the name you configure (the in-process spawn backend defaults to `spawn`); the tool row names that provider so the model sees a static tool. A minimal one-shot setup:
@@ -157,7 +159,7 @@ One user-role parent message opening with the outcome — `Background subagent <
 
 #### Token effect
 
-By default, one notice per settled Activation enters the parent's request, sized by the child's final text. An installed settlement-notice policy can suppress that copy; child messages and durable business notifications remain separate.
+By default, one notice per settled Activation enters the parent's request, sized by the child's final text. An installed settlement-notice policy can suppress that copy or provide a parent-facing subject and detail without changing the durable child id. One synchronous wording provider keeps that attribution when the asynchronous decision times out or policies disagree; conflicting wording providers use the native subject. Child messages and durable business notifications remain separate.
 
 #### KV Cache effect
 

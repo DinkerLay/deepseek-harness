@@ -86,6 +86,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 A tool’s `projectContent` installs execution-prepared content before post-execute policies. Policies may still replace or block it; `finalizeContent` remains the final content transform after those policies.
 
+Host integrations can register execution preparation before pre-execute policies. A preparer may capture operation-local state with `ToolRunContext.wrapDispatch()`; the captured wrapper applies when that call's body runs, including after an approval wait. Registrations are disposable and do not change visible tools.
+
 ### Host presentation descriptors
 
 A tool can retain pure `presentCall()` and `presentResult()` methods for Host-local consumers. The built-in Web Client does not consume those values. It selects a renderer through `tool.call.toolview` and derives card props from raw call arguments, result content, failure state, and persisted metadata. The [Client-derived presentation decision](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.md) owns this transport split.

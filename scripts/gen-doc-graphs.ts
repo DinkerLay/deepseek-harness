@@ -108,6 +108,14 @@ const GROUP_ORDER = [
 
 const SERVICE_ROLES: ServiceRole[] = [
   {
+    key: 'autoReviewSources',
+    pkg: 'experimental-auto-review',
+    title: 'Optional execution and input attribution for Auto review',
+    mode: 'core',
+    consumers: ['experimental-auto-review'],
+    note: 'Owns effect-scoped Host policies; absent registrations retain native source roles and Session permission selection.',
+  },
+  {
     key: 'hmr',
     pkg: 'hmr',
     title: 'Serialized module and configuration reloads',

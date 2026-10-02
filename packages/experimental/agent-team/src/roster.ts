@@ -8,7 +8,6 @@ import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import { scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ContinuablePresetBinding, ContinuableStart } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import { compositionOf } from './composition.ts'
@@ -17,49 +16,17 @@ import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
 import type { TeamState } from './projection.ts'
 import { messageAccepted } from './session-message.ts'
-import { TeamId } from './types.ts'
+import { TeamId, TeamMessageId } from './types.ts'
 import type {
   SpawnTeammateRequest,
   SpawnTeammateResult,
   TeamMemberLegacySnapshot,
   TeamMemberSnapshot,
   TeamMemberView,
-  TeamMemberToolLimit,
 } from './types.ts'
 import { requiredText } from './validation.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
-const DELEGATION_PRESET_MODULES = new Set([
-  '@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control',
-  '@deepseek-ai/dsh-tool-subagent-control/list-agents', '@deepseek-ai/dsh-tool-workflow',
-  '@deepseek-ai/dsh-workflow-ptc', '@deepseek-ai/dsh-tool-ralph',
-])
-const NATIVE_TEAM_TOOL_NAMES = new Set([
-  'spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent',
-  'retire_teammate', 'team_message_cancel', 'team_task_create', 'team_task_list',
-  'team_task_get', 'team_task_update',
-])
-
-/**
- * Apply a persisted Team ceiling to an inherited or locally registered member tool.
- * @param limit - Team mode's optional allow and deny lists.
- * @param name - exact tool name to test.
- * @returns true when the tool is admitted by the Team ceiling.
- */
-export function memberToolAllowed(limit: TeamMemberToolLimit | undefined, name: string): boolean {
-  return (limit?.allow === undefined || limit.allow.includes(name)) && !limit?.deny?.includes(name)
-}
-
-/** Fixed first input for a controlled teammate; caller-authored work is ignored. */
-function controlledStandbyPrompt(name: string, group: string | undefined, description: string) {
-  return [{ type: 'text' as const, text: `<system-reminder>
-You are teammate "${name}" in group "${group ?? 'unassigned'}".
-Your Team Lead is "lead". Your responsibility is: ${description}.
-Remain on standby until a Task is assigned. Read the Task Board when needed and send coordination questions only to lead. Do not message another teammate or start unassigned work.
-For this first turn, reply only "Ready." Do not call any tool, including send_message, and do not ask a question. Wait for an assignment notification before doing work.
-</system-reminder>` }]
-}
-
 /** Caller identity inside one implicit Team. */
 export interface TeamMembership {
   readonly root: Agent
@@ -186,23 +153,30 @@ export class TeamRoster {
   list(membership: TeamMembership): TeamMemberView[] {
     const { root } = membership
     const state = this.journal.state(root)
+    const leadModel = state.mode === undefined ? root.options.model
+      : root.session.requestHeader()?.config.model ?? root.options.model
     const result: TeamMemberView[] = [{
       id: root.id,
       name: 'lead',
       role: 'lead',
       status: availability(root),
-      ...root.options.model === undefined ? {} : { model: root.options.model },
+      ...leadModel === undefined ? {} : { model: leadModel },
       diagnostics: [],
     }]
     for (const member of state.members) {
       const live = this.ctx.agents.get(member.id)
-      const model = live?.options.model ?? root.options.model
+      const executionStarted = state.messages.some(message =>
+        message.targetId === member.id && state.delivered.includes(message.id))
+      const model = state.mode === undefined ? live?.options.model ?? root.options.model
+        : (live?.session ?? this.ctx.sessions.get(member.id))?.requestHeader()?.config.model
+          ?? live?.options.model ?? (executionStarted ? undefined : leadModel)
       result.push({
         id: member.id,
         name: member.name,
         role: 'teammate',
         status: member.phase === 'retiring' || member.phase === 'retired' || member.phase === 'failed'
           || member.phase === 'provisioning' ? member.phase : availability(live),
+        ...state.mode === undefined ? {} : { executionStarted },
         description: member.description,
         ...member.group === undefined ? {} : { group: member.group },
         provider: member.provider,
@@ -242,43 +216,6 @@ export class TeamRoster {
   }
 
   /**
-   * Refuse any effective member tool not declared by its Preset or Team adapters.
-   * @param agent - initialized, exact live Team child before message admission.
-   * @param extensionTeamToolNames - product Team tools supplied by the installed writer.
-   */
-  async validateMemberTools(agent: Agent, extensionTeamToolNames: readonly string[]): Promise<void> {
-    const membership = this.tryMembership(agent)
-    if (membership?.role !== 'teammate') return
-    const member = this.journal.state(membership.root).members.find(candidate => candidate.id === agent.id)
-    if (member?.preset === undefined) return
-    const registry = this.ctx.get('agentPresets')
-    const tools = this.ctx.get('tools')
-    const scope = scopeOf(agent.ctx)
-    if (registry === undefined || tools === undefined || scope === undefined) {
-      const missing = [registry === undefined ? 'preset registry' : undefined,
-        tools === undefined ? 'tool registry' : undefined, scope === undefined ? 'member scope' : undefined]
-        .filter((value): value is string => value !== undefined)
-      throw new TeamError(`member tool catalog cannot be checked: ${missing.join(', ')} unavailable`, 'TEAM_UNSAFE_PRESET')
-    }
-    await using lease = await registry.acquireComposition(member.preset.id)
-    if (lease.revision !== member.preset.revision) {
-      throw new TeamError(`preset "${member.preset.id}" declaration changed; member tools cannot be admitted`,
-        'TEAM_UNSAFE_PRESET')
-    }
-    const limit = this.journal.state(membership.root).mode?.memberToolLimit
-    if (lease.allowedTools === undefined && limit === undefined) return
-    const allowed = lease.allowedTools === undefined ? undefined
-      : new Set([...lease.allowedTools, ...NATIVE_TEAM_TOOL_NAMES, ...extensionTeamToolNames])
-    const unexpected = tools.schemas(scope).map(tool => tool.name)
-      .filter(name => name !== 'run_code' && ((allowed !== undefined && !allowed.has(name))
-        || !memberToolAllowed(limit, name)))
-    if (unexpected.length > 0) {
-      throw new TeamError(`member tool catalog contains tools outside preset or Team allowance: ${unexpected.join(', ')}`,
-        'TEAM_UNSAFE_PRESET')
-    }
-  }
-
-  /**
    * Reconcile provisioning state when one Team member Session starts.
    * @param agent - newly started exact live Agent.
    * @param signal - shared runtime cancellation.
@@ -288,6 +225,12 @@ export class TeamRoster {
     const membership = this.tryMembership(agent)
     if (membership?.role === 'lead') {
       await this.reconcileProvisioning(membership.root, signal)
+      if (this.journal.state(membership.root).mode !== undefined) {
+        for (const member of this.journal.state(membership.root).members) {
+          if (member.phase === 'failed') await this.failRegisteredMember(membership.root, member.id,
+            member.error ?? 'registered member could not start')
+        }
+      }
       await this.reconcileRetiring(membership.root, signal)
     }
   }
@@ -399,10 +342,9 @@ export class TeamRoster {
     const root = membership.root
     this.journal.assertWriteAdmission(root)
     const name = this.memberName(request.name)
-    const description = requiredText(request.description, 'description', 200)
     const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
     let preset: ContinuablePresetBinding | undefined
-    let inheritedToolFilter: { allow?: readonly string[]; deny?: readonly string[] } | undefined
+    let presetLabel: string | undefined
     const mode = this.journal.state(root).mode
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
@@ -421,35 +363,15 @@ export class TeamRoster {
         throw new TeamError(`preset "${lease.id}" declaration differs from the requested Profile revision`,
           'TEAM_PRESET_UNAVAILABLE')
       }
-      if (mode !== undefined && lease.compositionRows.some(row =>
-        row.enabled !== false && DELEGATION_PRESET_MODULES.has(row.moduleName))) {
-        throw new TeamError(`preset "${lease.id}" exposes delegation outside Agent Team`, 'TEAM_UNSAFE_PRESET')
-      }
-      if (lease.allowedTools !== undefined) {
-        const allowed = new Set(lease.allowedTools)
-        const available = new Set(lease.inheritedToolNames)
-        const missing = lease.allowedTools.filter(tool => !available.has(tool))
-        const undeclared = lease.presetToolNames.filter(tool => !allowed.has(tool))
-        if (missing.length > 0 || undeclared.length > 0) {
-          throw new TeamError(`preset "${lease.id}" tool allowance is invalid: ${[
-            ...missing.map(tool => `missing ${tool}`), ...undeclared.map(tool => `undeclared ${tool}`),
-          ].join(', ')}`, 'TEAM_UNSAFE_PRESET')
-        }
-      }
-      const limit = mode?.memberToolLimit
-      const globalNames = new Set(lease.inheritedToolNames)
-      const globalAllow = lease.allowedTools === undefined && limit?.allow === undefined ? undefined
-        : [...globalNames].filter(name => (lease.allowedTools === undefined || lease.allowedTools.includes(name))
-          && memberToolAllowed(limit, name))
-      const globalDeny = limit?.deny?.filter(name => globalNames.has(name))
-      if (globalAllow !== undefined || globalDeny !== undefined) {
-        inheritedToolFilter = {
-          ...globalAllow === undefined ? {} : { allow: globalAllow },
-          ...globalDeny === undefined ? {} : { deny: globalDeny },
-        }
-      }
       preset = { id: lease.id, revision: lease.revision }
+      presetLabel = lease.name ?? lease.id
     }
+    if (mode !== undefined && presetLabel === undefined) {
+      throw new TeamError('controlled member Preset has no display label', 'TEAM_PRESET_UNAVAILABLE')
+    }
+    const description = mode === undefined
+      ? requiredText(request.description ?? '', 'description', 200)
+      : requiredText(presetLabel ?? '', 'Preset label', 200)
     const childId = brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,
@@ -484,6 +406,12 @@ export class TeamRoster {
       await this.appendMember(root, member)
     })
 
+    if (mode !== undefined) {
+      const active = { ...member, phase: 'active' as const }
+      await this.settleProvisioning(root, active)
+      return { member: { ...this.memberView(active), executionStarted: false } }
+    }
+
     let started: ContinuableStart
     try {
       started = await this.ctx.subagents.startContinuable({
@@ -491,9 +419,8 @@ export class TeamRoster {
         provider: request.provider,
         label: description,
         request: {
-          prompt: mode === undefined ? request.prompt : controlledStandbyPrompt(name, group, description),
+          prompt: request.prompt,
           parent: root,
-          ...inheritedToolFilter === undefined ? {} : { toolFilter: inheritedToolFilter },
         },
         ...preset === undefined ? {} : { preset },
         signal,
@@ -602,6 +529,13 @@ export class TeamRoster {
     const provisioning = this.journal.state(root).members.filter(member => member.phase === 'provisioning')
     for (const member of provisioning) {
       signal.throwIfAborted()
+      if (this.journal.state(root).mode !== undefined) {
+        await this.journal.transact(root.id, async () => {
+          const current = this.journal.state(root).members.find(candidate => candidate.id === member.id)
+          if (current?.phase === 'provisioning') await this.appendMember(root, { ...current, phase: 'active' })
+        })
+        continue
+      }
       // A live child means creation is still completing in this process. Its
       // creator owns the terminal member edge.
       if (this.ctx.agents.get(member.id) !== undefined) continue
@@ -641,6 +575,27 @@ export class TeamRoster {
         await this.appendMember(root, settled)
       })
     }
+  }
+
+  /**
+   * Record a definitively unusable registered member and notify the Lead.
+   * Pending mail remains queued for explicit Lead cancellation.
+   * @param root - exact owning Lead.
+   * @param memberId - registered child identity.
+   * @param reason - actionable creation or composition failure.
+   */
+  async failRegisteredMember(root: Agent, memberId: SessionId, reason: string): Promise<void> {
+    await this.journal.transact(root.id, async () => {
+      const state = this.journal.state(root)
+      const member = state.members.find(candidate => candidate.id === memberId)
+      if (member?.phase !== 'active' && member?.phase !== 'failed') return
+      if (member.phase === 'active') await this.appendMember(root, { ...member, phase: 'failed', error: reason })
+      const messageId = TeamMessageId(`team-start-failed-${memberId}`)
+      if (this.journal.state(root).messages.some(message => message.id === messageId)) return
+      await this.journal.appendAndFlush(root, 'team/message/queued', { version: 2, teamId: TeamId(root.id),
+        message: { id: messageId, senderId: root.id, senderName: 'lead', targetId: root.id,
+          content: [{ type: 'text', text: `Teammate ${member.name} could not start: ${reason}. Cancel its pending mail and release or reassign its Tasks before retiring or rebuilding it.` }] } })
+    })
   }
 
   /** Complete a durable retirement left between admission cutoff and activation teardown. */

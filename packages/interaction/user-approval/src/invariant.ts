@@ -46,6 +46,12 @@ function validateApprovalEvent(
   if (event.type === 'approval/policy' && !APPROVAL_POLICIES.includes(event.data.policy)) {
     fail(`approval/policy carries unknown policy ${JSON.stringify(event.data.policy)}`)
   }
+  if (event.type === 'approval/answerer-route') {
+    const data: Readonly<Record<string, unknown>> = event.data
+    if (data.version !== 1 || typeof data.routeId !== 'string' || data.routeId.length === 0) {
+      fail('approval/answerer-route requires version 1 and a nonempty Host route id')
+    }
+  }
   return undefined
 }
 

@@ -215,7 +215,15 @@ export function applyDelegatedComposition(childCtx: Context, composition: ChildC
   childCtx.systemPrompt.context({
     name: 'subagent:delegation',
     order: childCtx.systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),
-    text: SUBAGENT_DELEGATION_CONTEXT,
+    text: (context) => {
+      const agent = context.agent
+      const approval = childCtx.get('approval')
+      if (agent === undefined || approval?.routeOf(agent) === undefined
+        || approval.effectivePolicy(agent) !== 'ask') return SUBAGENT_DELEGATION_CONTEXT
+      const auto = childCtx.get('permissionPresets')?.current(agent.session) === 'auto'
+      return 'You are a delegated subagent. Operations that require approval may be submitted through your configured answerer. Wait for its decision; grants apply only to that operation.'
+        + (auto ? ' An Auto review denial is final and does not ask the user. Do not retry unchanged; report the operation and reason to your direct parent.' : '')
+    },
   })
   if (composition.persona !== undefined) {
     childCtx.systemPrompt.section({

@@ -28,8 +28,9 @@ export async function harness(options: { live?: boolean } = {}): Promise<Context
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
-  if (options.live) liveRegistries.set(ctx, await liveConfig(ctx, AgentPresets, { default: 'standard' }))
-  else await ctx.plugin(AgentPresets, { default: 'standard' })
+  const registryConfig = { default: 'standard' }
+  if (options.live) liveRegistries.set(ctx, await liveConfig(ctx, AgentPresets, registryConfig))
+  else await ctx.plugin(AgentPresets, registryConfig)
   return ctx
 }
 export async function declare(ctx: Context, config: PresetDefinition) {

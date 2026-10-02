@@ -51,8 +51,12 @@ Use the target returned by spawn_teammate or list_agents for send_message and in
 
 const CONTROLLED_LEAD_POLICY = `Agent Team is available by default. You are lead.
 
-The shared Task Board is the authoritative collaboration channel. Only accepted Task results can serve downstream work. Put every required input in the downstream Task's direct prerequisites; do not relay another Task's result in ordinary messages. Create dependent Tasks as drafts when prerequisites are not yet accepted; do not assign them early. Once prerequisites are accepted, review the current results and explicitly confirm or rewrite a draft's requirements in the same assignment operation. Use team_task_assign for this. Receive member coordination messages, inspect submitted results, and accept or rework them. Before replying with a final answer, ensure no Task remains pending, running, or awaiting acceptance, including your own Task; a chat answer does not complete it. Do not treat ordinary messages as accepted Task results. Members may message only lead, not one another. Do not use subagent, workflow, or another delegation path outside Agent Team.`
-const CONTROLLED_MEMBER_POLICY = 'You are a controlled Agent Team teammate. On your first turn, only confirm readiness: do not call tools, send a message, or ask questions. Work only on an assigned running Task and submit its result for lead acceptance. The shared Task Board, not private messages, carries work and accepted results. Read only accepted direct prerequisites of your assigned Task. After assignment, you may message only lead for blockers or clarification; do not send another Task result through a message. If a required input is missing, report it to lead for a Task prerequisite or replacement. If your group is authorized and you need additional source material, dispatch a Task yourself rather than asking lead to create it. Do not contact other teammates or treat an ordinary message as an accepted Task result. Do not claim, edit, delete, reassign, or complete Tasks directly; you may release your own running Task and notify lead. Without an active Task, remain on standby and use only Team read-only queries or a message to lead.'
+The shared Task Board is the authoritative collaboration channel. Only accepted Task results can serve downstream work. Write each Task's division of work, user-provided conditions and acceptance criteria into its own requirements; teammates cannot see the user's conversation. When a Task needs another Task's result, give it a prerequisite path in blockedBy. An accepted indirect upstream result needs no redundant direct edge. Do not relay another Task's result in ordinary messages. A Task with unaccepted prerequisites may remain a draft, but must not be assigned early. Once prerequisites are accepted, review the current results and explicitly confirm or rewrite a draft's requirements in the same assignment operation. Use team_task_assign for this. Receive member coordination messages, inspect submitted results, and accept or rework them. Before replying with a final answer, ensure no Task remains pending, running, or awaiting acceptance, including your own Task, and handle pending proposals and open claim broadcasts; a chat answer does not complete a Task. Do not treat ordinary messages as accepted Task results. Members may message only lead, not one another. Do not use subagent, workflow, or another delegation path outside Agent Team.
+
+Recruiting a controlled member only registers it; its first Task, message, broadcast or comment delivery starts it. Prefer direct assignment for a known owner. Use a claim broadcast only to find applicants, then approve before they work. Notification broadcasts coordinate operations and never carry Task results. Create the current independent batch, not later phases whose requirements depend on unaccepted results; keep future planning in your personal todo.
+
+Messages clarify, remind, correct or authorize existing work; they do not replace a Task assignment. Write changed deliverables back into the Task. If urgent, interrupt the member before messaging it. When Auto blocks a member operation, decide whether it is needed. If so, write the exact action, target and scope in your own words; do not copy a member's request or result as authorization. Member-authored requirements need your actual rewrite or a separate explicit authorization. A member run-completion notice is not Task completion: inspect its unsubmitted Attempts before waiting or closing the work.`
+const CONTROLLED_MEMBER_POLICY = 'You are a controlled Agent Team teammate. Registration does not start work: your first input is the actual Team delivery, with a system identity reminder. Work only on a running Task assigned to you. A claim broadcast allows an application, not work; wait for Lead approval and an assignment. Without a running Attempt do not research, run commands, or edit files. Use Team read-only queries, a message to lead, an allowed comment response, or a broadcast application.\n\nThe Task requirements provide your division of work, user conditions and acceptance criteria. Read accepted results from direct or transitive DAG upstream Tasks through the Task Board; unrelated results remain forbidden. Submit formal work for Lead acceptance, never through messages, comments or broadcasts. If a required input has no prerequisite path, report it to lead and do not submit that Attempt; lead must stop and repair or replace it.\n\nMessage only lead for blockers and clarification. If authorized and an extra input is needed, dispatch a Task yourself; otherwise propose one for Lead review. You may comment on a related executing Task, apply to a claim broadcast while busy, or release your running Task. Do not edit, delete, reassign or complete Tasks directly. A Lead message clarifies or authorizes existing work and does not assign a new Task. When Auto blocks an operation, do not repeatedly retry it unchanged: report the operation and reason to lead, and wait for explicit authorization or another approach. Member run completion is not Task completion.'
 
 const RECRUITMENT_POLICY = (autonomousDelegation: boolean): string => autonomousDelegation
   ? 'Answer simple requests yourself. When delegation would materially help, use agent_find to identify a suitable Preset and recruit teammates without waiting for the user to mention Agent Team.'
@@ -64,13 +68,6 @@ const CONTROLLED_MEMBER_TASK_ACTIONS = ['release'] as const
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
-const BYPASS_DELEGATION_TOOLS = [
-  'subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'workflow', 'ralph',
-] as const
-const BYPASS_DELEGATION_NAMES: ReadonlySet<string> = new Set(BYPASS_DELEGATION_TOOLS)
-const STANDBY_TOOLS: ReadonlySet<string> = new Set([
-  'list_agents', 'team_task_list', 'team_task_get', 'team_task_review', 'send_message',
-])
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the
@@ -101,9 +98,9 @@ const MEMBER_VIEW_SCHEMA = {
   },
 } as const
 
-/** Expose the member name as its model-facing target. */
+/** Expose the addressable member row without runtime-only Client navigation flags. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
-  const { id: _id, name, ...details } = member
+  const { id: _id, name, executionStarted: _executionStarted, ...details } = member
   return { target: name, ...details }
 }
 
@@ -129,7 +126,7 @@ const TASK_VIEW_SCHEMA = {
 const CONTROLLED_TASK_VIEW_SCHEMA = {
   ...TASK_VIEW_SCHEMA,
   properties: { ...TASK_VIEW_SCHEMA.properties,
-    availableOpenTaskIds: { type: 'array', items: { type: 'string' } },
+    suggestedActions: { type: 'array', items: { type: 'string' } },
   },
 } as const
 
@@ -226,24 +223,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
   const controlledMember = config.controlledTasks && membership.role === 'teammate'
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
-  const registerTeamTool = (tool: ToolDefinition): () => void => membership.role === 'teammate'
-    && !ctx.agentTeams.memberToolAllowed(agent, tool.name)
-    ? () => {}
-    : scoped.tools.register(tool)
+  const registerTeamTool = (tool: ToolDefinition): () => void => scoped.tools.register(tool)
   try {
-    // Product Presets omit these capabilities at composition time. Controlled
-    // Teams also reject execution if a custom or misconfigured Preset exposes one.
-    if (config.controlledTasks) {
-      register(scoped.tools.guard(exec => BYPASS_DELEGATION_NAMES.has(exec.name)
-        ? `Team members must delegate through Agent Team, not ${exec.name}` : undefined))
-    }
-    if (controlledMember) {
-      register(scoped.tools.guard(exec => !STANDBY_TOOLS.has(exec.name)
-        && !ctx.agentTeams.standbyToolNames(agent).includes(exec.name)
-        && !ctx.agentTeams.hasRunningAttempt(agent)
-        ? `No running Task Attempt; remain on standby before using ${exec.name}` : undefined))
-    }
-
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
@@ -257,7 +238,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
         parameters: {
           name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
-          description: { type: 'string', required: true, description: 'Short description of the delegated responsibility.' },
+          ...config.controlledTasks ? {} : { description: {
+            type: 'string', required: true as const, description: 'Short description of the delegated responsibility.',
+          } },
           group: { type: 'string', description: 'Optional durable collaboration group, distinct from the teammate name.' },
           ...config.controlledTasks ? {} : { prompt: { type: 'string', required: true as const, description: 'Complete initial task for the teammate.' } },
           ...config.controlledTasks ? {} : { context: {
@@ -276,7 +259,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           const context = config.controlledTasks ? 'fresh' : args.context ?? 'fresh'
           const result = await ctx.agentTeams.spawnTeammate(agent, {
             name: args.name,
-            description: args.description,
+            ...args.description === undefined ? {} : { description: args.description },
             ...args.group === undefined ? {} : { group: args.group },
             prompt: config.controlledTasks ? [] : [
               { type: 'text', text: `<system-reminder>
@@ -514,7 +497,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...args.owner === undefined ? {} : { owner: args.owner },
         })
         return { ...task, ...controlledMember && args.action === 'release'
-          ? { availableOpenTaskIds: [...ctx.agentTeams.claimableOpenTaskIds(caller)] } : {} }
+          ? { suggestedActions: [...ctx.agentTeams.releaseHints(caller)] } : {} }
       },
     })))
   } catch (error: unknown) {

@@ -9,7 +9,7 @@ import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { ActivationTerminal } from './lifecycle.ts'
-import type { SubagentResult } from './types.ts'
+import type { SubagentResult, SubagentSettlementNoticeWording } from './types.ts'
 
 /** Durable attribution for one model-authored message between adjacent Agents. */
 export interface AgentMessageSource {
@@ -101,42 +101,53 @@ export function withContinuableReturnGuidance(
  * the parent's own task vocabulary.
  * @param childId - the durable child the parent knows by id.
  * @param stopReason - how the child's last ordinary turn ended.
+ * @param wording - optional wording from one runtime notice policy.
  * @returns the model-facing opening line of the settlement notice.
  */
-function settlementSummary(childId: SessionId, stopReason: SubagentResult['stopReason']): string {
-  const subject = `Background subagent ${childId}`
+function settlementSummary(childId: SessionId, stopReason: SubagentResult['stopReason'],
+  wording?: SubagentSettlementNoticeWording): string {
+  const subject = wording?.subject ?? `Background subagent ${childId}`
+  let summary: string
   switch (stopReason) {
     case 'completed':
-      return `${subject} finished and will do no further work unless you send it more.`
+      summary = `${subject} finished and will do no further work unless you send it more.`
+      break
     case 'aborted':
-      return `${subject} was stopped before it finished.`
+      summary = `${subject} was stopped before it finished.`
+      break
     case 'max-tokens':
-      return `${subject} ran out of room before it finished.`
+      summary = `${subject} ran out of room before it finished.`
+      break
     // A pre-step rejection — a hook deny, a policy plugin — discarded input
     // the child had claimed, so the parent must not treat the task as done.
     case 'refusal':
-      return `${subject} declined the task.`
+      summary = `${subject} declined the task.`
+      break
     case 'error':
-      return `${subject} failed before it finished.`
+      summary = `${subject} failed before it finished.`
+      break
     /* v8 ignore next 4 -- `SubagentResult['stopReason']` is merge-extensible, so this arm
      * needs a backend that adds a variant; an unnameable ending is reported as unfinished
      * rather than silently as success. */
     default:
-      return `${subject} ended abnormally (${String(stopReason)}) before it finished.`
+      summary = `${subject} ended abnormally (${String(stopReason)}) before it finished.`
   }
+  return wording?.detail === undefined ? summary : `${summary} ${wording.detail}`
 }
 
 /**
  * Build the runtime-owned settlement notice from the child's nonempty closing text.
  * @param childId - durable child session id named in the notice.
  * @param terminal - recorded terminal state for the settled Activation.
+ * @param wording - optional wording from one runtime notice policy.
  * @returns the durable user-message representation delivered to the parent.
  */
 export function createSettlementMessage(
   childId: SessionId,
   terminal: ActivationTerminal,
+  wording?: SubagentSettlementNoticeWording,
 ): ReturnType<typeof createUserMessage> {
-  const summary = settlementSummary(childId, terminal.stopReason)
+  const summary = settlementSummary(childId, terminal.stopReason, wording)
   // Parent providers receive this notice as a user message and may reject
   // nontext assistant blocks. Keep this conversion local so SDK/UI consumers
   // retain the complete child output.

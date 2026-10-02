@@ -11,7 +11,7 @@
 
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import type { ObjectJsonSchema, ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentDescriptorData } from './descriptor.ts'
@@ -45,10 +45,18 @@ export interface SubagentSettlementNoticeFacts {
   readonly firstInputOnly: boolean
 }
 
+/** Optional wording for one parent notice; the durable child id remains in its source metadata. */
+export interface SubagentSettlementNoticeWording {
+  readonly action: 'send'
+  readonly subject?: string
+  readonly detail?: string
+}
+
 /** An optional runtime policy; abstention and unavailable policy preserve normal delivery. */
 export type SubagentSettlementNoticePolicy = (
   facts: SubagentSettlementNoticeFacts,
-) => 'send' | 'suppress' | undefined | Promise<'send' | 'suppress' | undefined>
+) => 'send' | 'suppress' | SubagentSettlementNoticeWording | undefined
+  | Promise<'send' | 'suppress' | SubagentSettlementNoticeWording | undefined>
 
 /** What a caller asks for when starting a continuable background child. */
 export interface ContinuableStartSpec {
@@ -62,6 +70,10 @@ export interface ContinuableStartSpec {
    * before child materialization without a second identity handshake.
    */
   readonly childId?: SessionId
+  /** Host-owned first-input source; omission preserves the ordinary user source. */
+  readonly initialSource?: MessageSource
+  /** Host-reserved first-input identity; omission allocates a fresh message id. */
+  readonly initialMessageId?: MessageId
   /** Explicit child preset, pinned to a captured declaration revision; omission inherits the parent's composition. */
   readonly preset?: ContinuablePresetBinding
   /**

@@ -82,6 +82,48 @@ interface PresetOption {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxautoreviewsources--autoreviewsources"></a>
+
+### `ctx.autoReviewSources` — `AutoReviewSources`
+
+Runtime-only parent-input attribution; no registration preserves native review roles.
+
+```ts cordis-catalog
+/**
+ * Register one optional input attribution policy for its effect lifetime.
+ * @param policy - per-agent source classification; undefined abstains.
+ * @returns the registration disposer.
+ */
+registerParentInputPolicy(policy: AutoParentInputPolicy): () => Promise<void> | undefined
+
+/**
+ * Register an optional execution-bound permission selection.
+ * @param policy - captured selection for the exact pending execution; undefined abstains.
+ * @returns disposer for the registration.
+ */
+registerExecutionPolicy(policy: (exec: ToolExecution) => AutoExecutionPolicy | undefined): () => Promise<void> | undefined
+
+/**
+ * Read the captured selection; failed or conflicting owners require final review.
+ * @param exec - exact pending execution.
+ * @returns one selection, or undefined for the native Session-based selection.
+ */
+executionPolicy(exec: ToolExecution): AutoExecutionPolicy | undefined
+
+/**
+ * Read one unambiguous attribution; conflicting or failed claims grant none.
+ * @param agent - current child being reviewed.
+ * @param source - durable input source.
+ * @param content - retained blocks to classify.
+ * @returns instruction flags, or undefined when no policy claims the input.
+ */
+classify(agent: Agent, source: MessageSource, content: readonly ContentBlock[]): readonly boolean[] | undefined
+```
+
+Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageSource](llm-streaming.zh.md) · [ToolExecution](tools.zh.md)
+
+Source: [`packages/experimental/auto-review/src/index.ts`](../../packages/experimental/auto-review/src/index.ts)
+
 <a id="ctxpermissionpresets--permissionpresetservice"></a>
 
 ### `ctx.permissionPresets` — `PermissionPresetService`

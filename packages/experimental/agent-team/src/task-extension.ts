@@ -39,12 +39,8 @@ export interface TeamTaskExtensionHandle {
 export interface TeamTaskExtension {
   /** Stable identifier stored with each extension-owned Task event. */
   readonly id: string
-  /** Additional model tools supplied by this extension as Team capabilities. */
-  readonly teamToolNames?: readonly string[]
-  /** Additional extension tools admitted during member standby; execution still checks product policy. */
-  readonly standbyToolNames?: readonly string[]
-  /** Optional product offer summary appended to a controlled member's release result. */
-  claimableTaskIds?(caller: Agent): readonly TeamTaskId[]
+  /** Optional product-owned next-action hints appended to a controlled member's release result. */
+  releaseHints?(caller: Agent): readonly string[]
   /**
    * Validate a proposed member group against extension-owned policy while the
    * native roster creation transaction is locked. Throw to reject creation.
@@ -53,13 +49,6 @@ export interface TeamTaskExtension {
    */
   validateMemberGroup?(caller: Agent, group: string | undefined): void
   /**
-   * Whether this exact member currently owns a running product Attempt.
-   * Controlled Team tool admission fails closed when this callback is absent.
-   * @param caller - exact live Team member.
-   * @returns whether non-standby tools may be used.
-   */
-  hasRunningAttempt?(caller: Agent): boolean
-  /**
    * Read product work and durable Lead notices after one controlled member Activation.
    * Absence or an undecidable result preserves the native settlement notice.
    * @param facts - durable child-log interval captured before the child Agent was released.
@@ -67,6 +56,12 @@ export interface TeamTaskExtension {
    */
   assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): 'send' | 'suppress' | undefined
     | Promise<'send' | 'suppress' | undefined>
+  /**
+   * Read this member's processed but unsubmitted Task assignments after its Session log is flushed.
+   * @param facts - settled child identity and log interval.
+   * @returns Task ids, or an empty list when no processed work remains.
+   */
+  unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>
   /**
    * Handle native Task creation without writing a version-two Task event.
    * @param caller - exact live Team member.
