@@ -526,6 +526,7 @@
       "path": "packages/workspace/workspace",
       "purpose": "Remove deleted Session bindings and isolate configurable archive/pin metadata while preserving shared Project inventory",
       "source": [
+        "package.json",
         "src/entity.ts",
         "src/index.ts",
         "src/spec.ts"

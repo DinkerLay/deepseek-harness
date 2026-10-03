@@ -98,7 +98,7 @@ describe('sessions.list cold merge', () => {
     await ctx.fiber.dispose()
   })
 
-  it('uses a predecessor title hint while resolving effective cold directories', async () => {
+  it('lists a predecessor title hint without opening cold Session bodies', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const metas = [header('legacy-title', 100), header('uncached', 200)]
@@ -144,11 +144,11 @@ describe('sessions.list cold merge', () => {
       }),
     ])
     expect(stat).not.toHaveBeenCalled()
-    expect(inspect).toHaveBeenCalledTimes(2)
+    expect(inspect).not.toHaveBeenCalled()
     expect(observe).not.toHaveBeenCalled()
   })
 
-  it('serves cold rows from cached projections after resolving effective directories', async () => {
+  it('lists cached directory and projection hints without opening cold Session bodies', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     const metas: SessionHeader[] = [
@@ -167,7 +167,11 @@ describe('sessions.list cold merge', () => {
       inspect,
     })
     const cacheCalls: string[] = []
+    const cachedExecutionDirectory = vi.fn((meta: SessionHeader) => meta.id === sid('cached-conversation')
+      ? '/branches/cached-conversation' : undefined)
     ctx.provide('sessionProjectionCache', {
+      executionDirectoryHintsVersion: 1,
+      cachedExecutionDirectory,
       cachedSnapshot: (meta: SessionHeader) => {
         cacheCalls.push(String(meta.id))
         if (meta.id === sid('cached-blank')) {
@@ -193,13 +197,14 @@ describe('sessions.list cold merge', () => {
     if (!response.ok) throw new Error('unreachable')
     const byId = Object.fromEntries(response.value.items.map(item => [item.sessionId, item]))
     expect(byId['cached-blank']).toMatchObject({ blank: true, updatedAt: 100, running: false })
-    expect(byId['cached-conversation']).toMatchObject({ blank: false, updatedAt: 1000 })
-    // A cache miss leaves blankness unknown; the row stays visible after the bounded directory read.
+    expect(byId['cached-conversation']).toMatchObject({ blank: false, updatedAt: 1000, cwd: '/branches/cached-conversation' })
+    // A cache miss keeps the header directory and conservative blankness without a body read.
     expect(byId['uncached']).toMatchObject({
       blank: false,
       updatedAt: 300,
       parentSessionId: 'session-parent',
       origin: 'subagent',
+      cwd: '/proj',
     })
     expect(byId['missing-cwd']).toBeUndefined()
     // A cold seeded header reads the cache by header alone, like any other
@@ -214,9 +219,10 @@ describe('sessions.list cold merge', () => {
       },
     })
     expect(cacheCalls).toContain('seeded-cold')
-    expect(inspect).toHaveBeenCalledTimes(metas.length)
+    expect(cachedExecutionDirectory).toHaveBeenCalledWith(metas[1])
+    expect(inspect).not.toHaveBeenCalled()
     await remote.list(request({}))
-    expect(inspect).toHaveBeenCalledTimes(metas.length)
+    expect(inspect).not.toHaveBeenCalled()
   })
 
 })

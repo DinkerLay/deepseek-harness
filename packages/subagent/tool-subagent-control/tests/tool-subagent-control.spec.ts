@@ -251,11 +251,12 @@ describe('dsh-tool-subagent-control', () => {
 
     const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
     const followUp = loaded.events.findLast(event => event.type === 'user/message')
-    // The durable message source records the calling agent without granting authority.
+    // The durable source records its parent author; an idle parent supplies no fabricated Turn.
     expect(followUp?.type === 'user/message' && followUp.data.source).toEqual({
       kind: 'agent-message',
       form: 'relay',
       senderSessionId: parent.id,
+      delegation: { parentSessionId: parent.id },
     })
     expect(followUp?.type === 'user/message' && followUp.data.content).toEqual([
       { type: 'text', text: `Agent ${parent.id} sent a message: ` },

@@ -83,6 +83,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
 | [`commander`](https://github.com/tj/commander.js) | MIT |
 | [`compression`](https://github.com/expressjs/compression) | MIT |
 | [`diff`](https://github.com/kpdecker/jsdiff) | BSD-3-Clause |
+| [`dns-packet`](https://github.com/mafintosh/dns-packet) | MIT |
 | [`dompurify`](https://github.com/cure53/DOMPurify) | (MPL-2.0 OR Apache-2.0) |
 | [`electron-updater`](https://github.com/electron-userland/electron-builder) | MIT |
 | [`eventsource-parser`](https://github.com/rexxars/eventsource-parser) | MIT |
@@ -193,6 +194,7 @@ External packages **directly declared** for development, tests, types, or toolin
 | [`@types/babel__code-frame`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/big.js`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/compression`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
+| [`@types/dns-packet`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/js-yaml`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/jsdom`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/mdast`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |

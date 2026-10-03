@@ -34,6 +34,8 @@ Workspace generations select only archive/pin metadata in a separate optional un
 
 **Preserve old logs through custom migration.** The downstream release explicitly excludes legacy Session import. Current V4 persistence and replay are verified independently; old data is retained rather than erased or silently rebound.
 
+Workspace configuration declares its public Schemastery dependency, so publication keeps schema evaluation on the shared vendor module. The published payload closes every relative JavaScript import; dependency declarations, rather than copied vendor code, supply external runtime modules.
+
 ## Consequences
 
 Downstream management can consume public execution and resource contracts without owning DSH core state. The cost is an exact source delta and atomic fork artifact installation. Native System locks, race-focused deletion/fork tests, scoped policy tests and Client library tests cover the current behaviors. Host compilation and local SDK payload tests verify the current type and serialization paths. Remote-provider support and Product Web/Desktop acceptance remain separate evidence; this record does not claim those downstream flows pass.
