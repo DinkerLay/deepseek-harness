@@ -19,8 +19,6 @@ Status: implemented
 
 这消除了 `remotes → workspace-files → resources → remotes` 和 `remotes → workspace-files → sidebar-right → ui-conversation → remotes`。Cordis 运行时服务注入仍独立于 TypeScript 工程引用。
 
-Host 从所选 Session 的有效执行目录解析相对文件请求。Live Session 使用 `resolveSessionCwd`；cold Session 使用一个 `observeSession` handle 与 `executionDirectoryFromEvents`。不可变的创建 `header.cwd` 仍是 fallback。两个 Session helper 是可重复安装的安全结构函数，而 `SessionQueryError` constructor 是共享 peer，因为 Host 使用 `instanceof` 识别确定不存在的 Session。
-
 ## Alternatives considered
 
 **保留两个包。** 这隔离了编译环，却拆开同一文件能力的 Host 与 Client 归属。删除反向类型依赖后，可以采用与其它 API Controller 相同的双面组织。
@@ -31,8 +29,8 @@ Host 从所选 Session 的有效执行目录解析相对文件请求。Live Sess
 
 ## Consequences
 
-Host 线路方法和浏览器资源行为不变。浏览器实现、测试与文档归同一个包所有；Client 类型依赖止于协议和资源模型层，不反向触及 UI 或 Remote 装配。Session 移到另一执行目录后，预览与目录列表会从该目录解析，而不会改变其创建身份。
+Host 线路方法和浏览器资源行为不变。浏览器实现、测试与文档归同一个包所有；Client 类型依赖止于协议和资源模型层，不反向触及 UI 或 Remote 装配。
 
 ## Verification
 
-Cordis inspect 目录检查分析声明的 Client 导出，两个编译聚合保留其叶引用，Host 与 Client 文件服务测试覆盖相同的实现。有效目录测试覆盖 live 与 cold Session。依赖策略检查安全的 Session helper 与要求 peer 的查询错误；工程引用检查约束编译关系。
+Cordis inspect 目录检查分析声明的 Client 导出，两个编译聚合保留其叶引用，Host 与 Client 文件服务测试覆盖相同的实现。现有依赖与工程引用检查约束这些编译关系。

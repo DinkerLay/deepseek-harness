@@ -9,9 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This service records positive or negative ratings, an optional category from the fixed feedback taxonomy, and optional verbatim notes for finalized assistant messages. The canonical Session log owns every creation, edit, and deletion; `list`, `put`, and `delete` expose current feedback without constructing or waking an Agent. Released version-zero sidecar rows remain readable through a validated compatibility layer. Feedback does not enter model history.
-
-The post-commit `session-persistence/deleted` notification removes Session-owned derived records. It does not delete the Session log or external project directories; those operations remain with their lifecycle owners.
+This service records positive or negative ratings, an optional category from the fixed feedback taxonomy, and optional verbatim notes for finalized assistant messages. The canonical Session log owns every creation, edit, and deletion; `list`, `put`, and `delete` expose current feedback without constructing or waking an Agent. Feedback is log-only and does not enter model history.
 
 ## Table of Contents
 
@@ -24,14 +22,13 @@ The post-commit `session-persistence/deleted` notification removes Session-owned
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount `dsh-message-feedback` alongside `sessions`, `sessionPersistence`, and `storageDomain`. The Web bundle supplies the browser consumer and a note limit of 8192 bytes.
+Mount `dsh-message-feedback` alongside `sessions` and `sessionPersistence`. It needs no storage-domain service. The Web bundle supplies the browser consumer and a note limit of 8192 bytes.
 
 ### Configuration
 
 | Field | Default | Meaning |
 |---|---|---|
-| `maxNoteBytes` | required | Positive safe-integer maximum UTF-8 bytes in one optional note. |
-| `maxLegacyItemsPerSession` | `1000` | Positive safe-integer maximum number of released sidecar items read for one Session. |
+| `maxNoteBytes` | required | Positive safe integer specifying the maximum UTF-8 byte length of one optional note. |
 
 A supplied note must contain a non-whitespace character and fit the configured byte limit. Blank notes return `note-blank`; oversized notes return `note-too-large`. Accepted text is preserved exactly, including surrounding whitespace. Omitting a note clears it. Note validation precedes Session lookup. A supplied category must be one of the [fixed feedback categories](../command-feedback/README.md#the-web-feedback-dialog); the Remote schema rejects any other value, and omitting the category clears it.
 
@@ -52,27 +49,19 @@ Targets must be non-empty assistant messages produced by append-origin events. U
 
 ### Canonical log and durability
 
-`feedback/message-put` stores the owning Session id and complete item, including its version and timestamps. `feedback/message-delete` stores the owner and message id. Current state is derived from these events, ignoring other Session owners. Durable payloads are validated before use. New mutations only append canonical events.
+`feedback/message-put` stores the owning Session id and complete item, including its version and timestamps. `feedback/message-delete` stores the owner and message id. Current state is derived from these events, ignoring other Session owners. Durable payloads are validated before use. No second feedback store or cache exists.
 
 Live operations append through `Session.append` and await `sessions.flush`, then verify the captured log endpoint and Session header through a persistence read handle before reporting success. Cold mutations hold a persistence write handle across read, validation, comparison, append, flush, and close. Cold reads use a read handle. Neither path constructs a Session or appends lifecycle events.
 
 A per-Session queue serializes operations within one service instance; the persistence write handle excludes competing cold writers. Disposal stops admission and drains admitted operations before releasing the service. Persistence failures reject instead of becoming business failures. A failed flush does not roll back an accepted event; callers can list and retry with its version. Successful no-op mutations also flush the current prefix.
 
-Cold material mutations notify `feedback/committed` after flush with a borrowed read-only canonical prefix; observers must deep-clone it before transferring ownership. Observers finish before write ownership is released, must not await another feedback operation for that Session, and cannot reject an already committed mutation. Live consumers observe `session/event`.
-
-<a id="released-sidecar-read-through"></a>
-### Released sidecar read-through
-
-At initialization, the service opens the released `message_feedback` version-zero storage domain read-only. A row is visible only when its recorded `{createdAt, cwd}` identifies the inspected Session lifecycle, every field passes the strict released schema, every message id names a finalized append-origin assistant message, and its item count does not exceed `maxLegacyItemsPerSession`. Unknown or malformed data fails initialization or the owning Session operation instead of being guessed.
-
-Valid sidecar items seed the current-state fold. Canonical puts and deletes are then applied in Session-log order, so canonical values take precedence and a canonical delete continues to suppress the sidecar item after restart. The service never writes, migrates, truncates, or removes the sidecar file; its original bytes remain available for older runtimes and recovery tools. The [sidecar read-through decision](../../../.agents/notes/implemented/bug-fix/2026-09-10-message-feedback-sidecar-read-through.md) records why this remains a read path instead of a startup import.
+Cold material mutations emit `feedback/committed` after flush with a borrowed read-only canonical prefix; observers must deep-clone it before transferring ownership. Observers finish before write ownership is released, must not await another feedback operation for that Session, and cannot reject an already committed mutation. Live consumers observe `session/event`.
 
 ### Source map
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Remote service, payload validation, event projection, and persistence ownership |
-| [`src/legacy.ts`](src/legacy.ts) | Strict released sidecar schema and read-only storage-domain declaration |
 | [`src/types.ts`](src/types.ts) | Requests, results, and Session event declarations; types only |
 
 No runtime invariant companion is published: the service derives feedback directly from validated canonical events and owns no independently mutable projection.
@@ -100,11 +89,11 @@ Independent. Feedback does not change the model request prefix.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Compatibility read cost:** an operation on a Session with a released sidecar row validates that complete row and its message targets before folding canonical events. `maxLegacyItemsPerSession` bounds the row size accepted by this service.
+- **Log-only authority:** existing `message_feedback` sidecar data is neither read nor migrated. Those files remain untouched, but their feedback is unavailable through this service.
 - **Deletion retains history:** delete removes current feedback, not earlier ratings or notes from the append-only log; it is not a privacy-erasure operation.
 - **Writer ownership:** another process holding a Session write handle causes cold mutations to reject. The service does not wake that owner or coordinate Remote calls across processes.
 - **Trusted callers:** requests contain no authenticated actor or audit identity. Deployments must protect the Host gateway.
-- **Telemetry export:** for all users and providers, including `deepseek-official`, the shipped OTel backend in `FEEDBACK_ONLY` releases the complete canonical prefix only after new explicit text feedback, rating/note edits, or withdrawal. The prefix includes context and verbatim notes; later records wait for the next feedback, and `DISABLED` prevents capture. Deployments own redaction; see the [OTel export policy](../../session/session-telemetry-otel/README.md).
+- **Telemetry export:** for all users and providers, including `deepseek-official`, the shipped OTel backend in `FEEDBACK_ONLY` releases the complete canonical prefix only after new explicit text feedback, rating, note, or category edits, or withdrawal. The prefix includes context and verbatim notes; later records wait for the next feedback, and `DISABLED` prevents capture. Deployments own redaction; see the [OTel export policy](../../session/session-telemetry-otel/README.md).
 - **Scan cost:** each `list`, `put`, or `delete` that reaches an existing Session scans its full event log to derive current feedback; cold operations also read the full log from persistence. Work grows with total Session history, not just the number of feedback items.
 - **Retention:** `maxNoteBytes` limits one note, not aggregate log size or mutation count.
 

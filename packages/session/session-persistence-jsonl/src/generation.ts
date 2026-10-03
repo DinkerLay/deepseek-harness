@@ -7,6 +7,7 @@
  * @module @deepseek-ai/dsh-session-persistence-jsonl/generation
  */
 
+import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   link as fsLink,
@@ -27,12 +28,11 @@ import { constants, createZstdCompress } from 'node:zlib'
 import { Session } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { BlockAssembler, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import { SessionFormatError } from '@deepseek-ai/dsh-session-format'
 import type {
   SessionFormatArtifact,
-  SessionFormatCoordinateMap,
   SessionFormatJsonValue,
   SessionFormatRestore,
-  SessionFormatRestoreResult,
 } from '@deepseek-ai/dsh-session-format'
 import { validateStoredEvents } from '@deepseek-ai/dsh-session-persistence'
 import type { JsonlCompression } from './format.ts'
@@ -69,6 +69,8 @@ export interface JsonlGenerationFormatAdapter {
 
 /** Inputs for preparing one historical generation and publishing its current successor later. */
 export interface PrepareJsonlMigrationOptions {
+  /** Revalidate related source facts before preparation returns and immediately before publication. */
+  readonly validateRelatedSources?: () => Promise<void>
   /** Immutable generation selected by the backend resolver. */
   readonly sourcePath: string
   /** Version selected from the source filename and independently checked against its header. */
@@ -119,11 +121,7 @@ export class JsonlGenerationSourceChangedError extends Error {
 /** Current logical state prepared independently from durable publication. */
 export interface PreparedJsonlMigration {
   readonly sourceIdentity: JsonlPhysicalIdentity
-  /** Copy-stable identity over the exact predecessor bytes, format generation, and Session id. */
-  readonly sourceContentIdentity: string
   readonly artifact: SessionFormatArtifact
-  /** Exact source-event to current-event coordinates produced by the migration. */
-  readonly coordinates: SessionFormatCoordinateMap
   /** Encode, verify, and exclusively publish once; every call shares the same success or failure. */
   publish(): Promise<JsonlPhysicalIdentity>
 }
@@ -347,8 +345,8 @@ class MigratingJsonlRows {
     }
   }
 
-  finish(): SessionFormatRestoreResult {
-    return this.restore.finishWithCoordinates()
+  finish(): SessionFormatArtifact {
+    return this.restore.finish()
   }
 
   private consume(line: Buffer): void {
@@ -377,7 +375,7 @@ interface StartedMigrationStream {
 async function startMigrationStream(
   headerRecord: Buffer,
   sourceVersion: number,
-  format: JsonlGenerationFormatAdapter,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
   validateHistoricalHeader?: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
 ): Promise<StartedMigrationStream> {
   const value = parseJson(headerRecord.subarray(0, -1).toString('utf8'), 'header line')
@@ -414,10 +412,10 @@ async function decodeStreamingMigration(
   bytes: Buffer,
   compression: JsonlCompression,
   sourceVersion: number,
-  format: JsonlGenerationFormatAdapter,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
   validateHistoricalHeader: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
   signal?: AbortSignal,
-): Promise<SessionFormatRestoreResult> {
+): Promise<SessionFormatArtifact> {
   signal?.throwIfAborted()
   if (compression === 'none') {
     const headerEnd = bytes.indexOf(0x0A)
@@ -542,6 +540,7 @@ async function verifyCurrentGeneration(
     generation.meta,
     generation.inheritedEventCount,
     'detached',
+    currentSessionMessageProjections,
   )
   assertCurrentAssistantStreams(generation.events)
   return {
@@ -904,6 +903,7 @@ async function publishPreparedMigration(
       throw new Error('staged session generation changed during verification')
     }
     await internals.barrier('before-source-check', 1)
+    await options.validateRelatedSources?.()
     const beforePublish = await internals.fs.stat(sourcePath)
     if (identity(beforePublish) !== identity(sourceIdentity)) {
       throw new JsonlGenerationSourceChangedError(sourcePath)
@@ -959,9 +959,9 @@ async function prepareMigration(
     throw new Error(`migration preparation requires a historical source, got v${sourceVersion}`)
   }
   const source = await readStableSnapshot(sourcePath, signal, internals.fs)
-  let result: SessionFormatRestoreResult
+  let artifact: SessionFormatArtifact
   try {
-    result = await decodeStreamingMigration(
+    artifact = await decodeStreamingMigration(
       source.bytes,
       compression,
       sourceVersion,
@@ -975,26 +975,15 @@ async function prepareMigration(
     }
     throw error
   }
-  const { artifact, coordinates } = result
   if (artifact.header.version !== format.currentVersion) {
     throw new Error(`format migration returned v${artifact.header.version}, expected v${format.currentVersion}`)
   }
+  await options.validateRelatedSources?.()
   const sourceIdentity = source.identity
-  const sourceContentIdentity = (() => {
-    const hash = createHash('sha256')
-    for (const component of ['dsh-jsonl-migration-source-v1', String(sourceVersion), artifact.header.id]) {
-      hash.update(component, 'utf8')
-      hash.update('\0', 'utf8')
-    }
-    hash.update(source.bytes)
-    return `content-v1:${hash.digest('hex')}`
-  })()
   let publication: Promise<JsonlPhysicalIdentity> | undefined
   return {
     sourceIdentity,
-    sourceContentIdentity,
     artifact,
-    coordinates,
     publish() {
       if (publication === undefined) {
         publication = publishPreparedMigration(
@@ -1040,3 +1029,31 @@ export function createJsonlGenerationRuntime(
 }
 
 const defaultGenerationRuntime = createJsonlGenerationRuntime()
+
+/**
+ * Read one stable source through the shared streaming parser without publishing a generation.
+ * @param path - selected source generation path.
+ * @param version - physical source version identified by its filename.
+ * @param compression - source encoding.
+ * @param format - codec/restore factory, independent of current-generation publication.
+ * @param signal - cancellation observed during source reads and decode yields.
+ * @returns decoded artifact and physical source identity for later revalidation.
+ * @throws SessionFormatError for physical decoding failures; storage, cancellation, and unsupported migration errors retain their category.
+ */
+export async function readDecodedJsonlSource(
+  path: string,
+  version: number,
+  compression: JsonlCompression,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
+  signal?: AbortSignal,
+): Promise<{ artifact: SessionFormatArtifact; identity: JsonlPhysicalIdentity }> {
+  const source = await readStableJsonlFile(path, signal)
+  let artifact: SessionFormatArtifact
+  try {
+    artifact = await decodeStreamingMigration(source.bytes, compression, version, format, undefined, signal)
+  } catch (error: unknown) {
+    if (signal?.aborted || error instanceof SessionFormatError) throw error
+    throw new SessionFormatError(String(error), { cause: error })
+  }
+  return { artifact, identity: source.identity }
+}

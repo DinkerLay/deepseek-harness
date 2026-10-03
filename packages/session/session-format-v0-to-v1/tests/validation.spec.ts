@@ -84,14 +84,11 @@ const validPayloads: Readonly<Record<string, SessionFormatJsonValue>> = {
   },
   'session-log-deepseek/delivery-accepted': { sessionId: 'validation', throughSeq: 0, sessionFormatVersion: 1 },
   'session/end-seed': {},
-  'session/execution-directory': { sessionId: 'validation', cwd: '/worktree' },
-  'session/title': { title: 'Title', messageSeqs: [0], source: { kind: 'fallback' }, inputTruncated: true },
-  'session/title-generation': { state: 'failed', error: 'interrupted' },
+  'session/title': { title: 'Title', messageSeqs: [0], source: { kind: 'fallback' } },
   'session/title-llm-request': {
     titleProvider: 'title-1', messageSeqs: [0], route: { provider: 'mock', model: 'mock' },
-    system: 'title', messages: [userMessage], maxTokens: 20, inputTruncated: true,
+    system: 'title', messages: [userMessage], maxTokens: 20,
   },
-  'session/title-policy': { automatic: true },
   'step/end': { turn: 1, step: 0 },
   'step/start': { turn: 1, step: 0 },
   'subagent/descriptor': {
@@ -208,8 +205,8 @@ function invalidLeafMutations(
 function replaceAtPath(value: SessionFormatJsonValue, path: string, replacement: SessionFormatJsonValue): SessionFormatJsonValue {
   const copy = structuredClone(value)
   const keys = path.split('.')
-  let current = copy as unknown as Record<string, SessionFormatJsonValue>
-  for (const key of keys.slice(0, -1)) current = current[key] as unknown as Record<string, SessionFormatJsonValue>
+  let current = copy as Record<string, SessionFormatJsonValue>
+  for (const key of keys.slice(0, -1)) current = current[key] as Record<string, SessionFormatJsonValue>
   current[keys.at(-1) as string] = replacement
   return copy
 }
@@ -217,7 +214,7 @@ function replaceAtPath(value: SessionFormatJsonValue, path: string, replacement:
 describe('released event and payload inventory', () => {
   it('has an executable valid fixture for every frozen released-v0 event type', () => {
     expect(Object.keys(validPayloads).sort()).toEqual([...RELEASED_V0_EVENT_TYPES].sort())
-    expect(RELEASED_V0_EVENT_TYPES).toHaveLength(54)
+    expect(RELEASED_V0_EVENT_TYPES).toHaveLength(51)
     expect(RELEASED_V0_EVENT_TYPES.filter(type => !KNOWN_SESSION_EVENT_TYPES.has(type))).toEqual([
       'assistant/chunk',
       'tool/code-dispatch',
@@ -372,7 +369,7 @@ describe('released event and payload inventory', () => {
     }) }).toThrow(/unknown historical event/)
   })
 
-  it('permits empty Assistant provenance only under the released-v1 policy', () => {
+  it('permits empty Assistant source-event references only under the released-v1 policy', () => {
     const assistant = {
       type: 'assistant/message', seq: 1, time: 2, data: {},
       sourceEventSeqs: [], surfaceOp: 'append',
@@ -380,7 +377,7 @@ describe('released event and payload inventory', () => {
     expect(() => { assertReleasedSurfaceMetadata(assistant, 1, assistant.type, 'allow-empty-assistant') })
       .not.toThrow()
     expect(() => { assertReleasedSurfaceMetadata(assistant, 1, assistant.type, 'forbid-assistant') })
-      .toThrow(/obsolete chunk provenance/)
+      .toThrow(/obsolete chunk references/)
   })
 
   it('keeps capturedFormatVersion v1-only inside session-reference sources', () => {

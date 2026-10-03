@@ -1,13 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import { Session, SessionId, SessionLogOffset, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 import MessageFeedbackService from '../src/index.ts'
-import { legacyMessageFeedbackRowSchema } from '../src/legacy.ts'
 import type {
   MessageFeedbackItem,
   MessageFeedbackVersion,
@@ -42,133 +39,6 @@ function expectItem(
   if (!result.ok) throw new Error(`expected feedback item, got ${result.error.code}`)
   return result.value
 }
-
-function legacyDocument(
-  session: Session,
-  items: readonly MessageFeedbackItem[],
-): unknown {
-  return {
-    unit: { name: 'message_feedback', version: 0 },
-    global: null,
-    tables: {
-      sessions: {
-        [session.id]: {
-          session: {
-            createdAt: session.header.createdAt,
-            ...(session.header.cwd === undefined ? {} : { cwd: session.header.cwd }),
-          },
-          items,
-        },
-      },
-    },
-  }
-}
-
-describe('released sidecar compatibility', () => {
-  it('reads without rewriting bytes and keeps canonical put/delete authoritative after restart', async () => {
-    const fixture = messageFixture('legacy-readable', { createdAt: 41, cwd: '/legacy' })
-    const legacy: MessageFeedbackItem = {
-      messageId: fixture.assistantMessageIds[0],
-      rating: 'positive',
-      note: 'old note',
-      version: staleVersion(),
-      createdAt: 50,
-      updatedAt: 50,
-    }
-    const value = await setupHarness(64, legacyDocument(fixture.session, [legacy]))
-    harnesses.push(value)
-    value.persistence.persist(fixture.session)
-    const sidecar = join(value.root, 'message_feedback.json')
-    const original = await readFile(sidecar)
-
-    await expect(value.ctx.messageFeedback.list({ sessionId: fixture.session.id })).resolves.toEqual({
-      ok: true,
-      value: { items: [legacy] },
-    })
-    const updated = expectItem(await value.ctx.messageFeedback.put({
-      sessionId: fixture.session.id,
-      messageId: legacy.messageId,
-      rating: 'negative',
-      note: 'canonical',
-      ifVersion: legacy.version,
-    }))
-    expect(updated).toMatchObject({ rating: 'negative', note: 'canonical', createdAt: legacy.createdAt })
-    await expect(readFile(sidecar)).resolves.toEqual(original)
-
-    await expect(value.ctx.messageFeedback.delete({
-      sessionId: fixture.session.id,
-      messageId: legacy.messageId,
-      ifVersion: updated.version,
-    })).resolves.toEqual({ ok: true, value: { absent: true } })
-    await expect(value.ctx.messageFeedback.list({ sessionId: fixture.session.id }))
-      .resolves.toEqual({ ok: true, value: { items: [] } })
-
-    await value.disposeFeedback()
-    await value.ctx.plugin(MessageFeedbackService, { maxNoteBytes: 64, maxLegacyItemsPerSession: 1000 })
-    await expect(value.ctx.messageFeedback.list({ sessionId: fixture.session.id }))
-      .resolves.toEqual({ ok: true, value: { items: [] } })
-    await expect(readFile(sidecar)).resolves.toEqual(original)
-  })
-
-  it('ignores another Session lifecycle and rejects a row with an unknown message identity', async () => {
-    const old = messageFixture('legacy-reused', { createdAt: 10, cwd: '/old' })
-    const item: MessageFeedbackItem = {
-      messageId: old.assistantMessageIds[0],
-      rating: 'positive',
-      version: staleVersion(),
-      createdAt: 11,
-      updatedAt: 11,
-    }
-    const stale = await setupHarness(64, legacyDocument(old.session, [item]))
-    harnesses.push(stale)
-    const replacement = messageFixture('legacy-reused', { createdAt: 20, cwd: '/new' })
-    stale.persistence.persist(replacement.session)
-    await expect(stale.ctx.messageFeedback.list({ sessionId: replacement.session.id }))
-      .resolves.toEqual({ ok: true, value: { items: [] } })
-
-    const unknown = messageFixture('legacy-unknown', { createdAt: 30 })
-    const unknownItem = { ...item, messageId: 'missing-assistant' as MessageId }
-    const corrupt = await setupHarness(64, legacyDocument(unknown.session, [unknownItem]))
-    harnesses.push(corrupt)
-    corrupt.persistence.persist(unknown.session)
-    await expect(corrupt.ctx.messageFeedback.list({ sessionId: unknown.session.id }))
-      .rejects.toThrow(/unknown assistant message/u)
-  })
-
-  it('strictly rejects unknown row fields and bounds one Session read-through', async () => {
-    const fixture = messageFixture('legacy-bounded', { createdAt: 40 })
-    const items: MessageFeedbackItem[] = fixture.assistantMessageIds.map((messageId, index) => ({
-      messageId,
-      rating: 'positive',
-      version: staleVersion(),
-      createdAt: 41 + index,
-      updatedAt: 41 + index,
-    }))
-    expect(legacyMessageFeedbackRowSchema.safeParse({
-      session: { createdAt: 40 },
-      items: [items[0]],
-      unknown: true,
-    }).success).toBe(false)
-    await expect(setupHarness(64, {
-      unit: { name: 'message_feedback', version: 0 },
-      global: null,
-      tables: {
-        sessions: {
-          malformed: { session: { createdAt: 40 }, items: [items[0]], unknown: true },
-        },
-      },
-    })).rejects.toThrow(/does not match its schema/u)
-
-    const value = await setupHarness(64, legacyDocument(fixture.session, items), 1)
-    harnesses.push(value)
-    value.persistence.persist(fixture.session)
-    const sidecar = join(value.root, 'message_feedback.json')
-    const original = await readFile(sidecar)
-    await expect(value.ctx.messageFeedback.list({ sessionId: fixture.session.id }))
-      .rejects.toThrow(/maximum is 1/u)
-    await expect(readFile(sidecar)).resolves.toEqual(original)
-  })
-})
 
 describe('MessageFeedbackService public contract', () => {
   it('publishes the exact Gateway namespace and Remote method names', async () => {

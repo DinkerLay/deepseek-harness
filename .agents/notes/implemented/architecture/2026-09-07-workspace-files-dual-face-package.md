@@ -19,8 +19,6 @@ Two dependency directions keep the compiler graph acyclic:
 
 These remove `remotes → workspace-files → resources → remotes` and `remotes → workspace-files → sidebar-right → ui-conversation → remotes`. Runtime Cordis service injection remains independent from TypeScript project references.
 
-The Host resolves relative file requests from the selected Session's effective execution directory. Live Sessions use `resolveSessionCwd`; cold Sessions use one `observeSession` handle and `executionDirectoryFromEvents`. The immutable creation `header.cwd` remains the fallback. The two Session helpers are duplicate-safe structural functions, while the `SessionQueryError` constructor is a shared peer because the Host uses `instanceof` to recognize a definite missing Session.
-
 ## Alternatives considered
 
 **Keep separate packages.** This isolates the compiler cycle but splits one file capability's Host and Client ownership. Removing the reverse type dependencies permits the same dual-face organization as other API controllers.
@@ -31,8 +29,8 @@ The Host resolves relative file requests from the selected Session's effective e
 
 ## Consequences
 
-Host wire methods and browser resource behavior are unchanged. The browser implementation, tests, and documentation have one package owner; Client type dependencies stop at the protocol and resource-model layers instead of reaching UI or Remote assembly. A Session moved to another execution directory resolves previews and listings from that directory without changing its creation identity.
+Host wire methods and browser resource behavior are unchanged. The browser implementation, tests, and documentation have one package owner; Client type dependencies stop at the protocol and resource-model layers instead of reaching UI or Remote assembly.
 
 ## Verification
 
-The Cordis inspect catalog check analyzes the declared Client export, both compiler aggregates retain their leaf references, and the Host and Client file-service tests exercise the same implementations. Effective-directory tests cover live and cold Sessions. The dependency policy checks the safe Session helpers and peer-required query error; project-reference checks enforce the compilation relationships.
+The Cordis inspect catalog check analyzes the declared Client export, both compiler aggregates retain their leaf references, and the Host and Client file-service tests exercise the same implementations. The existing dependency and project-reference checks enforce their compilation relationships.

@@ -7,11 +7,9 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
-`userGlobalDisplayPath` optionally replaces the model-facing label of the global file and must end in `/AGENTS.md`. It does not change the physical `dshHome` lookup or the `user-global` reconciliation scope. Changing the label replaces the baseline on resume.
-
 ## Summary
 
-Agents receive workspace guidance from applicable user-global and project `AGENTS.md` files before their first request. Successful filesystem operations discover relevant nested files, and resume reconciles the baseline. A byte budget omits broader files before truncating the most specific one. Guidance follows the Session's recorded execution directory, while agentless calls keep backend defaults.
+`dsh-agent-instructions` gives agents workspace guidance from user-global and project-level `AGENTS.md`-compatible files. It loads the applicable chain for the first request. It does not watch external edits continuously: successful filesystem operations discover newly relevant nested files and make later changes or removals visible, while session resume reconciles the baseline. `dsh-base` enables this behavior by default, while profiles can disable it. A byte budget bounds the injected context: broader files are omitted before the most specific file is truncated, and an empty chain adds nothing.
 
 ## Table of Contents
 
@@ -50,7 +48,6 @@ The accepted fields, at a glance:
 ```ts
 export interface Config {
   dshHome?: string
-  userGlobalDisplayPath?: string
   projectRootMarkers?: string[]
   maxBytes: number
   maxSourceBytes?: number
@@ -125,6 +122,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a> <a id="prompt-shape"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination). `userGlobalDisplayPath` changes only the displayed global instruction path; physical lookup and the user-global scope identity remain unchanged.
+
 ## Model Experience
 
 ### Baseline context
@@ -181,7 +182,7 @@ Each discovered scope adds bounded history tokens until compaction. Unchanged co
 
 #### KV Cache effect
 
-Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
+Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV Cache entries.
 
 ### Changed or removed instruction context
 
@@ -205,7 +206,7 @@ Each confirmed change or removal is one retained history message bounded by `max
 
 #### KV Cache effect
 
-Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
+Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV Cache entries.
 
 ## Known Limitations and Deferred Work
 

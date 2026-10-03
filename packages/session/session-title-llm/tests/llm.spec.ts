@@ -390,7 +390,7 @@ it('preserves the provider selection when a Session overrides automatic cadence'
   await ctx.fiber.dispose()
 })
 
-it('measures escaped and multibyte input exactly and retains excerpt provenance', async () => {
+it('measures escaped and multibyte input exactly and records excerpt truncation', async () => {
   const { ctx, adapter } = await withScript(SCRIPT)
   const original = request(ctx)
   const messages = [{ seq: original.messages[0]!.seq, text: '中文😀\n"quote"' }]

@@ -154,14 +154,6 @@ export interface SessionFormatMigrationStage {
   ): void
   /** Emit trailing target items and return the exact target inherited cut. */
   finish(context: SessionFormatMigrationContext): number
-  /**
-   * Resolve one source event to the target event that retains its identity or
-   * durable meaning. Returns `undefined` when the edge deliberately consumes
-   * the source event into another representation.
-   * @param sourceSeq - event position in this stage's source generation.
-   * @returns target event position, or `undefined` for an explicitly consumed event.
-   */
-  mapSourceEventSeq?(sourceSeq: number): number | undefined
 }
 
 /** One composed migration chain that emits settled current events to its owner. */
@@ -169,30 +161,6 @@ export interface SessionFormatMigrationStream extends SessionFormatMigrationCont
   readonly header: SessionFormatHeader
   /** Settle all migration stages and return the exact current inherited cut. */
   finish(): number
-  /**
-   * Resolve one original event position through the complete settled chain.
-   * @param sourceSeq - event position in the decoded source generation.
-   * @returns current event position, or `undefined` when an edge consumed it.
-   */
-  mapSourceEventSeq(sourceSeq: number): number | undefined
-}
-
-/** Exact source-to-current event coordinates produced by one completed restore. */
-export interface SessionFormatCoordinateMap {
-  /** Physical source format version. */
-  readonly sourceVersion: number
-  /** Logical target format version. */
-  readonly targetVersion: number
-  /** One entry per source event; `null` marks an explicitly consumed event. */
-  readonly targetSeqBySourceSeq: readonly (number | null)[]
-  /** Complete current logical event count. */
-  readonly targetEventCount: number
-}
-
-/** Completed restore plus its exact event-coordinate mapping. */
-export interface SessionFormatRestoreResult {
-  readonly artifact: SessionFormatArtifact
-  readonly coordinates: SessionFormatCoordinateMap
 }
 
 /** Header-only classification that never inspects event rows. */
@@ -259,6 +227,4 @@ export interface SessionFormatRestore {
   decodeRow(rowValue: unknown): void
   /** Finish every decoder and migration stage and return the current artifact. */
   finish(): SessionFormatArtifact
-  /** Finish once and return the same artifact with source-to-current coordinates. */
-  finishWithCoordinates(): SessionFormatRestoreResult
 }

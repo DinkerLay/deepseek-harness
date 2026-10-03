@@ -90,14 +90,19 @@ export default class ShellExecEnvironmentRegistry extends Service {
    * @returns an immutable, key-sorted environment map.
    */
   async collect(execution: ToolExecution): Promise<Readonly<Record<string, string>>> {
+    execution.signal.throwIfAborted()
     const contributors = [...this.contributors.entries()].sort(([left], [right]) => left.localeCompare(right))
     const resolved = await Promise.all(contributors.map(async ([name, contributor]) => ({
       name,
       contributor,
       values: await contributor.resolve(execution),
     })))
+    execution.signal.throwIfAborted()
     const result: Record<string, string> = {}
     for (const { name, contributor, values } of resolved) {
+      if (this.contributors.get(name) !== contributor) {
+        throw new Error(`shell-exec-env: contributor "${name}" was removed during collection`)
+      }
       const declared = new Map(contributor.keys.map(key => [key.toUpperCase(), key]))
       for (const [key, value] of Object.entries(values)) {
         const declaredKey = declared.get(key.toUpperCase())

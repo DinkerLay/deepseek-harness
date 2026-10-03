@@ -1,7 +1,7 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -10,7 +10,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
-import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
+import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
@@ -31,7 +31,7 @@ async function harness(adapter: MockAdapter, sessionRoot?: string, dshHome?: str
   }
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(LocalJobRegistry)
-  await ctx.plugin(ToolTasks)
+  await ctx.plugin(ToolJobs)
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(BashEnvPlugin, dshHome === undefined ? {} : { dshHome })
   await ctx.plugin(LocalBashExecutor, { timeoutMs: 10_000 })
@@ -76,7 +76,7 @@ function findEvent<T extends SessionEvent['type']>(
 
 function resultText(event: SessionEvent): string {
   if (event.type !== 'tool/result') return ''
-  return event.data.message.content[0].content
+  return event.data.message.content
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('')
@@ -93,28 +93,6 @@ async function pollUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<v
 }
 
 describe('bash tool through the agent loop', () => {
-  it('executes a relative file write in the rebound directory under the original Session identity', async () => {
-    const shared = mkdtempSync(join(tmpdir(), 'dsh-directory-main-'))
-    const worktree = mkdtempSync(join(tmpdir(), 'dsh-directory-branch-'))
-    dirs.push(shared, worktree)
-    const adapter = new MockAdapter([
-      toolCallResponse('branch-write', 'bash', { command: 'printf branch > result.txt', description: 'write branch artifact' }),
-      textResponse('Branch artifact written.'),
-    ])
-    const ctx = await harness(adapter)
-    const handle = await ctx.agents.create({ sessionId: SessionId('directory-worker'), meta: { cwd: shared }, agentOptions: { provider: 'mock', model: 'mock' } })
-    const { agent } = handle
-    agent.session.append('session/execution-directory', { sessionId: agent.id, cwd: worktree })
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'write the branch artifact' }], source: { kind: 'user' } }))
-    await waitForIdle(ctx, agent)
-    expect(readFileSync(join(worktree, 'result.txt'), 'utf8')).toBe('branch')
-    expect(existsSync(join(shared, 'result.txt'))).toBe(false)
-    expect(agent.session.header.cwd).toBe(shared)
-    expect(agent.id).toBe('directory-worker')
-    await handle.dispose()
-    await ctx.fiber.dispose()
-  })
-
   it('first-turn bash receives session identity in a scrubbed DSH_* namespace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-bash-session-env-'))
     dirs.push(root)
@@ -158,14 +136,12 @@ describe('bash tool through the agent loop', () => {
     expect(toolCall.data.name).toBe('bash')
 
     const toolResult = findEvent(log, 'tool/result')
-    expect(toolResult.data.message.content[0].isError).toBe(false)
+    expect(toolResult.data.message.isError).toBe(false)
     expect(resultText(toolResult)).toBe('integration-ok\n')
 
     // The second model call saw the tool result in its derived history.
     const lastRequest = adapter.requests.at(-1)
-    const toolResultBlocks = (lastRequest?.messages ?? [])
-      .flatMap(message => message.content)
-      .filter(block => block.type === 'tool-result')
+    const toolResultBlocks = (lastRequest?.messages ?? []).filter(message => message.role === 'tool')
     expect(toolResultBlocks).toHaveLength(1)
 
     const finalMessage = findEvent(log, 'assistant/message', 'last')
@@ -186,7 +162,7 @@ describe('bash tool through the agent loop', () => {
     await waitForIdle(ctx, agent)
 
     const toolResult = findEvent(events(agent), 'tool/result')
-    expect(toolResult.data.message.content[0].isError).toBe(false)
+    expect(toolResult.data.message.isError).toBe(false)
     expect(resultText(toolResult)).toContain('[exit code: 9]')
   })
 
@@ -219,11 +195,11 @@ describe('bash tool through the agent loop', () => {
     await waitForIdle(ctx, agent)
 
     const firstResult = findEvent(events(agent), 'tool/result')
-    expect(firstResult.data.message.content[0].isError).toBe(false)
+    expect(firstResult.data.message.isError).toBe(false)
     expect(resultText(firstResult)).toBe('started background job bash-1')
     // The turn closed with the task still running, so the notice cannot exist yet.
     const isNotice = (e: SessionEvent): e is SessionEvent<'user/message'> =>
-      e.type === 'user/message' && e.data.source.kind === 'plugin'
+      e.type === 'user/message' && e.data.source.kind !== 'user'
     expect(events(agent).some(isNotice)).toBe(false)
 
     // Releasing the command now settles it against a provably idle owner. No
@@ -246,12 +222,11 @@ describe('bash tool through the agent loop', () => {
     expect(noticeText).toContain('background job bash-1 (bash: ')
     expect(noticeText).toContain('finished [status: completed, exit code: 0]')
     expect(notice.data.source).toMatchObject({
-      kind: 'plugin',
-      plugin: 'tool-jobs',
+      kind: 'tool-jobs',
       form: 'notice',
     })
     const readResult = findEvent(events(agent), 'tool/result', 'last')
-    expect(readResult.data.message.content[0].isError).toBe(false)
+    expect(readResult.data.message.isError).toBe(false)
     expect(resultText(readResult)).toContain('bg-ok')
     expect(resultText(readResult)).toContain('[status: completed, exit code: 0]')
   })

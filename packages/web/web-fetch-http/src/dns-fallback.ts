@@ -106,8 +106,10 @@ async function query(hostname: string, type: 'A' | 'AAAA', endpoint: URL,
     let bytes = 0
     for (;;) {
       signal.throwIfAborted()
-      const { done, value } = await reader.read()
-      if (done) break
+      const chunk: ReadableStreamReadResult<unknown> = await reader.read()
+      if (chunk.done) break
+      const value = chunk.value
+      if (!(value instanceof Uint8Array)) throw new Error('DNS resolver returned a non-byte body chunk')
       bytes += value.byteLength
       if (bytes > MAX_DNS_MESSAGE_BYTES) throw new Error('DNS response exceeds the wire-format limit')
       chunks.push(value)

@@ -7,7 +7,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionHandle, SessionAccess } from './handle.ts'
 import type { SessionPersistenceRevision } from './revision.ts'
 
@@ -112,33 +112,10 @@ export interface SessionPersistenceDeleteOptions {
   readonly signal?: AbortSignal
 }
 
-/** One immutable format generation participating in a coordinate migration. */
-export interface SessionMigrationGeneration {
-  /** Session format version encoded by this generation. */
-  readonly version: number
-  /** Backend revision of the immutable generation. */
-  readonly revision: SessionPersistenceRevision
-}
-
-/**
- * Exact durable coordinates from one retained historical generation to its
- * current logical successor. A `null` entry records an event deliberately
- * consumed by migration; unrelated numeric payload fields are never inferred.
- */
-export interface SessionMigrationCoordinates {
-  readonly sessionId: SessionId
-  readonly source: SessionMigrationGeneration
-  /** Prepared target version and its revision when the successor is already durable. */
-  readonly target: Omit<SessionMigrationGeneration, 'revision'> & { readonly revision?: SessionPersistenceRevision }
-  readonly targetSeqBySourceSeq: readonly (SessionSeq | null)[]
-  readonly targetEventCount: SessionLogOffset
-}
-
 declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionPersistence: SessionPersistence
   }
-
   interface Events {
     /**
      * Post-commit notification that one durable Session artifact was
@@ -173,15 +150,15 @@ declare module '@deepseek-ai/cordis' {
  * on this backend instance observe at least that prefix.
  */
 export abstract class SessionPersistence extends Service {
-  constructor(ctx: Context) {
-    super(ctx, 'sessionPersistence')
-  }
-
   /** Whether this provider implements serialized permanent deletion. */
   readonly supportsDeletion: boolean = false
 
-  /** Whether this provider can recover mappings from retained historical generations. */
-  readonly supportsMigrationCoordinates: boolean = false
+  /** Process-local instance identity, stable through Context proxies and distinct after service replacement. */
+  readonly identity: symbol = Symbol('sessionPersistence')
+
+  constructor(ctx: Context) {
+    super(ctx, 'sessionPersistence')
+  }
 
   /**
    * Create a new stored session and take its write ownership.
@@ -228,23 +205,6 @@ export abstract class SessionPersistence extends Service {
    */
   async listDeletionHeaders(options?: SessionPersistenceListOptions): Promise<readonly SessionHeader[]> {
     return (await this.list(options)).map(snapshot => snapshot.header)
-  }
-
-  /**
-   * Read the exact mapping from a retained historical generation to the
-   * current logical generation without publishing or rewriting either one.
-   * Implementations return the same mapping after successor publication while
-   * the source generation remains available, allowing interrupted sidecar
-   * migrations to resume idempotently.
-   * @param _id - Session identity whose retained source generation is inspected.
-   * @param _options - optional cancellation for read-only preparation.
-   * @returns coordinates, or `undefined` when no historical generation exists.
-   */
-  migrationCoordinates(
-    _id: SessionId,
-    _options?: SessionPersistenceOpenOptions,
-  ): Promise<SessionMigrationCoordinates | undefined> {
-    return Promise.reject(new Error('this session persistence backend does not expose migration coordinates'))
   }
 
   /**

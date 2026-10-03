@@ -203,8 +203,8 @@ interface CreateSessionOptions {
   readonly seed?: readonly SessionEvent[]
   /**
    * Exact fork-inherited prefix length when `meta.isSeeded` is true. The
-   * constructor seed is exactly this inherited prefix; the constructor
-   * appends the child-owned tagged marker at the cut.
+   * constructor appends the child-owned tagged marker at the cut unless
+   * the seed already includes it followed by child-owned fork closers.
    */
   readonly inheritedEventCount?: SessionLogOffset
   /**
@@ -328,6 +328,36 @@ The shipped provider implements the abstract `SessionPersistence` contract (`cre
 
 - **[dsh-session-persistence-jsonl](../../packages/session/session-persistence-jsonl)** — an append-only logical JSONL log per session, stored as checksummed concatenated Zstandard frames by default or raw lines by configuration, with crash-safe atomic materialization, per-batch `fsync` appends, and torn-tail truncation before the first new append. `stat`/`list` carry `sizeBytes` and a best-effort `fs.stat`-derived revision.
 
+## Permanent deletion
+
+A persistence provider advertises deletion explicitly. Its delete result contains the removed header, and post-commit consumers invalidate derived data. Recursive Host coordination previews the exact subtree and returns the identities committed in this attempt; it does not reclaim external project directories. See the [deletion package](../../packages/session/session-deletion/README.md).
+
+```ts type-equiv
+/** Options for {@link SessionPersistence.delete}. */
+interface SessionPersistenceDeleteOptions {
+  /** Optional cancellation observed before deletion takes ownership. */
+  readonly signal?: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Immutable recursive-deletion plan in bottom-up persistence order. */
+interface SessionDeletionPreview {
+  /** Requested subtree root. */
+  readonly rootSessionId: SessionId
+  /** Known descendants followed by the root, ready for bottom-up deletion. */
+  readonly sessionIds: readonly SessionId[]
+}
+```
+
+```ts type-equiv
+/** Immutable facts after one recursive deletion attempt commits. */
+interface SessionDeletionResult extends SessionDeletionPreview {
+  /** Identities whose persistence provider returned a removed header in this attempt. */
+  readonly deletedSessionIds: readonly SessionId[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -421,18 +451,6 @@ delete(_id: SessionId, _options?: SessionPersistenceDeleteOptions): Promise<Sess
  * @returns one detached header per currently known identity.
  */
 async listDeletionHeaders(options?: SessionPersistenceListOptions): Promise<readonly SessionHeader[]>
-
-/**
- * Read the exact mapping from a retained historical generation to the
- * current logical generation without publishing or rewriting either one.
- * Implementations return the same mapping after successor publication while
- * the source generation remains available, allowing interrupted sidecar
- * migrations to resume idempotently.
- * @param _id - Session identity whose retained source generation is inspected.
- * @param _options - optional cancellation for read-only preparation.
- * @returns coordinates, or `undefined` when no historical generation exists.
- */
-migrationCoordinates( _id: SessionId, _options?: SessionPersistenceOpenOptions, ): Promise<SessionMigrationCoordinates | undefined>
 
 /**
  * Flush every active write handle owned by this service instance in one

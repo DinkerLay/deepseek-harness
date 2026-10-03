@@ -1,6 +1,43 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/shell/shell-exec-env/README.md
-README.md: ba6dde3d044a86cf16222aecd8f8008dcaf4b413
-README.zh.md: 4e8c3a5a9e87148fcc8f4578616e4281cc8965ed
+/:
+  en: 4e509b221689a1a1
+  zh: 04f8e07bf71e98ef
+/deepseek-ai-dsh-shell-exec-env:
+  en: b4ba8dd9622a983c
+  zh: 246fbcfbc8c252b5
+/deepseek-ai-dsh-shell-exec-env/summary:
+  en: 41c0af2abc08d353
+  zh: fb3ea0b0549ba0d4
+/deepseek-ai-dsh-shell-exec-env/table-of-contents:
+  en: 6adb589fe29e47a0
+  zh: 943f58bec6abb6ca
+/deepseek-ai-dsh-shell-exec-env/use-this-package:
+  en: 635ac86a1e563b77
+  zh: 0d47a7aaf3f065ec
+/deepseek-ai-dsh-shell-exec-env/security:
+  en: 6ee9615ab8b2203b
+  zh: 0ca8a286fb0de156
+/deepseek-ai-dsh-shell-exec-env/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-shell-exec-env/model-experience/trusted-command-environment:
+  en: bb73e9888e883a08
+  zh: 443da64095ffbe30
+/deepseek-ai-dsh-shell-exec-env/model-experience/trusted-command-environment/what-the-model-sees:
+  en: 076ca89f714a6975
+  zh: 291ff1b02b329988
+/deepseek-ai-dsh-shell-exec-env/model-experience/trusted-command-environment/token-effect:
+  en: 042acd16b9be0ed6
+  zh: 0717a1a6a46ae48c
+/deepseek-ai-dsh-shell-exec-env/model-experience/trusted-command-environment/kv-cache-effect:
+  en: edf570b6af56f4bf
+  zh: d1f095a9d8e06f7a
+/deepseek-ai-dsh-shell-exec-env/known-limitations-and-deferred-work:
+  en: 7f6a33bd22932515
+  zh: 6a861e171232a05c
+/deepseek-ai-dsh-shell-exec-env/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

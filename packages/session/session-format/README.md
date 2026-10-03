@@ -36,12 +36,12 @@ const catalog = createSessionFormatCatalog({ currentVersion, codecs, currentEnco
 const descriptor = catalog.readHeader(physicalHeader)
 const restore = catalog.createRestore(physicalHeader, { recovery: 'recoverable', validation: 'transformed' })
 for (const row of physicalRows) restore.decodeRow(row)
-const { artifact: current, coordinates } = restore.finishWithCoordinates()
+const current = restore.finish()
 const headerRecord = catalog.encodeCurrentHeader(current.header, current.inheritedEventCount)
 const eventRecords = current.events.map(catalog.encodeCurrentEvent)
 ```
 
-`createSessionFormatCatalog()` accepts one frozen codec per supported version, the current record encoder, one migration per adjacent version pair, and current artifact and header restorers. `readHeader()` returns a `current`, `migration-required`, `unsupported`, or `malformed` descriptor without reading events. Body readers create one restore, push each parsed physical row through `decodeRow()`, and call `finish()` for a current artifact or `finishWithCoordinates()` for that artifact plus an exact source-to-current event map. Each map entry is a target sequence or `null` when a stage deliberately consumed the source event. Writers encode the artifact's header and events record by record.
+`createSessionFormatCatalog()` accepts one frozen codec per supported version, the current record encoder, one migration per adjacent version pair, and current artifact and header restorers. `readHeader()` returns a `current`, `migration-required`, `unsupported`, or `malformed` descriptor without reading events. Body readers create one restore, push each parsed physical row through `decodeRow()`, and call `finish()` once for a current artifact. Writers encode its header and events record by record.
 
 The `recovery` option selects strict row failure or recoverable suffix handling. `validation: 'current'` applies all installed current-format validation. `validation: 'transformed'` applies released current-format validation after historical migration, while already-current input receives only its codec's physical validation.
 
@@ -99,7 +99,7 @@ No direct effect. A migration that changes current history can change the cache 
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Final current history remains resident** — streaming retains only bounded intermediate state, but the returned current event array and any required sequence-remap table remain O(event count).
-- **Adjacent integer versions only** — the coordinate result maps complete source event positions; it does not infer meanings for opaque numeric payload fields or provide a general reference-rewrite algebra.
+- **Adjacent integer versions only** — the library does not expose spans, stable event identities, or a general reference-rewrite algebra.
 
 <a id="dev-note"></a>
 ### Dev Note

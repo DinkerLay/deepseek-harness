@@ -26,7 +26,6 @@
  * @module dsh-llm-pi-ai/adapter
  */
 
-import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type {
   Api,
   AuthContext,
@@ -60,6 +59,7 @@ import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attac
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
+import { createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
@@ -211,6 +211,24 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
   }
 }
 
+/** Native additive declarations require both transcript updates and a provider tool-loading protocol. */
+function supportsToolAdditions(model: Model<Api>): boolean {
+  const compat = model.compat
+  if (compat === undefined || !('supportsMidConvoSystemMessages' in compat)
+    || !compat.supportsMidConvoSystemMessages) return false
+  switch (model.api) {
+    case 'openai-responses':
+    case 'openai-codex-responses':
+    case 'azure-openai-responses':
+      return ('supportsAdditionalTools' in compat && compat.supportsAdditionalTools)
+        || ('supportsToolSearch' in compat && compat.supportsToolSearch)
+    case 'openai-completions':
+      return 'supportsMidConvoToolAdditions' in compat && compat.supportsMidConvoToolAdditions
+    default:
+      return false
+  }
+}
+
 /**
  * pi-ai-backed multi-provider adapter. Each operation reads the current
  * profiles, so a configuration change reaches the next request without a
@@ -312,6 +330,7 @@ export class PiAiAdapter extends LlmAdapter {
       context: { contextWindow: resolvedModel.contextWindow },
       ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
       ...reasoningInfo(resolvedModel, defaultLevel),
+      ...supportsToolAdditions(resolvedModel) ? { toolUpdate: 'addition-only' as const } : {},
     }
   }
 
@@ -341,6 +360,10 @@ export class PiAiAdapter extends LlmAdapter {
     // the one it started with and the next call picks up the new one.
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
+    if (!supportsToolAdditions(model) && (options.tools?.some(tool => tool.deferLoading === true)
+      || options.messages.some(message => message.role === 'developer'))) {
+      throw new LlmError('The selected pi-ai route does not support native tool updates', 'UNSUPPORTED_CONTENT')
+    }
     const reasoning = resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoning,

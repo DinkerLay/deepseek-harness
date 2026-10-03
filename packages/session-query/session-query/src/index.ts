@@ -4,6 +4,8 @@
  * @module @deepseek-ai/dsh-session-query
  */
 
+import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
+import { assertSessionHeadersCompatible } from './sources.ts'
 import { Context, Service } from '@deepseek-ai/cordis'
 import {
   executionDirectoryFromEvents,
@@ -190,6 +192,7 @@ export abstract class SessionQueryEngine extends Service {
       loaded.header,
       loaded.inheritedEventCount,
       'detached',
+      currentSessionMessageProjections,
     )
     return {
       session: structuredClone(loaded.header),
@@ -291,7 +294,24 @@ export abstract class SessionQueryEngine extends Service {
     filters: readonly SessionResultFilter[],
     signal?: AbortSignal,
   ): Promise<SessionRecord[]> {
-    return filterSessionResults(await this._corpus.listSessions(signal), filters)
+    const records = await this._corpus.listSessions(signal)
+    if (!filters.some(filter => filter.kind === 'cwd')) return filterSessionResults(records, filters)
+    const candidates = filterSessionResults(records, filters.filter(filter => filter.kind !== 'cwd'))
+    const indexed = new Map(candidates.map(record => [record.header.id, record]))
+    const observations = await this._corpus.projectMany(candidates.map(record => record.header.id), source => ({
+      header: structuredClone(source.header),
+      directory: executionDirectoryFromEvents(source.header, source.events),
+    }), signal)
+    const resolved = observations.map((observation): SessionRecord => {
+      if (observation.status === 'rejected') throw observation.reason
+      const record = indexed.get(observation.sessionId) as SessionRecord
+      assertSessionHeadersCompatible(record.header, observation.value.header)
+      const { executionDirectory: _hint, ...metadata } = record
+      return { ...metadata, ...observation.value.directory === undefined ? {} : {
+        executionDirectory: observation.value.directory,
+      } }
+    })
+    return filterSessionResults(resolved, filters)
   }
 
   private async _filterEvents(

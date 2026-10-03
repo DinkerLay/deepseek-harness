@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "upstream": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
-    "tag": "dsh-v0.1.5-rc.2",
-    "commit": "fb2c4b9e698e30edb738bca4cf0618587db7d203"
+    "tag": "dsh-v0.2.0-rc.2",
+    "commit": "639ed015397290b3745d163aafe02ffee4aa3f84"
   },
   "addedBundles": [],
   "addedPackages": [
@@ -45,8 +45,15 @@
       "purpose": "Coordinate Agent lifecycle, deletion reservations, and recorded execution directories",
       "source": [
         "src/agent.ts",
-        "src/index.ts",
-        "src/runtime-context.ts"
+        "src/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-agent-preset",
+      "path": "packages/preset/agent-preset",
+      "purpose": "Published public configuration and service contracts for downstream composition",
+      "source": [
+        "skills/cordis-composition-reference/references/packages.md"
       ]
     },
     {
@@ -63,6 +70,7 @@
       "path": "packages/api/session-controller",
       "purpose": "Exact recoverable forks, external creation receipts, deletion publication checks, and removed-Session notifications",
       "source": [
+        "src/catalog.ts",
         "src/client/contract/sessions.ts",
         "src/client/sessions/manager.ts",
         "src/client/sessions/service.ts",
@@ -74,12 +82,22 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-api-terminal-controller",
+      "path": "packages/api/terminal-controller",
+      "purpose": "Native V4 public capability integration for downstream Product consumers",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-api-workspace-files",
       "path": "packages/api/workspace-files",
       "purpose": "Resolve the recorded execution directory for Session-scoped file access",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.host.json",
+        "tsconfig.json"
       ]
     },
     {
@@ -99,14 +117,18 @@
       "source": [
         "package.json",
         "src/client/manifest.ts",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
       "name": "@deepseek-ai/dsh-client-test-runtime",
       "path": "packages/test-support/client-runtime",
       "purpose": "Project confirmed external Session creation in the public Client test runtime",
-      "source": ["src/sessions.ts"]
+      "source": [
+        "src/assembly/bundle-roster.ts",
+        "src/sessions.ts"
+      ]
     },
     {
       "name": "@deepseek-ai/dsh-client-ui-chat",
@@ -116,6 +138,7 @@
         "src/client/apply.ts",
         "src/client/chat/ChatView.tsx",
         "src/client/chat/StatsPills.tsx",
+        "src/client/chat/TurnActivity.tsx",
         "src/client/chat/TurnNavigator.tsx",
         "src/client/chat/turn-rail-items.ts",
         "src/client/contract/slots.ts",
@@ -152,7 +175,8 @@
       "purpose": "Resolve the recorded Session execution directory for local file references",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -172,6 +196,17 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-llm-pi-ai",
+      "path": "packages/llm/llm-pi-ai",
+      "purpose": "Native V4 public capability integration for downstream Product consumers",
+      "source": [
+        "src/adapter.ts",
+        "src/catalog.ts",
+        "src/config.ts",
+        "src/context.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-mcp-client",
       "path": "packages/mcp/mcp-client",
       "purpose": "Configurable MCP client identity across reconnects",
@@ -181,13 +216,11 @@
       ]
     },
     {
-      "name": "@deepseek-ai/dsh-message-feedback",
-      "path": "packages/feedback/message-feedback",
-      "purpose": "Read released feedback sidecars without mutation while canonical Session events retain write authority",
+      "name": "@deepseek-ai/dsh-ptc-runtime-node",
+      "path": "packages/ptc-runtime/ptc-runtime-node",
+      "purpose": "Optional deployment wall ceiling preserved across numeric and null PTC deadlines",
       "source": [
-        "package.json",
-        "src/index.ts",
-        "src/legacy.ts"
+        "src/index.ts"
       ]
     },
     {
@@ -202,7 +235,9 @@
       "name": "@deepseek-ai/dsh-scope",
       "path": "packages/core/scope",
       "purpose": "Route lazy prompt preparation to its exact assembly scope",
-      "source": ["src/scoped-events.generated.ts"]
+      "source": [
+        "src/scoped-events.generated.ts"
+      ]
     },
     {
       "name": "@deepseek-ai/dsh-session",
@@ -215,42 +250,13 @@
       ]
     },
     {
-      "name": "@deepseek-ai/dsh-session-format",
-      "path": "packages/session/session-format",
-      "purpose": "Carry exact migration coordinates through format restore and append recovery",
+      "name": "@deepseek-ai/dsh-session-format-v3-to-v4",
+      "path": "packages/session/session-format-v3-to-v4",
+      "purpose": "Native V4 public capability integration for downstream Product consumers",
       "source": [
-        "src/catalog.ts",
-        "src/chain.ts",
-        "src/types.ts"
-      ]
-    },
-    {
-      "name": "@deepseek-ai/dsh-session-format-v0-to-v1",
-      "path": "packages/session/session-format-v0-to-v1",
-      "purpose": "Strictly admit retained historical event fields during V0 migration",
-      "source": [
-        "src/dispositions.ts",
-        "src/index.ts",
-        "src/migration.ts",
-        "src/payload-validation.ts",
-        "src/retry-references.ts"
-      ]
-    },
-    {
-      "name": "@deepseek-ai/dsh-session-format-v1-to-v2",
-      "path": "packages/session/session-format-v1-to-v2",
-      "purpose": "Preserve retained historical event fields during V1 migration",
-      "source": [
-        "src/migration.ts"
-      ]
-    },
-    {
-      "name": "@deepseek-ai/dsh-session-format-v2-to-v3",
-      "path": "packages/session/session-format-v2-to-v3",
-      "purpose": "Preserve retained historical event fields and migration coordinates during V2 migration",
-      "source": [
-        "src/migration.ts",
-        "src/payload.ts"
+        "src/codec.ts",
+        "src/execution-state.ts",
+        "src/validation.ts"
       ]
     },
     {
@@ -267,11 +273,7 @@
       "purpose": "Delete JSONL artifacts safely, expose copy-stable migration coordinates, and import released SQLite Sessions",
       "source": [
         "package.json",
-        "src/generation.ts",
-        "src/index.ts",
-        "src/legacy-sqlite-provenance.ts",
-        "src/legacy-sqlite-worker.ts",
-        "src/legacy-sqlite.ts"
+        "src/index.ts"
       ]
     },
     {
@@ -280,7 +282,9 @@
       "purpose": "Evict deleted projections and reject stale publication",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "src/spec.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -331,6 +335,14 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-settings",
+      "path": "packages/settings/settings",
+      "purpose": "Explicit legacy configuration section and field mapping into native profile forms with retained raw backups",
+      "source": [
+        "src/index.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-shell-env",
       "path": "packages/shell/shell-env",
       "purpose": "Deployment-controlled built-in shell environment facts",
@@ -354,7 +366,8 @@
       "path": "packages/subagent/subagent-acp",
       "purpose": "Resolve the recorded Session execution directory for ACP subagents",
       "source": [
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -382,30 +395,6 @@
       ]
     },
     {
-      "name": "@deepseek-ai/dsh-subprocess",
-      "path": "packages/subprocess/subprocess",
-      "purpose": "Interactive terminal resize operation",
-      "source": [
-        "src/types.ts"
-      ]
-    },
-    {
-      "name": "@deepseek-ai/dsh-subprocess-e2b",
-      "path": "packages/e2b/subprocess-e2b",
-      "purpose": "Tracked E2B PTY resize",
-      "source": [
-        "src/terminal.ts"
-      ]
-    },
-    {
-      "name": "@deepseek-ai/dsh-subprocess-local",
-      "path": "packages/subprocess/subprocess-local",
-      "purpose": "Local PTY resize",
-      "source": [
-        "src/terminal.ts"
-      ]
-    },
-    {
       "name": "@deepseek-ai/dsh-system-prompt",
       "path": "packages/core/system-prompt",
       "purpose": "Provider-owned durable prompt provenance, legacy source declarations, and awaited lazy input preparation",
@@ -419,7 +408,8 @@
       "purpose": "Consume the optional trusted per-execution environment registry",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -427,14 +417,13 @@
       "path": "packages/shell/tool-bash-persistent",
       "purpose": "Resolve the recorded Session execution directory for persistent Bash",
       "source": [
-        "package.json",
         "src/index.ts"
       ]
     },
     {
       "name": "@deepseek-ai/dsh-tool-cordis",
       "path": "packages/extensions/tool-cordis",
-      "purpose": "Publish the reviewed Runtime extension API catalog",
+      "purpose": "Published public configuration and service contracts for downstream composition",
       "source": [
         "src/api-catalog.ts"
       ]
@@ -445,7 +434,8 @@
       "purpose": "Enforce deployment access ceilings around one-shot filesystem escalation",
       "source": [
         "src/sandbox.ts",
-        "src/session-cwd.ts"
+        "src/session-cwd.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -462,12 +452,13 @@
       "purpose": "Resolve the recorded Session execution directory for language-server access",
       "source": [
         "package.json",
-        "src/session-cwd.ts"
+        "src/session-cwd.ts",
+        "tsconfig.json"
       ]
     },
     {
       "name": "@deepseek-ai/dsh-tool-present",
-      "path": "packages/fs/tool-present",
+      "path": "packages/deliverables/tool-present",
       "purpose": "Resolve the recorded Session execution directory for presented files",
       "source": [
         "src/index.ts"
@@ -479,7 +470,8 @@
       "purpose": "Consume the optional trusted per-execution environment registry",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -487,7 +479,6 @@
       "path": "packages/shell/tool-pwsh-persistent",
       "purpose": "Resolve the recorded Session execution directory for persistent PowerShell",
       "source": [
-        "package.json",
         "src/index.ts"
       ]
     },
@@ -497,7 +488,8 @@
       "purpose": "Resolve the recorded Session execution directory for skill discovery",
       "source": [
         "package.json",
-        "src/index.ts"
+        "src/index.ts",
+        "tsconfig.json"
       ]
     },
     {
@@ -518,14 +510,24 @@
       "source": [
         "src/index.ts"
       ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-workspace-changes",
+      "path": "packages/deliverables/workspace-changes",
+      "purpose": "Native V4 public capability integration for downstream Product consumers",
+      "source": [
+        "src/index.ts"
+      ]
     }
   ],
   "runtimePatchPackages": [
     "@deepseek-ai/dsh-agent",
     "@deepseek-ai/dsh-agent-instructions",
     "@deepseek-ai/dsh-agent-loop",
+    "@deepseek-ai/dsh-agent-preset",
     "@deepseek-ai/dsh-api-gateway",
     "@deepseek-ai/dsh-api-session-controller",
+    "@deepseek-ai/dsh-api-terminal-controller",
     "@deepseek-ai/dsh-api-workspace-files",
     "@deepseek-ai/dsh-client-connection",
     "@deepseek-ai/dsh-client-modules",
@@ -537,16 +539,14 @@
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",
     "@deepseek-ai/dsh-hooks-codex",
+    "@deepseek-ai/dsh-llm-pi-ai",
     "@deepseek-ai/dsh-mcp-client",
-    "@deepseek-ai/dsh-message-feedback",
+    "@deepseek-ai/dsh-ptc-runtime-node",
     "@deepseek-ai/dsh-sandbox-policy",
     "@deepseek-ai/dsh-scope",
     "@deepseek-ai/dsh-session",
     "@deepseek-ai/dsh-session-deletion",
-    "@deepseek-ai/dsh-session-format",
-    "@deepseek-ai/dsh-session-format-v0-to-v1",
-    "@deepseek-ai/dsh-session-format-v1-to-v2",
-    "@deepseek-ai/dsh-session-format-v2-to-v3",
+    "@deepseek-ai/dsh-session-format-v3-to-v4",
     "@deepseek-ai/dsh-session-persistence",
     "@deepseek-ai/dsh-session-persistence-jsonl",
     "@deepseek-ai/dsh-session-projection-cache",
@@ -555,6 +555,7 @@
     "@deepseek-ai/dsh-session-reference",
     "@deepseek-ai/dsh-session-title",
     "@deepseek-ai/dsh-session-title-llm",
+    "@deepseek-ai/dsh-settings",
     "@deepseek-ai/dsh-shell-env",
     "@deepseek-ai/dsh-shell-exec-env",
     "@deepseek-ai/dsh-subagent",
@@ -562,9 +563,6 @@
     "@deepseek-ai/dsh-subagent-claude-code",
     "@deepseek-ai/dsh-subagent-codex",
     "@deepseek-ai/dsh-subagent-dsh-sdk",
-    "@deepseek-ai/dsh-subprocess",
-    "@deepseek-ai/dsh-subprocess-e2b",
-    "@deepseek-ai/dsh-subprocess-local",
     "@deepseek-ai/dsh-system-prompt",
     "@deepseek-ai/dsh-tool-bash",
     "@deepseek-ai/dsh-tool-bash-persistent",
@@ -577,6 +575,7 @@
     "@deepseek-ai/dsh-tool-pwsh-persistent",
     "@deepseek-ai/dsh-tool-skill",
     "@deepseek-ai/dsh-web-fetch-http",
-    "@deepseek-ai/dsh-workspace"
+    "@deepseek-ai/dsh-workspace",
+    "@deepseek-ai/dsh-workspace-changes"
   ]
 }

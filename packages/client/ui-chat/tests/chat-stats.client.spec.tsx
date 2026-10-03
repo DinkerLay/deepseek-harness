@@ -47,6 +47,12 @@ function makeSource(init: ChatUpdate = {}) {
 }
 
 describe('deriveStats', () => {
+  it('excludes only loaded hidden Turns from fallback counts while retaining executed Steps and timings', () => {
+    const nodes = [assistant(1, 1), assistant(2, 1), assistant(3, 2)]
+    expect(deriveStats(nodes, new Set([1, 10]))).toMatchObject({ turns: 1, steps: 3 })
+    expect(deriveStats(nodes, new Set([10]))).toEqual(deriveStats(nodes))
+  })
+
   it('counts turns and steps and never folds node usage into accounting', () => {
     const stats = deriveStats([
       assistant(1, 1, { inputTokens: 100, outputTokens: 50, cacheReadTokens: 900 }),
@@ -145,7 +151,7 @@ describe('StatsPills', () => {
     source: { getSnapshot(): ChatSnapshot; subscribe(fn: () => void): () => void },
     values: Record<string, unknown> = { tokenUsage: USAGE },
   ): StatsPillsProps {
-    return { useChat: bindSnapshotSelector(source), useProjection: projections(values), t: tEn }
+    return { usePerformanceUsage: selector => selector('detailed'), useChat: bindSnapshotSelector(source), useProjection: projections(values), t: tEn }
   }
 
   function tokenUsage(cacheReadTokens: number, uncachedInputTokens: number) {
@@ -158,22 +164,40 @@ describe('StatsPills', () => {
     timing: { stepStartTime: 1_000, firstTokenTime: 1_800, completedTime: 4_800 },
   })
 
-  it('counts displayed turns while preserving executed steps and token accounting', () => {
+  it('counts displayed Turns without reducing executed Steps or billed token accounting', () => {
     const { source } = makeSource()
     const snapshot = { ...source.getSnapshot(), excludedTurns: new Set([1]) }
     const view = render(<StatsPills {...props({ ...source, getSnapshot: () => snapshot }, {
       sessionStats: sessionStats({ turns: 2, steps: 8 }), tokenUsage: USAGE,
     })} />)
     expect(view.getByText('1 turns 8 steps')).toBeTruthy()
-    expect(view.getByRole('button', { name: '105 tok · Cache hit 90%' })).toBeTruthy()
+    expect(view.getByRole('button', { name: /105 tok.*Cache hit 90%/ })).toBeTruthy()
+  })
+
+  it('compact keeps only speed and cache hit, with no interactive statistics', () => {
+    const { source } = makeSource({ nodes: [timedStep()] })
+    const view = render(<StatsPills {...props(source)} usePerformanceUsage={selector => selector('compact')} />)
+    expect(view.container.textContent).toBe('20 tok/sCache hit 90%')
+    expect(view.queryByRole('button')).toBeNull()
+    fireEvent.mouseOver(view.getByText('20 tok/s'))
+    expect(view.queryByRole('dialog')).toBeNull()
+    view.rerender(<StatsPills {...props(source)} />)
+    expect(view.getAllByRole('button')).toHaveLength(2)
+    fireEvent.click(view.getAllByRole('button')[0]!)
+    expect(view.getByRole('dialog')).toBeTruthy()
+    view.rerender(<StatsPills {...props(source)} usePerformanceUsage={selector => selector('compact')} />)
+    expect(view.queryByRole('dialog')).toBeNull()
+  })
+
+  it('compact omits unavailable metrics instead of showing counts', () => {
+    const { source } = makeSource({ nodes: [assistant(1, 1)] })
+    const view = render(<StatsPills {...props(source, {})} usePerformanceUsage={selector => selector('compact')} />)
+    expect(view.container.textContent).toBe('')
   })
 
   it('renders the counts reading and usage pill and hides a brand-new empty session', () => {
     const { source } = makeSource({ nodes: [assistant(1, 1)] })
     const view = render(<StatsPills {...props(source)} />)
-    // InputBar's `.root:has([data-composer-stats])` bottom-clearance rule keys
-    // off this attribute: present exactly while the row renders.
-    expect(view.container.querySelector('[data-composer-stats]')).toBeTruthy()
     // No timing on the fixture: the speed segment drops out and the dialog
     // would have no rows, so the counts reading stays a static pill (no button).
     expect(view.getByText('1 turns 1 steps').closest('button')).toBeNull()
@@ -189,7 +213,6 @@ describe('StatsPills', () => {
       contextPressure: {},
     })} />)
     expect(emptyView.container.textContent).toBe('')
-    expect(emptyView.container.querySelector('[data-composer-stats]')).toBeNull()
   })
 
   it.each([

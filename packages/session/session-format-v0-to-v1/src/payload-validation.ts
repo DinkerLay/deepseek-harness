@@ -1,6 +1,5 @@
 import { SessionFormatError, sessionFormatCount, sessionFormatSafeInteger } from '@deepseek-ai/dsh-session-format'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
-import { isAbsolute } from 'node:path'
 import type {
   SessionFormatEvent,
   SessionFormatJsonValue,
@@ -182,25 +181,10 @@ export function assertReleasedPayloadSemantics(event: SessionFormatEvent, versio
       return
     case 'session/end-seed':
       return
-    case 'session/execution-directory':
-      nonEmptyString(data['sessionId'], `${label} sessionId`)
-      nonEmptyString(data['cwd'], `${label} cwd`)
-      if (!isAbsolute(data['cwd'] as string) || (data['cwd'] as string).includes('\0')) {
-        throw new SessionFormatError(`${label} cwd must be an absolute path`)
-      }
-      return
     case 'session/title':
       nonEmptyString(data['title'], `${label} title`)
       seqArray(data['messageSeqs'], event.seq, `${label} messageSeqs`, false)
       titleSourceValue(data['source'], `${label} source`)
-      if (data['inputTruncated'] !== undefined) literalValue(data['inputTruncated'], [true], `${label} inputTruncated`)
-      return
-    case 'session/title-generation':
-      literalValue(data['state'], ['generating', 'ready', 'failed'], `${label} state`)
-      if (data['error'] !== undefined) {
-        if (data['state'] !== 'failed') throw new SessionFormatError(`${label} error requires failed state`)
-        stringValue(data['error'], `${label} error`)
-      }
       return
     case 'session/title-llm-request':
       nonEmptyString(data['titleProvider'], `${label} titleProvider`)
@@ -211,10 +195,6 @@ export function assertReleasedPayloadSemantics(event: SessionFormatEvent, versio
         messageValue(value, `${label} message`, version)
       })
       positiveIntegerValue(data['maxTokens'], `${label} maxTokens`)
-      if (data['inputTruncated'] !== undefined) literalValue(data['inputTruncated'], [true], `${label} inputTruncated`)
-      return
-    case 'session/title-policy':
-      booleanValue(data['automatic'], `${label} automatic`)
       return
     case 'step/end':
     case 'step/start':
@@ -567,18 +547,9 @@ function messageSourceValue(
   if (expected === 'tool' && source['kind'] !== 'tool') throw new SessionFormatError(`${label} must be tool source`)
   switch (source['kind']) {
     case 'user':
-      assertReleasedV0Keys(source, ['kind'], ['rpcId', 'clientTimeZone', 'delegation', 'supercodeRetry'], label)
-      if (source['supercodeRetry'] !== undefined) {
-        const retry = exactRecord(source['supercodeRetry'], `${label} retry`,
-          ['version', 'operationId', 'sourceSessionId', 'sourceTurn', 'sourceEndSeq', 'mode', 'attempt', 'taskId'])
-        literalValue(retry['version'], [1], `${label} retry version`)
-        literalValue(retry['mode'], ['retry', 'continue', 'reexecute'], `${label} retry mode`)
-        for (const key of ['operationId', 'sourceSessionId', 'taskId']) nonEmptyString(retry[key], `${label} retry ${key}`)
-        for (const key of ['sourceTurn', 'sourceEndSeq', 'attempt']) countValue(retry[key], `${label} retry ${key}`)
-      }
+      assertReleasedV0Keys(source, ['kind'], ['rpcId', 'clientTimeZone'], label)
       if (source['rpcId'] !== undefined) nonEmptyString(source['rpcId'], `${label} rpcId`)
       if (source['clientTimeZone'] !== undefined) nonEmptyString(source['clientTimeZone'], `${label} clientTimeZone`)
-      if (source['delegation'] !== undefined) delegationValue(source['delegation'], `${label} delegation`)
       return
     case 'plugin':
       pluginSourceValue(source, label)
@@ -640,12 +611,6 @@ function messageSourceValue(
       literalValue(source['form'], ['relay'], `${label} form`)
       nonEmptyString(source['senderSessionId'], `${label} senderSessionId`)
       return
-    case 'agent-message':
-      assertReleasedV0Keys(source, ['kind', 'form', 'senderSessionId'], ['delegation'], label)
-      literalValue(source['form'], ['relay'], `${label} form`)
-      nonEmptyString(source['senderSessionId'], `${label} senderSessionId`)
-      if (source['delegation'] !== undefined) delegationValue(source['delegation'], `${label} delegation`)
-      return
     case 'subagent-settled':
       assertReleasedV0Keys(source, ['kind', 'form', 'summary', 'senderSessionId'], [], label)
       literalValue(source['form'], ['notice'], `${label} form`)
@@ -664,27 +629,11 @@ function messageSourceValue(
   }
 }
 
-function delegationValue(value: SessionFormatJsonValue | undefined, label: string): void {
-  const delegation = exactRecord(value, label, ['parentSessionId'], ['parentTurn'])
-  nonEmptyString(delegation['parentSessionId'], `${label} parentSessionId`)
-  if (delegation['parentTurn'] !== undefined) countValue(delegation['parentTurn'], `${label} parentTurn`)
-}
-
 function pluginSourceValue(source: JsonRecord, label: string): void {
   const optional = ['form', 'sections', 'summary']
   if (source['plugin'] === 'compact') optional.push('compactionId', 'sourceCommandId')
-  const localMemory = source['plugin'] === 'supercode-local-memory-status' || source['plugin'] === 'supercode-local-memory-body'
-  if (localMemory) optional.push('memorySnapshot')
   assertReleasedV0Keys(source, ['kind', 'plugin'], optional, label)
   nonEmptyString(source['plugin'], `${label} plugin`)
-  if (source['memorySnapshot'] !== undefined) {
-    const descriptor = exactRecord(source['memorySnapshot'], `${label} memorySnapshot`, ['version', 'section', 'label', 'order'])
-    literalValue(descriptor['version'], [1], `${label} memorySnapshot version`)
-    nonEmptyString(descriptor['section'], `${label} memorySnapshot section`)
-    nonEmptyString(descriptor['label'], `${label} memorySnapshot label`)
-    finiteNumberValue(descriptor['order'], `${label} memorySnapshot order`)
-    literalValue(source['form'], ['snapshot'], `${label} memorySnapshot form`)
-  }
   if (source['plugin'] === 'compact') {
     nonEmptyString(source['compactionId'], `${label} compactionId`)
     if (source['sourceCommandId'] !== undefined) nonEmptyString(source['sourceCommandId'], `${label} sourceCommandId`)

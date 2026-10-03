@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-03-runtime-coordination.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-03-runtime-coordination.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-03-runtime-coordination:
+  en: f77def2ff12dc56f
+  zh: 8bfb26b7dc054b89
+/2026-10-03-runtime-coordination/summary:
+  en: d12b25b19b8ac348
+  zh: 53251e7af42c31b5
+/2026-10-03-runtime-coordination/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-03-runtime-coordination/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-03-runtime-coordination/compatibility:
+  en: 1b9a645ef23601f6
+  zh: f46ad7a8f9598faf
+/2026-10-03-runtime-coordination/verification:
+  en: c4eaec3eb6c240b8
+  zh: a7e5741cada1f1bb
+/2026-10-03-runtime-coordination/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import type { LookupAddress } from 'node:dns'
 import { encode, RECURSION_DESIRED } from 'dns-packet'
-import type { Response as UndiciResponse } from 'undici'
+import { Response as UndiciResponse } from 'undici'
 import { installProxyFromEnvironment, proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeIpFallback } from '../src/dns-fallback.ts'
@@ -21,10 +21,10 @@ function dnsResponse(name: string, type: 'A' | 'AAAA', answers: LookupAddress[])
       data: answer.address,
     })),
   })
-  return new Response(Buffer.from(body), {
+  return new UndiciResponse(Buffer.from(body), {
     status: 200,
     headers: { 'content-type': 'application/dns-message' },
-  }) as unknown as UndiciResponse
+  })
 }
 
 function fallback() {
@@ -65,7 +65,7 @@ describe('direct Fake-IP DNS recovery', () => {
       NO_PROXY: 'origin.test',
     }
     const dispose = await installProxyFromEnvironment({
-      get: name => values[name] === undefined ? undefined : { value: values[name]! },
+      get: name => values[name] === undefined ? undefined : { value: values[name] },
     }, () => {})
     const close = vi.fn(async () => {})
     const request = vi.spyOn(publicHttpNetwork, 'request')

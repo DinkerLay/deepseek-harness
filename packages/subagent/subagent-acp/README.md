@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-A delegated task can run in a fresh ACP-compatible subprocess with its own runtime, Session, model, and tools. The child shares only the selected working directory and returns its final answer or a safe error; intermediate traffic stays outside the parent conversation. Configured policy answers permission prompts without interaction. Choose an in-process backend when the child must share parent capabilities. Work follows the recorded Session execution directory.
+Use this package to delegate a task to an ACP-compatible agent running in a fresh subprocess with its own runtime, session, model, and tools. Each run shares only the selected working directory, sends the task over ACP, and returns the child's final answer or a safe error; intermediate messages and tool traffic stay outside the parent conversation. Permission prompts are answered by configured policy without human interaction. Choose it when delegation needs process isolation or a non-Harness ACP agent, and choose an in-process backend when the child must share parent capabilities.
 
 ## Table of Contents
 
@@ -119,6 +119,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination).
+
 ## Model Experience
 
 ### Child-agent request

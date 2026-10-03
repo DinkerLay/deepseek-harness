@@ -18,7 +18,7 @@ const SECTION_ORDER_NAMES = [
   'PLAN_POLICY', 'TEAM_POLICY', 'PTC_ONLY', 'FILE_REFERENCE', 'TOOL_BASH',
   'TOOL_PWSH', 'TOOL_READ', 'TOOL_WRITE', 'TOOL_EDIT', 'TOOL_GLOB',
   'TOOL_GREP', 'TOOL_JOBS', 'TOOL_PTY', 'TOOL_WEB_SEARCH', 'TOOL_WEB_FETCH',
-  'TOOL_LSP', 'TOOL_SESSION_QUERY', 'TOOL_GOAL', 'TOOL_CORDIS', 'TOOL_WORKFLOW',
+  'TOOL_LSP', 'TOOL_SESSION_QUERY', 'TOOL_GOAL', 'TOOL_WORKFLOW',
   'TOOL_RALPH', 'TOOL_SUBAGENT', 'TOOL_REPORT', 'TOOLS_SDK',
   'DELIVERABLE_FILE_REFERENCES', 'STRUCTURED_OUTPUT',
   'HARNESS_SOURCE', 'WEB_SURFACE', 'DEPLOYMENT_PERSONA_SUFFIX',
@@ -58,6 +58,7 @@ describe('SystemPrompt', () => {
     expect(reads).toBe(2)
     await ctx.fiber.dispose()
   })
+
   it('keeps repository section placements unique, integral, and at least ten apart', async () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, {})
@@ -606,6 +607,25 @@ describe('SystemPrompt', () => {
       expect(renderPrompt(await ctx.systemPrompt.assemble())).toBe(`${IDENTITY}\n\nYou run on deepseek-v4 in /work.`)
     })
 
+    it.each([
+      [false, false],
+      [false, true],
+      [true, false],
+      [true, true],
+    ])('preserves literal section text with complete=%s and dynamic=%s', async (complete, dynamic) => {
+      const ctx = new Context()
+      try {
+        await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false, personaPrefix: '{{model}}' })
+        ctx.systemPrompt.variable('model', () => 'actual-model')
+        const text = '{{item}} {{model}} {{ model }} {{nested{{item}}}}'
+        ctx.systemPrompt.section({ name: 'literal', order: 1, text: dynamic ? () => text : text, interpolate: false, complete })
+        expect(renderPrompt(await ctx.systemPrompt.assemble()))
+          .toBe(complete ? text : `actual-model\n\n${text}`)
+      } finally {
+        await ctx.fiber.dispose()
+      }
+    })
+
     it('lets a waterfall listener add or override variables before render', async () => {
       const ctx = new Context()
       await ctx.plugin(SystemPrompt)
@@ -700,19 +720,4 @@ describe('SystemPrompt', () => {
       expect(text).toBe('v = literal {{sneaky}} inside!')
     })
   })
-})
-
-
-it('validates durable provider identities and copies historical aliases', async () => {
-  const ctx = new Context()
-  try {
-    const aliases = ['@example/previous-prompt']
-    await ctx.plugin(SystemPrompt, { sourcePlugin: '@example/prompt', legacySourcePlugins: aliases })
-    aliases.push('later')
-    expect(ctx.systemPrompt.sourceIdentityVersion).toBe(1)
-    expect(ctx.systemPrompt.sourcePlugin).toBe('@example/prompt')
-    expect(ctx.systemPrompt.legacySourcePlugins).toEqual(['@example/previous-prompt'])
-    expect(() => SystemPrompt.Config({ sourcePlugin: ' ' })).toThrow()
-    expect(() => SystemPrompt.Config({ legacySourcePlugins: [''] })).toThrow()
-  } finally { await ctx.fiber.dispose() }
 })

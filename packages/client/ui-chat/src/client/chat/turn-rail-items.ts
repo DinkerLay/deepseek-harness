@@ -13,7 +13,7 @@ import type { TurnNavigationItem } from '../contract/snapshot.ts'
 /** One rail mark: a loaded Turn scrolls to its row; an unloaded one pages history through its seq first. */
 export interface TurnRailItem {
   readonly turn: number
-  /** Display ordinal after presentation exclusions; navigation still uses turn. */
+  /** Display ordinal after exclusions; navigation still addresses the original Turn. */
   readonly displayTurn?: number
   /** Bounded prompt preview (loaded window first, outline fallback). */
   readonly prompt: string
@@ -60,7 +60,7 @@ function outlineEntries(outline: unknown): readonly unknown[] {
  * through. Result ascends by turn.
  * @param loaded - loaded-window rail items (timeline order).
  * @param outline - `turnOutline` projection value, treated as wire data.
- * @param excluded - presentation-hidden Turns that must not be restored from the outline.
+ * @param excluded - presentation-hidden Turns, including those present only in the outline.
  * @returns every known turn, ascending; a stable empty array when none.
  */
 export function mergeTurnRailItems(
@@ -92,5 +92,14 @@ export function mergeTurnRailItems(
   if (byTurn.size === 0) return EMPTY_ITEMS
   const items = [...byTurn.values()].sort((left, right) => left.turn - right.turn)
   if (excluded === undefined || excluded.size === 0) return items
-  return items.map(item => ({ ...item, displayTurn: item.turn - [...excluded].filter(turn => turn < item.turn).length }))
+  const hidden = [...excluded].sort((left, right) => left - right)
+  let count = 0
+  return items.map((item) => {
+    while (true) {
+      const hiddenTurn = hidden[count]
+      if (hiddenTurn === undefined || hiddenTurn >= item.turn) break
+      count += 1
+    }
+    return { ...item, displayTurn: item.turn - count }
+  })
 }

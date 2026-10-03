@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Models can navigate code with one read-only `lsp` tool for definitions, references, implementations, and hover documentation. Requests use one-based UTF-16 positions; bounded results group locations by file and identify omission, truncation, absence, and errors. Configure an LSP provider and use textual search for ordinary discovery. Language-server paths follow the recorded Session execution directory.
+`dsh-tool-lsp` lets a model navigate code through one read-only `lsp` tool: open a symbol's definition, find references and implementations, or read hover documentation. Requests use one-based UTF-16 line and character positions. Navigation results are bounded, grouped by file, and labeled when locations are omitted or text is truncated; hover results are normalized and distinguish missing information from errors. The package requires a configured LSP provider and a session workspace root. Choose it when textual search is ambiguous or a change needs precise symbol relationships; ordinary navigation should continue to use `search` and `read`.
 
 ## Table of Contents
 
@@ -94,6 +94,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination).
+
 ## Model Experience
 
 ### System prompt

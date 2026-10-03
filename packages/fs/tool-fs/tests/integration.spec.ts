@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
@@ -374,8 +373,9 @@ describe('bare provider (no dsh-fs-observation-policy)', () => {
   })
 })
 
-// Per-session cwd: a relative file_path resolves against the calling Session's
-// effective execution directory, not the backend's config.cwd.
+// Per-session cwd: a relative file_path resolves against the calling session's workspace
+// (`exec.agent.session.header.cwd`), not the backend's config.cwd, so the
+// caller-selected session workspace wins, matching dsh-tool-bash.
 describe('per-session cwd', () => {
   let sessionDir: string
   beforeEach(async () => {
@@ -398,29 +398,6 @@ describe('per-session cwd', () => {
       arguments: args,
       agent: { session: sessionObj } as never,
     })
-
-  it('reads and edits the rebound worktree without changing the shared file or creation cwd', async () => {
-    const id = SessionId('rebound-reader-writer')
-    const owner = Session.create(id, undefined, {
-      version: SESSION_FORMAT_VERSION,
-      id,
-      createdAt: 0,
-      cwd: sessionDir,
-      isSeeded: false,
-    })
-    await writeFile(join(sessionDir, 'report.md'), 'shared baseline')
-    await writeFile(join(dir, 'report.md'), 'isolated baseline')
-    expect(text(await callIn(owner, 'read', { file_path: 'report.md' }))).toContain('shared baseline')
-    owner.append('session/execution-directory', { sessionId: id, cwd: dir })
-    expect(text(await callIn(owner, 'read', { file_path: 'report.md' }))).toContain('isolated baseline')
-    const result = await callIn(owner, 'edit', { file_path: 'report.md', old_string: 'isolated baseline', new_string: 'audited result' })
-    expect(result.isError).toBe(false)
-    expect(await readFile(join(dir, 'report.md'), 'utf8')).toBe('audited result')
-    expect(await readFile(join(sessionDir, 'report.md'), 'utf8')).toBe('shared baseline')
-    expect(owner.header.cwd).toBe(sessionDir)
-    const restored = Session.create(id, owner.snapshotEvents(), owner.header, owner.inheritedEventCount)
-    expect(text(await callIn(restored, 'read', { file_path: 'report.md' }))).toContain('audited result')
-  })
 
   it('writes a relative path into the SESSION cwd, not config.cwd', async () => {
     const result = await callIn({ header: { cwd: sessionDir } }, 'write', { file_path: 'note.txt', content: 'hi' })

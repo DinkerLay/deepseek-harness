@@ -1,4 +1,5 @@
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { DatabaseSync } from 'node:sqlite'
@@ -33,6 +34,12 @@ import {
   type SessionQueryErrorCode,
   type SessionSearchRequest,
 } from '@deepseek-ai/dsh-session-query'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'test': { kind: 'test' } & ContextFormed
+  }
+}
 
 const temporaryDirectories: string[] = []
 
@@ -407,7 +414,7 @@ describe('SQLite session search', () => {
         },
       },
       { type: 'user/message', seq: SessionSeq(2), time: 12, data: createUserMessage({
-        content: [{ type: 'text', text: 'needle summary' }], source: { kind: 'plugin', plugin: 'test' },
+        content: [{ type: 'text', text: 'needle summary' }], source: { kind: 'test' },
       }), surfaceOp: { op: 'replace', startSeq: SessionSeq(0), endSeq: SessionSeq(0) }, sourceEventSeqs: [SessionSeq(0)] },
       { type: 'turn/end', seq: SessionSeq(3), time: 13, data: { turn: 1, reason: { kind: 'error', error: { message: 'needle failure', code: 'UNKNOWN' } } } },
     ]
@@ -1171,24 +1178,6 @@ describe('SQLite reconciliation and source lifecycle', () => {
     expect(after.get(changed.id)).toBeGreaterThan(before.get(changed.id)!)
     expect(after.has(deleted.id)).toBe(false)
     expect(after.has(added.id)).toBe(true)
-  })
-
-  it('removes a committed deletion from an already-open derived index', async () => {
-    const deleted = header('event-deleted')
-    TestPersistence.reset([{ meta: deleted, events: messageEvents('event deletion needle') }])
-    const ctx = new Context()
-    await ctx.plugin(SessionStore)
-    await ctx.plugin(TestPersistence)
-    await ctx.plugin(SqliteSessionQueryEngine, { path: ':memory:' })
-    await ctx.sessionQuery.searchSessions({ query: 'needle' })
-    const db = (ctx.sessionQuery as unknown as { _db: DatabaseSync })._db
-    expect(db.prepare('SELECT id FROM persisted_sessions WHERE id = ?').get(deleted.id)).toBeDefined()
-    TestPersistence.entries.delete(deleted.id)
-
-    await ctx.parallel('session-persistence/deleted', deleted, SessionLogOffset(0))
-
-    expect(db.prepare('SELECT id FROM persisted_sessions WHERE id = ?').get(deleted.id)).toBeUndefined()
-    await ctx.fiber.dispose()
   })
 
   it('drops connection-local live overlays on reopen and retains persistent bases', async () => {

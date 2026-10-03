@@ -19,7 +19,6 @@ import type {
   SessionFormatMigrationStream,
   SessionFormatRestore,
   SessionFormatRestoreOptions,
-  SessionFormatRestoreResult,
 } from './types.ts'
 
 /**
@@ -171,7 +170,6 @@ type SessionFormatArtifactRestorer = (artifact: SessionFormatArtifact) => Sessio
 class CurrentSessionFormatRestore implements SessionFormatRestore {
   readonly header: SessionFormatArtifact['header']
   private readonly collector = new SessionFormatEventCollector()
-  private completed: SessionFormatRestoreResult | undefined
 
   constructor(
     private readonly decoder: SessionFormatArtifactDecoder,
@@ -187,35 +185,16 @@ class CurrentSessionFormatRestore implements SessionFormatRestore {
   }
 
   finish(): SessionFormatArtifact {
-    return this.complete().artifact
-  }
-
-  finishWithCoordinates(): SessionFormatRestoreResult {
-    return this.complete()
-  }
-
-  private complete(): SessionFormatRestoreResult {
-    if (this.completed !== undefined) return this.completed
     const inheritedEventCount = finishDecoder(
       this.decoder,
       this.collector,
       this.sourceInheritedEventCount,
     )
-    const artifact = restoreCurrentVersion(this.restoreArtifact({
+    return restoreCurrentVersion(this.restoreArtifact({
       header: this.header,
       inheritedEventCount,
       events: this.collector.values,
     }), this.currentVersion)
-    this.completed = Object.freeze({
-      artifact,
-      coordinates: Object.freeze({
-        sourceVersion: this.currentVersion,
-        targetVersion: this.currentVersion,
-        targetSeqBySourceSeq: Object.freeze(artifact.events.map(event => event.seq)),
-        targetEventCount: artifact.events.length,
-      }),
-    })
-    return this.completed
   }
 }
 
@@ -223,9 +202,6 @@ class MigratingSessionFormatRestore implements
   SessionFormatRestore,
   SessionFormatMigrationContext {
   readonly header: SessionFormatArtifact['header']
-  private sourceEventCount = 0
-  private artifact: SessionFormatArtifact | undefined
-  private completed: SessionFormatRestoreResult | undefined
 
   constructor(
     private readonly decoder: SessionFormatArtifactDecoder,
@@ -245,51 +221,23 @@ class MigratingSessionFormatRestore implements
   }
 
   emitEvent(event: SessionFormatEvent): void {
-    this.sourceEventCount = Math.max(this.sourceEventCount, event.seq + 1)
     this.migration.emitEvent(event)
   }
 
   emitRun(run: SessionFormatEventRun): void {
-    this.sourceEventCount = Math.max(this.sourceEventCount, run.firstSeq + run.eventCount)
     this.migration.emitRun(run)
   }
 
   finish(): SessionFormatArtifact {
-    return this.completeArtifact()
-  }
-
-  finishWithCoordinates(): SessionFormatRestoreResult {
-    return this.complete()
-  }
-
-  private complete(): SessionFormatRestoreResult {
-    if (this.completed !== undefined) return this.completed
-    const current = this.completeArtifact()
-    const targetSeqBySourceSeq = Array.from({ length: this.sourceEventCount }, (_, sourceSeq) =>
-      this.migration.mapSourceEventSeq(sourceSeq) ?? null)
-    this.completed = Object.freeze({
-      artifact: current,
-      coordinates: Object.freeze({
-        sourceVersion: this.sourceVersion,
-        targetVersion: this.currentVersion,
-        targetSeqBySourceSeq: Object.freeze(targetSeqBySourceSeq),
-        targetEventCount: current.events.length,
-      }),
-    })
-    return this.completed
-  }
-
-  private completeArtifact(): SessionFormatArtifact {
-    if (this.artifact !== undefined) return this.artifact
     finishDecoder(this.decoder, this, this.sourceInheritedEventCount)
-    const candidate = {
+    const artifact = {
       header: this.header,
       inheritedEventCount: this.migration.finish(),
       events: this.collector.values,
     }
     let restored: SessionFormatArtifact
     try {
-      restored = this.restoreArtifact(candidate)
+      restored = this.restoreArtifact(artifact)
     } catch (error: unknown) {
       if (this.validation === 'current'
         || error instanceof SessionFormatUnsupportedMigrationError) throw error
@@ -299,8 +247,7 @@ class MigratingSessionFormatRestore implements
         { cause: error },
       )
     }
-    this.artifact = restoreCurrentVersion(restored, this.currentVersion)
-    return this.artifact
+    return restoreCurrentVersion(restored, this.currentVersion)
   }
 }
 

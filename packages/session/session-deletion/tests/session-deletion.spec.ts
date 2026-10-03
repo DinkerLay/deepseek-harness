@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,7 +61,10 @@ async function mounted(): Promise<{ readonly ctx: Context; readonly cwd: string 
 }
 
 /** Register one minimal idle Agent over an already-live Session. */
-function registerIdleAgent(ctx: Context, session: Session): { readonly agent: Agent; readonly detach: () => void } {
+async function registerIdleAgent(ctx: Context, session: Session): Promise<{
+  readonly agent: Agent
+  readonly detach: ReturnType<Context['effect']>
+}> {
   const nextTurn: Inbox['nextTurn'] = []
   const nextStep: Inbox['nextStep'] = []
   const inbox: Inbox = {
@@ -88,7 +92,14 @@ function registerIdleAgent(ctx: Context, session: Session): { readonly agent: Ag
     whenIdle: () => Promise.resolve(),
     runMaintenance: <T>(job: (signal: AbortSignal) => Promise<T>) => job(new AbortController().signal),
   } satisfies Agent
-  return { agent, detach: ctx.agents.register(agent) }
+  const scope = createScope(ctx, agent)
+  agent.ctx = scope.ctx
+  ctx.effect(() => () => scope.dispose())
+  const registry = scope.ctx.get('agents')
+  if (registry === undefined) throw new Error('Agent fixture requires the native registry')
+  const detach = registry.register(agent)
+  await detach
+  return { agent, detach }
 }
 
 describe('SessionDeletion (JSONL)', () => {
@@ -148,9 +159,9 @@ describe('SessionDeletion (JSONL)', () => {
     const session = ctx.sessions.prepare(meta.id, { meta: { cwd } })
     const detachSession = ctx.sessions.enter(session)
     ctx.sessions.announce(session)
-    const { agent, detach: detachAgent } = registerIdleAgent(ctx, session)
+    const { agent, detach: detachAgent } = await registerIdleAgent(ctx, session)
     const dispose = vi.fn(async () => {
-      detachAgent()
+      await detachAgent()
       detachSession()
     })
     const handle = {
@@ -179,7 +190,7 @@ describe('SessionDeletion (JSONL)', () => {
     await persist(ctx, childMeta)
     const root = ctx.sessions.create(rootMeta.id, { meta: { cwd } })
     const child = ctx.sessions.create(childMeta.id, { meta: { cwd, parentSession: rootMeta.id } })
-    for (const session of [root, child]) registerIdleAgent(ctx, session)
+    for (const session of [root, child]) await registerIdleAgent(ctx, session)
     const release = vi.fn()
     const dispose = vi.fn(async () => {})
     vi.spyOn(ctx.agents, 'reserveIdleDisposal').mockImplementation(id => id === child.id

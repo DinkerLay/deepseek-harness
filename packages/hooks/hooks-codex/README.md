@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Existing Codex command hooks can gate Session start, prompt submission, tool execution, and stop without a rewrite. Hooks may block prompts or tools with model-visible reasons, add context, or request another Agent step. Commands run from the recorded Session execution directory. Choose a native plugin for behavior outside these five supported Codex hook points.
+`dsh-hooks-codex` runs command hooks from an existing Codex `hooks.json` during agent runs, so prompt and tool gates work without being rewritten. It supports five Codex hook points: session start, prompt submission, before and after tool execution, and stop. Hooks can block prompts or tool calls with model-visible reasons, add conversation context, or force another agent step. Choose this package to reuse Codex command hooks in the harness; use a native plugin for behavior outside this supported subset.
 
 ## Table of Contents
 
@@ -80,7 +80,7 @@ This section explains the design decisions behind the bridge and points at the c
 
 ### Hook point mapping
 
-Each supported event programs against one harness extension point: `SessionStart` emits context into the new session (`agent/session-start`), `UserPromptSubmit` and `PreToolUse` are waterfalls that can reject the incoming action (`agent/pre-step`, `tools/pre-execute`), `PostToolUse` is a waterfall that can block with feedback or add context to the downstream decision (`tools/post-execute`), and `Stop` is a serial listener whose blocking result forces another step through `steer()` (`agent/turn-stopping`). Context-only hooks always delegate via `next()` before folding a sourced message into the downstream decision, so a later listener can still reject or rewrite; blocking decisions map to `deny` (`PreToolUse` has no `allow` or `ask`). The per-event wiring lives in [`src/index.ts`](src/index.ts).
+Each supported event programs against one harness extension point: `SessionStart` adds context through awaited `agent/created` initialization before the first turn, `UserPromptSubmit` and `PreToolUse` are waterfalls that can reject the incoming action (`agent/pre-step`, `tools/pre-execute`), `PostToolUse` is a waterfall that can block with feedback or add context to the downstream decision (`tools/post-execute`), and `Stop` is a serial listener whose blocking result forces another step through `steer()` (`agent/turn-stopping`). Context-only hooks always delegate via `next()` before folding a sourced message into the downstream decision, so a later listener can still reject or rewrite; blocking decisions map to `deny` (`PreToolUse` has no `allow` or `ask`). The per-event wiring lives in [`src/index.ts`](src/index.ts).
 
 ### Payloads and environment
 
@@ -130,6 +130,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination).
+
 ## Model Experience
 
 ### Hook-provided context

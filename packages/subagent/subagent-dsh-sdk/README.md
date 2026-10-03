@@ -1,5 +1,5 @@
 ---
-description: "The out-of-process SDK subagent backend for users and maintainers choosing a delegation provider, configuring a child Harness runtime command, or debugging remote child runs."
+description: "The out-of-process SDK subagent backend for users and maintainers choosing a delegation provider, configuring a child Harness runtime, or debugging local nested child runs."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Each delegated task can run in a fresh DeepSeek Harness subprocess with its own profile, Session, model route, and tools. The child receives the task and recorded execution directory, keeps intermediate messages and tool traffic isolated, and returns final assistant text or a safe error. Choose this backend for a complete Harness runtime; choose in-process execution when shared state matters more than subprocess isolation and startup cost.
+`dsh-subagent-dsh-sdk` runs each delegated task in a fresh DeepSeek Harness subprocess with its own profile, session, model route, and tools. The parent provides the task and working directory, while each child uses its configured runtime and remains isolated from the parent conversation. The parent receives the child's final assistant text or a safe error; intermediate messages and tool traffic stay inside the child process. Choose this backend when delegation needs a complete Harness runtime rather than shared in-process state, and accept the cost of starting a new process for every run.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ Each delegated task can run in a fresh DeepSeek Harness subprocess with its own 
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this provider when a delegation should run as a complete Harness runtime in its own process. The common path is explicit: mount the seam, mount this provider, and give it a command that starts an SDK runtime with its own `cordis.yml`.
+Mount this provider when a delegation should run as a complete Harness runtime in its own process. The common path is explicit: mount the seam, mount this provider, configure `dshBin` when needed, and select the child `profile` and ordered `patches`.
 
 ### When to choose it
 
@@ -132,6 +132,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination).
+
 ## Model Experience
 
 ### Child-agent request

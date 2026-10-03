@@ -83,14 +83,10 @@ export const RELEASED_V0_EVENT_DISPOSITIONS: Readonly<Record<string, ReleasedV0P
     ['sessionId', 'throughSeq'],
   ),
   'session/end-seed': disposition([]),
-  'session/execution-directory': disposition(['sessionId', 'cwd']),
-  'session/title': disposition(['title', 'messageSeqs', 'source'], ['inputTruncated']),
-  'session/title-generation': disposition(['state'], ['error']),
+  'session/title': disposition(['title', 'messageSeqs', 'source']),
   'session/title-llm-request': disposition(
     ['titleProvider', 'messageSeqs', 'route', 'system', 'messages', 'maxTokens'],
-    ['inputTruncated'],
   ),
-  'session/title-policy': disposition(['automatic']),
   'step/end': disposition(['turn', 'step']),
   'step/start': disposition(['turn', 'step']),
   'subagent/descriptor': disposition(

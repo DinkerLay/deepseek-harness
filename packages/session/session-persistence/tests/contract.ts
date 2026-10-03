@@ -138,50 +138,6 @@ function secondTurn(startSeq = 6): SessionEvent[] {
  */
 export function runPersistenceContract(name: string, make: () => Promise<ContractBackend>): void {
   describe(`SessionPersistence contract: ${name}`, () => {
-    it('advertises serialized deletion support', async () => {
-      const { persistence, dispose } = await make()
-      try {
-        expect(persistence.supportsDeletion).toBe(true)
-      } finally {
-        await dispose()
-      }
-    })
-
-    it('permanently deletes one materialized Session and treats a retry as absent', async () => {
-      const { persistence, dispose } = await make()
-      try {
-        const m = meta('delete-materialized')
-        const handle = await persistence.create(m)
-        await handle.append(oneTurnLog())
-        await handle.close()
-
-        await expect(persistence.delete(m.id)).resolves.toMatchObject(m)
-        await expect(persistence.delete(m.id)).resolves.toBeUndefined()
-        expect((await persistence.list()).map(snapshot => snapshot.header.id)).not.toContain(m.id)
-        await expect(persistence.open(m.id, 'read')).rejects.toThrow(/not found/)
-      } finally {
-        await dispose()
-      }
-    })
-
-    it('refuses deletion while a native write handle owns a lazy identity', async () => {
-      const { persistence, dispose } = await make()
-      try {
-        const m = meta('delete-lazy')
-        const owner = await persistence.create(m)
-        expect((await persistence.listDeletionHeaders()).map(header => header.id)).toContain(m.id)
-        await expect(persistence.delete(m.id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
-        await owner.close()
-        await expect(persistence.delete(m.id)).resolves.toBeUndefined()
-        const replacement = await persistence.create(m)
-        await replacement.append(oneTurnLog())
-        await replacement.close()
-        expect((await persistence.list()).map(snapshot => snapshot.header.id)).toContain(m.id)
-      } finally {
-        await dispose()
-      }
-    })
-
     it('round-trips through one write handle: append, self-read, offset/length defaults', async () => {
       const { persistence, dispose } = await make()
       try {

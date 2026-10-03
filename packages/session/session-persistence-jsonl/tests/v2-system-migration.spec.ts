@@ -1,11 +1,11 @@
 import { freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { Context } from '@deepseek-ai/cordis'
-import { Session, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -14,7 +14,6 @@ import { generationLogPath } from '../src/format.ts'
 const id = SessionId('v2-system-migration')
 const config = { provider: 'mock', model: 'mock' }
 let root: string
-const copiedRoots: string[] = []
 const contexts: Context[] = []
 
 beforeEach(async () => {
@@ -25,14 +24,14 @@ afterEach(async () => {
   try {
     for (const ctx of contexts.splice(0).reverse()) await ctx.fiber.dispose()
   } finally {
-    await Promise.all([root, ...copiedRoots.splice(0)].map(path => rm(path, { recursive: true, force: true })))
+    await rm(root, { recursive: true, force: true })
   }
 })
 
-async function mount(storageRoot = root): Promise<Context> {
+async function mount(): Promise<Context> {
   const ctx = new Context()
   contexts.push(ctx)
-  await ctx.plugin(JsonlSessionPersistence, { root: storageRoot, compression: 'none' })
+  await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
   return ctx
 }
 
@@ -96,7 +95,7 @@ function assertRequestHistory(events: readonly SessionEvent[], handle: SessionHa
 }
 
 describe('V2 system prompts through current Session and JSONL persistence', () => {
-  it.each([undefined, ''])('prepares prompts and clear (%j) read-only, then publishes V3 without replacing V2', async (clear) => {
+  it.each([undefined, ''])('prepares prompts and clear (%j) read-only, then publishes the current generation without replacing V2', async (clear) => {
     const sourcePath = await writeV2([
       { type: 'turn/start', data: { turn: 1 } },
       { type: 'step/start', data: { turn: 1, step: 1 } },
@@ -111,7 +110,7 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
     const reader = await ctx.sessionPersistence.open(id, 'read')
     let prepared: readonly SessionEvent[]
     try {
-      expect(reader.header.version).toBe(3)
+      expect(reader.header.version).toBe(SESSION_FORMAT_VERSION)
       prepared = (await reader.read()).events
       expect(prepared.map(event => event.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
       expect(prepared.filter(event => event.type !== 'system/message').map(event => [event.type, event.time])).toEqual([
@@ -157,10 +156,10 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
     }
     expect(await observeFile(sourcePath)).toEqual(original)
     expect((await readdir(directory)).filter(name => name.endsWith('.jsonl')).sort())
-      .toEqual(['session.v2.jsonl', 'session.v3.jsonl'])
-    const publishedPath = generationLogPath(root, undefined, id, 3, 'none')
+      .toEqual(['session.v2.jsonl', `session.v${SESSION_FORMAT_VERSION}.jsonl`])
+    const publishedPath = generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, 'none')
     const published = (await readFile(publishedPath, 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line) as unknown)
-    expect(published[0]).toMatchObject({ type: 'session', version: 3, id })
+    expect(published[0]).toMatchObject({ type: 'session', version: SESSION_FORMAT_VERSION, id })
     expect(published.slice(1)).toEqual(prepared)
 
     const reopened = await mount()
@@ -193,15 +192,6 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
     ], true)
     const original = await observeFile(sourcePath)
     const ctx = await mount()
-    const preflight = await ctx.sessionPersistence.migrationCoordinates(id)
-    expect(preflight).toMatchObject({
-      sessionId: id,
-      source: { version: 2 },
-      target: { version: 3 },
-      targetSeqBySourceSeq: [0, 1, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-      targetEventCount: 15,
-    })
-    expect(preflight?.target.revision).toBeUndefined()
     const reader = await ctx.sessionPersistence.open(id, 'read')
     let prepared: readonly SessionEvent[]
     try {
@@ -233,7 +223,7 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
       session.append('step/start', { turn: 2, step: 1 })
       session.append('system/message', {
         turn: 2, step: 1,
-        message: freezeMessage({ role: 'system', id: MessageId('resumed-system'), content: [{ type: 'text', text: 'resumed prompt' }], source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' } }),
+        message: freezeMessage({ role: 'system', id: MessageId('resumed-system'), content: [{ type: 'text', text: 'resumed prompt' }], source: { kind: 'system-prompt' } }),
       }, { surfaceOp: { op: 'replace', startSeq: SessionSeq(4), endSeq: SessionSeq(4) }, sourceEventSeqs: [SessionSeq(4)] })
       session.append('step/end', { turn: 2, step: 1 })
       session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
@@ -244,16 +234,6 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
       await writer.close()
     }
     const reopened = await mount()
-    const recovery = await reopened.sessionPersistence.migrationCoordinates(id)
-    expect(recovery).toMatchObject({
-      sessionId: id,
-      source: preflight?.source,
-      target: { version: 3 },
-      targetSeqBySourceSeq: preflight?.targetSeqBySourceSeq,
-      targetEventCount: 15,
-    })
-    expect(recovery?.target.revision).toBeDefined()
-    expect(recovery?.source.revision).toMatch(/^content-v1:[0-9a-f]{64}$/u)
     const reopenedReader = await reopened.sessionPersistence.open(id, 'read')
     try {
       expect((await reopenedReader.read()).events).toEqual(expected)
@@ -268,32 +248,6 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
       await reopenedReader.close()
     }
     expect(await observeFile(sourcePath)).toEqual(original)
-
-    const copiedRoot = await mkdtemp(join(tmpdir(), 'dsh-v2-system-migration-copy-'))
-    copiedRoots.push(copiedRoot)
-    await rm(copiedRoot, { recursive: true })
-    await cp(root, copiedRoot, { recursive: true })
-    const copied = await mount(copiedRoot)
-    const copiedRecovery = await copied.sessionPersistence.migrationCoordinates(id)
-    expect(copiedRecovery).toMatchObject({
-      source: preflight?.source,
-      target: { version: 3 },
-      targetSeqBySourceSeq: preflight?.targetSeqBySourceSeq,
-      targetEventCount: 15,
-    })
-    const copiedReader = await copied.sessionPersistence.open(id, 'read')
-    try {
-      expect((await copiedReader.read()).events).toEqual(expected)
-    } finally {
-      await copiedReader.close()
-    }
-
-    const copiedSourcePath = generationLogPath(copiedRoot, undefined, id, 2, 'none')
-    const copiedSource = await readFile(copiedSourcePath, 'utf8')
-    expect(copiedSource).toContain('"id":"summary"')
-    await writeFile(copiedSourcePath, copiedSource.replace('"id":"summary"', '"id":"changed-summary"'))
-    await expect(copied.sessionPersistence.migrationCoordinates(id))
-      .rejects.toThrow(/current generation does not retain its migrated predecessor prefix/u)
   })
 
   it.each(['read', 'write'] as const)('refuses unsupported pre-step V2 during %s open without falling back to V1', async (access) => {
@@ -314,27 +268,7 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
       .toEqual(['session.v1.jsonl', 'session.v2.jsonl'])
   })
 
-  it('deletes every retained generation only after taking native write ownership', async () => {
-    const sourcePath = await writeV2([
-      { type: 'turn/start', data: { turn: 1 } },
-      { type: 'step/start', data: { turn: 1, step: 1 } },
-      request('prompt'),
-      { type: 'step/end', data: { turn: 1, step: 1 } },
-      { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
-    ])
-    const ctx = await mount()
-    const writer = await ctx.sessionPersistence.open(id, 'write')
-    await writer.close()
-    const directory = dirname(sourcePath)
-    expect((await readdir(directory)).filter(name => name.endsWith('.jsonl')).sort())
-      .toEqual(['session.v2.jsonl', 'session.v3.jsonl'])
-
-    await expect(ctx.sessionPersistence.delete(id)).resolves.toMatchObject({ id })
-    expect((await readdir(directory)).filter(name => name.endsWith('.jsonl'))).toEqual([])
-    expect(await ctx.sessionPersistence.stat(id)).toBeUndefined()
-  })
-
-  it('persists native V3 system appends after the protected head without converting them to user messages', async () => {
+  it('persists current system appends after the protected head without converting them to user messages', async () => {
     const ctx = await mount()
     const session = Session.create(id)
     const writer = await ctx.sessionPersistence.create(session.header)
@@ -343,12 +277,12 @@ describe('V2 system prompts through current Session and JSONL persistence', () =
       session.append('step/start', { turn: 1, step: 1 })
       session.append('system/message', {
         turn: 1, step: 1,
-        message: freezeMessage({ role: 'system', id: MessageId('head'), content: [{ type: 'text', text: 'head prompt' }], source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' } }),
+        message: freezeMessage({ role: 'system', id: MessageId('head'), content: [{ type: 'text', text: 'head prompt' }], source: { kind: 'system-prompt' } }),
       }, { surfaceOp: 'append' })
       session.append('user/message', freezeMessage({ role: 'user', id: MessageId('question'), content: human.content, source: { kind: 'user' } }), { surfaceOp: 'append' })
       session.append('system/message', {
         turn: 1, step: 1,
-        message: freezeMessage({ role: 'system', id: MessageId('context'), content: [{ type: 'text', text: 'tail context' }], source: { kind: 'plugin', plugin: 'context-plugin' } }),
+        message: freezeMessage({ role: 'system', id: MessageId('context'), content: [{ type: 'text', text: 'tail context' }], source: { kind: 'system-prompt' } }),
       }, { surfaceOp: 'append' })
       session.append('step/end', { turn: 1, step: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })

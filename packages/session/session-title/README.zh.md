@@ -1,5 +1,5 @@
 ---
-description: "面向用户与维护者的日志会话标题说明，用于选择标题来源、配置服务或排查标题状态。"
+description: "面向用户与维护者的日志支持型会话标题说明，用于选择标题来源、配置服务或排查标题状态。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-客户端可以显示来自首条合格人类消息、异步 generator 或显式重命名的持久 Session 标题。标题跨回放与分页保留且不进入模型输入；自动工作不会延迟主响应，较新请求会取代较旧请求。分支保留自己的自动输入与生成状态，继承标题仍是临时值；除非用户固定标题，`refresh()` 会启动一次明确的新尝试。
+使用 `dsh-session-title` 为每个会话提供客户端可见标题，标题可以来自第一条符合条件的用户消息、可选异步生成器或显式用户重命名。已接受的标题在回放、恢复与分页后仍然存在，但绝不会进入模型输入。自动生成绝不会延迟主 agent（智能体）响应，较新的标题请求会取代旧工作。当客户端需要带可配置长度上限的持久标题，以及通过 `refresh()` 主动重新生成标题的路径时，请选择本包。
 
 ## 目录
 
@@ -54,7 +54,7 @@ kind: "package-reference"
 
 ### 添加提供方
 
-可选异步提供方可通过 `ctx.sessionTitle.register(provider)` 注册一个；第二次注册会立即抛出。随附的模型支持提供方是[首消息](../session-title-first-prompt-llm/README.zh.md)与[全消息](../session-title-all-prompts-llm/README.zh.md)，两者都使用共享的 [LLM 生成策略](../session-title-llm/README.zh.md)。提供方只有在带标记、由循环构建的请求的确切路由与已记录 `request/header` 匹配时才启动，较新的修订会取代并中止旧工作。
+可选异步提供方可通过 `ctx.sessionTitle.register(provider)` 注册一个；第二次注册会立即抛出。随附的模型支持提供方是[首消息](../session-title-first-prompt-llm/README.zh.md)与[全消息](../session-title-all-prompts-llm/README.zh.md)，两者都使用共享的 [LLM（大语言模型）生成策略](../session-title-llm/README.zh.md)。提供方只有在带标记、由循环构建的请求的确切路由与已记录 `request/header` 匹配时才启动，较新的修订会取代并中止旧工作。
 
 ### 读取标题
 
@@ -84,7 +84,7 @@ kind: "package-reference"
 |---|---|
 | [`src/index.ts`](src/index.ts) | 服务：配置、折叠、回退调度、提供方注册表、并发、`title` 投影单元 |
 | [`src/normalize.ts`](src/normalize.ts) | 标题文本清洗、UTF-8 安全截断与确定性回退 |
-| [`src/types.ts`](src/types.ts) | `title` 投影键声明的唯一归属 |
+| [`src/types.ts`](src/types.ts) | `title` 投影键声明的归属位置 |
 
 ### 生命周期与并发
 
@@ -112,6 +112,12 @@ kind: "package-reference"
 -----
 
 <a id="model-experience"></a>
+## 运行时协调
+
+first-prompt 命名使用 fork 继承截点后的人员输入；all-prompts 生成包含符合条件的继承输入。子会话暂时保留继承标题，first-prompt 模式根据自己的输入命名。`registerAutomaticMode()` 为各会话选择命名频率，显式用户固定标题仍优先。`titleGeneration` 投影持久的生成中、就绪和失败状态；恢复时中断的生成会标为失败，显式刷新会释放用户固定状态。
+
+仅供 Host 使用的 `titleSnapshot` 投影重建最新标题、分支自身的固定状态与生成状态，不同步读取事件历史。提供方输入通过临时 `titleMessages` 投影组装所请求 Session 与序号范围；等待提供方之前即解除注册，因此输入文本不为其他 Session 保留，也不写入 checkpoint。每次生成仍会折叠目标历史以收集符合条件的人员文本，回退与普通标题读取使用有界状态。
+
 ## 模型体验
 
 ### 会话标题状态

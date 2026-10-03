@@ -2,8 +2,6 @@
 
 [English](system-prompt.md) | 中文
 
-该服务通过 `sourceIdentityVersion`、`sourcePlugin` 和 `legacySourcePlugins` 声明循环拥有的持久来源。[提供方身份决策](../../.agents/notes/implemented/architecture/2026-09-16-provider-owned-prompt-provenance.zh.md)约束当前来源写入与历史来源识别。
-
 [system-prompt 包](../../packages/core/system-prompt)负责管理提示词贡献者与一次组装调用之间交换的数据。该包的 [README](../../packages/core/system-prompt/README.zh.md) 记录注册、排序、作用域与渲染行为；本页记录各插件实现或传递的确切跨包类型。
 
 源码：[`packages/core/system-prompt/src/index.ts`](../../packages/core/system-prompt/src/index.ts)。
@@ -58,9 +56,11 @@ interface PromptSection {
   /**
    * Static text or a provider evaluated at each assembly with that assembly's
    * {@link AssembleContext}. The text may reference `{{variable}}`s — they are
-   * interpolated later, by {@link renderPrompt}.
+   * interpolated later, by {@link renderPrompt}, unless `interpolate` is false.
    */
   readonly text: string | ((context: AssembleContext) => string)
+  /** Whether to interpolate prompt variables. Defaults to true; false preserves literal text. */
+  readonly interpolate?: boolean
   /**
    * Treat this contribution as the complete system prompt. Assembly still
    * runs the cooperative waterfall so tools, contexts, and variables can be
@@ -226,13 +226,13 @@ Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-
 
 #### `system-prompt/prepare` — serial
 
-Prepare lazy inputs before any prompt provider or Tool schema is read. Scope-filtered dispatch uses the assembly scope. Failure rejects this assembly.
+Prepare lazy inputs before prompt providers and tool schemas are read. Scope-filtered dispatch follows the assembly scope; failure rejects this assembly.
 
 ```ts cordis-catalog
 /**
- * Prepare lazy inputs before any prompt provider or Tool schema is read.
- * Scope-filtered dispatch uses the assembly scope. Failure rejects this assembly.
- * @param context - assembly identity and cancellation signal; do not retain its signal for later turns.
+ * Prepare lazy inputs before prompt providers and tool schemas are read.
+ * Scope-filtered dispatch follows the assembly scope; failure rejects this assembly.
+ * @param context - assembly identity and cancellation; its signal owns only this assembly.
  * @mode serial
  */
 'system-prompt/prepare'(this: Scoped<SystemPrompt>, context: AssembleContext): Promise<void>

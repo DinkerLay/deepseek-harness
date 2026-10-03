@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Callers can generate concise Session titles from selected human messages under one consistent model policy. They choose the contributing messages and either provide a model route or use the Session route. Required byte, output-token, and duration limits bound the request; cancellation stays effective while streaming. Invalid or non-text results are rejected, and accepted titles record when the provider deliberately shortened source text.
+`dsh-session-title-llm` generates concise session titles from selected human messages with a consistent model request policy. Callers choose which messages contribute to each revision and may either supply a provider and model route together or use the route recorded for the current session. Required limits cap the framed input, generated output, and end-to-end duration, while caller cancellation remains effective throughout streaming. Invalid, empty, late, tool-call, or otherwise non-text results are rejected before they can replace a title.
 
 ## Table of Contents
 
@@ -92,6 +92,10 @@ Read these pages when the generation policy is not enough. They move from the se
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+`sessionTitleInputBytes()` measures the complete framed JSON input in UTF-8, including escaping and instruction text. Providers may select bounded excerpts; the auxiliary request and accepted title record `inputTruncated: true` when a cited input was shortened.
+
 ## Model Experience
 
 ### Auxiliary title request

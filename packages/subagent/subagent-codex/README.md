@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Delegated work can run as a fresh unattended Codex thread in the parent's recorded execution directory. Each run accepts one self-contained task and returns only the final answer or a safe diagnostic. Native Codex configuration and authentication remain authoritative, while permission mode selects non-interactive approval and sandbox behavior. The Bundle supplies a compatible pinned payload but exposes no model capability until a delegation tool is configured.
+Install `@deepseek-ai/dsh-subagent-codex` into a Profile when delegated work should run in a genuine, unattended Codex session in the parent Session's workspace. Each delegation uses a fresh isolated Codex thread for one self-contained text task and returns only its final answer or a safe failure diagnostic. Native Codex configuration and authentication remain authoritative, while `permissionMode` selects the non-interactive approval and sandbox behavior. The Bundle supplies a compatible native Codex payload, but it exposes no model capability until a delegation tool is configured.
 
 ## Table of Contents
 
@@ -132,6 +132,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Session-scoped operations use the effective directory supplied by the public [execution-directory resolver](../../core/session/README.md#runtime-coordination).
+
 ## Model Experience
 
 ### Child request

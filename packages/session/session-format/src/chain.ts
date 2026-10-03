@@ -203,16 +203,6 @@ class ChainedMigrationContext implements SessionFormatMigrationContext {
     }
     return targetCut
   }
-
-  mapSourceEventSeq(sourceSeq: number): number | undefined {
-    const map = this.entry.stage.mapSourceEventSeq
-    if (map === undefined) {
-      throw new SessionFormatUnsupportedMigrationError(
-        `${this.entry.migration.name} does not expose source event coordinates`,
-      )
-    }
-    return map.call(this.entry.stage, sourceSeq)
-  }
 }
 
 class CompiledSessionFormatMigrationStream implements SessionFormatMigrationStream {
@@ -248,15 +238,6 @@ class CompiledSessionFormatMigrationStream implements SessionFormatMigrationStre
     let inheritedEventCount = this.sourceInheritedEventCount
     for (const stage of this.stages) inheritedEventCount = stage.finish()
     return sessionFormatCount(inheritedEventCount, 'finished Session inherited event count')
-  }
-
-  mapSourceEventSeq(sourceSeq: number): number | undefined {
-    let current: number | undefined = sessionFormatCount(sourceSeq, 'source Session event seq')
-    for (const stage of this.stages) {
-      if (current === undefined) return undefined
-      current = stage.mapSourceEventSeq(current)
-    }
-    return current
   }
 }
 

@@ -46,7 +46,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-每次前台和后台 shell 调用都会收集新的快照。收集发生在工具校验、sandbox 策略解析及可能的审批提示之后，但在进程创建之前。Provider 拒绝时，工具调用失败且不会启动进程。快照只合并到本次命令显式的 `ShellExecRequest.env`；`process.env` 永远不会被修改或缓存。
+每次前台和后台 shell 调用都会收集新的快照。收集发生在工具校验、sandbox 策略解析及可能的审批提示之后，但在进程创建之前。提供方拒绝或取消时，工具调用失败且不会启动进程。在收集等待期间移除或替换贡献方，会拒绝其待处理值；卸载的账户不能投递陈旧环境快照。快照只合并到本次命令显式的 `ShellExecRequest.env`；`process.env` 永远不会被修改或缓存。
 
 此注册表不会读取进程环境、持久化值、公开列表操作，也不会给面向模型的工具 schema 增加环境参数。它还拒绝受管理的 `DSH_*` 命名空间；该命名空间仍由 [`@deepseek-ai/dsh-shell-env`](../shell-env/README.zh.md) 拥有。本地子进程 Provider 会先删除环境中形似凭证的变量，再合并这份显式可信快照。
 
@@ -58,11 +58,19 @@ Provider 插件运行在可信 Host 进程中，并已具有执行该进程权�
 <a id="package-section-3"></a>
 ## 模型体验
 
-模型仅通过 Skill 或其他可信 shell Consumer 运行的命令间接使用这些值。注册表不会增加提示词、工具 schema 字段、结果字段或持久化会话事件。
+### 受信命令环境
+
+#### 模型看到什么
+
+注册表不增加提示词文本、Tool schema 字段、结果字段或持久 Session 事件。受信 shell Consumer 通过 `ShellExecRequest.env` 提供收集到的值；该子进程可以读取它们，并可能把它们包含在自身输出中。
+
+#### Token 影响
+
+收集操作不增加模型输入。shell Consumer 管理记录的命令输出及其后续 token 成本。
 
 #### KV Cache 影响
 
-无。
+受信环境不进入请求前缀；收集本身不影响提供方缓存复用。
 
 ## 已知限制与暂缓事项
 

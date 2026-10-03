@@ -113,24 +113,10 @@ function assertSource(message: SessionFormatJsonObject): void {
     throw new SessionFormatUnsupportedMigrationError('cannot safely transform unclassified message source')
   }
   if (source['kind'] === 'agent-message') {
-    keys(source, ['kind', 'form', 'senderSessionId'], ['delegation'], 'agent-message source')
+    keys(source, ['kind', 'form', 'senderSessionId'], [], 'agent-message source')
     if (source['form'] !== 'relay' || typeof source['senderSessionId'] !== 'string' || source['senderSessionId'].length === 0) {
       throw new SessionFormatError('agent-message source requires relay form and senderSessionId')
     }
-    if (source['delegation'] !== undefined) assertDelegation(source['delegation'])
-  } else if (source['kind'] === 'user' && source['delegation'] !== undefined) {
-    assertDelegation(source['delegation'])
-  }
-}
-
-function assertDelegation(value: SessionFormatJsonValue): void {
-  const delegation = record(value, 'message source delegation')
-  keys(delegation, ['parentSessionId'], ['parentTurn'], 'message source delegation')
-  if (typeof delegation['parentSessionId'] !== 'string' || delegation['parentSessionId'].length === 0) {
-    throw new SessionFormatError('message source delegation requires parentSessionId')
-  }
-  if (delegation['parentTurn'] !== undefined) {
-    sessionFormatCount(delegation['parentTurn'], 'message source delegation parentTurn')
   }
 }
 

@@ -51,6 +51,29 @@ function appendRoute(session: ReturnType<Context['sessions']['create']>, reason:
 }
 
 describe('SessionTitleService Provider lifecycle', () => {
+  it('releases target-only provider input before invocation and omits it from checkpoints', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SessionTitleService, CONFIG)
+    const other = ctx.sessions.create(SessionId('unrelated-input'))
+    appendHumanPrompt(other, 'Private unrelated topic')
+    const target = ctx.sessions.create(SessionId('requested-input'))
+    const message = appendHumanPrompt(target, 'This title input')
+    await settle()
+    const generate = vi.fn(async (request: SessionTitleProviderRequest) => {
+      expect(request.messages.map(input => input.text)).toEqual(['This title input'])
+      expect(ctx.sessionProjections.checkpoint(other)).not.toHaveProperty('titleMessages')
+      expect(ctx.sessionProjections.checkpoint(target)).not.toHaveProperty('titleMessages')
+      expect(ctx.sessionProjections.snapshot(target).values).not.toHaveProperty('titleMessages')
+      return { title: 'Target title', messageSeqs: [message.seq] }
+    })
+    ctx.sessionTitle.register({ id: SessionTitleProviderId('target-only'), automatic: 'all-prompts', generate })
+    await ctx.sessionTitle.refresh(target)
+    expect(generate).toHaveBeenCalledOnce()
+    await ctx.fiber.dispose()
+  })
+
   it('inherits a provisional title and names a fork from its own first input', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -60,7 +83,7 @@ describe('SessionTitleService Provider lifecycle', () => {
     parent.append('turn/start', {
       turn: 1,
     })
-    appendHumanPrompt(parent, 'Inherited title prompt')
+    const parentMessage = appendHumanPrompt(parent, 'Inherited title prompt')
     await settle()
     parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
@@ -109,9 +132,12 @@ describe('SessionTitleService Provider lifecycle', () => {
     child.append('turn/end', { turn: 3, reason: { kind: 'completed' } })
 
     expect(allGenerate).toHaveBeenCalledOnce()
+    expect(allGenerate.mock.calls[0]?.[0].messages.map(message => message.text)).toEqual([
+      'Inherited title prompt', 'Child follow-up prompt', 'Retitle the fork now',
+    ])
     expect(ctx.sessionTitle.get(child)).toMatchObject({
       title: 'Fork all prompts',
-      messageSeqs: [childMessage.seq, latestMessage.seq],
+      messageSeqs: [parentMessage.seq, childMessage.seq, latestMessage.seq],
       source: { kind: 'provider', provider: SessionTitleProviderId('fork-all') },
     })
     expect(ctx.sessionTitle.get(parent)?.title).toBe('Inherited title prompt')

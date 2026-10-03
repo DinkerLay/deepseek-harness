@@ -20,7 +20,7 @@ type SessionEventSurface = 'current' | 'shadowed' | 'log-only'
 interface SessionRecord {
   /** Cloned session header selected from the live-preferred corpus. */
   header: SessionHeader
-  /** Latest recorded execution directory, falling back to immutable creation cwd. */
+  /** Live directory or latest lifecycle-matching cached hint; a cold cache miss falls back to creation cwd. */
   executionDirectory?: string
   /** Whether the id currently exists in `ctx.sessions`. */
   live: boolean

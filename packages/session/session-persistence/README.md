@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Applications can persist and resume append-only Session logs through a backend-independent handle API. One writer owns a Session while readers receive validated contiguous prefixes; flush is the durability barrier. Providers may expose permanent deletion and exact migration-coordinate observation. Deletion reports the removed lifecycle to derived consumers, while migration coordinates map immutable source revisions to the current log without publishing or rewriting either history.
+This package lets applications persist and resume session event logs through a backend-independent API. Readers can create, open, inspect, list, append to, read, flush, and close stored sessions while preserving contiguous append-only history. A completed flush is the durability barrier; readers never receive torn tails or invalid records, and only one writer per session is allowed within a backend instance. Use the shipped [JSONL backend](../session-persistence-jsonl/README.md) for one compressed log per session, or implement another backend with the same observable guarantees.
 
 ## Table of Contents
 
@@ -123,6 +123,10 @@ Read these pages when the package-level contract is not enough. They move from t
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+Permanent deletion is optional and requires `supportsDeletion`. `delete()` takes serialized write ownership, removes the provider-owned Session generations and returns the removed header, or undefined for absence. `listDeletionHeaders()` includes every identity needed for subtree discovery. `session-persistence/deleted` is a post-commit cleanup notification; observer failure cannot reverse the storage commit.
+
 ## Model Experience
 
 ### Resumed conversation history
@@ -146,9 +150,10 @@ Persistence does not mutate live request prefixes. A resumed loop can reuse prov
 
 These limits define where the seam's guarantees stop. They are current package constraints, not a task backlog.
 
-- **No automatic retention policy** — deletion requires an explicit Host owner and a backend advertising `supportsDeletion`.
+- **The seam guarantees write ownership only within one backend instance** — cross-process exclusion is provider-specific. The shipped JSONL provider adds a kernel-backed lease across instances and processes; another provider must document an equivalent guarantee or require deployments to prevent concurrent writers.
 - **A backend plugin reload under live sessions fails their writers loudly** — a reloaded backend cannot serve handles the old instance issued; writes fail until the sessions restart, and nothing silently re-adopts the logs.
 - **Only handle-acquired sessions persist** — `ctx.sessions.create` + `session/flush` alone stores nothing; agent-loop is the production acquisition point, and tests seed storage through `create`/`append`/`close`.
+- **No deletion or retention API** — pruning stored sessions is out-of-band backend maintenance.
 - **`list()` is unpaginated and unfiltered** — it returns every stored session's snapshot; fine for local stores, unindexed at scale.
 - **Synthetic closers are the only crash story** — resume appends `interruptedTurnClosers` through the write handle; there is no partial-turn resume that continues an interrupted turn instead of closing it.
 

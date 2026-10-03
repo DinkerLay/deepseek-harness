@@ -12,13 +12,10 @@ import { z } from 'zod'
 import { FEEDBACK_CATEGORIES } from '@deepseek-ai/dsh-command-feedback'
 import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import { deriveEventMessage, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
-import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-session'
 import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
-import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
-import { legacyMessageFeedbackDomainSpec } from './legacy.ts'
-import type { LegacyMessageFeedbackRow } from './legacy.ts'
 import type {
   MessageFeedbackDeleteRequest,
   MessageFeedbackDeleteResult,
@@ -43,11 +40,6 @@ export type * from './types.ts'
 export interface Config {
   /** Maximum UTF-8 byte length accepted for one note. */
   readonly maxNoteBytes: number
-  /**
-   * Maximum number of released sidecar items read for one Session.
-   * Larger rows fail explicitly without entering a Remote result.
-   */
-  readonly maxLegacyItemsPerSession?: number
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -102,12 +94,8 @@ function rejected<E extends MessageFeedbackFailure>(error: E): MessageFeedbackRe
 }
 
 /** Validate persisted payloads before deriving current, Session-owned feedback. */
-function currentItems(
-  sessionId: SessionId,
-  events: readonly SessionEvent[],
-  legacy: readonly MessageFeedbackItem[] = [],
-): MessageFeedbackItem[] {
-  const items = new Map(legacy.map(item => [item.messageId, item]))
+function currentItems(sessionId: SessionId, events: readonly SessionEvent[]): MessageFeedbackItem[] {
+  const items = new Map<MessageFeedbackItem['messageId'], MessageFeedbackItem>()
   for (const event of events) {
     switch (event.type) {
       case 'feedback/message-put':
@@ -126,31 +114,16 @@ function currentItems(
   return [...items.values()]
 }
 
-/** Whether one message id names a finalized append-origin assistant message. */
-function hasFeedbackTarget(events: readonly SessionEvent[], messageId: string): boolean {
-  return events.some(event => event.type === 'assistant/message'
-    && isAppendSurfaceEvent(event)
-    && deriveEventMessage(event)?.id === messageId)
-}
-
-/** Whether a released sidecar row belongs to this exact Session lifecycle. */
-function sameLegacyIdentity(row: LegacyMessageFeedbackRow, header: SessionHeader): boolean {
-  return row.session.createdAt === header.createdAt && row.session.cwd === header.cwd
-}
-
 /** Session-log service; cold operations never construct a Session or Agent. */
 export class MessageFeedbackService extends TypertRemoteService {
-  static inject = ['sessionPersistence', 'sessions', 'storageDomain']
+  static inject = ['sessionPersistence', 'sessions']
 
   /** Loader validation for the required note-size policy. */
   static Config: s<Config> = s.object({
     maxNoteBytes: s.number().step(1).min(1).required(),
-    maxLegacyItemsPerSession: s.number().step(1).min(1).default(1000),
   })
 
   private readonly maxNoteBytes: number
-  private readonly maxLegacyItemsPerSession: number
-  private legacyTable?: KvTable<SessionId, LegacyMessageFeedbackRow>
   private readonly operationTails = new Map<SessionId, Promise<void>>()
   private mutationAdmissionOpen = true
 
@@ -164,22 +137,12 @@ export class MessageFeedbackService extends TypertRemoteService {
       throw new TypeError('message-feedback: maxNoteBytes must be a positive safe integer')
     }
     this.maxNoteBytes = config.maxNoteBytes
-    this.maxLegacyItemsPerSession = config.maxLegacyItemsPerSession ?? 1000
-    if (!Number.isSafeInteger(this.maxLegacyItemsPerSession) || this.maxLegacyItemsPerSession < 1) {
-      throw new TypeError('message-feedback: maxLegacyItemsPerSession must be a positive safe integer')
-    }
   }
 
-  protected async [Service.init](): Promise<void> {
-    const legacy = await this.ctx.storageDomain.open(legacyMessageFeedbackDomainSpec)
-    this.legacyTable = legacy.table('sessions')
-    for (const sessionId of this.legacyTable.keys()) {
-      if (sessionId.length === 0) throw new Error('message-feedback: legacy sidecar contains an empty Session id')
-    }
+  protected [Service.init](): void {
     this.ctx.effect(() => async () => {
       this.mutationAdmissionOpen = false
       await Promise.all(this.operationTails.values())
-      await legacy.close()
     }, 'message-feedback.drain')
   }
 
@@ -190,8 +153,8 @@ export class MessageFeedbackService extends TypertRemoteService {
    */
   @Remote('list')
   list(request: MessageFeedbackListRequest): Promise<MessageFeedbackListResult> {
-    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, false, (header, events) =>
-      success(Object.freeze({ items: Object.freeze(this.itemsFor(header, events).map(snapshotItem)) }))))
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, false, events =>
+      success(Object.freeze({ items: Object.freeze(currentItems(request.sessionId, events).map(snapshotItem)) }))))
   }
 
   /**
@@ -204,9 +167,11 @@ export class MessageFeedbackService extends TypertRemoteService {
   put(request: MessageFeedbackPutRequest): Promise<MessageFeedbackPutResult> {
     const note = this.resolveNote(request.note)
     if (!note.ok) return Promise.resolve(note)
-    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (header, events, append) => {
-      const items = this.itemsFor(header, events)
-      if (!hasFeedbackTarget(events, request.messageId)) {
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (events, append) => {
+      const items = currentItems(request.sessionId, events)
+      if (!events.some(event => event.type === 'assistant/message'
+        && isAppendSurfaceEvent(event)
+        && deriveEventMessage(event)?.id === request.messageId)) {
         return rejected({ code: 'target-not-found', sessionId: request.sessionId, messageId: request.messageId })
       }
       const existing = items.find(item => item.messageId === request.messageId)
@@ -240,8 +205,8 @@ export class MessageFeedbackService extends TypertRemoteService {
    */
   @Remote('delete')
   delete(request: MessageFeedbackDeleteRequest): Promise<MessageFeedbackDeleteResult> {
-    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (header, events, append) => {
-      const existing = this.itemsFor(header, events).find(item => item.messageId === request.messageId)
+    return this.enqueue(request.sessionId, () => this.withSession(request.sessionId, true, async (events, append) => {
+      const existing = currentItems(request.sessionId, events).find(item => item.messageId === request.messageId)
       if (existing !== undefined) {
         if (request.ifVersion !== existing.version) return rejected(this.versionConflict(existing))
         await append({ type: 'feedback/message-delete', data: { sessionId: request.sessionId, messageId: request.messageId } })
@@ -252,31 +217,11 @@ export class MessageFeedbackService extends TypertRemoteService {
     }))
   }
 
-  /** Merge one matching released sidecar row below canonical log mutations. */
-  private itemsFor(header: SessionHeader, events: readonly SessionEvent[]): MessageFeedbackItem[] {
-    const row = this.legacyTable?.get(header.id)
-    if (row === undefined || !sameLegacyIdentity(row, header)) return currentItems(header.id, events)
-    if (row.items.length > this.maxLegacyItemsPerSession) {
-      throw new Error(
-        `message-feedback: legacy sidecar for Session '${header.id}' has ${String(row.items.length)} items; `
-        + `maximum is ${String(this.maxLegacyItemsPerSession)}`,
-      )
-    }
-    for (const item of row.items) {
-      if (!hasFeedbackTarget(events, item.messageId)) {
-        throw new Error(
-          `message-feedback: legacy sidecar for Session '${header.id}' references unknown assistant message '${item.messageId}'`,
-        )
-      }
-    }
-    return currentItems(header.id, events, row.items)
-  }
-
   /** Hold cold write ownership across read/compare/append; use live owners directly. */
   private async withSession<T>(
     sessionId: SessionId,
     write: boolean,
-    operation: (header: SessionHeader, events: readonly SessionEvent[], append: Append) => T | Promise<T>,
+    operation: (events: readonly SessionEvent[], append: Append) => T | Promise<T>,
   ): Promise<T | MissingSession> {
     if (this.ctx.sessions.get(sessionId) === undefined
       && await this.ctx.sessionPersistence.stat(sessionId) === undefined
@@ -285,10 +230,12 @@ export class MessageFeedbackService extends TypertRemoteService {
     }
     const live = this.ctx.sessions.get(sessionId)
     if (live !== undefined) {
-      return operation(live.header, live.snapshotEvents(), async (event) => {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+      return operation(live.snapshotEvents(), async (event) => {
         if (event !== undefined) {
           live.append(event.type, event.data)
         }
+        // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
         const last = live.snapshotEvents().at(-1)
         if (!(await this.ctx.sessions.flush(live))) {
           throw new Error(
@@ -314,7 +261,7 @@ export class MessageFeedbackService extends TypertRemoteService {
     const handle = await this.ctx.sessionPersistence.open(sessionId, write ? 'write' : 'read')
     try {
       const { events } = await handle.read()
-      return await operation(handle.header, events, async (event) => {
+      return await operation(events, async (event) => {
         const entry: FeedbackEvent | undefined = event === undefined ? undefined
           : { ...event, seq: SessionSeq(events.length), time: Date.now() }
         if (entry !== undefined) await handle.append([entry])

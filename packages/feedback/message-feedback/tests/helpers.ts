@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -21,9 +21,6 @@ import SessionPersistence, {
   type SessionHandle,
   type SessionPersistenceSnapshot,
 } from '@deepseek-ai/dsh-session-persistence'
-import Storage from '@deepseek-ai/dsh-storage'
-import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
-import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import MessageFeedbackService from '../src/index.ts'
 
 export interface MessageFixture {
@@ -206,24 +203,14 @@ export interface TestHarness {
 }
 
 /** Compose feedback over a controllable Session persistence backend. */
-export async function setupHarness(
-  maxNoteBytes = 64,
-  legacyDocument?: unknown,
-  maxLegacyItemsPerSession = 1000,
-): Promise<TestHarness> {
+export async function setupHarness(maxNoteBytes = 64): Promise<TestHarness> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-message-feedback-test-'))
-  if (legacyDocument !== undefined) {
-    await writeFile(join(root, 'message_feedback.json'), `${JSON.stringify(legacyDocument, null, 2)}\n`, 'utf8')
-  }
   const ctx = new Context()
   let disposeFeedback: (() => Promise<void>) | undefined
   try {
     await ctx.plugin(SessionStore)
     await ctx.plugin(TestPersistence)
-    await ctx.plugin(Storage)
-    await ctx.plugin(StorageJson, { root })
-    await ctx.plugin(StorageDomain, { backend: 'json' })
-    const feedbackFiber = await ctx.plugin(MessageFeedbackService, { maxNoteBytes, maxLegacyItemsPerSession })
+    const feedbackFiber = await ctx.plugin(MessageFeedbackService, { maxNoteBytes })
     disposeFeedback = feedbackFiber.dispose
   } catch (error) {
     await ctx.fiber.dispose()

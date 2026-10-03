@@ -6,15 +6,21 @@
  */
 
 import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextSnapshotSection, Message } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, ContextSnapshotSection, Message } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionSeq, SurfaceIntent, SystemMessage, UserMessage } from '@deepseek-ai/dsh-session'
 import { isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'runtime-context': { kind: 'runtime-context' } & ContextFormed
+  }
+}
 
+const SOURCE = 'runtime-context'
 const CLEARED = 'Current runtime context: none. Earlier runtime-context snapshots no longer apply.'
 
-function isOwned(message: UserMessage, sources: ReadonlySet<string>): boolean {
-  return message.source.kind === 'plugin' && sources.has(message.source.plugin)
+function isOwned(message: UserMessage): boolean {
+  return message.source.kind === SOURCE
 }
 
 function textOf(message: Message): string | undefined {
@@ -35,15 +41,16 @@ export interface SystemPromptDecisionInput {
   /** Whether the prepared route for this attempt reads a later `system` message as the effective prompt. */
   inHistory: boolean
   /**
-   * Whether this step's request starts a new model-message series: a pre-step
-   * listener declared one, the surface was replaced since the last request, or
-   * the assembled tool schemas differ from the logged header.
+   * Whether prompt admission must consolidate: a pre-step listener declared a
+   * new series, the surface changed since the last request, or assembled tools
+   * changed on a route without tool-update support.
    */
   startsSeries: boolean
 }
 
 /** Committed events from the newest backward; the restore scans stop at the first match. */
 function eventsNewestFirst(session: Session): readonly SessionEvent[] {
+  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   return session.snapshotEvents().toReversed()
 }
 
@@ -56,19 +63,18 @@ function eventsNewestFirst(session: Session): readonly SessionEvent[] {
  * tails do not supply effective text or require repeated replacements.
  */
 export class SystemPromptProjection {
-  /** @param session - receiving Session. @param sourcePlugin - selected provider identity. */
-  constructor(private readonly session: Session, private readonly sourcePlugin: string) {}
+  constructor(private readonly session: Session) {}
 
   /** The surviving `system/message` nodes in surface order. */
-  private systemNodes(): { seq: SessionSeq; text: string | undefined; sourcePlugin: string | undefined }[] {
-    const nodes: { seq: SessionSeq; text: string | undefined; sourcePlugin: string | undefined }[] = []
+  private systemNodes(): { seq: SessionSeq; text: string | undefined }[] {
+    const nodes: { seq: SessionSeq; text: string | undefined }[] = []
     for (const seq of this.session.surface.nodes) {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       const event = this.session.eventAt(seq)
       if (event?.type !== 'system/message') continue
       const content = event.data.message.content
       const text = content.length === 0 ? '' : textOf(event.data.message)
-      const source = event.data.message.source
-      nodes.push({ seq, text, sourcePlugin: source.kind === 'plugin' ? source.plugin : undefined })
+      nodes.push({ seq, text })
     }
     return nodes
   }
@@ -83,22 +89,22 @@ export class SystemPromptProjection {
     const nodes = this.systemNodes()
     const head = nodes[0]
     if (head === undefined) {
-      return [{ message: createSystemMessage(rendered, this.sourcePlugin), intent: { surfaceOp: 'append' } }]
+      return [{ message: createSystemMessage(rendered), intent: { surfaceOp: 'append' } }]
     }
     const latest = nodes.findLast(node => node.text !== '') ?? head
-    if (!input.inHistory || input.startsSeries || rendered.length === 0 || head.sourcePlugin !== this.sourcePlugin) {
+    if (!input.inHistory || input.startsSeries || rendered.length === 0) {
       const updates = nodes.slice(1).filter(node => node.text !== '')
         .map(node => this.replace(node.seq, ''))
-      if (head.text !== rendered || head.sourcePlugin !== this.sourcePlugin) updates.push(this.replace(head.seq, rendered))
+      if (head.text !== rendered) updates.push(this.replace(head.seq, rendered))
       return updates
     }
-    if (latest.text === rendered && latest.sourcePlugin === this.sourcePlugin) return []
-    return [{ message: createSystemMessage(rendered, this.sourcePlugin), intent: { surfaceOp: 'append' } }]
+    if (latest.text === rendered) return []
+    return [{ message: createSystemMessage(rendered), intent: { surfaceOp: 'append' } }]
   }
 
   private replace(seq: SessionSeq, text: string): SystemPromptCommit {
     return {
-      message: createSystemMessage(text, this.sourcePlugin),
+      message: createSystemMessage(text),
       intent: { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] },
     }
   }
@@ -107,33 +113,28 @@ export class SystemPromptProjection {
 /** Tracks the last retained runtime-context snapshot without owning its commit. */
 export class RuntimeContextProjection {
   /** `undefined` means no snapshot ever existed; `null` means none is retained. */
-  private retained: { seq: SessionSeq; text: string | undefined; currentSource: boolean } | null | undefined
+  private retained: { seq: SessionSeq; text: string | undefined } | null | undefined
 
   /**
    * Restore projection state once, then follow authoritative session events.
    * @param ctx - agent-scoped event context.
    * @param session - session receiving projected messages.
-   * @param sourcePlugin - current provider package identity for new messages.
-   * @param legacySourcePlugins - previous providers whose snapshots remain owned.
    */
-  constructor(ctx: Context, session: Session, private readonly sourcePlugin: string, legacySourcePlugins: readonly string[]) {
-    const sources = new Set([sourcePlugin, ...legacySourcePlugins])
+  constructor(ctx: Context, session: Session) {
     const surface = new Set(session.surface.nodes)
     for (const event of eventsNewestFirst(session)) {
-      if (event.type !== 'user/message' || !isOwned(event.data, sources)) continue
+      if (event.type !== 'user/message' || !isOwned(event.data)) continue
       this.retained ??= null
       if (surface.has(event.seq)) {
-        this.retained = { seq: event.seq, text: textOf(event.data),
-          currentSource: event.data.source.kind === 'plugin' && event.data.source.plugin === sourcePlugin }
+        this.retained = { seq: event.seq, text: textOf(event.data) }
         break
       }
     }
 
     ctx.on('session/event', (subject, event) => {
       if (subject !== session) return
-      if (event.type === 'user/message' && isOwned(event.data, sources)) {
-        this.retained = { seq: event.seq, text: textOf(event.data),
-          currentSource: event.data.source.kind === 'plugin' && event.data.source.plugin === sourcePlugin }
+      if (event.type === 'user/message' && isOwned(event.data)) {
+        this.retained = { seq: event.seq, text: textOf(event.data) }
       } else if (this.retained
         && isReplacementSurfaceEvent(event)
         && event.sourceEventSeqs?.includes(this.retained.seq) === true) {
@@ -151,13 +152,13 @@ export class RuntimeContextProjection {
   project(current: string, sections: readonly ContextSnapshotSection[]): UserMessage | undefined {
     if (this.retained === undefined && current.length === 0) return
     const snapshot = current.length === 0 ? CLEARED : current
-    if (this.retained?.text === snapshot && this.retained.currentSource) return
+    if (this.retained?.text === snapshot) return
     return createUserMessage({
       content: [{ type: 'text', text: snapshot }],
       // The cleared marker has no contributions left to attribute.
       source: sections.length === 0
-        ? { kind: 'plugin', plugin: this.sourcePlugin }
-        : { kind: 'plugin', plugin: this.sourcePlugin, form: 'snapshot', sections },
+        ? { kind: SOURCE }
+        : { kind: SOURCE, form: 'snapshot', sections },
     })
   }
 }

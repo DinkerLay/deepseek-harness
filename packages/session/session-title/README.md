@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Clients can show a durable Session title from the first eligible human message, an asynchronous generator, or an explicit rename. Titles survive replay and paging without entering model input; automatic work never delays the main response, and newer requests supersede older ones. Branches keep their own automatic-input and generation state, inherited titles remain provisional, and `refresh()` starts a deliberate new attempt unless the user pinned a title.
+Use `dsh-session-title` to give each session a client-visible title from the first eligible human message, an optional asynchronous generator, or an explicit user rename. Accepted titles persist through replay, resume, and paging but never enter model input. Automatic generation never delays the main agent response, and newer title requests supersede older work. Choose the package when clients need durable titles with configurable length limits and a deliberate `refresh()` path for regenerating them.
 
 ## Table of Contents
 
@@ -112,6 +112,12 @@ Read these pages when the service contract is not enough. They move from the sub
 -----
 
 <a id="model-experience"></a>
+## Runtime coordination
+
+First-prompt naming uses human inputs after the fork-inherited cut; all-prompts generation includes eligible inherited input. A child keeps the inherited title provisionally and first-prompt mode names it from its own input. `registerAutomaticMode()` selects per-Session cadence while explicit user pins remain authoritative. `titleGeneration` projects durable generating, ready and failed state; interrupted generation is failed on restoration, and explicit refresh releases a user pin.
+
+The host-only `titleSnapshot` projection reconstructs the latest title, branch-owned pin and generation state without synchronous event-history reads. Provider input uses a transient `titleMessages` projection for the requested Session and sequence range. Registration ends before the provider is awaited, so input text is not retained for other Sessions or written to checkpoints. A generation still folds the target history to collect eligible human text; fallback and ordinary title reads use bounded state.
+
 ## Model Experience
 
 ### Session title state

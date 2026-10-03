@@ -90,10 +90,6 @@ class TransformedReleasedV1ToV2Stage implements SessionFormatMigrationStage {
   finish(context: SessionFormatMigrationContext): number {
     return finishMigration(this.state, context)
   }
-
-  mapSourceEventSeq(sourceSeq: number): number | undefined {
-    return this.state.mapping.get(sessionFormatCount(sourceSeq, 'format v1 source event seq'))
-  }
 }
 
 class DecodedReleasedV1ToV2Stage extends TransformedReleasedV1ToV2Stage {
@@ -295,7 +291,7 @@ function transformMessage(
   }
   if (pending === undefined
     || !matchesChunkSources(pending.group, sources)) {
-    throw refusal(`assistant/message ${event.seq} chunk provenance is not one complete ordered attempt`)
+    throw refusal(`assistant/message ${event.seq} chunk references are not one complete ordered attempt`)
   }
   assertAttemptCut(state, pending.group, event.seq)
   pending.group.terminal = true
@@ -337,8 +333,7 @@ function emitSource(
   }
   ensureTargetCut(state, event.seq, event.time, source.type, context)
   state.mapping.set(event.seq, state.targetSeq)
-  context.emitEvent(remapReleasedRetryReferences(remapReferences(source, state.targetSeq, state.mapping), state.sourceHeader.id,
-    seq => mapOne(seq, state.mapping, 'retry source end')))
+  context.emitEvent(remapReferences(source, state.targetSeq, state.mapping))
   state.targetSeq += 1
 }
 
@@ -698,4 +693,3 @@ function coordinate(value: SessionFormatJsonValue | undefined): number {
 function refusal(message: string): SessionFormatUnsupportedMigrationError {
   return new SessionFormatUnsupportedMigrationError(message)
 }
-import { remapReleasedRetryReferences } from '@deepseek-ai/dsh-session-format-v0-to-v1'

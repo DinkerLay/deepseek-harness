@@ -45,19 +45,18 @@ async function loadComposition(): Promise<Context> {
   context.baseUrl = pathToFileURL(root).href + '/'
   await context.plugin(Loader)
   context.loader.builtins.include = Include
-  const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-session', SessionStore],
-    ['@deepseek-ai/dsh-agent', AgentRegistry],
-    ['@deepseek-ai/dsh-session-persistence-jsonl', JsonlSessionPersistence],
-    ['@deepseek-ai/dsh-session-deletion', SessionDeletion],
-  ])
-  context.loader.internal = {
-    version: 'v2',
-    async import(specifier: string) {
-      if (!modules.has(specifier)) throw new Error(`unexpected Loader import: ${specifier}`)
-      return modules.get(specifier)
-    },
-  } as unknown as NonNullable<typeof context.loader.internal>
+  class FixtureInclude extends Include {
+    override import(specifier: string): unknown {
+      switch (specifier) {
+        case '@deepseek-ai/dsh-session': return SessionStore
+        case '@deepseek-ai/dsh-agent': return AgentRegistry
+        case '@deepseek-ai/dsh-session-persistence-jsonl': return JsonlSessionPersistence
+        case '@deepseek-ai/dsh-session-deletion': return SessionDeletion
+        default: return super.import(specifier)
+      }
+    }
+  }
+  context.loader.builtins.include = FixtureInclude
   await context.loader.create({
     name: 'cordis:include',
     config: { path: pathToFileURL(configPath).href },

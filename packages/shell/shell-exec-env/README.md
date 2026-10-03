@@ -46,7 +46,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-Every foreground and background shell call collects a new snapshot after tool validation, sandbox-policy resolution, and any approval prompt, but before process creation. Provider rejection fails the tool call without starting a process. The snapshot is merged only into that command's explicit `ShellExecRequest.env`; `process.env` is never modified or cached.
+Every foreground and background shell call collects a new snapshot after tool validation, sandbox-policy resolution, and any approval prompt, but before process creation. Provider rejection or cancellation fails the tool call without starting a process. Removing or replacing a contributor while collection waits rejects its pending values; an unloaded account cannot deliver a stale environment snapshot. The snapshot is merged only into that command's explicit `ShellExecRequest.env`; `process.env` is never modified or cached.
 
 This registry does not read process environment, persist values, expose a list operation, or add environment parameters to the model-facing Tool schema. It also rejects the managed `DSH_*` namespace, which remains owned by [`@deepseek-ai/dsh-shell-env`](../shell-env/README.md). Local subprocess providers remove ambient credential-shaped variables before merging this explicit trusted snapshot.
 
@@ -58,11 +58,19 @@ Provider plugins execute in the trusted Host process and can already run code wi
 <a id="package-section-3"></a>
 ## Model Experience
 
-Indirectly, through commands run by a Skill or another trusted shell Consumer. The registry adds no prompt text, Tool schema field, result field, or durable session event.
+### Trusted command environment
+
+#### What the model sees
+
+The registry adds no prompt text, Tool schema field, result field, or durable Session event. A trusted shell Consumer supplies collected values through `ShellExecRequest.env`; that child process can read them and may include them in its own output.
+
+#### Token effect
+
+Collection adds no model input. Shell Consumers own any recorded command output and its later token cost.
 
 #### KV Cache effect
 
-None.
+The trusted environment does not enter the request prefix; collection itself does not affect provider cache reuse.
 
 ## Known Limitations and Deferred Work
 

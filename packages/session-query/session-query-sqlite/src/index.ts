@@ -698,8 +698,6 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
       offset,
     ]
     assertPortableBindingCount(bindings.length)
-    // The browser fixture mirrors these rank keys in
-    // `packages/client/connection/src/client/fixture.ts`; update both together.
     return this._requireDb().prepare(`
       ${selected.sql},
       filtered AS (
@@ -912,6 +910,7 @@ function selectedDocumentsParams(query: string, persistenceVisible: boolean): Ar
 }
 
 function observeLive(session: Session): ObservedSession {
+  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   return observeSession(session.header, session.inheritedEventCount, session.snapshotEvents())
 }
 

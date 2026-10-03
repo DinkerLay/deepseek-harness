@@ -17,9 +17,9 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     /**
-     * Prepare lazy inputs before any prompt provider or Tool schema is read.
-     * Scope-filtered dispatch uses the assembly scope. Failure rejects this assembly.
-     * @param context - assembly identity and cancellation signal; do not retain its signal for later turns.
+     * Prepare lazy inputs before prompt providers and tool schemas are read.
+     * Scope-filtered dispatch follows the assembly scope; failure rejects this assembly.
+     * @param context - assembly identity and cancellation; its signal owns only this assembly.
      * @mode serial
      */
     'system-prompt/prepare'(this: Scoped<SystemPrompt>, context: AssembleContext): Promise<void>
@@ -68,9 +68,11 @@ export interface PromptSection {
   /**
    * Static text or a provider evaluated at each assembly with that assembly's
    * {@link AssembleContext}. The text may reference `{{variable}}`s — they are
-   * interpolated later, by {@link renderPrompt}.
+   * interpolated later, by {@link renderPrompt}, unless `interpolate` is false.
    */
   readonly text: string | ((context: AssembleContext) => string)
+  /** Whether to interpolate prompt variables. Defaults to true; false preserves literal text. */
+  readonly interpolate?: boolean
   /**
    * Treat this contribution as the complete system prompt. Assembly still
    * runs the cooperative waterfall so tools, contexts, and variables can be
@@ -96,6 +98,8 @@ export interface AssembledSection {
   name: string
   /** The resolved (but not yet interpolated) section text. */
   text: string
+  /** Whether to interpolate prompt variables. Defaults to true; false preserves literal text. */
+  interpolate?: boolean
 }
 
 /** One resolved dynamic context contribution. */
@@ -146,11 +150,12 @@ const SECTION_ORDERS = {
   TOOL_LSP: 2200,
   TOOL_SESSION_QUERY: 2300,
   TOOL_GOAL: 2400,
-  TOOL_CORDIS: 2500,
   TOOL_WORKFLOW: 2600,
   TOOL_RALPH: 2700,
   TOOL_SUBAGENT: 2800,
   TOOL_REPORT: 2900,
+  TOOL_COMPUTER_USE: 3000,
+  MCP_SERVERS: 3100,
   TOOLS_SDK: 5000,
   DELIVERABLE_FILE_REFERENCES: 9000,
   STRUCTURED_OUTPUT: 9900,
@@ -247,10 +252,6 @@ function compareToolNames(a: ToolSchema, b: ToolSchema): number {
 
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
 export interface Config {
-  /** Package identity recorded on system prompts and runtime-context snapshots. */
-  sourcePlugin?: string
-  /** Previous provider identities whose runtime-context snapshots remain owned on resume. */
-  legacySourcePlugins?: string[]
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
@@ -275,7 +276,8 @@ export interface Config {
 
 /**
  * Interpolate strict `{{variable}}` references, drop empty sections, and join
- * the rest with blank lines. Malformed, unknown, or undefined references throw;
+ * the rest with blank lines. Sections with `interpolate: false` retain literal
+ * text. Malformed, unknown, or undefined references in other sections throw;
  * a lone `{{` without any later `}}` is literal prose, and substituted values
  * are not scanned again.
  * @param assembly - the assembly whose sections and variables to render.
@@ -283,7 +285,7 @@ export interface Config {
  */
 export function renderPrompt(assembly: PromptAssembly): string {
   return assembly.sections
-    .map(section => interpolate(section, assembly.variables, 'section'))
+    .map(section => section.interpolate === false ? section.text : interpolate(section, assembly.variables, 'section'))
     .filter(text => text.length > 0)
     .join('\n\n')
 }
@@ -408,18 +410,11 @@ class PromptLayer implements ScopeLayer {
 
 /** Registry service for the prompt inputs assembled before each model step. */
 export class SystemPrompt extends Service {
-  /** Version of the awaited, scope-aware pre-assembly preparation event. */
-  readonly preparationVersion: number = 1
-  /** Version of the provider-owned durable source identity API. */
-  readonly sourceIdentityVersion: number = 1
-  /** Package identity attached by the loop to this provider's new messages. */
-  readonly sourcePlugin: string
-  /** Historical package identities accepted during runtime-context restoration. */
-  readonly legacySourcePlugins: readonly string[]
-
+  /** Version of the awaited, scope-aware preparation event. */
+  // The public declaration is consumed by the wire type generator.
+  // oxlint-disable-next-line typescript/prefer-as-const
+  readonly preparationVersion: 1 = 1
   static Config: z<Config> = z.object({
-    sourcePlugin: z.string().pattern(/^\S+$/u).default('@deepseek-ai/dsh-system-prompt'),
-    legacySourcePlugins: z.array(z.string().pattern(/^\S+$/u)).default([]),
     includeHarnessIdentity: z.boolean().default(true),
     includeRuntimeContext: z.boolean().default(true),
     personaPrefix: z.string().default(''),
@@ -436,8 +431,6 @@ export class SystemPrompt extends Service {
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'systemPrompt')
-    this.sourcePlugin = config.sourcePlugin ?? '@deepseek-ai/dsh-system-prompt'
-    this.legacySourcePlugins = Object.freeze([...(config.legacySourcePlugins ?? [])])
     this.toolOrder = validateToolOrder(config.toolOrder)
     // Keep harness-owned openers independent of the selected loop plugin.
     if (config.includeHarnessIdentity ?? true) {
@@ -604,10 +597,11 @@ export class SystemPrompt extends Service {
     const knownNames = new Set<string>()
     for (const provider of providers) {
       const result = provider(context)
-      const schemas = result.schemas.map(({ name, description, parameters }): ToolSchema => ({
+      const schemas = result.schemas.map(({ name, description, parameters, deferLoading }): ToolSchema => ({
         name,
         description,
         parameters: structuredClone(parameters),
+        ...deferLoading === true ? { deferLoading } : {},
       }))
       const acceptedKnownNames = result.knownNames ?? schemas.map(tool => tool.name)
       collected.push(...schemas)
@@ -624,6 +618,7 @@ export class SystemPrompt extends Service {
         const assembled = {
           name: section.name,
           text: typeof section.text === 'function' ? section.text(context) : section.text,
+          ...section.interpolate !== undefined ? { interpolate: section.interpolate } : {},
         }
         if (section.complete === true) completeSection = { ...assembled }
         return assembled

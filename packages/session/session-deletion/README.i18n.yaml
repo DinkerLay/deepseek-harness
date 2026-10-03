@@ -1,6 +1,43 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/session/session-deletion/README.md
-README.md: 3a397c22bd5385ef0fc92bed4d7bb18365c34048
-README.zh.md: dbd3e40a8865498c288ed5cc363dfdbacbafad70
+/:
+  en: 7034db49d65ac6ec
+  zh: 184c2e6973931688
+/deepseek-ai-dsh-session-deletion:
+  en: 05c88c0ca20b4809
+  zh: 95e92134fa427504
+/deepseek-ai-dsh-session-deletion/summary:
+  en: 6cbec7bcf5a2b704
+  zh: 3b7b5e8df125c392
+/deepseek-ai-dsh-session-deletion/table-of-contents:
+  en: 930b9750e775013a
+  zh: a14458bc061cbda5
+/deepseek-ai-dsh-session-deletion/operation:
+  en: 928f297f8d45a832
+  zh: 9ddeb74b0f018d30
+/deepseek-ai-dsh-session-deletion/composition:
+  en: 7a4b431b5b1fb3f5
+  zh: d3553b89ec78879a
+/deepseek-ai-dsh-session-deletion/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-session-deletion/model-experience/session-deletion:
+  en: 88d2b7ef8425c301
+  zh: 4b6c8877aa37d5de
+/deepseek-ai-dsh-session-deletion/model-experience/session-deletion/what-the-model-sees:
+  en: 028eefd7a41c038b
+  zh: 2083579f4ff4c63b
+/deepseek-ai-dsh-session-deletion/model-experience/session-deletion/token-effect:
+  en: 5b83ac7ce1ea1346
+  zh: 8b40adadcf1403dd
+/deepseek-ai-dsh-session-deletion/model-experience/session-deletion/kv-cache-effect:
+  en: 50a0e519f44acc14
+  zh: c9756fe1e7e548f1
+/deepseek-ai-dsh-session-deletion/known-limitations-and-deferred-work:
+  en: 9fe130e62d722791
+  zh: 22535656dcdef0a5
+/deepseek-ai-dsh-session-deletion/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

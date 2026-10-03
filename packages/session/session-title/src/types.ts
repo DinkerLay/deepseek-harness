@@ -17,7 +17,7 @@ import type { OptionalSessionSeq, SessionLogOffset, SessionSeq } from '@deepseek
 export type SessionTitleProviderId = Branded<'SessionTitleProviderId'>
 
 /** Exact auxiliary model route that produced a title. */
-export interface SessionTitleModelProvenance {
+export interface SessionTitleModelIdentity {
   /** Registered LLM provider route. */
   readonly provider: string
   /** Provider model id. */
@@ -30,7 +30,7 @@ export type SessionTitleSource =
   | {
     readonly kind: 'provider'
     readonly provider: SessionTitleProviderId
-    readonly model?: SessionTitleModelProvenance
+    readonly model?: SessionTitleModelIdentity
   }
   | {
     /** Explicit user rename: pins the title — automatic generation stops scheduling. */
@@ -80,12 +80,25 @@ export interface TitleInputState {
   readonly lastSeq: OptionalSessionSeq
 }
 
+/** Constant-size title state reconstructed by the projection registry. */
+export interface TitleRuntimeState {
+  readonly inheritedEventCount: SessionLogOffset
+  readonly latest: SessionTitleSnapshot | null
+  readonly ownLatest: SessionTitleSnapshot | null
+  readonly pinned: boolean
+  readonly generation: { readonly eventSeq: SessionSeq; readonly state: 'generating' | 'ready' | 'failed'; readonly error?: string } | null
+}
+
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     /** Latest logged title text, or null. */
     title: string | null
     /** Eligible human title input. */
     titleInput: TitleInputState
+    /** Host-only title ownership and generation state. */
+    titleSnapshot: TitleRuntimeState
+    /** Human text retained only after an on-demand provider input projection is registered. */
+    titleMessages: readonly SessionTitleUserMessage[]
     titleGeneration: { inheritedEventCount: SessionLogOffset; value: { state: 'generating' | 'ready' | 'failed'; error?: string | undefined } | null }
   }
   interface SessionProjectionMap {

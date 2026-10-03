@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-03-native-v4-downstream-management.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-03-native-v4-downstream-management.md
+/agent-note-native-v4-extensions-for-downstream-management:
+  en: 5e6de79156115ddd
+  zh: e2ab6bbe377d5f82
+/agent-note-native-v4-extensions-for-downstream-management/problem:
+  en: f1f9b934718ddec6
+  zh: 51372ef7c88d7021
+/agent-note-native-v4-extensions-for-downstream-management/decision:
+  en: f1a4303fbd2c5ef2
+  zh: 4a143e3a787366d7
+/agent-note-native-v4-extensions-for-downstream-management/alternatives-considered:
+  en: 1957cb06e233e17a
+  zh: bce4c293675c0d75
+/agent-note-native-v4-extensions-for-downstream-management/consequences:
+  en: 149d360c58f647ef
+  zh: 8d632751760d5c19

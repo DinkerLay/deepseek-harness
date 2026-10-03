@@ -203,8 +203,8 @@ interface CreateSessionOptions {
   readonly seed?: readonly SessionEvent[]
   /**
    * Exact fork-inherited prefix length when `meta.isSeeded` is true. The
-   * constructor seed is exactly this inherited prefix; the constructor
-   * appends the child-owned tagged marker at the cut.
+   * constructor appends the child-owned tagged marker at the cut unless
+   * the seed already includes it followed by child-owned fork closers.
    */
   readonly inheritedEventCount?: SessionLogOffset
   /**
@@ -328,6 +328,36 @@ interface SessionPersistenceSnapshot {
 
 - **[dsh-session-persistence-jsonl](../../packages/session/session-persistence-jsonl)**——逐会话仅追加的逻辑 JSONL 日志，默认存储为带 checksum 的连续 Zstandard frame，也可配置为原始行；具备崩溃安全的原子实体化、逐批 `fsync` 的 append，以及在第一次新 append 之前截断撕裂尾部。`stat`/`list` 携带 `sizeBytes` 与尽力而为的、由 `fs.stat` 派生的修订号。
 
+## 永久删除
+
+持久化提供方显式声明删除支持。删除结果包含被移除的 header，提交后的消费方使派生数据失效。Host 递归协调预览精确子树，并返回本次已提交删除的身份；它不回收外部项目目录。见[删除包](../../packages/session/session-deletion/README.zh.md)。
+
+```ts type-equiv
+/** Options for {@link SessionPersistence.delete}. */
+interface SessionPersistenceDeleteOptions {
+  /** Optional cancellation observed before deletion takes ownership. */
+  readonly signal?: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Immutable recursive-deletion plan in bottom-up persistence order. */
+interface SessionDeletionPreview {
+  /** Requested subtree root. */
+  readonly rootSessionId: SessionId
+  /** Known descendants followed by the root, ready for bottom-up deletion. */
+  readonly sessionIds: readonly SessionId[]
+}
+```
+
+```ts type-equiv
+/** Immutable facts after one recursive deletion attempt commits. */
+interface SessionDeletionResult extends SessionDeletionPreview {
+  /** Identities whose persistence provider returned a removed header in this attempt. */
+  readonly deletedSessionIds: readonly SessionId[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -421,18 +451,6 @@ delete(_id: SessionId, _options?: SessionPersistenceDeleteOptions): Promise<Sess
  * @returns one detached header per currently known identity.
  */
 async listDeletionHeaders(options?: SessionPersistenceListOptions): Promise<readonly SessionHeader[]>
-
-/**
- * Read the exact mapping from a retained historical generation to the
- * current logical generation without publishing or rewriting either one.
- * Implementations return the same mapping after successor publication while
- * the source generation remains available, allowing interrupted sidecar
- * migrations to resume idempotently.
- * @param _id - Session identity whose retained source generation is inspected.
- * @param _options - optional cancellation for read-only preparation.
- * @returns coordinates, or `undefined` when no historical generation exists.
- */
-migrationCoordinates( _id: SessionId, _options?: SessionPersistenceOpenOptions, ): Promise<SessionMigrationCoordinates | undefined>
 
 /**
  * Flush every active write handle owned by this service instance in one

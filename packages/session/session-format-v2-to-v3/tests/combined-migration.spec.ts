@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import { v3Catalog as sessionFormatCatalog } from './catalog.ts'
 import { SessionFormatEventCollector, SessionFormatUnsupportedMigrationError } from '@deepseek-ai/dsh-session-format'
 import type { SessionFormatEvent, SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
 import { releasedV3SessionFormatCodec, restoreReleasedV3Artifact } from '../src/index.ts'
@@ -53,100 +53,6 @@ function assertComposite(events: readonly SessionFormatEvent[]): void {
 }
 
 describe('combined structural, canonical-envelope and PTC catalog migration', () => {
-  it('preserves explicitly admitted fork history and exposes exact V0-to-V3 coordinates', () => {
-    const forkHeader = {
-      type: 'session', version: 0, id: 'fork-history', createdAt: 1,
-      cwd: '/workspace', delegationDepth: 0,
-    }
-    const forkEvents = [
-      event('turn/start', 0, { turn: 1 }),
-      event('step/start', 1, { turn: 1, step: 1 }),
-      event('user/message', 2, {
-        id: 'delegated', role: 'user', content: [{ type: 'text', text: 'work' }],
-        source: {
-          kind: 'user',
-          delegation: { parentSessionId: 'parent', parentTurn: 7 },
-        },
-      }, { surfaceOp: 'append' }),
-      event('session/execution-directory', 3, { sessionId: 'fork-history', cwd: '/workspace/branch' }),
-      event('session/title', 4, {
-        title: 'Branch title', messageSeqs: [2], source: { kind: 'provider', provider: 'fork-title' },
-        inputTruncated: true,
-      }),
-      event('session/title-generation', 5, { state: 'ready' }),
-      event('session/title-policy', 6, { automatic: true }),
-      event('step/end', 7, { turn: 1, step: 1 }),
-      event('turn/end', 8, { turn: 1, reason: { kind: 'completed' } }),
-    ]
-    const reader = sessionFormatCatalog.createRestore(forkHeader, { recovery: 'strict', validation: 'current' })
-    for (const row of forkEvents) reader.decodeRow(row)
-    const restored = reader.finishWithCoordinates()
-    expect(restored.coordinates).toEqual({
-      sourceVersion: 0,
-      targetVersion: 3,
-      targetSeqBySourceSeq: [0, 1, 3, 4, 5, 6, 7, 8, 9],
-      targetEventCount: 10,
-    })
-    expect(restored.artifact.events.find(row => row.type === 'session/execution-directory')?.data)
-      .toEqual({ sessionId: 'fork-history', cwd: '/workspace/branch' })
-    expect(restored.artifact.events.find(row => row.type === 'session/title')?.data)
-      .toMatchObject({ title: 'Branch title', messageSeqs: [3], inputTruncated: true })
-    expect(restored.artifact.events.find(row => row.type === 'session/title-generation')?.data)
-      .toEqual({ state: 'ready' })
-    expect(restored.artifact.events.find(row => row.type === 'session/title-policy')?.data)
-      .toEqual({ automatic: true })
-    expect((restored.artifact.events.find(row => row.type === 'user/message')?.data as SessionFormatJsonObject).source)
-      .toMatchObject({ delegation: { parentSessionId: 'parent', parentTurn: 7 } })
-  })
-
-  it.each(['supercode-local-memory-status', 'supercode-local-memory-body'])('retains released %s snapshots through V0 to V3', (plugin) => {
-    const memorySource = { kind: 'plugin', plugin, form: 'snapshot', sections: [{ name: plugin, text: 'retained state' }],
-      memorySnapshot: { version: 1, section: plugin, label: 'Local memory', order: 10 } }
-    const rows = [event('turn/start', 0, { turn: 1 }), event('step/start', 1, { turn: 1, step: 1 }),
-      event('user/message', 2, { id: 'memory-snapshot', role: 'user', source: memorySource,
-        content: [{ type: 'text', text: 'retained state' }] }, { surfaceOp: 'append' }),
-      event('step/end', 3, { turn: 1, step: 1 }), event('turn/end', 4, { turn: 1, reason: { kind: 'completed' } })]
-    const physicalHeader = { type: 'session', version: 0, id: 'memory-history', createdAt: 1, delegationDepth: 0 }
-    const before = JSON.stringify(rows)
-    const read = () => {
-      const reader = sessionFormatCatalog.createRestore(physicalHeader, { recovery: 'strict', validation: 'current' })
-      for (const row of rows) reader.decodeRow(row)
-      return reader.finishWithCoordinates()
-    }
-    const result = read()
-    const retained = result.artifact.events.find(row => row.type === 'user/message')!.data as SessionFormatJsonObject
-    expect(retained.source).toEqual(memorySource)
-    expect(JSON.stringify(rows)).toBe(before)
-    expect(result.coordinates.targetSeqBySourceSeq[2]).toBe(3)
-    memorySource.memorySnapshot.version = 2
-    expect(read).toThrow('memorySnapshot version')
-    memorySource.memorySnapshot.version = 1
-    memorySource.plugin = 'unrelated-plugin'
-    expect(read).toThrow('unexpected member "memorySnapshot"')
-  })
-
-  it('remaps an ordinary retry endpoint while preserving a foreign Session capture', () => {
-    const h = { type: 'session', version: 0, id: 'retry-history', createdAt: 1, delegationDepth: 0 }
-    const retry = { version: 1, operationId: 'repeat-1', sourceSessionId: h.id, sourceTurn: 1,
-      sourceEndSeq: 4, mode: 'retry', attempt: 2, taskId: 'same-task' }
-    const input = { id: 'first', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'repeat me' }] }
-    const rows = [event('turn/start', 0, { turn: 1 }), event('step/start', 1, { turn: 1, step: 1 }),
-      event('user/message', 2, input, { surfaceOp: 'append' }), event('step/end', 3, { turn: 1, step: 1 }),
-      event('turn/end', 4, { turn: 1, reason: { kind: 'completed' } }), event('turn/start', 5, { turn: 2 }),
-      event('step/start', 6, { turn: 2, step: 1 }), event('user/message', 7, { ...input, id: 'repeat',
-        source: { kind: 'user', supercodeRetry: retry } }, { surfaceOp: 'append' }),
-      event('step/end', 8, { turn: 2, step: 1 }), event('turn/end', 9, { turn: 2, reason: { kind: 'completed' } })]
-    const read = () => {
-      const reader = sessionFormatCatalog.createRestore(h, { recovery: 'strict', validation: 'current' })
-      for (const row of rows) reader.decodeRow(row)
-      return reader.finish().events.filter(row => row.type === 'user/message').at(-1)!.data as SessionFormatJsonObject
-    }
-    expect(read()['source']).toMatchObject({ supercodeRetry: { sourceEndSeq: 5 } })
-    expect(retry.sourceEndSeq).toBe(4)
-    retry.sourceSessionId = 'another-session'
-    expect(read()['source']).toMatchObject({ supercodeRetry: { sourceEndSeq: 4 } })
-  })
-
   it('inserts and clears system prompts while remapping replacement and nested PTC history without rewriting identities', () => {
     const before = JSON.stringify(source)
     const reader = sessionFormatCatalog.createRestore(header, { recovery: 'strict', validation: 'current' })

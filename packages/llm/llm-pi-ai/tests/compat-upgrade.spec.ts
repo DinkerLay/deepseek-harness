@@ -9,7 +9,7 @@ function configured(compat: Record<string, unknown>, api = 'openai-completions')
 }
 
 function resolved(compat: Record<string, unknown>, api = 'openai-completions') {
-  return resolveProfiles(configured(compat, api).providers).get('gateway')?.piProvider?.getModels()[0]?.compat
+  return resolveProfiles(structuredClone(configured(compat, api).providers.get()) as import('../src/config.ts').Options['providers']).get('gateway')?.piProvider?.getModels()[0]?.compat
 }
 
 describe('pi-ai gateway compatibility declarations', () => {
@@ -50,9 +50,25 @@ describe('pi-ai gateway compatibility declarations', () => {
     expect(() => resolved(compat, 'anthropic-messages')).toThrow(/compat/)
   })
 
-  it.each(['supportsMidConvoEffort', 'allowedFallbackModels'])('withholds catalog-owned %s', (field) => {
+  it.each([
+    'supportsMidConvoEffort', 'allowedFallbackModels', 'supportsMidConvoToolChanges', 'sessionAffinityFormat',
+  ])('withholds catalog-owned %s', (field) => {
     expect(() => resolved({ [field]: true }, 'anthropic-messages'))
       .toThrow(/which is not configurable here/)
+  })
+
+  it.each(['supportsMidConvoSystemMessages', 'supportsMidConvoToolAdditions'])(
+    'rejects %s on a protocol that cannot represent native conversation updates', (field) => {
+      expect(() => resolved({ [field]: true }, 'anthropic-messages'))
+        .toThrow(/no model on the route speaks a protocol/)
+    },
+  )
+
+  it('rejects Mistral native conversation updates on its unsupported protocol', () => {
+    expect(() => resolveProfiles({
+      mistral: { compat: { supportsMidConvoSystemMessages: true } },
+    }))
+      .toThrow(/no model on the route speaks a protocol/)
   })
 
   it('keeps generic additions absent unless configured', () => {

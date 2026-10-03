@@ -27,20 +27,6 @@ const INSTALL_LOCK_INITIALIZATION_TIMEOUT_MS = 5_000
 const INSTALL_LOCK_POLL_MS = 50
 const ALLOW_HOOKS_PATH_OVERRIDE = 'DSH_LEFTHOOK_ALLOW_HOOKS_PATH_OVERRIDE'
 const REPOSITORY_EXTENSION_PATTERN = '^extensions\\.'
-const PAIRING_MERGE_DRIVER_CONFIG = [
-  ['merge.dsh-translation-pairing.name', 'DeepSeek Harness bilingual pairing records'],
-  [
-    'merge.dsh-translation-pairing.driver',
-    'scripts/merge-translation-pairing-driver.sh %O %A %B %P',
-  ],
-]
-const PAIRING_MERGE_DRIVER_PROBE = [
-  '--import',
-  'tsx/esm',
-  'scripts/merge-translation-pairing.ts',
-  '--probe',
-]
-
 function errorCode(error) {
   return typeof error === 'object' && error !== null && 'code' in error
     ? error.code
@@ -266,17 +252,18 @@ function planWorktreeConfigMigration(root, commonConfigPath) {
     }
   }
 
-  const extensionText = assertSingle(
-    directFileConfigValues(root, commonConfigPath, 'extensions.worktreeConfig'),
-    'extensions.worktreeConfig',
-  )
-  const extensionEnabled = extensionText === undefined
-    ? false
-    : parseGitBoolean(extensionText, 'extensions.worktreeConfig')
+  const extensionEnabled = worktreeConfigExtensionEnabled(root, commonConfigPath)
   const worktreeText = assertSingle(
     directFileConfigValues(root, commonConfigPath, 'core.worktree'),
     'core.worktree',
   )
+  if (worktreeText !== undefined) {
+    throw new Error(
+      `cannot enable extensions.worktreeConfig while core.worktree is in the common config `
+      + `(file:${commonConfigPath}: ${JSON.stringify(worktreeText)}); `
+      + 'move it to the main worktree config first',
+    )
+  }
 
   const directBareText = assertSingle(directFileConfigValues(root, commonConfigPath, 'core.bare'), 'core.bare')
   const directBare = directBareText === undefined ? undefined : parseGitBoolean(directBareText, 'core.bare')
@@ -287,83 +274,20 @@ function planWorktreeConfigMigration(root, commonConfigPath) {
     )
   }
 
-  return { directBareText, extensionEnabled, extensionText, version, versionText, worktreeText }
+  return { directBare, extensionEnabled, version }
 }
 
-function applyWorktreeConfigMigration(root, commonConfigPath, mainWorktreeConfigPath, migration) {
-  const { directBareText, extensionEnabled, extensionText, version, versionText, worktreeText } = migration
-  const mainConfigExisted = existsSync(mainWorktreeConfigPath)
-  const rollbackSteps = []
-  const change = (args, rollback) => {
-    git(args, root)
-    rollbackSteps.unshift(rollback)
+function applyWorktreeConfigMigration(root, commonConfigPath, migration) {
+  const { directBare, extensionEnabled, version } = migration
+  if (version === 0) {
+    git(['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', '1'], root)
   }
-  const rollback = () => {
-    const errors = []
-    for (const step of rollbackSteps) {
-      try {
-        step()
-      } catch (error) {
-        errors.push(error)
-      }
-    }
-    if (errors.length > 0) {
-      throw new AggregateError(errors, `worktree config migration rollback failed: ${errors.map(String).join('; ')}`)
-    }
+  if (!extensionEnabled) {
+    git(['config', '--file', commonConfigPath, 'extensions.worktreeConfig', 'true'], root)
   }
-
-  try {
-    if (worktreeText !== undefined) {
-      change(
-        ['config', '--file', mainWorktreeConfigPath, 'core.worktree', worktreeText],
-        () => {
-          git(['config', '--file', mainWorktreeConfigPath, '--unset-all', 'core.worktree'], root)
-          if (!mainConfigExisted && !hasDirectConfigEntries(root, mainWorktreeConfigPath)) {
-            unlinkSync(mainWorktreeConfigPath)
-          }
-        },
-      )
-      change(
-        ['config', '--file', commonConfigPath, '--unset-all', 'core.worktree'],
-        () => git(['config', '--file', commonConfigPath, 'core.worktree', worktreeText], root),
-      )
-    }
-    if (version === 0) {
-      change(
-        ['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', '1'],
-        () => git(['config', '--file', commonConfigPath, 'core.repositoryFormatVersion', versionText], root),
-      )
-    }
-    if (!extensionEnabled) {
-      change(
-        ['config', '--file', commonConfigPath, 'extensions.worktreeConfig', 'true'],
-        () => {
-          if (extensionText === undefined) {
-            git(['config', '--file', commonConfigPath, '--unset-all', 'extensions.worktreeConfig'], root)
-          } else {
-            git(['config', '--file', commonConfigPath, 'extensions.worktreeConfig', extensionText], root)
-          }
-        },
-      )
-    }
-    if (directBareText !== undefined) {
-      change(
-        ['config', '--file', commonConfigPath, '--unset-all', 'core.bare'],
-        () => git(['config', '--file', commonConfigPath, 'core.bare', directBareText], root),
-      )
-    }
-  } catch (error) {
-    try {
-      rollback()
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        `worktree config migration failed: ${String(error)}; ${String(rollbackError)}`,
-      )
-    }
-    throw error
+  if (directBare === false) {
+    git(['config', '--file', commonConfigPath, '--unset-all', 'core.bare'], root)
   }
-  return rollback
 }
 
 function readInstallLock(lockPath) {
@@ -440,21 +364,42 @@ function releaseInstallLock(lockPath, ownedRecord, ownedStat) {
   }
 }
 
+/** Hold one opt-in fixture stage until its parent explicitly releases it. */
+async function waitForLockTestBarrier(path) {
+  writeFileSync(`${path}.ready`, '')
+  const deadline = Date.now() + INSTALL_LOCK_TIMEOUT_MS
+  while (!existsSync(`${path}.release`)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for installer test barrier ${path}`)
+    await new Promise(resolveWait => setTimeout(resolveWait, INSTALL_LOCK_POLL_MS))
+  }
+}
+
+/** Windows can deny access to a deleted lock until its last reader closes it. */
+async function accessInstallLock(operation, deadline) {
+  while (true) {
+    try {
+      return operation()
+    } catch (error) {
+      if (process.platform !== 'win32' || errorCode(error) !== 'EPERM' || Date.now() >= deadline) throw error
+      await new Promise(resolveWait => setTimeout(resolveWait, INSTALL_LOCK_POLL_MS))
+    }
+  }
+}
+
 async function acquireInstallLock(commonDirectory) {
   const lockPath = join(commonDirectory, INSTALL_LOCK)
   const deadline = Date.now() + INSTALL_LOCK_TIMEOUT_MS
   const ownedRecord = `${String(process.pid)} ${randomUUID()}\n`
   let initializingLock
+  let observeBarrier = process.env.DSH_TEST_LEFTHOOK_LOCK_OBSERVE_BARRIER
   while (true) {
     try {
-      const lockHandle = openSync(lockPath, 'wx', 0o600)
+      const lockHandle = await accessInstallLock(() => openSync(lockPath, 'wx', 0o600), deadline)
       let ownedStat
       try {
         ownedStat = fstatSync(lockHandle)
-        const writeDelay = Number(process.env.DSH_TEST_LEFTHOOK_LOCK_WRITE_DELAY_MS ?? 0)
-        if (writeDelay > 0) {
-          await new Promise(resolveWait => setTimeout(resolveWait, writeDelay))
-        }
+        const publicationBarrier = process.env.DSH_TEST_LEFTHOOK_LOCK_PUBLISH_BARRIER
+        if (publicationBarrier !== undefined) await waitForLockTestBarrier(publicationBarrier)
         writeFileSync(lockHandle, ownedRecord)
       } finally {
         closeSync(lockHandle)
@@ -472,14 +417,14 @@ async function acquireInstallLock(commonDirectory) {
       return () => releaseInstallLock(lockPath, ownedRecord, ownedStat)
     } catch (error) {
       if (errorCode(error) !== 'EEXIST') throw error
-      const existingStat = installLockStat(lockPath)
+      const existingStat = await accessInstallLock(() => installLockStat(lockPath), deadline)
       if (existingStat === undefined) continue
       if (!existingStat.isFile() || existingStat.isSymbolicLink()) {
         throw manualLockRecoveryError(lockPath, 'invalid')
       }
-      const existingRecord = readInstallLock(lockPath)
+      const existingRecord = await accessInstallLock(() => readInstallLock(lockPath), deadline)
       if (existingRecord === undefined) continue
-      const verifiedStat = installLockStat(lockPath)
+      const verifiedStat = await accessInstallLock(() => installLockStat(lockPath), deadline)
       if (verifiedStat === undefined) continue
       if (!verifiedStat.isFile() || verifiedStat.isSymbolicLink()) {
         throw manualLockRecoveryError(lockPath, 'invalid')
@@ -489,6 +434,11 @@ async function acquireInstallLock(commonDirectory) {
       if (owner === undefined) {
         if (!installLockRecordMayBeIncomplete(existingRecord)) {
           throw manualLockRecoveryError(lockPath, 'invalid')
+        }
+        if (observeBarrier !== undefined) {
+          const barrier = observeBarrier
+          observeBarrier = undefined
+          await waitForLockTestBarrier(barrier)
         }
         const now = Date.now()
         if (
@@ -670,86 +620,6 @@ function refuseScopedHooksPath(entry) {
   )
 }
 
-function installPairingMergeDriver(root, worktreeConfigPath) {
-  const added = []
-  try {
-    for (const [key, expected] of PAIRING_MERGE_DRIVER_CONFIG) {
-      const entries = includedFileConfigEntries(root, worktreeConfigPath, key)
-      const includedEntry = entries.find(entry => !originIsFile(entry.origin, root, worktreeConfigPath))
-      if (includedEntry !== undefined) {
-        throw new Error(
-          `refusing pairing merge-driver config from an included worktree file (${configSource(includedEntry)})`,
-        )
-      }
-      const existing = assertSingle(entries.map(entry => entry.value), `worktree ${key}`)
-      const effectiveBefore = effectiveConfigEntry(root, key)
-      if (effectiveBefore?.scope === 'command') {
-        throw new Error(
-          `refusing command-scoped ${key} (${configSource(effectiveBefore)}); `
-          + 'transient configuration cannot be replaced by the worktree installer',
-        )
-      }
-      if (existing === undefined && effectiveBefore !== undefined && effectiveBefore.value !== expected) {
-        throw new Error(
-          `refusing to mask inherited ${key} (${configSource(effectiveBefore)}); `
-          + 'remove or integrate the custom pairing merge driver explicitly',
-        )
-      }
-      if (existing !== undefined && existing !== expected) {
-        throw new Error(
-          `refusing to replace worktree ${key} value ${JSON.stringify(existing)}; `
-          + 'remove or integrate the custom pairing merge driver explicitly',
-        )
-      }
-      if (existing === undefined) {
-        git(['config', '--worktree', key, expected], root)
-        added.push(key)
-      }
-      const installed = includedFileConfigEntries(root, worktreeConfigPath, key)
-      if (
-        installed.length !== 1
-        || installed[0]?.value !== expected
-        || !originIsFile(installed[0].origin, root, worktreeConfigPath)
-      ) {
-        throw new Error(`new worktree-local ${key} did not become the direct worktree value`)
-      }
-      const effectiveAfter = effectiveConfigEntry(root, key)
-      if (
-        effectiveAfter === undefined
-        || effectiveAfter.scope !== 'worktree'
-        || effectiveAfter.value !== expected
-        || !originIsFile(effectiveAfter.origin, root, worktreeConfigPath)
-      ) {
-        throw new Error(`new worktree-local ${key} did not become the effective direct worktree value`)
-      }
-    }
-  } catch (error) {
-    const rollbackErrors = []
-    for (const key of added.reverse()) {
-      try {
-        git(['config', '--worktree', '--unset-all', key], root)
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError)
-      }
-    }
-    if (rollbackErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackErrors],
-        `Pairing merge-driver configuration failed: ${String(error)}; `
-        + `rollback also failed: ${rollbackErrors.map(String).join('; ')}`,
-      )
-    }
-    throw error
-  }
-  return () => {
-    for (const key of added.reverse()) git(['config', '--worktree', '--unset-all', key], root)
-  }
-}
-
-function probePairingMergeDriver(root) {
-  capture(process.execPath, PAIRING_MERGE_DRIVER_PROBE, { cwd: root })
-}
-
 async function main() {
   if (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true') return
   if (typeof lefthookPackage.bin?.lefthook !== 'string') return
@@ -765,7 +635,6 @@ async function main() {
   const commonOutput = stripGitLineTerminator(git(['rev-parse', '--git-common-dir'], root).stdout)
   const commonDirectory = isAbsolute(commonOutput) ? commonOutput : resolve(root, commonOutput)
   const commonConfigPath = join(commonDirectory, 'config')
-  const mainWorktreeConfigPath = join(commonDirectory, 'config.worktree')
   const worktreeConfigPath = join(gitDirectory, 'config.worktree')
   const hooksPath = join(gitDirectory, HOOKS_DIRECTORY)
   const releaseLock = await acquireInstallLock(commonDirectory)
@@ -835,18 +704,10 @@ async function main() {
     ) {
       throw new Error(`hooks directory ownership changed while relocating ${JSON.stringify(worktreePath)}`)
     }
-    const rollbackMigration = applyWorktreeConfigMigration(
-      root,
-      commonConfigPath,
-      mainWorktreeConfigPath,
-      migration,
-    )
+    applyWorktreeConfigMigration(root, commonConfigPath, migration)
 
     let pathChanged = false
-    let rollbackPairingMergeDriver = () => {}
     try {
-      probePairingMergeDriver(root)
-      rollbackPairingMergeDriver = installPairingMergeDriver(root, worktreeConfigPath)
       git(['config', '--worktree', 'core.hooksPath', hooksPath], root)
       pathChanged = worktreePath !== hooksPath
       const installedEntry = effectiveConfigEntry(root, 'core.hooksPath')
@@ -872,16 +733,6 @@ async function main() {
         } catch (rollbackError) {
           rollbackErrors.push(rollbackError)
         }
-      }
-      try {
-        rollbackPairingMergeDriver()
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError)
-      }
-      try {
-        rollbackMigration()
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError)
       }
       if (rollbackErrors.length > 0) {
         throw new AggregateError(

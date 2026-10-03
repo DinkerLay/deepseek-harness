@@ -1,11 +1,11 @@
 import { createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, MessageSource } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
 import SessionPersistence, {
-  SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
@@ -26,6 +26,19 @@ import SessionQueryEngine, {
 import { SessionTitleProviderId, SessionTitleService } from '@deepseek-ai/dsh-session-title'
 import { TestSessionQueryEngine } from './test-service.ts'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'test': { kind: 'test' } & ContextFormed
+  }
+}
+
+type CheckpointSource = Extract<MessageSource, { readonly kind: 'compact-checkpoint' }>
+
+/** Build a typed checkpoint source for a query fixture without owning compaction. */
+function checkpointSource(compactionId: string): CheckpointSource {
+  return { kind: 'compact-checkpoint', compactionId: compactionId as CheckpointSource['compactionId'] }
+}
+
 const TITLE_SERVICE_CONFIG = { fallbackMaxWords: 8, fallbackMaxBytes: 64, maxTitleBytes: 256 }
 
 function header(id: string, createdAt = 1, extra: Partial<SessionHeader> = {}): SessionHeader {
@@ -45,11 +58,12 @@ function eventLog(text = 'hello'): SessionEvent[] {
 }
 
 class TestHandle implements SessionHandle {
+  readonly inheritedEventCount = SessionLogOffset(0)
+
   constructor(
     readonly id: SessionIdType,
     readonly header: SessionHeader,
     readonly access: SessionAccess,
-    readonly inheritedEventCount = SessionLogOffset(0),
   ) {}
 
   read(offset = 0, length?: number, options?: SessionHandleReadOptions): Promise<SessionHandleReadResult> {
@@ -100,7 +114,7 @@ function entryRevision(entry: { events: SessionEvent[] }): SessionPersistenceRev
 }
 
 class TestPersistence extends SessionPersistence {
-  static entries = new Map<SessionIdType, { meta: SessionHeader; events: SessionEvent[]; inheritedEventCount?: SessionLogOffset }>()
+  static entries = new Map<SessionIdType, { meta: SessionHeader; events: SessionEvent[] }>()
   static listFailure: unknown
   static listOverride: ((signal?: AbortSignal) => Promise<SessionPersistenceSnapshot[]>) | undefined
   static readFailure: unknown
@@ -115,7 +129,7 @@ class TestPersistence extends SessionPersistence {
   static listSignals: Array<AbortSignal | undefined> = []
   static readSignals: Array<AbortSignal | undefined> = []
 
-  static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[]; inheritedEventCount?: SessionLogOffset }[] = []): void {
+  static reset(entries: readonly { meta: SessionHeader; events: SessionEvent[] }[] = []): void {
     this.entries = new Map(entries.map(entry => [entry.meta.id, structuredClone(entry)]))
     this.listFailure = undefined
     this.listOverride = undefined
@@ -140,7 +154,7 @@ class TestPersistence extends SessionPersistence {
   open(id: SessionIdType, access: SessionAccess): Promise<SessionHandle> {
     const entry = TestPersistence.entries.get(id)
     if (entry === undefined) return Promise.reject(new SessionPersistenceNotFoundError(id))
-    return Promise.resolve(new TestHandle(id, structuredClone(entry.meta), access, entry.inheritedEventCount))
+    return Promise.resolve(new TestHandle(id, structuredClone(entry.meta), access))
   }
 
   stat(id: SessionIdType): Promise<SessionPersistenceSnapshot | undefined> {
@@ -462,56 +476,6 @@ describe.each(cancellableExactReads.filter(read => read.inspects))(
 )
 
 describe('session-query exact reads', () => {
-  it('lists unsupported historical headers without accepting their event bodies', async () => {
-    const stored = header('unsupported-history', 1, { cwd: '/recorded' })
-    TestPersistence.reset([{ meta: stored, events: eventLog() }])
-    const refusal = new SessionFormatUnsupportedError('unsupported old extension', { kind: 'jsonl', path: '/session.v0.jsonl' })
-    TestPersistence.readFailure = new Error('cannot restore old generation', { cause: refusal })
-    const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
-    try {
-      await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([
-        { header: stored, executionDirectory: '/recorded' },
-      ])
-      await ctx.sessionQuery.listSessions()
-      expect(TestPersistence.readCalls).toEqual([stored.id])
-      await expect(ctx.sessionQuery.readSession(stored.id)).rejects.toThrow('unsupported')
-    } finally { await ctx.fiber.dispose() }
-  })
-
-  it.each(['live', 'persisted'] as const)('reads a continued %s fork without treating its local history as seed', async (source) => {
-    TestPersistence.reset()
-    const owner = await liveContext()
-    const parent = owner.sessions.create(SessionId(`parent-${source}`))
-    parent.append('turn/start', { turn: 1 })
-    parent.append('user/message', createUserMessage({ source: { kind: 'user' },
-      content: [{ type: 'text', text: 'inherited request' }] }), { surfaceOp: 'append' })
-    parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    const child = owner.sessions.fork(parent, undefined, SessionId(`child-${source}`))
-    child.append('turn/start', { turn: 2 })
-    child.append('user/message', createUserMessage({ source: { kind: 'user' },
-      content: [{ type: 'text', text: 'local continuation' }] }), { surfaceOp: 'append' })
-    child.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
-    const events = child.snapshotEvents()
-    const reader = source === 'live' ? owner : await liveContext()
-    try {
-      if (source === 'persisted') {
-        TestPersistence.reset([{ meta: child.header, events: structuredClone([...events]),
-          inheritedEventCount: child.inheritedEventCount }])
-        await reader.plugin(TestPersistence)
-      }
-      const snapshot = await reader.sessionQuery.readSession(child.id)
-      expect(snapshot.session).toEqual(child.header)
-      expect(snapshot.session.parentSession).toBe(parent.id)
-      expect(snapshot.inheritedEventCount).toBe(parent.snapshotEvents().length)
-      expect(snapshot.events).toEqual(events)
-      expect(snapshot.events.length).toBeGreaterThan(snapshot.inheritedEventCount)
-    } finally {
-      if (reader !== owner) await reader.fiber.dispose()
-      await owner.fiber.dispose()
-    }
-  })
-
   it('returns a detached replay-valid full log and rejects a corrupt persisted seed', async () => {
     const valid = header('valid-log', 2)
     const corrupt = header('corrupt-log', 1)
@@ -954,67 +918,6 @@ describe('session-query exact reads', () => {
     expect(older.header.createdAt).toBe(1)
   })
 
-  it('caches cold execution directories by revision and coalesces concurrent refreshes', async () => {
-    const stored = header('cached-directory', 1, { cwd: '/created' })
-    const entry = {
-      meta: stored,
-      events: [{
-        type: 'session/execution-directory' as const,
-        seq: SessionSeq(0),
-        time: 10,
-        data: { sessionId: stored.id, cwd: '/first' },
-      }],
-    }
-    TestPersistence.reset([entry])
-    const ctx = await liveContext()
-    await ctx.plugin(TestPersistence)
-
-    await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([{
-      header: { id: stored.id }, executionDirectory: '/first', live: false, persisted: true,
-    }])
-    expect(TestPersistence.readCalls).toEqual([stored.id])
-    await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([{
-      executionDirectory: '/first',
-    }])
-    expect(TestPersistence.readCalls).toEqual([stored.id])
-
-    const durable = TestPersistence.entries.get(stored.id)!
-    durable.events.push({
-      type: 'session/execution-directory',
-      seq: SessionSeq(1),
-      time: 11,
-      data: { sessionId: stored.id, cwd: '/second' },
-    })
-    const started = Promise.withResolvers<undefined>()
-    const release = Promise.withResolvers<undefined>()
-    TestPersistence.readOverride = async (sessionId) => {
-      started.resolve(undefined)
-      await release.promise
-      const current = TestPersistence.entries.get(sessionId)
-      if (current === undefined) throw new Error('missing cached-directory fixture')
-      return structuredClone(current)
-    }
-    const first = ctx.sessionQuery.listSessions()
-    await started.promise
-    const second = ctx.sessionQuery.listSessions()
-    await vi.waitFor(() => expect(TestPersistence.listCalls).toBe(4))
-    expect(TestPersistence.readCalls).toEqual([stored.id, stored.id])
-    release.resolve(undefined)
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      [{ header: stored, executionDirectory: '/second', live: false, persisted: true }],
-      [{ header: stored, executionDirectory: '/second', live: false, persisted: true }],
-    ])
-    TestPersistence.readOverride = undefined
-
-    TestPersistence.entries.delete(stored.id)
-    await expect(ctx.sessionQuery.listSessions()).resolves.toEqual([])
-    TestPersistence.entries.set(stored.id, durable)
-    await expect(ctx.sessionQuery.listSessions()).resolves.toMatchObject([{
-      executionDirectory: '/second',
-    }])
-    expect(TestPersistence.readCalls).toEqual([stored.id, stored.id, stored.id])
-  })
-
   it('filters sessions symmetrically and owns mutable filter values immediately', async () => {
     const durable = header('durable-filter', 1)
     TestPersistence.reset([{ meta: durable, events: eventLog('durable') }])
@@ -1070,7 +973,7 @@ describe('session-query exact reads', () => {
       'user/message',
       createUserMessage({
         content: [{ type: 'text', text: 'replacement' }],
-        source: { kind: 'plugin', plugin: 'test' },
+        source: { kind: 'test' },
       }),
       { surfaceOp: { op: 'replace', startSeq: first.seq, endSeq: first.seq }, sourceEventSeqs: [first.seq] },
     )
@@ -1097,7 +1000,7 @@ describe('session-query exact reads', () => {
     session.append(
       'user/message',
       createUserMessage({
-        content: [{ type: 'text', text: 'checkpoint' }], source: { kind: 'plugin', plugin: 'compact' },
+        content: [{ type: 'text', text: 'checkpoint' }], source: checkpointSource('query-compaction-1'),
       }),
       { surfaceOp: { op: 'replace', startSeq: first.seq, endSeq: first.seq }, sourceEventSeqs: [first.seq] },
     )
@@ -1111,7 +1014,7 @@ describe('session-query exact reads', () => {
     session.append(
       'user/message',
       createUserMessage({
-        content: [{ type: 'text', text: 'latest checkpoint' }], source: { kind: 'plugin', plugin: 'compact' },
+        content: [{ type: 'text', text: 'latest checkpoint' }], source: checkpointSource('query-compaction-2'),
       }),
       { surfaceOp: { op: 'replace', startSeq: SessionSeq(2), endSeq: retained.seq }, sourceEventSeqs: [SessionSeq(2), retained.seq] },
     )
@@ -1141,7 +1044,7 @@ describe('session-query exact reads', () => {
     ])
     if (snapshot.events[0]?.type !== 'user/message') throw new Error('expected current user message')
     expect(() => {
-      (snapshot.events[0]!.data as { content: unknown[] }).content = []
+      (snapshot.events[0]!.data as unknown as { content: unknown[] }).content = []
     }).toThrow()
     Object.assign(snapshot.session, { cwd: '/mutated' })
 

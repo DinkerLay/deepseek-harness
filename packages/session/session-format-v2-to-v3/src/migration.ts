@@ -65,11 +65,7 @@ class ReleasedV2ToV3Stage implements SessionFormatMigrationStage {
       if (data['sessionFormatVersion'] === 3) throw new SessionFormatError('format v2 delivery marker claims target format v3')
       if (data['sessionFormatVersion'] === 2 && data['sessionId'] !== this.input.sourceHeader.id) this.lastForeignDeliverySeq = event.seq
     }
-    const target = remapReleasedRetryReferences(remapEvent(source, this.targetSeq, this.mapping), this.input.sourceHeader.id, (seq) => {
-      const mapped = this.mapping[seq]
-      if (mapped === undefined) throw new SessionFormatError('retry source end must identify an earlier event')
-      return mapped
-    })
+    const target = remapEvent(source, this.targetSeq, this.mapping)
     this.mapping.push(this.targetSeq++)
     context.emitEvent(canonicalizeTransformedEvent(renamePtcEvent(target)))
     if (event.type === 'step/start') {
@@ -94,10 +90,6 @@ class ReleasedV2ToV3Stage implements SessionFormatMigrationStage {
       throw new SessionFormatError('current-generation delivery marker names the wrong Session')
     }
     return sessionFormatCount(this.targetCut, 'format v3 inherited event count')
-  }
-
-  mapSourceEventSeq(sourceSeq: number): number | undefined {
-    return this.mapping[sessionFormatCount(sourceSeq, 'format v2 source event seq')]
   }
 
   private observeMessageIds(event: SessionFormatEvent): void {
@@ -179,4 +171,3 @@ function renameMessageSource(message: SessionFormatJsonObject): SessionFormatJso
   if (source['kind'] !== 'plugin' || source['plugin'] !== 'tools-code-mode') return message
   return { ...message, source: { ...source, plugin: 'tools-ptc' } }
 }
-import { remapReleasedRetryReferences } from '@deepseek-ai/dsh-session-format-v0-to-v1'
