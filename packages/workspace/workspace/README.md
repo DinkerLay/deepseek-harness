@@ -48,6 +48,10 @@ The package needs a session store, a session persistence backend, and the storag
 
 With these rows mounted, creating a project shows up in the list immediately and survives a restart; the first start also groups existing sessions by the directory they ran in. If a required peer is missing, the workspace feature stays unavailable until it is mounted.
 
+Set optional `sessionMetadataDomain` to a safe storage unit name distinct from `workspace` when independent Session generations share Project inventory. The selected version-0 unit owns archive/pin arrays and explicit recovery markers; omission retains the ordinary shared domain. `sessionMetadataDomainVersion: 1` and the effective `sessionMetadataDomain` let consumers require this capability. New metadata does not import old archive/pin identities or rewrite their shared values. Project records, order, defaults and native create/delete recovery remain shared.
+
+Metadata-only writes leave the shared singleton untouched, and Project-only writes leave the sidecar untouched. A mixed update records its intent before the shared write and clears it only after metadata commits. Committed Session deletion records its identity before removing bindings; restart completes only that identity without pruning unrelated candidates. Stored Project candidates reach views through `visibleSessionIds`, using the existing canonical-header index without opening Session bodies.
+
 ### Creating and ordering projects
 
 Create a project from any fully qualified directory that exists: filesystem roots such as `C:\` and ordinary directories are valid. Relative paths, Windows drive-relative paths such as `C:work`, missing paths, and files are rejected without creating a project; creating a project for a directory that already has one returns the existing project unchanged. Rename a project at any time, and move it to any position in the list:

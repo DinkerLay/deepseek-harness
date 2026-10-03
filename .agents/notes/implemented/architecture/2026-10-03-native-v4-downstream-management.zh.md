@@ -20,6 +20,10 @@ fork 保留官方 V4 Session 与 Agent 生命周期实现，并增加有界公�
 
 PiAi bridge 将已解析历史 Tool addition 映射到 transcript system 消息，仅对显式支持协议／模型标志的路由提供原生增量能力。准备好的快照绑定能力与派发。不支持路由保持原生兼容投影；远程网关仍需实际协议验证。
 
+Subagent 公开 Client 入口暴露 `SubagentChatResource`，并触达其资源协议、保持来源和 Sidebar Conversation 声明。可选 Sidebar 准备声明嵌套注册读取的每项服务。隔离 Slot 所属方保持隔离；资源关闭仍释放原生 Session 引用。下游消费者使用这些公开类型和原生注册，不复制资源所属方，也不维护重复声明适配器。
+
+Workspace 代际只在可选独立单元中选择归档/置顶元数据；共享 Project 清单仍是权威。公开有效域事实防止消费者静默使用旧 Session 集合。混合更新和删除清理使用持久意图，Header 索引投影防止旧候选身份泄漏到当前流。Conversation 事件源适配器围绕规范绑定装饰 UI 读取，不替换 Session 传输或持久化。两类注册均由 Effect 管理，经原生所属方释放。
+
 ## 考虑过的替代方案
 
 **将原生服务复制到下游包。** 这会为执行、持久化或 transport 创建竞争权威。通用缺失约定属于当前原生所属模块。

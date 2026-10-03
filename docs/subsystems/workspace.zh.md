@@ -125,6 +125,8 @@ interface Workspace {
 
 控制器的 `initializeDefault` 不接受请求参数：它拥有固定目录名 `default-workspace`，解析 Documents 位置，并请求注册表执行一次初始化。注册表接收目录解析器，以所请求目录（而非规范路径）的最后一段作为初始标题，并将登记与持久化身份一起提交。语言不会传到 Host——浏览器消费方通过控制器的 `workspaceDisplayTitle` 为仍保留该自动标题的工作区加标签，因此只有屏幕上的名称跟随读者语言。[首次使用行为与配置](../../packages/api/workspace-controller/README.zh.md#first-use-workspace)说明复用和失败处理。
 
+可选 Config `sessionMetadataDomain` 选择版本 0 归档/置顶单元，`workspace` 版本 2 保留共享 Project 记录和注册表状态。`sessionMetadataDomainVersion` 为 `1`；普通共享存储的有效 `sessionMetadataDomain` 为 undefined。新单元初始为空，不导入共享 Session 数组。仅元数据或仅 Project 的写入保留另一介质；显式待处理意图恢复混合写入和确定身份的删除清理。[所属包](../../packages/workspace/workspace/README.zh.md)负责配置及失败语义。
+
 ## 会话置顶
 
 控制器的[传输类型](../../packages/api/workspace-controller/src/types.ts)定义了 `WorkspacePinSessionRequest` 和 `WorkspaceUnpinSessionRequest`，两者都携带一个 `sessionId`。两个操作都返回 `WorkspacePinValue`：完整的会话 id 数组 `pinnedSessionIds`，最近置顶的会话排在前面。置顶要求会话已知且未归档；对未置顶的 id 取消置顶会成功，且不改变集合。归档在同一次持久化写入中移除该会话的置顶，取消归档不会恢复置顶。
@@ -540,6 +542,13 @@ delete(id: WorkspaceId): Promise<boolean>
  * @returns the complete committed workspace order.
  */
 insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly WorkspaceId[]>
+
+/**
+ * Project a validated record's membership against the current canonical-header index.
+ * @param record - Stored record whose candidate account is being rendered.
+ * @returns candidates belonging to its directory in recorded order; no Session is opened.
+ */
+visibleSessionIds(record: { readonly path: string; readonly sessionIds: readonly SessionId[] }): readonly SessionId[]
 
 /**
  * Archive one session durably. The session must exist (live or in session

@@ -125,6 +125,8 @@ Sessions get their cwd at create time from whoever creates them, not from this r
 
 The controller's `initializeDefault` takes no request: it owns the fixed `default-workspace` directory name, resolves the Documents location, and asks the registry to initialize once. The registry accepts a directory resolver, derives the initial title from the requested directory's final segment rather than the canonical one, and commits the registration with its durable identity. No language reaches the Host — browser consumers label a Workspace still carrying that automatic title through the controller's `workspaceDisplayTitle`, so only the on-screen name follows the reader's language. [First-use behavior and configuration](../../packages/api/workspace-controller/README.md#first-use-workspace) describe reuse and failure handling.
 
+The optional `sessionMetadataDomain` Config selects a version-0 archive/pin unit while `workspace` version 2 retains shared Project records and registry state. `sessionMetadataDomainVersion` is `1`; the effective `sessionMetadataDomain` is undefined for ordinary shared storage. The new unit begins empty and never imports the shared Session arrays. Metadata-only and Project-only writes preserve the other medium; explicit pending intents recover combined writes and identified deletion cleanup. [The package](../../packages/workspace/workspace/README.md) owns configuration and failure semantics.
+
 ## Session pinning
 
 The controller's [transport types](../../packages/api/workspace-controller/src/types.ts) define `WorkspacePinSessionRequest` and `WorkspaceUnpinSessionRequest`, each carrying one `sessionId`. Both operations return `WorkspacePinValue`: the complete `pinnedSessionIds` array of Session ids, most recently pinned first. Pinning requires a known, unarchived Session; unpinning an id that is not pinned succeeds without changing the set. Archiving removes the Session's pin in the same durable write, and unarchiving does not restore it.
@@ -540,6 +542,13 @@ delete(id: WorkspaceId): Promise<boolean>
  * @returns the complete committed workspace order.
  */
 insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly WorkspaceId[]>
+
+/**
+ * Project a validated record's membership against the current canonical-header index.
+ * @param record - Stored record whose candidate account is being rendered.
+ * @returns candidates belonging to its directory in recorded order; no Session is opened.
+ */
+visibleSessionIds(record: { readonly path: string; readonly sessionIds: readonly SessionId[] }): readonly SessionId[]
 
 /**
  * Archive one session durably. The session must exist (live or in session

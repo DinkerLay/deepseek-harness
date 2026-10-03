@@ -7,6 +7,7 @@ import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState,
   workspaceRecord,
+  workspaceSessionMetadataState,
   WorkspaceId,
 } from '@deepseek-ai/dsh-workspace'
 import type {
@@ -31,13 +32,13 @@ export function workspaceView(workspace: Workspace): WorkspaceView {
   }
 }
 
-function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceView {
+function changedWorkspaceView(ctx: Context, workspaceId: string, value: unknown): WorkspaceView {
   const record: WorkspaceRecord = workspaceRecord.parse(value)
   return {
     workspaceId: WorkspaceId(workspaceId),
     path: record.path,
     title: record.title,
-    sessionIds: [...record.sessionIds],
+    sessionIds: [...ctx.workspaceRegistry.visibleSessionIds(record)],
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }
@@ -96,6 +97,13 @@ export class WorkspaceFeed {
   }
 
   private changed(change: DomainChanged): void {
+    const metadataDomain = this.ctx.workspaceRegistry.sessionMetadataDomain
+    if (metadataDomain !== undefined && change.domain === metadataDomain) {
+      if (change.table !== '' || change.operation !== 'put') return
+      const state = workspaceSessionMetadataState.parse(change.value)
+      if (state.pendingMutation === undefined) this.sessionMetadataChanged(state)
+      return
+    }
     if (change.domain !== 'workspace') return
     if (change.table === '') {
       if (change.operation !== 'put') return
@@ -113,16 +121,10 @@ export class WorkspaceFeed {
       }
       this.order = nextOrder
       if (orderChanged) this.publish({ type: 'order', workspaceIds: [...state.workspaceIds] })
-      const nextArchived = state.archivedSessionIds.map(String)
-      if (!sameStrings(this.archived, nextArchived)) {
-        this.archived = nextArchived
-        this.publish({ type: 'archived', archivedSessionIds: [...state.archivedSessionIds] })
-      }
-      const nextPinned = state.pinnedSessionIds.map(String)
-      if (!sameStrings(this.pinned, nextPinned)) {
-        this.pinned = nextPinned
-        this.publish({ type: 'pinned', pinnedSessionIds: [...state.pinnedSessionIds] })
-      }
+      this.sessionMetadataChanged(metadataDomain === undefined ? state : {
+        archivedSessionIds: this.ctx.workspaceRegistry.archivedSessionIds,
+        pinnedSessionIds: this.ctx.workspaceRegistry.pinnedSessionIds,
+      })
       return
     }
     if (change.table !== 'workspaces') return
@@ -134,8 +136,21 @@ export class WorkspaceFeed {
     if (!this.knownIds.has(change.key)) return
     this.publish({
       type: 'upsert',
-      workspace: changedWorkspaceView(change.key, change.value),
+      workspace: changedWorkspaceView(this.ctx, change.key, change.value),
     })
+  }
+
+  private sessionMetadataChanged(state: Pick<WorkspaceBaseline, 'archivedSessionIds' | 'pinnedSessionIds'>): void {
+    const nextArchived = state.archivedSessionIds.map(String)
+    if (!sameStrings(this.archived, nextArchived)) {
+      this.archived = nextArchived
+      this.publish({ type: 'archived', archivedSessionIds: [...state.archivedSessionIds] })
+    }
+    const nextPinned = state.pinnedSessionIds.map(String)
+    if (!sameStrings(this.pinned, nextPinned)) {
+      this.pinned = nextPinned
+      this.publish({ type: 'pinned', pinnedSessionIds: [...state.pinnedSessionIds] })
+    }
   }
 
   private publish(frame: Exclude<WorkspaceFollowFrame, { readonly type: 'baseline' }>): void {

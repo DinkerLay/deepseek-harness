@@ -90,6 +90,14 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-api-workspace-controller",
+      "path": "packages/api/workspace-controller",
+      "purpose": "Stream the selected Session metadata domain and header-valid Workspace membership",
+      "source": [
+        "src/feed.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-api-workspace-files",
       "path": "packages/api/workspace-files",
       "purpose": "Resolve the recorded execution directory for Session-scoped file access",
@@ -148,9 +156,11 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-conversation",
       "path": "packages/client/ui-conversation",
-      "purpose": "Effect-owned decorators for native per-Session view builders",
+      "purpose": "Effect-owned native view decorators and UI event-source adapters on canonical Session bindings",
       "source": [
-        "src/client/conversation/view-registry.ts"
+        "src/client/conversation/assembly.ts",
+        "src/client/conversation/view-registry.ts",
+        "src/client/index.ts"
       ]
     },
     {
@@ -159,6 +169,14 @@
       "purpose": "Explicit caller-owned Markdown file-link navigation",
       "source": [
         "src/markdown/render.tsx"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-ui-subagent",
+      "path": "packages/client/ui-subagent",
+      "purpose": "Declare nested Sidebar resource dependencies and expose native resource and Slot types through the public Client entry",
+      "source": [
+        "src/client/index.ts"
       ]
     },
     {
@@ -506,9 +524,11 @@
     {
       "name": "@deepseek-ai/dsh-workspace",
       "path": "packages/workspace/workspace",
-      "purpose": "Remove deleted Session workspace metadata",
+      "purpose": "Remove deleted Session bindings and isolate configurable archive/pin metadata while preserving shared Project inventory",
       "source": [
-        "src/index.ts"
+        "src/entity.ts",
+        "src/index.ts",
+        "src/spec.ts"
       ]
     },
     {
@@ -528,6 +548,7 @@
     "@deepseek-ai/dsh-api-gateway",
     "@deepseek-ai/dsh-api-session-controller",
     "@deepseek-ai/dsh-api-terminal-controller",
+    "@deepseek-ai/dsh-api-workspace-controller",
     "@deepseek-ai/dsh-api-workspace-files",
     "@deepseek-ai/dsh-client-connection",
     "@deepseek-ai/dsh-client-modules",
@@ -535,6 +556,7 @@
     "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
     "@deepseek-ai/dsh-client-ui-primitives",
+    "@deepseek-ai/dsh-client-ui-subagent",
     "@deepseek-ai/dsh-cordis-client-runner",
     "@deepseek-ai/dsh-file-reference-local",
     "@deepseek-ai/dsh-hooks-claude-code",

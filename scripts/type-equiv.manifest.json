@@ -2431,6 +2431,11 @@
       "doc": "docs/subsystems/subagent.md",
       "symbol": "SubagentMessageDelegation",
       "source": "packages/subagent/subagent/src/continuation-messages.ts"
+    },
+    {
+      "doc": "docs/subsystems/conversation.md",
+      "symbol": "ConversationEventSourceAdapter",
+      "source": "packages/client/ui-conversation/src/client/conversation/assembly.ts"
     }
   ]
 }

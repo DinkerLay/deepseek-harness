@@ -27,6 +27,16 @@ Chat 与 Trajectory 可以识别同一个持久 event family，但各自保留�
 
 shell 拥有 View 选择，并在 binding 创建、被选为 current 或 View roster 变化时，于渲染前解析已注册的偏好 View 或 Chat fallback。assembler 只接收解析后的 target id，不自行选择 Chat 或其他默认 target。第三方 View 使用相同的选择与激活操作。View Definition 可以提供 `toolCallFocus(callId)`；shell 仅为声明了此能力且可见的目标提供 Inspect，由目标将调用 id 映射为自己的焦点标识。
 
+<a id="ui-event-sources"></a>
+## UI 事件源
+
+`eventSourceAdapterVersion: 1` 允许由 Effect 管理的 `registerEventSourceAdapter(id, adapt)` 贡献方围绕规范 `SessionBinding` 调度只读 UI 事件窗口。适配器按注册顺序包装前一个来源。注册和移除会重新绑定既有读取器，不替换其可观测身份；截点保留原生内容及单调修订。无效适配器会回滚注册。绑定身份、传输、持久历史和模型可见执行仍归原生所属方。
+
+```ts type-equiv
+/** UI-only read scheduling over one canonical retained generation. */
+type ConversationEventSourceAdapter = (binding: SessionBinding, source: SessionEventSource) => SessionEventSource
+```
+
 <a id="group-definitions"></a>
 ## Group Definition
 

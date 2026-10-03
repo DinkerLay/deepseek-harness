@@ -82,3 +82,33 @@ export const workspaceDomainSpec = defineDomain({
   },
   tables: { workspaces: domainTable<WorkspaceId, WorkspaceRecord>(workspaceRecord) },
 })
+
+/** Registry fields shared by every Session metadata domain. */
+export const workspaceRegistryState = workspaceDomainState.omit({ archivedSessionIds: true, pinnedSessionIds: true })
+
+/** Recoverable Session-only metadata for an explicitly configured domain. */
+export const workspaceSessionMetadataState = z.object({
+  archivedSessionIds: z.array(sessionId),
+  pinnedSessionIds: z.array(sessionId),
+  pendingMutation: z.discriminatedUnion('operation', [
+    z.object({ operation: z.literal('set-registry'), registry: workspaceRegistryState,
+      archivedSessionIds: z.array(sessionId), pinnedSessionIds: z.array(sessionId) }),
+    z.object({ operation: z.literal('remove-session'), sessionId }),
+  ]).optional(),
+})
+
+/** Durable payload of the optional Session metadata domain. */
+export type WorkspaceSessionMetadataState = z.infer<typeof workspaceSessionMetadataState>
+
+/** Session metadata layout; deployments select its physical unit name. */
+const sessionMetadataSpec = defineDomain({ name: 'workspace_session_metadata', version: 0,
+  global: { schema: workspaceSessionMetadataState, initial: { archivedSessionIds: [], pinnedSessionIds: [] } }, tables: {} })
+
+/**
+ * Select a separate metadata unit without changing shared Workspace records.
+ * @param name - Validated deployment-selected unit name.
+ * @returns the version-zero metadata domain layout with that physical identity.
+ */
+export function workspaceSessionMetadataSpec(name: string): typeof sessionMetadataSpec {
+  return { ...sessionMetadataSpec, name }
+}

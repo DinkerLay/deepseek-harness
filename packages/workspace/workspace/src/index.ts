@@ -8,6 +8,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import { UNIT_NAME_RE } from '@deepseek-ai/dsh-storage'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
@@ -16,15 +18,24 @@ import type { WorkspaceEntityHost } from './entity.ts'
 
 export { WorkspaceMoveInvalidError } from './entity.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath, realpathNormalize } from './paths.ts'
-import { workspaceDomainSpec } from './spec.ts'
-import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+import { workspaceDomainSpec, workspaceSessionMetadataSpec } from './spec.ts'
+import type { WorkspaceDomainState, WorkspaceRecord, WorkspaceSessionMetadataState } from './spec.ts'
 import type { SessionActivity, Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
 
 export type {
   SessionActivity, SessionActivityItem, SessionActivityKind, SessionActivityKindMap, Workspace,
 } from './types.ts'
-export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
-export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+export { workspaceDomainState, workspaceRecord, workspaceDomainSpec, workspaceSessionMetadataState } from './spec.ts'
+export type { WorkspaceDomainState, WorkspaceRecord, WorkspaceSessionMetadataState } from './spec.ts'
+
+/** Optional separation of Session archive/pin state from shared Project inventory. */
+export interface Config {
+  /** Safe storage unit name distinct from `workspace`; omission retains the shared native domain. */
+  sessionMetadataDomain?: string
+}
+
+/** Deployment configuration for selecting Session-only metadata. */
+export const Config: z<Config> = z.object({ sessionMetadataDomain: z.string().pattern(UNIT_NAME_RE) })
 export { realpathNormalize } from './paths.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
@@ -169,10 +180,19 @@ const compareHeaders = (left: SessionHeader, right: SessionHeader): number =>
  */
 export class WorkspaceRegistry extends Service {
   static inject = ['storageDomain', 'sessionPersistence']
+  static Config = Config
+
+  /** Public support for separately selecting archive/pin metadata without replacing Project inventory. */
+  // oxlint-disable-next-line typescript/prefer-as-const -- Public Typert service properties require an explicit type annotation.
+  readonly sessionMetadataDomainVersion: 1 = 1
+
+  /** Effective Session metadata unit, or undefined for the ordinary shared domain. */
+  get sessionMetadataDomain(): string | undefined { return this.config.sessionMetadataDomain }
 
   private table?: KvTable<WorkspaceId, WorkspaceRecord>
   private global?: DomainGlobal<WorkspaceDomainState>
   private state?: WorkspaceDomainState
+  private sessionMetadata?: DomainGlobal<WorkspaceSessionMetadataState>
   private readonly entities = new Map<WorkspaceId, WorkspaceEntity>()
   private readonly headers = new Map<SessionId, SessionHeader>()
   private readonly sessionPaths = new Map<SessionId, string>()
@@ -189,8 +209,10 @@ export class WorkspaceRegistry extends Service {
     },
   }
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'workspaceRegistry')
+    if (config.sessionMetadataDomain === workspaceDomainSpec.name)
+      throw new Error('workspace sessionMetadataDomain must differ from the shared workspace domain')
     ctx.on('session-persistence/deleted', header => this.removeDeletedSession(header.id))
   }
 
@@ -201,6 +223,15 @@ export class WorkspaceRegistry extends Service {
     this.table = domain.table('workspaces')
     this.global = domain.global
     this.state = domain.global.get()
+
+    if (this.config.sessionMetadataDomain !== undefined) {
+      const metadata = await this.ctx.storageDomain.open(workspaceSessionMetadataSpec(this.config.sessionMetadataDomain))
+      this.ctx.effect(() => () => metadata.close(), 'workspace.sessionMetadataClose')
+      this.sessionMetadata = metadata.global
+      const active = metadata.global.get()
+      this.state = { ...this.state, archivedSessionIds: active.archivedSessionIds, pinnedSessionIds: active.pinnedSessionIds }
+      await this.recoverSessionMetadataMutation()
+    }
 
     await this.recoverPendingMutation()
     this.validateStoredState(this.state)
@@ -345,6 +376,15 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
+   * Project a validated record's membership against the current canonical-header index.
+   * @param record - Stored record whose candidate account is being rendered.
+   * @returns candidates belonging to its directory in recorded order; no Session is opened.
+   */
+  visibleSessionIds(record: { readonly path: string; readonly sessionIds: readonly SessionId[] }): readonly SessionId[] {
+    return record.sessionIds.filter(id => this.sessionPaths.get(id) === record.path)
+  }
+
+  /**
    * Archive one session durably. The session must exist (live or in session
    * persistence); its workspace accounting — or lack of one — is irrelevant.
    * Without `stopActivity` the session must also be inactive: the
@@ -467,6 +507,11 @@ export class WorkspaceRegistry extends Service {
   /** Remove a committed persistence deletion from Workspace accounting and archive state. */
   private removeDeletedSession(sessionId: SessionId): Promise<void> {
     return this.enqueueOperation(async () => {
+      if (this.sessionMetadata !== undefined) {
+        await this.sessionMetadata.set({ ...this.sessionMetadata.get(), pendingMutation: { operation: 'remove-session', sessionId } })
+        await this.recoverSessionMetadataMutation()
+        return
+      }
       for (const entity of this.entities.values()) await entity.detachSession(sessionId)
       this.headers.delete(sessionId)
       this.sessionPaths.delete(sessionId)
@@ -897,14 +942,68 @@ export class WorkspaceRegistry extends Service {
   }
 
   private async setState(state: WorkspaceDomainState): Promise<void> {
-    await (this.global as DomainGlobal<WorkspaceDomainState>).set(state)
+    const shared = this.global as DomainGlobal<WorkspaceDomainState>
+    if (this.sessionMetadata === undefined) {
+      await shared.set(state)
+      this.state = state
+      return
+    }
+    const previous = shared.get()
+    const registry = (value: WorkspaceDomainState) => JSON.stringify([
+      value.initialized, value.defaultWorkspaceId ?? null, value.workspaceIds, value.pendingMutation ?? null,
+    ])
+    const active = this.sessionMetadata.get()
+    const metadataChanged = !sameSessionIds(active.archivedSessionIds, state.archivedSessionIds)
+      || !sameSessionIds(active.pinnedSessionIds, state.pinnedSessionIds)
+    const registryChanged = registry(previous) !== registry(state)
+    const nextMetadata = { archivedSessionIds: state.archivedSessionIds, pinnedSessionIds: state.pinnedSessionIds }
+    const nextRegistry = { ...state, archivedSessionIds: previous.archivedSessionIds, pinnedSessionIds: previous.pinnedSessionIds }
+    if (registryChanged && metadataChanged) {
+      const { archivedSessionIds: _archive, pinnedSessionIds: _pin, ...registry } = nextRegistry
+      await this.sessionMetadata.set({ ...active, pendingMutation: { operation: 'set-registry', registry, ...nextMetadata } })
+      await shared.set(nextRegistry)
+      await this.sessionMetadata.set(nextMetadata)
+    } else if (registryChanged) await shared.set(nextRegistry)
+    else if (metadataChanged) await this.sessionMetadata.set(nextMetadata)
     this.state = state
+  }
+
+  /** Finish an explicitly recorded cross-unit update before another operation can replace its intent. */
+  private async recoverSessionMetadataMutation(): Promise<void> {
+    const metadata = this.sessionMetadata
+    if (metadata === undefined) return
+    const active = metadata.get()
+    const pending = active.pendingMutation
+    if (pending === undefined) return
+    let next: WorkspaceSessionMetadataState
+    if (pending.operation === 'set-registry') {
+      const shared = this.global as DomainGlobal<WorkspaceDomainState>
+      const previous = shared.get()
+      await shared.set({ ...pending.registry,
+        archivedSessionIds: previous.archivedSessionIds, pinnedSessionIds: previous.pinnedSessionIds })
+      next = { archivedSessionIds: pending.archivedSessionIds, pinnedSessionIds: pending.pinnedSessionIds }
+    } else {
+      for (const [id, record] of this.requireTable().entries()) {
+        if (!record.sessionIds.includes(pending.sessionId)) continue
+        const entity = this.entities.get(id) ?? new WorkspaceEntity(this.host, id, record)
+        await entity.removeCommittedSessionBinding(pending.sessionId)
+      }
+      this.headers.delete(pending.sessionId)
+      this.sessionPaths.delete(pending.sessionId)
+      this.invalidSessionPaths.delete(pending.sessionId)
+      next = { archivedSessionIds: active.archivedSessionIds.filter(id => id !== pending.sessionId),
+        pinnedSessionIds: active.pinnedSessionIds.filter(id => id !== pending.sessionId) }
+    }
+    await metadata.set(next)
+    this.state = { ...(this.global as DomainGlobal<WorkspaceDomainState>).get(),
+      archivedSessionIds: next.archivedSessionIds, pinnedSessionIds: next.pinnedSessionIds }
   }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operationTail.then(async () => {
       // A committed delete may leave only its marker cleanup pending. Retry
       // recovery before another create/delete can overwrite that pending operation record.
+      await this.recoverSessionMetadataMutation()
       await this.recoverPendingMutation()
       return await operation()
     })

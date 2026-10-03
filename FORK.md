@@ -10,7 +10,13 @@ Official DSH owns native V4 history, Agent execution, continuation, tools, provi
 
 Public browser libraries load without activating their default plugins. Conversation builder decorators forward grouping and publication; Chat presentation can exclude replaced Turns from logical navigation and counts. Markdown local links retain caller-owned resolution. Administrative channels retain authenticated loopback authority. Model catalogs distinguish registered execution providers from providers with available models.
 
+Subagent Sidebar registration declares all nested resource dependencies and its public Client entry exposes the readonly resource type plus the associated Slot, protocol and retention-source declarations. Downstream presentation reuses native retention, restore and disposal.
+
 The PiAi bridge carries additive developer Tool changes through pi-ai transcript system messages. Route capability is explicit and bound to the prepared model snapshot; unsupported routes use the native DSH compatibility projection. Provider-specific protocol support requires real transport evidence before enablement.
+
+Workspace Project inventory stays shared while deployments may select a separate archive/pin metadata domain. The selected unit starts empty, preserves old shared Session arrays and records recoverable cross-unit changes. Native Workspace streams project the selected metadata and current header-valid membership.
+
+Conversation consumers can register an effect-owned UI event-source adapter around the canonical Session binding. Adapters preserve source identity and monotonic revision; they do not clone bindings, change native transport or alter durable/model-visible history.
 
 ## Native V4 scope
 

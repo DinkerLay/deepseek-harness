@@ -27,6 +27,8 @@ kind: "package-reference"
 <a id="conversation-assembly"></a>
 ## Conversation 组装
 
+`ctx.uiConversation.registerEventSourceAdapter(id, adapt)` 在保留原生 Session binding 身份的前提下调度只读 UI 事件窗口，`eventSourceAdapterVersion: 1` 标识这项扩展。适配器按注册顺序组合，只能延迟原生不可变窗口，保留内容和顺序。注册、移除及调用方卸载会重新绑定现有读者，保持 Conversation、snapshot 与 open-Turn observable 的身份；移除时追上原生窗口。较旧的延迟窗口不会让已观察的 revision 回退。Session 传输、持久化、执行和引用生命周期仍由原生服务拥有。
+
 `ctx.uiConversation.views.decorate(target, id, wrap)` 为每个独立 Session builder 注册由 effect 持有的装饰器，支持稍后注册的 target。注册顺序决定包装顺序；注册与移除重建活跃 target。装饰器保持 Definition 与检查路由，并转发 `changedTurns`、`groupInput()` 和 `publish()`，使分组快照先安装，再通知局部读取方。`builderDecoratorsVersion: 1` 标识此能力。
 
 `UiConversation.events` 是 event Definition 的唯一 registry，`UiConversation.views` 是 target snapshot builder 的唯一 registry。两者都拒绝重复 key、保持注册顺序、返回幂等 disposer，并在 contribution roster 变化时重建现有 binding。`UiConversation.binding(bindingOrSessionId)` 为当前 Session Controller binding 返回 identity 稳定的 Conversation binding，不会另开事件源。 View Definition 可以声明 `toolCallFocus`，将工具调用 id 转换为自身的焦点标识。仅当此目标拥有可见的 View 条目时，Conversation 才提供 Inspect 回调；Chat 直接使用回调，不选择目标。

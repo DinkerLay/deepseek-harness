@@ -4382,6 +4382,23 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-workflow-ptc -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-workspace -->
+<a id="deepseek-aidsh-workspace"></a>
+
+## `@deepseek-ai/dsh-workspace`
+
+- `inject`: `storageDomain` · `sessionPersistence`
+- `source`: [`packages/workspace/workspace/src/index.ts:32`](../packages/workspace/workspace/src/index.ts)
+
+```ts config-catalog
+/** Optional separation of Session archive/pin state from shared Project inventory. */
+export interface Config {
+  /** Safe storage unit name distinct from `workspace`; omission retains the shared native domain. */
+  sessionMetadataDomain?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-workspace -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-workspace-changes -->
 <a id="deepseek-aidsh-workspace-changes"></a>
 
@@ -4513,7 +4530,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
-| `@deepseek-ai/dsh-workspace` | `storageDomain` · `sessionPersistence` | [`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts) |
 <!-- END GENERATED config-catalog:no-config -->
 
 ## Seam packages (not directly loadable)

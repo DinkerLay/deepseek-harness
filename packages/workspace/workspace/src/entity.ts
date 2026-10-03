@@ -188,6 +188,16 @@ export class WorkspaceEntity implements Workspace {
   }
 
   /**
+   * Remove an identified durable deletion without pruning unrelated generation candidates.
+   * @param sessionId - Exact committed deletion identity.
+   */
+  async removeCommittedSessionBinding(sessionId: SessionId): Promise<void> {
+    await this.mutate(record => record.sessionIds.includes(sessionId)
+      ? { ...record, sessionIds: record.sessionIds.filter(id => id !== sessionId) }
+      : record, false)
+  }
+
+  /**
    * The single write path: run `fn` on the domain write chain via
    * `table.update`, stamping `updatedAt` and pruning candidates that no
    * longer pass the id-plus-canonical-cwd membership check, then swap the
@@ -199,14 +209,14 @@ export class WorkspaceEntity implements Workspace {
    * through the sentinel when pruning also finds nothing, so a no-op neither
    * rewrites the medium nor emits a change event.
    */
-  private async mutate(fn: (record: WorkspaceRecord) => WorkspaceRecord): Promise<void> {
+  private async mutate(fn: (record: WorkspaceRecord) => WorkspaceRecord, pruneCandidates = true): Promise<void> {
     let next: WorkspaceRecord
     try {
       next = await this.host.table().update(this.id, (current) => {
         const changed = fn(current)
-        const sessionIds = changed.sessionIds.filter(
+        const sessionIds = pruneCandidates ? changed.sessionIds.filter(
           id => this.host.sessionPath(id) === changed.path,
-        )
+        ) : changed.sessionIds
         if (changed === current && sessionIds.length === current.sessionIds.length) {
           throw unchangedSentinel
         }

@@ -29,6 +29,7 @@ export type {
 export type {
   SubagentReadOnlyComposerProps, SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
+export type { SubagentChatResource } from './sidebar-chat/index.tsx'
 
 /** Required services for subagent presentation and navigation. */
 export const inject = ['sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight']
@@ -54,7 +55,7 @@ function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatc
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-subagent: dictionaries')
-  ctx.inject(['resources', 'sidebarRightTabs'], (scope) => {
+  ctx.inject(['resources', 'sidebarRightTabs', 'sessions', 'slots'], (scope) => {
     registerSidebarChat(scope, ctx.locale.bind(NS))
   })
   const catalogActions = (_parentSessionId: SessionId): SubagentCatalogInjected => ({

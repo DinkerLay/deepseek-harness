@@ -250,7 +250,7 @@ function standaloneProps(
 }
 
 type ConversationTargetSources = {
-  [Target in Extract<keyof ConversationViewSnapshotMap, string>]:
+  [Target in keyof ConversationViewSnapshotMap]:
   ObservableSnapshot<ConversationViewSnapshotMap[Target] | undefined>
 }
 
@@ -281,7 +281,7 @@ async function bench(snapshot = historySnapshot(NODES)) {
     snapshot: conversationStore,
     openTurn: createSnapshotStore<number | undefined>(undefined),
     activate: () => {},
-    target: target => targetSources[target],
+    target: target => targetSources[target] ?? createSnapshotStore(undefined),
   }
   vi.spyOn(uiConversation, 'binding').mockReturnValue(binding)
   // The conversation entry's role: declare the ring, then seed the chat entry.

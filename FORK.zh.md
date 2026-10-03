@@ -10,7 +10,13 @@
 
 公开浏览器库可加载而不激活默认插件。Conversation builder decorator 转发分组与发布；Chat 展示可将被替换轮次排除在逻辑导航与统计之外。Markdown 本地链接保持调用方解析。管理通道保持经过身份验证的回环权限。模型目录区分已注册执行提供方和存在可用模型的提供方。
 
+Subagent Sidebar 注册声明全部嵌套资源依赖，公开 Client 入口暴露只读资源类型及相应 Slot、协议和保持来源声明。下游呈现复用原生保持、恢复和释放。
+
 PiAi bridge 通过 pi-ai transcript system 消息承载增量 developer Tool 变化。路由能力显式声明并绑定准备好的模型快照；不支持的路由使用原生 DSH 兼容投影。启用提供方专用协议支持前，必须取得真实传输证据。
+
+Workspace Project 清单保持共享，部署可选择独立归档/置顶元数据域。所选单元初始为空，保留旧共享 Session 数组，并记录可恢复跨单元变更。原生 Workspace 流投影所选元数据及当前通过 Header 校验的成员关系。
+
+Conversation 消费者可围绕规范 Session 绑定注册由 Effect 管理的 UI 事件源适配器。适配器保留来源身份和单调修订，不克隆绑定、不改变原生传输，也不改变持久或模型可见历史。
 
 ## 原生 V4 范围
 

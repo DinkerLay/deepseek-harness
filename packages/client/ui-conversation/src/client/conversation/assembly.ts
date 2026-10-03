@@ -58,6 +58,7 @@ class BoundConversation implements ConversationBinding {
   private revision = -1
   private frame: number | undefined
   private disposeFeed: () => void = () => {}
+  private feed: SessionEventSource | undefined
 
   constructor(
     feed: SessionEventSource,
@@ -66,10 +67,7 @@ class BoundConversation implements ConversationBinding {
     this.viewStore = assembler
     this.snapshot = createSnapshotStore(this.currentSnapshot())
     this.openTurn = createSnapshotStore(assembler.openTurn())
-    this.replace(feed.getSnapshot())
-    this.disposeFeed = feed.subscribe(() => {
-      this.accept(feed.getSnapshot())
-    })
+    this.setEventSource(feed)
   }
 
   target<Target extends Extract<keyof ConversationViewSnapshotMap, string>>(
@@ -98,6 +96,19 @@ class BoundConversation implements ConversationBinding {
 
   rebuild(): void { this.publish(this.assembler.rebuildRegistry()) }
 
+  /** Replace only the UI read source while keeping the native generation and observable faces. */
+  setEventSource(feed: SessionEventSource): void {
+    if (feed === this.feed) return
+    this.disposeFeed()
+    this.feed = feed
+    const current = feed.getSnapshot()
+    if (current.revision >= this.revision) {
+      this.cancelFrame()
+      this.replace(current)
+    }
+    this.disposeFeed = feed.subscribe(() => { this.accept(feed.getSnapshot()) })
+  }
+
   dispose(): void {
     this.cancelFrame()
     this.disposeFeed()
@@ -109,7 +120,7 @@ class BoundConversation implements ConversationBinding {
   }
 
   private accept(window: SessionEventWindow): void {
-    if (window.revision === this.revision) return
+    if (window.revision <= this.revision) return
     if (window.revision !== this.revision + 1 || window.change.kind === 'replace') {
       this.replace(window)
       return
@@ -182,6 +193,9 @@ interface BindingRecord {
   disposeScope: () => void
 }
 
+/** UI-only read scheduling over one canonical retained generation. */
+export type ConversationEventSourceAdapter = (binding: SessionBinding, source: SessionEventSource) => SessionEventSource
+
 /** Root service owning Conversation registries and per-Session bindings. */
 export class UiConversation extends Service {
   /** Registry of event matchers and target snapshot builders. */
@@ -192,6 +206,10 @@ export class UiConversation extends Service {
   readonly groups: ConversationGroupRegistry
   private readonly bindings = new WeakMapWithValues<SessionBinding, BindingRecord>()
   private readonly images: HistoricalImageCache
+  private readonly eventSourceAdapters = new Map<string, ConversationEventSourceAdapter>()
+  /** Public support for caller-owned UI event-window scheduling. */
+  // oxlint-disable-next-line typescript/prefer-as-const -- Public Typert service properties require an explicit type annotation.
+  readonly eventSourceAdapterVersion: 1 = 1
 
   /**
    * @param ctx - owning Client context.
@@ -244,7 +262,7 @@ export class UiConversation extends Service {
     const current = this.bindings.get(owner)
     if (current !== undefined) return current.binding
     const binding = new BoundConversation(
-      owner.eventSource,
+      this.adaptEventSource(owner),
       new ConversationNodeAssembler(this.events, this.views, this.groups),
     )
     const record: BindingRecord = { source: owner, binding, disposeScope: () => {} }
@@ -255,6 +273,45 @@ export class UiConversation extends Service {
     )
     record.disposeScope = () => { void disposeScope() }
     return binding
+  }
+
+  /**
+   * Register one read-only UI scheduler in registration order. The native Session binding,
+   * transport, persistent history and model-visible execution keep their original owners.
+   * Existing Conversation observables keep their identities when the adapter changes.
+   * Adapters may delay native immutable cuts; they must preserve their contents and ordering.
+   * @param id - stable contributor identity, unique while registered.
+   * @param adapt - wrap the preceding UI source for the exact canonical generation.
+   * @returns idempotent removal, also owned by the calling plugin effect.
+   */
+  registerEventSourceAdapter(id: string, adapt: ConversationEventSourceAdapter): () => void {
+    if (id.trim() === '') throw new Error('Conversation event-source adapter id must not be empty')
+    const remove = this.ctx.effect(() => {
+      if (this.eventSourceAdapters.has(id)) throw new Error(`Conversation event-source adapter "${id}" is already registered`)
+      this.eventSourceAdapters.set(id, adapt)
+      try { this.rebindEventSources() }
+      catch (error) {
+        this.eventSourceAdapters.delete(id)
+        this.rebindEventSources()
+        throw error
+      }
+      return () => {
+        if (this.eventSourceAdapters.get(id) !== adapt) return
+        this.eventSourceAdapters.delete(id)
+        this.rebindEventSources()
+      }
+    }, `ui-conversation event-source adapter ${JSON.stringify(id)}`)
+    return () => { void remove() }
+  }
+
+  private adaptEventSource(binding: SessionBinding): SessionEventSource {
+    let source = binding.eventSource
+    for (const adapt of this.eventSourceAdapters.values()) source = adapt(binding, source)
+    return source
+  }
+
+  private rebindEventSources(): void {
+    for (const record of this.bindings.values) record.binding.setEventSource(this.adaptEventSource(record.source))
   }
 
   /**

@@ -20,6 +20,10 @@ Browser library exports load without activating default plugins. Page reconcilia
 
 The PiAi bridge maps resolved historical Tool additions onto transcript system messages and offers native additive capability only for explicitly supported protocol/model flags. The prepared snapshot binds capability and dispatch. Unsupported routes keep the native compatibility projection; a remote gateway still requires actual protocol verification.
 
+The Subagent public Client entry exposes `SubagentChatResource` and reaches its resource protocol, retention-source and Sidebar Conversation declarations. Optional Sidebar setup names every service read by its nested registration. Isolated Slot owners remain isolated; resource closure still releases the native Session reference. Downstream consumers use these public types and native registration rather than copying a resource owner or maintaining duplicate declaration adapters.
+
+Workspace generations select only archive/pin metadata in a separate optional unit; shared Project inventory remains authoritative. Public effective-domain facts prevent consumers from silently accepting the old Session sets. Mixed updates and deletion cleanup use durable intents, and header-index projection prevents old candidate identities from leaking into current streams. Conversation event-source adapters decorate UI reads around the canonical binding rather than replacing Session transport or persistence. Both registrations remain effect-owned and dispose through native owners.
+
 ## Alternatives considered
 
 **Copy native services into a downstream package.** That would create a competing authority for execution, persistence or transport. Generic missing contracts belong on the current native owners.

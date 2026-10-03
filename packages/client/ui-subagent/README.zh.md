@@ -29,6 +29,8 @@ kind: "package-reference"
 
 本包注册 `dsh-resource://subagentchat/session/<child>?parent=<parent>&mode=<mode>` 资源与 builtin Sidebar tab 类型。资源直接根据地址保留 child 的 `SessionReference`，不刷新 parent 目录，并在 tab 记录关闭时释放 reference。tab 通过 `sidebar.chat.conversation` 渲染共享 `conversation.content` Factory，把局部 View 固定为 Chat，并省略主 Conversation 的 Header 与宽度控制。
 
+公开 Client 入口导出 `SubagentChatResource`，并使 `subagentchat` 资源协议、`sidebarChat` 保持来源和 `sidebar.chat.conversation` Slot 声明对消费者可见。可选 Sidebar 注册同时等待资源、Tab 类型、Session 和 Slot，保留调用方隔离的 Slot 所属方；消费者不重建资源生命周期。
+
 ### 浏览目录
 
 悬停触发器 150ms 后打开目录；指针离开触发器和目录后，经过 120ms 关闭。点击后代数量触发器会固定目录，直到点击外部，或在触发器或树内按 Escape 关闭。点击面包屑标题会导航至对应会话。

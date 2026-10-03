@@ -27,6 +27,16 @@ Each Session keeps a monotonic set of active targets. Creating or reading a targ
 
 The shell owns View selection and resolves the registered preferred View or Chat fallback before rendering when a binding is created or selected as current, and after View-roster changes. The assembler receives only the resolved target id and does not select Chat or another default target. A third-party View participates through the same selection and activation operations. A View Definition may expose `toolCallFocus(callId)`; the shell supplies Inspect only for a visible target that declares this capability, and the target maps the call id to its own focus identity.
 
+<a id="ui-event-sources"></a>
+## UI event sources
+
+`eventSourceAdapterVersion: 1` permits effect-owned `registerEventSourceAdapter(id, adapt)` contributors to schedule read-only UI event windows around a canonical `SessionBinding`. An adapter wraps the previous source in registration order. Registration and removal rebind existing readers without replacing their observable identities; cuts retain their native content and monotonic revision. An invalid adapter rolls back registration. Binding identity, transport, durable history and model-visible execution remain native.
+
+```ts type-equiv
+/** UI-only read scheduling over one canonical retained generation. */
+type ConversationEventSourceAdapter = (binding: SessionBinding, source: SessionEventSource) => SessionEventSource
+```
+
 <a id="group-definitions"></a>
 ## Group Definitions
 
