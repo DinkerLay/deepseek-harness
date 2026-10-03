@@ -27,7 +27,7 @@ kind: "package-reference"
 
 本包是每个委派组合都共享的约定。你通过把服务与一个或多个提供方后端以及面向模型的委派工具一起挂载来启用它；此后 agent 即可委派工作，服务会把每个请求路由到具名提供方。
 
-可信 Host 可以给 `deliverContinuableInput()` 提供预留的子会话 id 和稳定输入 id。它创建或恢复子会话，收到持久输入回执后才返回；重试不再插入另一份输入。恢复后的待处理输入使用驱动器可选的 `wakePending()` 能力，等待回执或退出时释放子会话锁。`synchronizeContinuablePermissions()` 显式让活跃的直接子会话对齐父级沙箱与权限选择，保留子会话的审批策略；普通委派不调用它。
+可信 Host 可以给 `deliverContinuableInput()` 提供预留的子会话 id 和稳定输入 id。它创建或恢复子会话，收到持久输入回执后才返回；重试不再插入另一份输入。恢复后的待处理输入使用驱动器可选的 `wakePending()` 能力，等待回执或退出时释放子会话锁。`synchronizeContinuablePermissions(parent, child, settingsSource?)` 显式让活跃的直接子会话对齐可选活跃设置来源的沙箱与权限选择，默认来源为父级。它要求真实亲子关系，保留子会话的审批策略、父子关系、深度和 Preset；普通委派不调用它。设置来源已释放时，它会在追加策略事实之前拒绝。
 
 ### 启用委派
 

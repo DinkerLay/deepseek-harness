@@ -3,7 +3,9 @@
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { AgentInput } from '@deepseek-ai/dsh-agent'
 import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionSeq, SessionId as toSessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
   TeamCompositionState,
@@ -22,6 +24,7 @@ import type {
   TeamTaskId,
   TeamTaskTransactionUpdate,
   TeamTaskView,
+  TeamLeadDeliveryReceipt,
 } from './types.ts'
 import { applyCompositionTransition, noteCompositionMemberChange, noteCompositionPermissionChange } from './composition.ts'
 import {
@@ -150,7 +153,27 @@ const teamMessageSnapshotSchema = z.object({
   targetId: sessionIdSchema,
   content: z.array(contentBlockSchema),
   contentParts: z.array(z.enum(['sender', 'fact'])).optional(),
+  senderTerm: positiveSafeInteger.optional(),
+  contentAuthors: z.array(z.object({ executionId: sessionIdSchema, term: positiveSafeInteger }).strict().nullable()).optional(),
+  transfer: z.object({ sourceExecutionId: sessionIdSchema, heldSeq: nonNegativeSafeInteger.transform(SessionSeq),
+    input: z.custom<AgentInput>((value) => {
+      if (value === null || typeof value !== 'object' || !('message' in value)) return false
+      const item = value as Record<string, unknown>
+      const message = item.message
+      if (message === null || typeof message !== 'object') return false
+      const data = message as Record<string, unknown>
+      const source = data.source
+      return typeof data.id === 'string' && data.id.length > 0 && data.role === 'user'
+        && Array.isArray(data.content) && z.array(contentBlockSchema).safeParse(data.content).success
+        && source !== null && typeof source === 'object' && 'kind' in source && typeof source.kind === 'string'
+        && (item.target === 'next-step' || item.target === 'next-turn') && typeof item.wakeup === 'boolean'
+        && (item.requestedTarget === undefined || item.requestedTarget === 'next-step' || item.requestedTarget === 'next-turn')
+    }),
+  }).strict().optional(),
 }).strict() as z.ZodType<TeamMessageSnapshot>
+
+const ordinaryTeamMessageSnapshotSchema = teamMessageSnapshotSchema.refine(message => message.transfer === undefined,
+  'source input custody requires the native input-queued event')
 
 const teamEventSelectorSchema = z.object({
   version: nonNegativeSafeInteger,
@@ -184,7 +207,7 @@ const teamTaskTransactionEventSchema = z.object({
   teamId: teamIdSchema,
   updates: z.array(teamTaskTransactionUpdateSchema).min(1),
   extension: z.object({ id: z.string().min(1), dataJson: z.string() }).strict(),
-  notices: z.array(teamMessageSnapshotSchema).optional(),
+  notices: z.array(ordinaryTeamMessageSnapshotSchema).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/task/transaction']>
 
 const teamLeadTransactionEventSchema = z.object({
@@ -192,21 +215,21 @@ const teamLeadTransactionEventSchema = z.object({
   binding: teamLeadBindingSchema,
   extension: z.object({ id: z.string().min(1).max(200), dataJson: z.string() }).strict(),
   releases: z.array(teamTaskTransactionUpdateSchema),
-  notices: z.array(teamMessageSnapshotSchema).optional(),
+  notices: z.array(ordinaryTeamMessageSnapshotSchema).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/lead/transaction']>
 
 const teamExtensionEventSchema = z.object({
   version: z.literal(1),
   teamId: teamIdSchema,
   extension: z.object({ id: z.string().min(1), recordId: z.string().min(1), dataJson: z.string() }).strict(),
-  notices: z.array(teamMessageSnapshotSchema).optional(),
+  notices: z.array(ordinaryTeamMessageSnapshotSchema).optional(),
   affectsComposition: z.literal(true).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/extension']>
 
 const teamMessageQueuedEventSchema = z.object({
   version: z.literal(2),
   teamId: teamIdSchema,
-  message: teamMessageSnapshotSchema,
+  message: ordinaryTeamMessageSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/queued']>
 
 const teamMessageDeliveredEventSchema = z.object({
@@ -215,6 +238,14 @@ const teamMessageDeliveredEventSchema = z.object({
   messageId: teamMessageIdSchema,
   targetId: sessionIdSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/delivered']>
+
+const teamInputQueuedEventSchema = z.object({ version: z.literal(1), teamId: teamIdSchema,
+  message: teamMessageSnapshotSchema.refine(message => message.transfer !== undefined),
+}).strict() as z.ZodType<SessionEventMap['team/message/input-queued']>
+const leadDeliveryReceiptSchema = z.object({ messageId: teamMessageIdSchema, targetId: sessionIdSchema,
+  executionId: sessionIdSchema, term: positiveSafeInteger }).strict()
+const teamLeadDeliveredEventSchema = leadDeliveryReceiptSchema.extend({ version: z.literal(1), teamId: teamIdSchema })
+  .strict() as z.ZodType<SessionEventMap['team/message/lead-delivered']>
 
 const teamMessageCancelledEventSchema = z.object({
   version: z.literal(3),
@@ -261,6 +292,8 @@ export interface TeamState {
   readonly extensionRecords: readonly { readonly writerId: string; readonly recordId: string; readonly dataJson: string }[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
+  /** Recipient metadata for the same terminal delivered index, never another acknowledgement set. */
+  readonly leadDeliveries?: readonly TeamLeadDeliveryReceipt[]
   readonly cancelled: readonly TeamMessageCancellation[]
   readonly nextTaskNumber: number
 }
@@ -309,6 +342,7 @@ const teamProjectionEntrySchema = z.object({
   }).strict()).default([]),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
+  leadDeliveries: z.array(leadDeliveryReceiptSchema).optional(),
   cancelled: z.array(z.object({
     messageId: teamMessageIdSchema,
     targetId: sessionIdSchema,
@@ -329,6 +363,8 @@ export type TeamEventType =
   | 'team/task/transaction'
   | 'team/extension'
   | 'team/message/queued'
+  | 'team/message/input-queued'
+  | 'team/message/lead-delivered'
   | 'team/message/delivered'
   | 'team/message/cancelled'
 
@@ -350,6 +386,8 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/task/transaction'
     || event.type === 'team/extension'
     || event.type === 'team/message/queued'
+    || event.type === 'team/message/input-queued'
+    || event.type === 'team/message/lead-delivered'
     || event.type === 'team/message/delivered'
     || event.type === 'team/message/cancelled'
 }
@@ -384,6 +422,10 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamExtensionEventSchema, event.data) }
     case 'team/message/queued':
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
+    case 'team/message/input-queued':
+      return { ...event, data: parsePersisted(event.type, teamInputQueuedEventSchema, event.data) }
+    case 'team/message/lead-delivered':
+      return { ...event, data: parsePersisted(event.type, teamLeadDeliveredEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
     case 'team/message/cancelled':
@@ -402,7 +444,8 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
     if (selector.teamId !== state.id) return state
     const expectedVersion = event.type === 'team/lead/transaction' || event.type === 'team/mode' || event.type === 'team/composition'
       || event.type === 'team/task/transaction'
-      || event.type === 'team/extension' ? 1
+      || event.type === 'team/extension' || event.type === 'team/message/input-queued'
+      || event.type === 'team/message/lead-delivered' ? 1
       : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
@@ -566,8 +609,11 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         ...composition === undefined ? {} : { composition },
         messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
-    case 'team/message/queued': {
+    case 'team/message/queued':
+    case 'team/message/input-queued': {
       const message = event.data.message
+      if (event.type === 'team/message/input-queued' && (state.mode === undefined || message.targetId !== toSessionId(state.id)
+        || message.content.length > 0)) throw new Error('input transfer requires its controlled logical Lead target')
       if (state.messages.some(candidate => candidate.id === message.id)) {
         throw new Error(`team message "${message.id}" was queued twice`)
       }
@@ -577,11 +623,29 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       const queued = state.messages.find(message => message.id === event.data.messageId)
       if (queued === undefined) throw new Error(`team message "${event.data.messageId}" was delivered before queueing`)
       if (queued.targetId !== event.data.targetId) throw new Error(`team message "${event.data.messageId}" target changed`)
+      if (queued.transfer !== undefined) throw new Error('input transfer requires one Lead delivery receipt')
       if (state.delivered.includes(event.data.messageId)) throw new Error(`team message "${event.data.messageId}" was delivered twice`)
       if (state.cancelled.some(item => item.messageId === event.data.messageId)) {
         throw new Error(`team message "${event.data.messageId}" was cancelled before delivery`)
       }
       return { ...state, delivered: [...state.delivered, event.data.messageId] }
+    }
+    case 'team/message/lead-delivered': {
+      const { messageId, targetId, executionId, term } = event.data
+      const queued = state.messages.find(message => message.id === messageId)
+      if (state.mode === undefined || queued === undefined
+        || queued.targetId !== toSessionId(state.id) || targetId !== toSessionId(state.id)) {
+        throw new Error('Lead receipt requires a queued controlled logical Lead item')
+      }
+      const initial = executionId === toSessionId(state.id) && term === 1
+      if (!initial && !state.leadHistory?.some(binding => binding.executionId === executionId && binding.term === term)) {
+        throw new Error('Lead receipt execution and term never held this seat')
+      }
+      if (state.delivered.includes(messageId) || state.cancelled.some(item => item.messageId === messageId)) {
+        throw new Error('Lead mailbox item was already settled')
+      }
+      return { ...state, delivered: [...state.delivered, messageId],
+        leadDeliveries: [...state.leadDeliveries ?? [], { messageId, targetId, executionId, term }] }
     }
     case 'team/message/cancelled': {
       const { targetId, messageIds, reason } = event.data
@@ -592,6 +656,7 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         seen.add(messageId)
         const queued = state.messages.find(message => message.id === messageId)
         if (queued === undefined) throw new Error(`team message "${messageId}" was cancelled before queueing`)
+        if (queued.transfer !== undefined) throw new Error('source input custody cannot be cancelled as Team mail')
         if (queued.targetId !== targetId) throw new Error(`team message "${messageId}" target changed`)
         if (state.delivered.includes(messageId) || state.cancelled.some(item => item.messageId === messageId)) {
           throw new Error(`team message "${messageId}" was already settled`)
@@ -717,7 +782,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 17,
+  stateVersion: 18,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

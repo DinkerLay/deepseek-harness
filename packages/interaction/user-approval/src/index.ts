@@ -142,6 +142,13 @@ export interface ApprovalAnswererRoute {
   readonly taskId?: string
   /** Optional provider-owned lookup of the exact operation in the origin's log. */
   readonly operation?: ApprovalRequestEvent['originOperation']
+  /**
+   * Revalidate the ownership and readiness captured by this route resolution.
+   * The service checks it during lookup and immediately before recording a grant.
+   * Policy changes alone must not invalidate an already-presented question.
+   * @returns Whether this captured route still owns the decision; false or a thrown error rejects a grant.
+   */
+  isValid?(): boolean
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
@@ -239,6 +246,8 @@ export class ApprovalService extends Service {
    * violate the pair. Session contains post-commit observer failures, so an
    * authoritative append cannot reject the request or suppress its matching
    * audit event.
+   * A routed grant is accepted only while its captured route remains valid;
+   * a false or throwing validity check records `rejected` instead.
    * @param req - the pending decision (agent, tool identity, reason, signal).
    * @returns the closed outcome; `'allowed-once'` is the only grant.
    * @throws when no turn is open or either audit event fails before the session
@@ -260,7 +269,9 @@ export class ApprovalService extends Service {
       ...req.callId !== undefined ? { callId: req.callId } : {},
       ...req.reason !== undefined ? { reason: req.reason } : {},
     })
-    const outcome = await this.decide(req, id)
+    const decision = await this.decide(req, id)
+    const outcome = decision.outcome === 'allowed-once' && decision.route !== undefined
+      && !this.validRoute(decision.route) ? 'rejected' : decision.outcome
     session.append('approval/decided', { id, outcome })
     return outcome
   }
@@ -342,8 +353,13 @@ export class ApprovalService extends Service {
       if (target === undefined || target.agent === agent) return undefined
       const agents = this.ctx.get('agents')
       if (agents !== undefined && agents.get(target.agent.id) !== target.agent) return undefined
+      if (!this.validRoute(target)) return undefined
       return { target, signal: route.controller.signal }
     } catch { return undefined }
+  }
+
+  private validRoute(target: ApprovalAnswererRoute): boolean {
+    try { return target.isValid?.() ?? true } catch (_error: unknown) { return false }
   }
 
   /**
@@ -363,24 +379,28 @@ export class ApprovalService extends Service {
   /**
    * Dispatch the waterfall, contained and raced against the request signal.
    * @param req - the borrowed public request.
-   * @param session - the request agent's session used for policy lookup.
-   * @returns the normalized closed outcome.
+   * @param id - original audit identity forwarded to a routed answerer.
+   * @returns the normalized outcome and captured route for the final grant check.
    */
-  private async decide(req: ApprovalRequest, id: ApprovalRequestId): Promise<ApprovalOutcome> {
+  private async decide(req: ApprovalRequest, id: ApprovalRequestId): Promise<{
+    outcome: ApprovalOutcome
+    route?: ApprovalAnswererRoute
+  }> {
     const binding = this.routeOf(req.agent)
     const resolved = binding === undefined ? undefined : this.resolveRoute(req.agent, req)
     const routed = resolved === undefined ? undefined : { ...resolved,
       signal: AbortSignal.any([resolved.signal, ...req.signal === undefined ? [] : [req.signal]]) }
     const signal = routed?.signal ?? req.signal
-    if (signal?.aborted) return 'cancelled'
+    const decision = (outcome: ApprovalOutcome) => ({ outcome, ...routed === undefined ? {} : { route: routed.target } })
+    if (signal?.aborted) return decision('cancelled')
     // The 'never' policy is decided HERE, before any dispatch: a listener
     // registered with `prepend: true` after this service mounts would sit
     // ahead of any gate LISTENER, so a listener-shaped gate cannot keep the
     // documented promise that 'never' rejects deterministically regardless
     // of registration order — only the service's own request path can.
-    if (binding !== undefined && routed === undefined) return 'rejected'
+    if (binding !== undefined && routed === undefined) return decision('rejected')
     const answerer = routed?.target.agent ?? req.agent
-    if (this.ownPolicy(answerer.session) === 'never') return 'rejected'
+    if (this.ownPolicy(answerer.session) === 'never') return decision('rejected')
     const operation = routed?.target.operation
     const forwarded: ApprovalRequest = routed === undefined ? req : {
       ...req, agent: answerer, originSessionId: req.agent.id, approvalRequestId: id,
@@ -408,8 +428,8 @@ export class ApprovalService extends Service {
       // tool call open — the seam contains its callbacks.
       () => 'unavailable',
     )
-    if (signal === undefined) return answer
-    return await new Promise<ApprovalOutcome>((resolve) => {
+    if (signal === undefined) return decision(await answer)
+    return decision(await new Promise<ApprovalOutcome>((resolve) => {
       const onAbort = () => {
         signal.removeEventListener('abort', onAbort)
         resolve('cancelled')
@@ -421,7 +441,7 @@ export class ApprovalService extends Service {
         // the late answer is discarded by construction.
         resolve(outcome)
       })
-    })
+    }))
   }
 }
 

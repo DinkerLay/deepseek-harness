@@ -408,6 +408,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'an owner-scoped creation and cold-activation capability; no seat authority is granted.',
       },
       {
+        signature: 'leadContext(agent: Agent): import(\'./types.ts\').TeamLeadContext',
+        description: 'Read the stable Team host and committed execution independently of operation authority.',
+        parameters: [{ name: 'agent', description: 'exact live Team member, dormant host or marked execution.' }],
+        returns: 'the current seat, optional live execution, and execution readiness.',
+      },
+      {
+        signature: 'isLeadAuthor(agent: Agent, executionId: import(\'@deepseek-ai/dsh-session\').SessionId, term?: number): boolean',
+        description: 'Verify recorded current or historical Lead authorship without granting current authority.',
+        parameters: [{ name: 'agent', description: 'exact live Team reader.' }, { name: 'executionId', description: 'actual recorded author.' }, { name: 'term', description: 'recorded author term, or omitted to infer the anchor\'s implicit initial seat.' }],
+        returns: 'whether the native seat history validates that author.',
+      },
+      {
         signature: 'leadSeat(agent: Agent): import(\'./lead-seat.ts\').TeamLeadSeat',
         description: 'Read the stable seat through an exact live Team caller, including its dormant host.',
         parameters: [{ name: 'agent', description: 'exact live anchor, member or current execution.' }],
@@ -541,7 +553,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async request(req: ApprovalRequest): Promise<ApprovalOutcome>',
-        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event.',
+        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event. A routed grant is accepted only while its captured route remains valid; a false or throwing validity check records `rejected` instead.',
         parameters: [{ name: 'req', description: 'the pending decision (agent, tool identity, reason, signal).' }],
         returns: 'the closed outcome; `\'allowed-once\'` is the only grant.',
         throws: ['when no turn is open or either audit event fails before the session append commit point.'],
@@ -3109,9 +3121,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the child and durably recorded input identities.',
       },
       {
-        signature: 'synchronizeContinuablePermissions(parent: Agent, child: Agent): void',
-        description: 'Align a live direct child\'s sandbox and permission selection with its parent. Approval remains child-owned; unchanged values append no events.',
-        parameters: [{ name: 'parent', description: 'exact live direct parent supplying current permission state.' }, { name: 'child', description: 'exact live child initialized before its next operation.' }],
+        signature: 'synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void',
+        description: 'Align a live direct child\'s sandbox and permission selection with a live settings source. Approval remains child-owned; unchanged values append no events. The authorized parent and durable/runtime lineage remain unchanged.',
+        parameters: [{ name: 'parent', description: 'exact live direct parent authorizing the synchronization.' }, { name: 'child', description: 'exact live child initialized before its next operation.' }, { name: 'settingsSource', description: 'exact live settings owner; omission uses the direct parent.' }],
       },
       {
         signature: 'registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void',
@@ -4803,7 +4815,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ApprovalAnswererRoute',
-    declaration: 'export interface ApprovalAnswererRoute {\n    readonly agent: Agent;\n    readonly displaySubject: string;\n    readonly taskId?: string;\n    readonly operation?: ApprovalRequestEvent[\'originOperation\'];\n}',
+    declaration: 'export interface ApprovalAnswererRoute {\n    readonly agent: Agent;\n    readonly displaySubject: string;\n    readonly taskId?: string;\n    readonly operation?: ApprovalRequestEvent[\'originOperation\'];\n    isValid?(): boolean;\n}',
   },
   {
     name: 'ApprovalAnswererRouteId',
@@ -5907,11 +5919,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LeadExecutionHandle',
-    declaration: 'export interface LeadExecutionHandle {\n    prepareAnchor(anchor: Agent): Promise<void>;\n    capture(agent: Agent): Promise<readonly AgentInput[]>;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    create(anchor: Agent, request: CreateLeadExecutionRequest): Promise<AgentHandle>;\n    prepareActivation(observation: SessionObservation): Promise<LeadActivationPreparation | undefined>;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface LeadExecutionHandle {\n    prepareAnchor(anchor: Agent): Promise<void>;\n    capture(agent: Agent): Promise<readonly AgentInput[]>;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    queueHeld(source: Agent): Promise<readonly TeamMessageId[]>;\n    preloadLeadMail(anchor: Agent, expectedSeat: Pick<TeamLeadSeat, \'executionId\' | \'term\'>): Promise<readonly TeamLeadDeliveryReceipt[]>;\n    create(anchor: Agent, request: CreateLeadExecutionRequest): Promise<AgentHandle>;\n    prepareActivation(observation: SessionObservation): Promise<LeadActivationPreparation | undefined>;\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'LeadExecutionProvider',
-    declaration: 'export interface LeadExecutionProvider {\n    resolveAnchor(id: SessionId, signal?: AbortSignal): Promise<Agent>;\n    isReady?(anchor: Agent): boolean;\n}',
+    declaration: 'export interface LeadExecutionProvider {\n    resolveAnchor(id: SessionId, signal?: AbortSignal): Promise<Agent>;\n    resolveExecution?(id: SessionId, signal?: AbortSignal): Promise<Agent>;\n    isReady?(anchor: Agent): boolean;\n}',
   },
   {
     name: 'LlmAdapter',
@@ -7647,7 +7659,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    inter /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remot /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
@@ -7798,12 +7810,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamCompositionTransition = {\n    readonly kind: \'begin\';\n    readonly applicationId: string;\n    readonly profileId: string;\n    readonly profileVersion: number;\n    readonly targetJson: string;\n    readonly retiringMemberIds: readonly SessionId[];\n    readonly previousPhase: \'dynamic\' | \'fixed\';\n} | {\n    readonly kind: \'target\';\n    readonly applicationId: string;\n    readonly targetJson: string;\n} | {\n    readonly kind: \'diagnostic\';\n    readonly applicationId: string;\n    readonly message: string;\n} | {\n    readonly kind: \'finish\';\n    readonly applicationId: string;\n} | {\n    readonly kind: \'stop\';\n    readonly applicationId: string;\n} | {\n    readonly kind: \'lock\';\n} | {\n    readonly kind: \'unlock\';\n};',
   },
   {
+    name: 'TeamContentAuthor',
+    declaration: 'export interface TeamContentAuthor {\n    readonly executionId: SessionId;\n    readonly term: number;\n}',
+  },
+  {
     name: 'TeamControlledMode',
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n    readonly memberToolLimit?: TeamMemberToolLimit | undefined;\n}',
   },
   {
     name: 'TeamExtensionNotice',
-    declaration: 'export interface TeamExtensionNotice extends TeamMessageSnapshot {\n    readonly ordinaryMessageLimit?: true;\n}',
+    declaration: 'export interface TeamExtensionNotice extends TeamPeerMessageSnapshot {\n    readonly ordinaryMessageLimit?: true;\n}',
   },
   {
     name: 'TeamExtensionRecord',
@@ -7838,6 +7854,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeamInputTransfer',
+    declaration: 'export interface TeamInputTransfer {\n    readonly sourceExecutionId: SessionId;\n    readonly heldSeq: SessionSeq;\n    readonly input: AgentInput;\n}',
+  },
+  {
+    name: 'TeamLeadContext',
+    declaration: 'export interface TeamLeadContext {\n    readonly anchor: Agent;\n    readonly seat: TeamLeadSeat;\n    readonly execution?: Agent;\n    readonly ready: boolean;\n}',
+  },
+  {
+    name: 'TeamLeadDeliveryReceipt',
+    declaration: 'export interface TeamLeadDeliveryReceipt {\n    readonly messageId: TeamMessageId;\n    readonly targetId: SessionId;\n    readonly executionId: SessionId;\n    readonly term: number;\n}',
+  },
+  {
     name: 'TeamLeadSeat',
     declaration: 'export interface TeamLeadSeat {\n    readonly executionId: SessionId;\n    readonly term: number;\n    readonly presetId?: string;\n    readonly revision?: string;\n}',
   },
@@ -7867,7 +7895,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMessageSnapshot',
-    declaration: 'export interface TeamMessageSnapshot {\n    readonly id: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly targetId: SessionId;\n    readonly content: ContentBlock[];\n    readonly contentParts?: readonly (\'sender\' | \'fact\')[];\n}',
+    declaration: 'export interface TeamMessageSnapshot {\n    readonly id: TeamMessageId;\n    readonly senderId: SessionId;\n    readonly senderName: string;\n    readonly targetId: SessionId;\n    readonly content: ContentBlock[];\n    readonly contentParts?: readonly (\'sender\' | \'fact\')[];\n    readonly senderTerm?: number;\n    readonly contentAuthors?: readonly (TeamContentAuthor | null)[];\n    readonly transfer?: TeamInputTransfer;\n}',
+  },
+  {
+    name: 'TeamPeerMessageSnapshot',
+    declaration: 'export type TeamPeerMessageSnapshot = Omit<TeamMessageSnapshot, \'transfer\'>;',
   },
   {
     name: 'TeamPresetBinding',

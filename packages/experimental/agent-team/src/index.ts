@@ -154,6 +154,11 @@ export class TeamService extends Service {
       this.config.maxMessageBytes,
       this.config.messageRetryDelayMs,
       this.config.maxMessageRetries,
+      agent => this.leadContext(agent),
+      (anchor, signal) => this.leadExecutions.resolveCurrent(anchor, signal),
+      (anchor, id, signal) => this.leadExecutions.resolveSource(anchor, id, signal),
+      anchor => this.leadExecutions.isReady(anchor),
+      anchor => this.leadExecutions.isInputBound(anchor),
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
@@ -192,7 +197,13 @@ export class TeamService extends Service {
       return { action: 'send', subject: `Teammate ${member.name}` }
     }), 'agentTeams.settlementNoticePolicy()')
 
-    ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
+    ctx.on('session/event', (session, event) => {
+      this.mailbox.observeSessionEvent(session, event)
+      if (event.type === 'team/lead/transaction' || event.type === 'team/extension' && ctx.agents.isInputControlled(session)) {
+        const anchor = ctx.agents.get(session.id)
+        if (anchor !== undefined) this.scheduleRecovery(anchor)
+      }
+    })
     ctx.on('agent/created', async ({ agent, source }) => {
       await this.initializeControlledMode(agent, source)
       this.scheduleRecovery(agent)
@@ -230,7 +241,31 @@ export class TeamService extends Service {
    * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
    */
   installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle {
-    return this.leadExecutions.install(this.ctx, provider)
+    return this.leadExecutions.install(this.ctx, provider, {
+      bind: (input) => { this.mailbox.bindLeadInput(input) },
+      queueHeld: (source, input, signal) => this.mailbox.queueHeld(source, input, signal),
+      preloadLeadMail: (anchor, seat, input, signal) => this.mailbox.preloadLeadMail(anchor, seat, input, signal),
+    })
+  }
+
+  /** Read the stable Team host and committed execution independently of operation authority.
+   * @param agent - exact live Team member, dormant host or marked execution.
+   * @returns the current seat, optional live execution, and execution readiness.
+   */
+  leadContext(agent: Agent): import('./types.ts').TeamLeadContext {
+    const membership = this.roster.tryMembership(agent)
+    const anchor = membership?.root ?? this.leadExecutions.anchorForRead(agent)
+    return this.leadExecutions.context(anchor)
+  }
+
+  /** Verify recorded current or historical Lead authorship without granting current authority.
+   * @param agent - exact live Team reader.
+   * @param executionId - actual recorded author.
+   * @param term - recorded author term, or omitted to infer the anchor's implicit initial seat.
+   * @returns whether the native seat history validates that author.
+   */
+  isLeadAuthor(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId, term?: number): boolean {
+    return this.leadExecutions.isAuthor(this.leadContext(agent).anchor, executionId, term)
   }
 
   /** Read the stable seat through an exact live Team caller, including its dormant host.

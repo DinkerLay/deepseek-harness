@@ -10,7 +10,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 const contexts: Context[] = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
 
-async function setup() {
+async function setup(validity?: () => (() => boolean)) {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -24,6 +24,7 @@ async function setup() {
     const call = question?.callId === undefined ? undefined : origin.session.snapshotEvents().findLast(event =>
       event.type === 'tool/call' && event.data.callId === question.callId)
     return { agent: parent, displaySubject: 'worker', taskId: 'task-1',
+      ...validity === undefined ? {} : { isValid: validity() },
       ...call?.type !== 'tool/call' ? {} : { operation: { name: call.data.name, arguments: call.data.arguments } } }
   })
   ctx.approval.bindAnswererRoute(child, route)
@@ -40,6 +41,100 @@ function close(agent: Agent): void {
 }
 
 describe('routed approval', () => {
+  it.each(['false', 'throws'] as const)('rejects new requests and policy lookup when captured route validity is %s', async (kind) => {
+    const { ctx, child, callId } = await setup(() => () => {
+      if (kind === 'throws') throw new Error('route validity lookup failed')
+      return false
+    })
+    let asked = 0
+    ctx.on('approval/request', async () => { asked += 1; return 'allowed-once' })
+    expect(ctx.approval.effectivePolicy(child)).toBe('never')
+    expect(ctx.approval.answererOf(child)).toBeUndefined()
+    expect(await ctx.approval.request({ agent: child, toolName: 'bash', callId })).toBe('rejected')
+    expect(asked).toBe(0)
+    expect(child.session.snapshotEvents().filter(event => event.type === 'approval/decided')
+      .map(event => event.data.outcome)).toEqual(['rejected'])
+    close(child)
+  })
+
+  it.each(['term', 'frozen', 'throws'] as const)('rejects a late grant when the captured route becomes %s', async (change) => {
+    const state = { term: 1, ready: true, failed: false }
+    const { ctx, parent, child, callId } = await setup(() => {
+      const term = state.term
+      return () => {
+        if (state.failed) throw new Error('route validity lookup failed')
+        return state.ready && state.term === term
+      }
+    })
+    const entered = Promise.withResolvers<undefined>()
+    const answer = Promise.withResolvers<'allowed-once'>()
+    let requests = 0
+    ctx.on('approval/request', async (req) => {
+      requests += 1
+      expect(req.agent).toBe(parent)
+      entered.resolve(undefined)
+      return requests === 1 ? answer.promise : 'allowed-once'
+    })
+    const waiting = ctx.approval.request({ agent: child, toolName: 'bash', callId })
+    try {
+      await entered.promise
+      if (change === 'term') state.term += 1
+      else if (change === 'frozen') state.ready = false
+      else state.failed = true
+      answer.resolve('allowed-once')
+      expect(await waiting).toBe('rejected')
+      expect(child.session.snapshotEvents().filter(event => event.type === 'approval/decided')
+        .map(event => event.data.outcome)).toEqual(['rejected'])
+      state.ready = true
+      state.failed = false
+      expect(await ctx.approval.request({ agent: child, toolName: 'bash', callId })).toBe('allowed-once')
+      expect(requests).toBe(2)
+    } finally {
+      answer.resolve('allowed-once')
+      await waiting
+      close(child)
+    }
+  })
+
+  it('does not invalidate an already-presented question solely because the answerer changes permission policy', async () => {
+    const state = { term: 1, ready: true }
+    const { ctx, parent, child, callId } = await setup(() => {
+      const term = state.term
+      return () => state.ready && state.term === term
+    })
+    const entered = Promise.withResolvers<undefined>()
+    const answer = Promise.withResolvers<'allowed-once'>()
+    ctx.on('approval/request', async () => { entered.resolve(undefined); return answer.promise })
+    const waiting = ctx.approval.request({ agent: child, toolName: 'bash', callId })
+    try {
+      await entered.promise
+      setApprovalPolicy(parent.session, 'never')
+      expect(ctx.approval.answererOf(child)).toBe(parent)
+      expect(ctx.approval.effectivePolicy(child)).toBe('never')
+      answer.resolve('allowed-once')
+      expect(await waiting).toBe('allowed-once')
+      expect(await ctx.approval.request({ agent: child, toolName: 'bash', callId })).toBe('rejected')
+    } finally {
+      answer.resolve('allowed-once')
+      await waiting
+      close(child)
+    }
+  })
+
+  it('retains a late explicit rejection when route ownership was invalidated', async () => {
+    let valid = true
+    const { ctx, child, callId } = await setup(() => () => valid)
+    const entered = Promise.withResolvers<undefined>()
+    const answer = Promise.withResolvers<'rejected'>()
+    ctx.on('approval/request', async () => { entered.resolve(undefined); return answer.promise })
+    const waiting = ctx.approval.request({ agent: child, toolName: 'bash', callId })
+    await entered.promise
+    valid = false
+    answer.resolve('rejected')
+    expect(await waiting).toBe('rejected')
+    close(child)
+  })
+
   it('rejects duplicate or unavailable route registrations and preserves the original binding', async () => {
     const { ctx, parent, child, route } = await setup()
     expect(() => ctx.approval.registerAnswererRoute(route, () => ({ agent: parent, displaySubject: 'duplicate' })))

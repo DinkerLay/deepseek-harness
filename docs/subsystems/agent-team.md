@@ -68,7 +68,7 @@ interface TeamControlledMode {
 The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable. The Lead can cancel undelivered messages with a reason before retiring an unavailable member. The recovery mailbox is queued-minus-delivered-minus-cancelled.
 
 ```ts type-equiv
-/** One peer message retained until its target Session records it. */
+/** One mailbox item retained until its target Session records it. */
 interface TeamMessageSnapshot {
   readonly id: TeamMessageId
   readonly senderId: SessionId
@@ -77,6 +77,12 @@ interface TeamMessageSnapshot {
   readonly content: ContentBlock[]
   /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  /** Actual sender's server-validated Lead term; only the anchor's implicit initial seat can omit it. */
+  readonly senderTerm?: number
+  /** Per-block authority, independent of the sender who relays unchanged requirements. */
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
+  /** Present only for non-authorizing transfer of the original identified input. */
+  readonly transfer?: TeamInputTransfer
 }
 ```
 
@@ -89,7 +95,7 @@ interface TeamMessageCancellation {
 }
 ```
 
-Every message attempts Steer delivery. A running target receives it at the nearest step boundary; an inactive target starts a turn if loaded or cold-resumes otherwise. Scheduling is not stored in the durable record because callers cannot select another mode.
+Ordinary peer messages attempt Steer delivery: a running target receives one at its nearest step boundary, and an inactive target starts or cold-resumes. Native Lead transfers instead retain the original input id, source, effective/requested queue and wake intent. Their internal queue key also identifies the source-held capture sequence, so cancellation and a second seat change cannot consume an earlier receipt. The owning coordinator preloads without waking; its queue and actual execution/term receipt must both be durably confirmed before source cleanup. These items use the same mailbox order, not a second inbox or journal. Only the new input-queued event can contain `TeamInputTransfer`; ordinary peer and extension-notice types exclude it.
 
 The target Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. Folding that source across inbox and history is the target-side de-duplication key; the model-visible framing repeats the id and sender.
 
@@ -103,8 +109,12 @@ interface TeamMessageSource {
   readonly senderName: string
   /** Attribution aligned with the delivered blocks, including system framing. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  readonly senderTerm?: number
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
 }
 ```
+
+`TeamContentAuthor` records an actual execution id and its lawful term for an unchanged text block. Relaying an older Lead's requirement does not make the current sender its author. System framing, non-text blocks and reference facts carry null author entries; the product checks original Task-assignment records before treating an old requirement as an instruction. `TeamLeadContext` only reads the anchor, detached seat, optional live execution and readiness; it never grants operation authority or silently activates a cold execution.
 
 ## Shared task DAG
 
@@ -259,6 +269,20 @@ membership(agent: Agent): TeamMembership
  * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
  */
 installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
+
+/** Read the stable Team host and committed execution independently of operation authority.
+ * @param agent - exact live Team member, dormant host or marked execution.
+ * @returns the current seat, optional live execution, and execution readiness.
+ */
+leadContext(agent: Agent): import('./types.ts').TeamLeadContext
+
+/** Verify recorded current or historical Lead authorship without granting current authority.
+ * @param agent - exact live Team reader.
+ * @param executionId - actual recorded author.
+ * @param term - recorded author term, or omitted to infer the anchor's implicit initial seat.
+ * @returns whether the native seat history validates that author.
+ */
+isLeadAuthor(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId, term?: number): boolean
 
 /** Read the stable seat through an exact live Team caller, including its dormant host.
  * @param agent - exact live anchor, member or current execution.
@@ -416,7 +440,7 @@ interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'ina
 tryMembership(agent: Agent): TeamMembership | undefined
 ```
 
-Types: [Agent](core.md)
+Types: [Agent](core.md) · [SessionId](core.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 <!-- END GENERATED cordis-surface -->

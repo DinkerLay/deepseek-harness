@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { TeamExtensionNotice, TeamMessageSnapshot, TeamTaskTransactionUpdate } from './types.ts'
+import type { TeamExtensionNotice, TeamPeerMessageSnapshot, TeamTaskTransactionUpdate } from './types.ts'
 import { TeamId } from './types.ts'
 
 /** One committed Lead execution and its immutable composition. */
@@ -30,7 +30,7 @@ export interface TeamLeadTransaction {
   readonly binding: TeamLeadBinding
   readonly extension: { readonly id: string; readonly dataJson: string }
   readonly releases: readonly TeamTaskTransactionUpdate[]
-  readonly notices?: readonly TeamMessageSnapshot[]
+  readonly notices?: readonly TeamPeerMessageSnapshot[]
 }
 
 /** Authenticated coordinator plan; notices are framed by the native mailbox before writing. */

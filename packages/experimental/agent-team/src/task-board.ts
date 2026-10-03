@@ -482,10 +482,26 @@ export class TeamTaskBoard {
     const seen = new Set<string>()
     const sender = this.membershipOf(caller)
     for (const [index, notice] of notices.entries()) {
+      if ('transfer' in notice) throw new TeamError('Task notices cannot create source input custody', 'TEAM_INVALID_ARGUMENT')
       if (notice.senderId !== caller.id || notice.senderName !== sender.name
         || notice.targetId === caller.id && !(allowLeadSelf && caller.id === root.id)) {
         throw new TeamError(`Task notice "${notice.id}" has an invalid sender or target`, 'TEAM_INVALID_ARGUMENT')
       }
+      const term = sender.role === 'lead' ? sender.term ?? 1 : undefined
+      if (notice.senderTerm !== undefined && notice.senderTerm !== term) {
+        throw new TeamError('Task notice cannot choose its sender term', 'TEAM_INVALID_ARGUMENT')
+      }
+      const authors = notice.contentAuthors ?? notice.content.map((block, offset) =>
+        term !== undefined && block.type === 'text' && notice.contentParts?.[offset] === 'sender'
+          ? { executionId: caller.id, term } : null)
+      if (authors.length !== notice.content.length || authors.some((author, offset) => author !== null
+        && (notice.content[offset]?.type !== 'text'
+          || !(author.executionId === root.id && author.term === 1)
+            && !state.leadHistory?.some(binding => binding.executionId === author.executionId && binding.term === author.term)))) {
+        throw new TeamError('Task notice content author does not match a legitimate Lead term', 'TEAM_INVALID_ARGUMENT')
+      }
+      if (state.mode !== undefined) notices[index] = { ...notice,
+        ...term === undefined ? {} : { senderTerm: term }, contentAuthors: authors }
       if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
         throw new TeamError(`Task notice "${notice.id}" already exists`, 'TEAM_INVALID_ARGUMENT')
       }
@@ -497,7 +513,7 @@ export class TeamTaskBoard {
       const pending = state.messages.filter(message => message.targetId === notice.targetId
         && !state.delivered.includes(message.id)
         && !state.cancelled.some(item => item.messageId === message.id)).length
-        + notices.filter(candidate => candidate.targetId === notice.targetId && candidate !== notice).length
+        + notices.filter((candidate, candidateIndex) => candidate.targetId === notice.targetId && candidateIndex !== index).length
       if (pending >= this.maxPendingMessagesPerMember) {
         throw new TeamError('Task notice target has too many pending messages', 'TEAM_MAILBOX_FULL')
       }

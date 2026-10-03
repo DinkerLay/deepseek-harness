@@ -143,6 +143,8 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, service registration, recovery scheduling |
 | [`src/roster.ts`](src/roster.ts) | Team identity, membership resolution, provisioning, and roster teardown |
 | [`src/lead-execution.ts`](src/lead-execution.ts) | Host-only validation of an ordinary execution's immutable Lead identity |
+| [`src/lead-runtime.ts`](src/lead-runtime.ts) | Owned Lead preparation, readiness and cancellable cold activation |
+| [`src/lead-mail.ts`](src/lead-mail.ts) | Logical Lead delivery receipts and original-input custody in the existing mailbox |
 | [`src/composition.ts`](src/composition.ts) | User-managed lock and recoverable application transitions |
 | [`src/mailbox.ts`](src/mailbox.ts) | Durable queue, target-local dispatch, acknowledgement, and recovery |
 | [`src/task-board.ts`](src/task-board.ts) | Task CAS commands, DAG validation, and derived views |
@@ -161,6 +163,10 @@ Every unmarked ordinary runtime root is the implicit Lead of a Team whose `TeamI
 
 A Host coordinator can prepare ordinary, unseeded Lead executions without making them runtime children or roster members. Identity and optional input ownership are durable before publication. An execution has Lead authority only when its id, term and Preset revision match the stable Team seat and the coordinator permits readiness; the original anchor then has only a dormant host role. Candidates reject ordinary input, while frozen or superseded executions retain input without running. Cold preparation loads the anchor first and rejects a changed Preset revision before mounting. Without this optional provider, official composition and execution paths remain unchanged.
 
+`leadContext(agent)` reads the stable anchor, a detached current seat, the exact loaded execution if present, and readiness. It never loads an execution or grants collaboration authority. `isLeadAuthor(agent, executionId, term)` checks a current or historical native seat; omitting the term identifies only the original anchor's implicit first seat, without rewriting stored data. New Lead-authored records name their term explicitly.
+
+An optional owned `resolveExecution(id, signal)` restores a recorded current recipient or historical source without running its model. The runtime shares concurrent resolution, cancels it when registration closes, and rechecks the exact live identity and full Preset binding. Owned queue and preload operations also carry that registration cancellation through persisted reads and transaction waits, and recheck it before late mutations or wakeup. Missing resolution, changed declarations, invalid identities and cancellation leave queued work or source custody intact with a diagnostic; no default model or Preset is selected.
+
 Unconfigured members retain the `team/member` version 2 record. A member with a Preset, group, or Profile slot uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding, group, or slot id.
 
 ### Durable mailbox
@@ -170,6 +176,14 @@ Unconfigured members retain the `team/member` version 2 record. A member with a 
 Lead-authorized cancellation waits behind target-local dispatch and records the remaining message ids in one `team/message/cancelled` event. Recovery excludes cancelled ids; a delivered id cannot later be cancelled, and a cancelled id cannot be acknowledged as delivered.
 
 Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation.
+
+With native Lead input ownership, ordinary Lead mail targets the stable logical anchor but is admitted only to its ready current execution. `queueHeld(source)` captures pending input and queues it in the same `messages` sequence as ordinary Team mail. Its internal queue identity derives from source Session id, original message id and the persisted held-event sequence; a later capture has a new identity even when the user message id is unchanged. The optional transfer stores the complete original `AgentInput`, preserving source, effective and requested queue, content, and wake intent. Operation-bound question replies stay with their original execution and late replies to a superseded execution are rejected.
+
+`preloadLeadMail(anchor, expectedSeat)` consumes that same target order without waking. One `team/message/lead-delivered` receipt records the logical target and actual execution/term in the existing delivered index; ordinary official receipts remain unchanged. Target custody and root queue/receipt each require an explicit successful flush, including retry of an already present in-memory fact. Cross-execution source custody is released only after both confirm; restoring a cancelled preparation to its original execution preloads without releasing it. Recovery retries confirmed cleanup across all historical terms, quietly restoring an offline legitimate source when needed. A stale capture receipt cannot clear a newer held fact. Team message cancellation cannot discard transferred source input.
+
+Controlled messages may retain an actual sender term and per-content original Lead authors. Delivery adds null authors for its own framing; non-text and ordinary reference facts have no author. Explicit unchanged historical text authors remain separate from the immediate sender's `sender`/`fact` classification. A trusted writer must match such metadata to its original authoritative record, not infer authorship from a heading or grant authorship to a summary or approved member content.
+
+Only the native input owner creates transfer records through `team/message/input-queued`. Task extension notices and ordinary message events cannot attach transferred input or bypass the matching persisted source capture.
 
 ### Shared task board
 
@@ -185,11 +199,11 @@ The same handle's `commitRecord()` writes a `team/extension` event with an opaqu
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/composition`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/extension`, `team/message/queued`, `team/message/delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/mode`, `team/composition`, `team/member`, `team/member/configured`, `team/task`, `team/task/transaction`, `team/extension`, `team/message/queued`, `team/message/input-queued`, `team/message/delivered`, `team/message/lead-delivered`, and `team/message/cancelled` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 15 rebuilds checkpoints from earlier cache versions from the Session log, including composition and the extension-record identity index; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 18 rebuilds checkpoints from earlier cache versions from the Session log, including the Lead delivery receipt metadata; the Session format version is unchanged.
 
 ### Disposal
 

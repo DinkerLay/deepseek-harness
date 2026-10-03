@@ -2,7 +2,9 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { Agent, AgentInput } from '@deepseek-ai/dsh-agent/types'
+import type { TeamLeadSeat } from './lead-seat.ts'
 
 /** Identifies the implicit team rooted at one top-level Session. */
 export type TeamId = Branded<'TeamId'>
@@ -284,7 +286,42 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   }
 }
 
-/** One peer message retained until its target Session records it. */
+/** Read-only stable Team and current execution; this value grants no collaboration authority or activation. */
+export interface TeamLeadContext {
+  readonly anchor: Agent
+  /** Detached value of the committed current seat, independent of readiness. */
+  readonly seat: TeamLeadSeat
+  /** Exact loaded matching execution; omitted when cold or invalid, without invoking a resolver. */
+  readonly execution?: Agent
+  /** Whether the committed execution is loaded and its registered owner permits consuming input. */
+  readonly ready: boolean
+}
+
+/** Server-recorded authorship of one unchanged Lead-authored content block. */
+export interface TeamContentAuthor {
+  readonly executionId: SessionId
+  readonly term: number
+}
+
+/** Native queue custody for one source-held input; the original message remains unchanged. */
+export interface TeamInputTransfer {
+  /** Original source Session; it is not a claimed new sender. */
+  readonly sourceExecutionId: SessionId
+  /** Source's own persisted capture fact; later capture of the same input gets another queue key. */
+  readonly heldSeq: SessionSeq
+  /** Unmodified input, including original message id/source and effective/requested queue plus wake intent. */
+  readonly input: AgentInput
+}
+
+/** Sole native acknowledgement of one queue item's actual Lead recipient. */
+export interface TeamLeadDeliveryReceipt {
+  readonly messageId: TeamMessageId
+  readonly targetId: SessionId
+  readonly executionId: SessionId
+  readonly term: number
+}
+
+/** One mailbox item retained until its target Session records it. */
 export interface TeamMessageSnapshot {
   readonly id: TeamMessageId
   readonly senderId: SessionId
@@ -293,10 +330,19 @@ export interface TeamMessageSnapshot {
   readonly content: ContentBlock[]
   /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  /** Actual sender's server-validated Lead term; only the anchor's implicit initial seat can omit it. */
+  readonly senderTerm?: number
+  /** Per-block authority, independent of the sender who relays unchanged requirements. */
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
+  /** Present only for non-authorizing transfer of the original identified input. */
+  readonly transfer?: TeamInputTransfer
 }
 
+/** Ordinary peer snapshot; only native input-queued facts may hold transferred AgentInput. */
+export type TeamPeerMessageSnapshot = Omit<TeamMessageSnapshot, 'transfer'>
+
 /** Extension-only admission hint stripped before a Team notice is persisted. */
-export interface TeamExtensionNotice extends TeamMessageSnapshot {
+export interface TeamExtensionNotice extends TeamPeerMessageSnapshot {
   /** Count the complete delivered content against a controlled Team's ordinary-message limit. */
   readonly ordinaryMessageLimit?: true
 }
@@ -317,6 +363,8 @@ export interface TeamMessageSource {
   readonly senderName: string
   /** Attribution aligned with the delivered blocks, including system framing. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  readonly senderTerm?: number
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
 }
 
 /** Retired tool-limit fields retained only to describe released persistent records. */
@@ -470,19 +518,23 @@ declare module '@deepseek-ai/dsh-session/types' {
       teamId: TeamId
       updates: TeamTaskTransactionUpdate[]
       extension: { id: string; dataJson: string }
-      notices?: TeamMessageSnapshot[]
+      notices?: TeamPeerMessageSnapshot[]
     }
     /** One opaque extension record and optional Team notices, without a Task update. */
     'team/extension': {
       version: 1
       teamId: TeamId
       extension: { id: string; recordId: string; dataJson: string }
-      notices?: TeamMessageSnapshot[]
+      notices?: TeamPeerMessageSnapshot[]
       /** A product permission-table change invalidates any associated Profile. */
       affectsComposition?: true
     }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
-    'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot }
+    'team/message/queued': { version: 2; teamId: TeamId; message: TeamPeerMessageSnapshot }
+    /** Source-held input admitted into the same native mailbox under a capture-specific key. */
+    'team/message/input-queued': { version: 1; teamId: TeamId; message: TeamMessageSnapshot & { readonly transfer: TeamInputTransfer } }
+    /** Sole receipt for a controlled logical Lead target and its actual execution. */
+    'team/message/lead-delivered': { version: 1; teamId: TeamId } & TeamLeadDeliveryReceipt
     /** Durable acknowledgement that the target Session recorded the message. */
     'team/message/delivered': {
       version: 2

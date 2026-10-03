@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, InputControllerHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -19,11 +19,15 @@ import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
 import { requiredText } from './validation.ts'
+import { TeamLeadMail } from './lead-mail.ts'
+import type { TeamLeadSeat } from './lead-seat.ts'
 import type {
   SendTeamMessageRequest,
   SendTeamMessageResult,
   TeamMessageSnapshot,
   TeamMessageSource,
+  TeamLeadContext,
+  TeamLeadDeliveryReceipt,
 } from './types.ts'
 
 /** Complete content delivered to a Team target, including stable sender attribution.
@@ -62,11 +66,16 @@ function teamMessageSource(teamId: TeamId, message: TeamMessageSnapshot, state: 
     ? [...message.contentParts] : message.content.map(() => 'fact' as const)
   return { kind: 'team-message', teamId, messageId: message.id, senderId: message.senderId,
     senderName: message.senderName,
-    contentParts: [...Array.from({ length: framing }, () => 'fact' as const), ...parts] }
+    contentParts: [...Array.from({ length: framing }, () => 'fact' as const), ...parts],
+    ...message.senderTerm === undefined ? {} : { senderTerm: message.senderTerm },
+    ...message.contentAuthors === undefined ? {} : {
+      contentAuthors: [...Array.from({ length: framing }, () => null), ...message.contentAuthors],
+    } }
 }
 
 /** Owns every process-local state transition for the durable Team mailbox. */
 export class TeamMailbox {
+  private readonly leadMail: TeamLeadMail
   private readonly dispatchTails = new Map<SessionId, Promise<void>>()
   private readonly inFlightMessages = new Set<TeamMessageId>()
   private readonly inFlightDispatches = new Set<Promise<unknown>>()
@@ -89,11 +98,53 @@ export class TeamMailbox {
     private readonly maxMessageBytes: number,
     private readonly retryDelayMs: number,
     private readonly maxRetries: number,
+    leadContext: (agent: Agent) => TeamLeadContext,
+    resolveLead: (anchor: Agent, signal: AbortSignal) => Promise<TeamLeadContext>,
+    resolveSource: (anchor: Agent, id: SessionId, signal: AbortSignal) => Promise<Agent>,
+    canDeliverLead: (anchor: Agent) => boolean,
+    private readonly ownsLeadInput: (anchor: Agent) => boolean,
   ) {
+    this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
+      context: leadContext,
+      canDeliver: canDeliverLead,
+      resolve: resolveLead,
+      resolveSource,
+      serial: (targetId, operation) => this.serializeTarget(targetId, operation),
+      dispatch: (root, message, signal) => this.tryDispatch(root, message, signal),
+      frame: (message, state) => ({ content: teamMessageDeliveryContent(message, state),
+        source: teamMessageSource(TeamId(state.id), message, state) }),
+    }, maxPendingMessagesPerMember, maxMessageBytes)
     lifecycle.signal.addEventListener('abort', () => {
       for (const retry of this.retries.values()) clearTimeout(retry.timer)
       this.retries.clear()
     }, { once: true })
+  }
+
+  /** Bind or remove the registered native input owner's preload capability.
+   * @param input - owner capability, or undefined after provider removal.
+   */
+  bindLeadInput(input: InputControllerHandle | undefined): void { this.leadMail.bind(input) }
+
+  /** Persist captured source input in the existing native mailbox.
+   * @param source - exact controlled source execution.
+   * @param input - native input owner.
+   * @param signal - owning registration cancellation; a late continuation cannot queue after closing.
+   * @returns durable internal transfer ids.
+   */
+  queueHeld(source: Agent, input: InputControllerHandle, signal: AbortSignal): Promise<readonly TeamMessageId[]> {
+    return this.trackDispatch(this.leadMail.queueHeld(source, input, signal))
+  }
+
+  /** Preload the committed Lead without waking through the shared target sequence.
+   * @param anchor - exact stable controlled host.
+   * @param seat - expected committed recipient.
+   * @param input - native input owner.
+   * @param signal - owning registration cancellation; preloading never wakes its recipient.
+   * @returns sole native receipts after target and anchor confirmation.
+   */
+  preloadLeadMail(anchor: Agent, seat: Pick<TeamLeadSeat, 'executionId' | 'term'>,
+    input: InputControllerHandle, signal: AbortSignal): Promise<readonly TeamLeadDeliveryReceipt[]> {
+    return this.trackDispatch(this.leadMail.preloadLeadMail(anchor, seat, input, signal))
   }
 
   /**
@@ -138,10 +189,13 @@ export class TeamMailbox {
     const membership = this.roster.tryMembership(agent)
     if (membership === undefined) return
     const state = this.journal.state(membership.root)
+    if (state.mode !== undefined && (state.lead !== undefined || this.ownsLeadInput(membership.root))) {
+      await this.trackDispatch(this.leadMail.cleanupConfirmed(membership.root))
+    }
     const messages = state.messages.filter(message =>
       !state.delivered.includes(message.id)
       && !state.cancelled.some(item => item.messageId === message.id)
-      && (membership.role === 'lead' || message.targetId === agent.id))
+      && (membership.role === 'lead' || membership.role === 'host' || message.targetId === agent.id))
     for (const message of messages) {
       signal.throwIfAborted()
       await this.tryDispatch(membership.root, message, signal)
@@ -170,6 +224,10 @@ export class TeamMailbox {
     const root = membership.root
     this.journal.assertWriteAdmission(root)
     const name = targetName.trim()
+    if (name === 'lead' && this.journal.state(root).messages.some(message => message.transfer !== undefined
+      && !this.journal.state(root).delivered.includes(message.id))) {
+      throw new TeamError('source input custody cannot be cancelled as Team mail', 'TEAM_MESSAGE_TARGET_DENIED')
+    }
     const target = this.journal.state(root).members.find(member => member.name === name)
     if (target === undefined || target.phase === 'retired') {
       throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
@@ -205,7 +263,9 @@ export class TeamMailbox {
       if (state.mode?.kind === 'controlled' && membership.role === 'teammate' && target.id !== root.id) {
         throw new TeamError('controlled teammates may message only the Lead', 'TEAM_MESSAGE_TARGET_DENIED')
       }
-      if (target.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
+      if (target.id === caller.id || membership.role === 'lead' && target.id === root.id) {
+        throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
+      }
       const pendingForTarget = state.messages.filter(candidate =>
         candidate.targetId === target.id && !state.delivered.includes(candidate.id)
         && !state.cancelled.some(item => item.messageId === candidate.id)).length
@@ -222,7 +282,10 @@ export class TeamMailbox {
         targetId: target.id,
         content,
         ...state.mode === undefined ? {} : { contentParts: content.map(block =>
-          block.type === 'text' ? 'sender' as const : 'fact' as const) },
+          block.type === 'text' ? 'sender' as const : 'fact' as const),
+        ...membership.role !== 'lead' ? {} : { senderTerm: membership.term ?? 1,
+          contentAuthors: content.map(block => block.type === 'text'
+            ? { executionId: caller.id, term: membership.term ?? 1 } : null) } },
       }
       const ordinaryLimit = state.mode?.maxOrdinaryMessageBytes
       const deliveryBytes = teamMessageDeliveryBytes(queued)
@@ -240,6 +303,11 @@ export class TeamMailbox {
         teamId: TeamId(root.id),
         message: queued,
       })
+      if (queued.targetId === root.id && state.mode !== undefined
+        && (state.lead !== undefined || this.ownsLeadInput(root))
+        && !await this.ctx.sessions.flush(root.session)) {
+        throw new TeamError('Lead queue durability was not confirmed', 'TEAM_INPUT_DURABILITY')
+      }
       // Register dispatch before releasing the root transaction so concurrent
       // senders enter the target-local queue in durable mailbox order.
       return { message: queued, dispatch: this.tryDispatch(root, queued, request.signal) }
@@ -330,6 +398,10 @@ export class TeamMailbox {
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
       const state = this.journal.state(root)
+      if (message.targetId === root.id && state.mode !== undefined
+        && (state.lead !== undefined || this.ownsLeadInput(root))) {
+        return await this.leadMail.deliver(root, message, undefined, undefined, signal)
+      }
       const member = state.mode === undefined ? undefined : state.members.find(candidate => candidate.id === message.targetId)
       if (member !== undefined) {
         if (member.phase !== 'active') return false

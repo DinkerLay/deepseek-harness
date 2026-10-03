@@ -526,12 +526,14 @@ async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
 async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId }, input: UserMessage): Promise<ContinuableStart>
 
 /**
- * Align a live direct child's sandbox and permission selection with its parent.
+ * Align a live direct child's sandbox and permission selection with a live settings source.
  * Approval remains child-owned; unchanged values append no events.
- * @param parent - exact live direct parent supplying current permission state.
+ * The authorized parent and durable/runtime lineage remain unchanged.
+ * @param parent - exact live direct parent authorizing the synchronization.
  * @param child - exact live child initialized before its next operation.
+ * @param settingsSource - exact live settings owner; omission uses the direct parent.
  */
-synchronizeContinuablePermissions(parent: Agent, child: Agent): void
+synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void
 
 /**
  * Register one optional parent-notice policy for continuable Activations.

@@ -831,7 +831,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:353`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:401`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -4112,7 +4112,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-user-approval`
 
-- `source`: [`packages/interaction/user-approval/src/index.ts:155`](../packages/interaction/user-approval/src/index.ts)
+- `source`: [`packages/interaction/user-approval/src/index.ts:162`](../packages/interaction/user-approval/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. All optional — `static Config` supplies the defaults. */

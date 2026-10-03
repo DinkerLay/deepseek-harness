@@ -74,6 +74,8 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'team/member/configured',
   'team/message/cancelled',
   'team/message/delivered',
+  'team/message/input-queued',
+  'team/message/lead-delivered',
   'team/message/queued',
   'team/mode',
   'team/task',

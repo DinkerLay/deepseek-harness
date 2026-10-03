@@ -68,7 +68,7 @@ interface TeamControlledMode {
 Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event。退队前，Lead 可说明原因并取消无法投递的消息。恢复 mailbox 是 queued-minus-delivered-minus-cancelled。
 
 ```ts type-equiv
-/** One peer message retained until its target Session records it. */
+/** One mailbox item retained until its target Session records it. */
 interface TeamMessageSnapshot {
   readonly id: TeamMessageId
   readonly senderId: SessionId
@@ -77,6 +77,12 @@ interface TeamMessageSnapshot {
   readonly content: ContentBlock[]
   /** Host-recorded author attribution per content block; omitted blocks carry no added authority. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  /** Actual sender's server-validated Lead term; only the anchor's implicit initial seat can omit it. */
+  readonly senderTerm?: number
+  /** Per-block authority, independent of the sender who relays unchanged requirements. */
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
+  /** Present only for non-authorizing transfer of the original identified input. */
+  readonly transfer?: TeamInputTransfer
 }
 ```
 
@@ -89,7 +95,7 @@ interface TeamMessageCancellation {
 }
 ```
 
-每条消息都会尝试 Steer 投递。running target 在最近的步骤边界收到消息，inactive target 在已加载时启动一个轮次，否则冷恢复。调用方不能选择其他模式，因此持久记录不存储调度方式。
+普通 peer 消息尝试 Steer 投递：运行中的 target 在最近的步骤边界收到消息，空闲 target 启动或冷恢复。原生 Lead 转交则保留原输入 id、来源、有效／原请求队列和唤醒意图。内部队列 key 还包含来源捕获事实的序号，取消或第二次换任不会抵扣此前的回执。拥有者协调器预投递不唤醒；队列和实际执行／任期回执都取得持久确认后，才能清理来源。这些条目沿用同一 mailbox 顺序，不另建 inbox 或日志。只有新 input-queued 事件能携带 `TeamInputTransfer`，普通 peer 与扩展通知类型将它排除。
 
 target Session 会在 pending inbox 条目和最终用户消息上保留消息身份与发送者归因。跨 inbox 与历史折叠该 source 构成 target 侧去重键；模型可见的 framing 会重复 id 和发送者。
 
@@ -103,8 +109,12 @@ interface TeamMessageSource {
   readonly senderName: string
   /** Attribution aligned with the delivered blocks, including system framing. */
   readonly contentParts?: readonly ('sender' | 'fact')[]
+  readonly senderTerm?: number
+  readonly contentAuthors?: readonly (TeamContentAuthor | null)[]
 }
 ```
+
+`TeamContentAuthor` 为未改写的文字块记录实际执行 id 与其合法任期。当前发送者转派旧 Lead 的要求，不会成为该要求的作者。系统 framing、非文字块和引用资料的作者条目为空；产品先核对原 Task 指派记录，才把旧要求当作指令。`TeamLeadContext` 只读锚点、脱离原状态的席位、可选的在线执行和就绪状态，不授予操作权限，也不悄悄激活离线执行。
 
 ## 共享任务 DAG
 
@@ -259,6 +269,20 @@ membership(agent: Agent): TeamMembership
  * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
  */
 installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
+
+/** Read the stable Team host and committed execution independently of operation authority.
+ * @param agent - exact live Team member, dormant host or marked execution.
+ * @returns the current seat, optional live execution, and execution readiness.
+ */
+leadContext(agent: Agent): import('./types.ts').TeamLeadContext
+
+/** Verify recorded current or historical Lead authorship without granting current authority.
+ * @param agent - exact live Team reader.
+ * @param executionId - actual recorded author.
+ * @param term - recorded author term, or omitted to infer the anchor's implicit initial seat.
+ * @returns whether the native seat history validates that author.
+ */
+isLeadAuthor(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId, term?: number): boolean
 
 /** Read the stable seat through an exact live Team caller, including its dormant host.
  * @param agent - exact live anchor, member or current execution.
@@ -416,7 +440,7 @@ interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'ina
 tryMembership(agent: Agent): TeamMembership | undefined
 ```
 
-Types: [Agent](core.zh.md)
+Types: [Agent](core.zh.md) · [SessionId](core.zh.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 <!-- END GENERATED cordis-surface -->

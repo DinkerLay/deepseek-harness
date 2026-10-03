@@ -52,7 +52,10 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 `request(req)` names the agent, tool, optional call id and reason, and an abort signal. Optional `displayReason` supplies localized presentation text without changing the logged reason. It requires an open turn: an idle or between-turn caller throws before auditing anything. Aborting withdraws the question — the request settles `cancelled` and a late answer is discarded. A failure that prevents either audit append from committing rejects instead of returning an unlogged decision.
 
 ### What the model and user see
+
 Host integrations can bind an optional answerer route before the first model operation. Decisions and policy statements then use the current answerer's policy; the origin retains its audit. Routed presentations carry the original operation supplied from the origin log, and missing details prohibit a grant. Disposing the route withdraws pending questions. Browser disconnection alone does not decide a question; transport can replay it on reconnect.
+
+A resolved route may supply `isValid()` to recheck its captured ownership and readiness. A false result or thrown error makes answerer lookup unavailable and rejects new requests. The service rechecks the same captured route immediately before recording a grant, so a late `allowed-once` becomes `rejected` if ownership or readiness changed. A permission-policy switch alone does not withdraw an already-presented question; the callback must not treat that switch as invalidation. Routes without this callback retain their existing behavior.
 
 The model sees only the asking consumer's eventual tool outcome — allowed, rejected, cancelled, or unavailable — plus the current policy in the runtime-context snapshot; the audit events and the human permission UI are not model context. A `never` switch is announced to the model by a sourced user message, and both policies contribute their complete current meaning to the snapshot.
 
@@ -156,6 +159,7 @@ These limits define when the seam is a poor fit or needs special composition car
 - **Only one-shot grants exist** — the outcome vocabulary has `allowed-once` but no `allow-always`, remembered rule, revocation, or grant store; session policy is only `ask` / `never`.
 - **The request carries no tool arguments** — an answerer sees the tool name, reason, and optional call id; the ACP machine channel requires a call id and delegates requests without one.
 - **No built-in answerer** — headless or incompletely composed deployments resolve `unavailable` and fail closed; the service itself never prompts a human.
+- **Route validity is checked at lookup and grant** — invalidation does not itself withdraw an open prompt, and Session replay does not reconstruct the Host callback or its captured state.
 
 <a id="dev-note"></a>
 ### Dev Note

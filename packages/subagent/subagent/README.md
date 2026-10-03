@@ -27,7 +27,7 @@ Use `dsh-subagent` to delegate work to named child agents, collect their results
 
 This package is the contract every delegation setup shares. You enable it by mounting the service together with one or more provider backends and the model-facing delegation tool; from then on, an agent can delegate work and the service routes each request to the named provider.
 
-Trusted Hosts can use `deliverContinuableInput()` with a reserved child id and stable input id. It creates or resumes the child and returns only after durable input receipt; retries do not insert another copy. Restored pending input uses the driver's optional `wakePending()` support. The runtime releases the child lock while awaiting receipt or teardown. `synchronizeContinuablePermissions()` explicitly aligns a live direct child's sandbox and permission selection with its parent while retaining the child's approval policy; ordinary delegation does not call it.
+Trusted Hosts can use `deliverContinuableInput()` with a reserved child id and stable input id. It creates or resumes the child and returns only after durable input receipt; retries do not insert another copy. Restored pending input uses the driver's optional `wakePending()` support. The runtime releases the child lock while awaiting receipt or teardown. `synchronizeContinuablePermissions(parent, child, settingsSource?)` explicitly aligns a live direct child's sandbox and permission selection with the optional live settings source, defaulting to its parent. It requires the actual parent-child relationship and retains the child's approval policy, lineage, depth and Preset; ordinary delegation does not call it. Detached settings sources reject before policy facts are appended.
 
 ### Enabling delegation
 

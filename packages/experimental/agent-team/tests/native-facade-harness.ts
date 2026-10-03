@@ -23,11 +23,16 @@ export async function nativeFacadeHarness(options: {
   leadPresetId?: string
   seed?: readonly SessionEvent[]
   script?: ConstructorParameters<typeof MockAdapter>[0]
+  resources?: { root: string; contexts: Context[] }
+  resume?: boolean
+  beforeLead?: (ctx: Context) => void | Promise<void>
 } = {}) {
   const ctx = new Context()
-  const root = mkdtempSync(join(tmpdir(), 'dsh-native-facade-'))
-  onTestFinished(async () => {
-    await ctx.fiber.dispose()
+  const resources = options.resources ?? { root: mkdtempSync(join(tmpdir(), 'dsh-native-facade-')), contexts: [] }
+  const root = resources.root
+  resources.contexts.push(ctx)
+  if (options.resources === undefined) onTestFinished(async () => {
+    for (const context of resources.contexts.toReversed()) await context.fiber.dispose()
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   })
   await ctx.plugin(Loader)
@@ -57,16 +62,18 @@ export async function nativeFacadeHarness(options: {
   if (policy === undefined || wording === undefined) throw new Error('native settlement policies were not installed')
   const adapter = new MockAdapter(options.script ?? [])
   ctx.llm.registerAdapter(['mock'], adapter)
-  const lead = await ctx.agents.create({ sessionId: SessionId('facade-anchor'),
-    agentOptions: { provider: 'mock', model: 'mock' },
-    ...options.seed === undefined ? {} : { seed: options.seed },
-    setup: async (scoped) => {
-      const presets = scoped.get('agentPresets')
-      if (presets === undefined) throw new Error('native facade fixture requires Presets')
-      await presets.mount(scoped, options.leadPresetId ?? 'standard')
-    },
-  })
-  return { ctx, lead: lead.agent, adapter, fiber, policy, wording }
+  await options.beforeLead?.(ctx)
+  const setup = async (scoped: Context) => {
+    const presets = scoped.get('agentPresets')
+    if (presets === undefined) throw new Error('native facade fixture requires Presets')
+    await presets.mount(scoped, options.leadPresetId ?? 'standard')
+  }
+  const lead = options.resume
+    ? await ctx.agents.resume({ resumeSessionId: SessionId('facade-anchor'),
+      agentOptions: { provider: 'mock', model: 'mock' }, setup })
+    : await ctx.agents.create({ sessionId: SessionId('facade-anchor'),
+      agentOptions: { provider: 'mock', model: 'mock' }, ...options.seed === undefined ? {} : { seed: options.seed }, setup })
+  return { ctx, lead: lead.agent, adapter, fiber, policy, wording, resources }
 }
 
 /** Controlled composition used by native facade and tool lifecycle tests. */

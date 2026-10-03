@@ -124,6 +124,8 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  * violate the pair. Session contains post-commit observer failures, so an
  * authoritative append cannot reject the request or suppress its matching
  * audit event.
+ * A routed grant is accepted only while its captured route remains valid;
+ * a false or throwing validity check records `rejected` instead.
  * @param req - the pending decision (agent, tool identity, reason, signal).
  * @returns the closed outcome; `'allowed-once'` is the only grant.
  * @throws when no turn is open or either audit event fails before the session

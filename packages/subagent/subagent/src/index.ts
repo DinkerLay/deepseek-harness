@@ -315,25 +315,30 @@ export class SubagentRuntime extends TypertRemoteService {
   }
 
   /**
-   * Align a live direct child's sandbox and permission selection with its parent.
+   * Align a live direct child's sandbox and permission selection with a live settings source.
    * Approval remains child-owned; unchanged values append no events.
-   * @param parent - exact live direct parent supplying current permission state.
+   * The authorized parent and durable/runtime lineage remain unchanged.
+   * @param parent - exact live direct parent authorizing the synchronization.
    * @param child - exact live child initialized before its next operation.
+   * @param settingsSource - exact live settings owner; omission uses the direct parent.
    */
-  synchronizeContinuablePermissions(parent: Agent, child: Agent): void {
+  synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void {
     const agents = this.ctx.get('agents')
     if (agents?.get(parent.id) !== parent || agents.get(child.id) !== child
       || child.session.header.parentSession !== parent.id) {
       throw new SubagentError('permission synchronization requires the exact live direct parent and child', 'UNAUTHORIZED')
+    }
+    if (agents.get(settingsSource.id) !== settingsSource) {
+      throw new SubagentError('permission synchronization requires an exact live settings source', 'UNAUTHORIZED')
     }
     const sandbox = this.ctx.get('sandboxPolicy')
     const permissions = this.ctx.get('permissionPresets')
     if (sandbox === undefined || permissions === undefined) {
       throw new SubagentError('permission synchronization requires sandbox policy and permission presets', 'NOT_RESUMABLE')
     }
-    const mode = sandbox.overrideOf(parent.session) ?? sandbox.defaultMode
+    const mode = sandbox.overrideOf(settingsSource.session) ?? sandbox.defaultMode
     if (sandbox.overrideOf(child.session) !== mode) child.session.append('sandbox/mode', { mode, source: 'delegation' })
-    const preset = permissions.current(parent.session)
+    const preset = permissions.current(settingsSource.session)
     const recorded = this.ctx.get('sessionProjections')?.stateOf(child.session, 'permissions')?.preset ?? undefined
     if (recorded !== preset) child.session.append('permission/preset', { preset })
   }

@@ -143,6 +143,8 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、服务注册、恢复调度 |
 | [`src/roster.ts`](src/roster.ts) | Team 身份、成员关系解析、provisioning 与 roster 拆除 |
 | [`src/lead-execution.ts`](src/lead-execution.ts) | 仅限 Host 的普通执行不可变 Lead 身份校验 |
+| [`src/lead-runtime.ts`](src/lead-runtime.ts) | 有所有权的 Lead 准备、就绪与可取消的冷激活 |
+| [`src/lead-mail.ts`](src/lead-mail.ts) | 既有信箱中的逻辑 Lead 投递回执与原始输入保管 |
 | [`src/composition.ts`](src/composition.ts) | 用户管理的锁定与可恢复的应用转换 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
 | [`src/task-board.ts`](src/task-board.ts) | 任务 CAS 命令、DAG 校验与派生视图 |
@@ -161,6 +163,10 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运行时子 Agent 或 roster 成员。身份和可选的输入所有权在发布前持久记录。只有执行 id、任期、Preset 修订都匹配稳定 Team 席位，且协调器允许就绪时，执行才有 Lead 权限；原锚点随后只有休眠的宿主身份。候选拒绝普通输入，冻结或被替换的执行保留输入但不运行。冷准备先加载锚点，在挂载前拒绝变更过的 Preset 修订。未安装此可选提供方时，官方组合与执行路径不变。
 
+`leadContext(agent)` 读取稳定锚点、独立的现任席位值、存在时的准确已加载执行与就绪状态；它不加载执行，也不授予协作权限。`isLeadAuthor(agent, executionId, term)` 核对当前或历史原生席位；省略任期只能识别原锚点隐式的第一任，不改写存储数据。新写的 Lead 作者记录明确指定任期。
+
+可选、受所有权约束的 `resolveExecution(id, signal)` 可恢复已记录的现任接收方或历史来源，但不运行模型。运行时共享并发恢复，在注册关闭时取消，并复核准确的活对象身份与完整 Preset 绑定。有所有权的排队和预投递操作也把注册取消传入持久读取和事务等待，并在迟到变更或唤醒前复核。恢复能力缺失、声明变化、身份无效和取消均保留排队工作或来源保管并报告诊断，不选择默认模型或 Preset。
+
 未配置的成员沿用 `team/member` 第 2 版记录。配置了 Preset、分组或 Profile 槽位的成员使用 `team/member/configured` 第 3 版；恢复时，其 Preset 身份与修订值必须和 child 的 continuable-Preset 事件一致。投影接受两种记录，并拒绝更改已有成员的 Preset 绑定、分组或槽位 id。
 
 ### 持久 mailbox
@@ -170,6 +176,14 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 由 Lead 授权的取消操作会排在 target 本地投递之后，并用一条 `team/message/cancelled` 事件记录剩余消息 id。恢复排除已取消的 id；已送达的 id 之后不能取消，已取消的 id 也不能再确认送达。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
+
+安装原生 Lead 输入所有权后，普通 Lead 邮件仍以稳定逻辑锚点为目标，但只进入就绪的现任执行。`queueHeld(source)` 捕获 pending 输入，并将它排入和普通 Team 邮件共用的 `messages` 序列。内部队列身份由来源 Session id、原消息 id 与持久 held 事件序号派生；即使用户消息 id 不变，后一次捕获也有新身份。可选 transfer 保存完整原始 `AgentInput`，保留来源、有效队列和请求队列、正文及唤醒意图。操作绑定的问题回复留在原执行；发给已被替换执行的迟到回复明确拒绝。
+
+`preloadLeadMail(anchor, expectedSeat)` 按同一目标顺序处理邮件而不唤醒。一条 `team/message/lead-delivered` 回执在既有 delivered 索引中记录逻辑目标及实际执行／任期，普通官方回执不变。目标保管和根队列／回执均要求显式成功的 flush，已有内存事实重试时也必须再次确认。只有两边确认后才释放跨执行的来源保管；取消准备后恢复到原执行时只预投递，不释放。恢复会重试全部历史任期已确认回执的清理，必要时静止恢复合法的离线来源。旧捕获回执不能清除更新的 held 事实。Team 消息取消不能丢弃转交的来源输入。
+
+受控消息可保留实际发送者任期与逐内容原 Lead 作者。投递框架的作者为 null，非文本和普通引用资料无作者。显式、未改写的历史文本作者独立于即时发送者的 `sender`／`fact` 分类。受信任写入方必须把此元数据对应到原权威记录，不能按标题推导作者，也不能给摘要或经批准的成员内容盖上作者。
+
+只有原生输入所有者能通过 `team/message/input-queued` 创建 transfer 记录。Task 扩展通知和普通消息事件不能附带转交输入，不能绕过匹配的持久来源捕获。
 
 ### 共享任务板
 
@@ -185,11 +199,11 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 ### 持久性模型
 
-Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/mode`、`team/composition`、`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/extension`、`team/message/queued`、`team/message/delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
+Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/mode`、`team/composition`、`team/member`、`team/member/configured`、`team/task`、`team/task/transaction`、`team/extension`、`team/message/queued`、`team/message/input-queued`、`team/message/delivered`、`team/message/lead-delivered` 与 `team/message/cancelled` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
-Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 15 从 Session 日志重建较早缓存版本的 checkpoint，包括组成与扩展记录身份索引；Session 格式版本保持不变。
+Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 18 从 Session 日志重建较早缓存版本的 checkpoint，包括 Lead 投递回执元数据；Session 格式版本保持不变。
 
 ### Dispose
 
