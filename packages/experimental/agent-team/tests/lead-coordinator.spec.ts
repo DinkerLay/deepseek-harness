@@ -4,6 +4,35 @@ import type { TeamLeadSafePointHandle } from '../src/index.ts'
 import { leadCoordinatorHarness } from './lead-coordinator-harness.ts'
 
 describe('registered native Lead coordinator', () => {
+  it.each([false, true])('rechecks captured settings at the locked fresh commit without invalidating durable retry (fixed=%s)', async (fixed) => {
+    const test = await leadCoordinatorHarness()
+    if (fixed) await test.ctx.agentTeams.commitComposition(test.lead, () => ({ kind: 'lock' }))
+    await test.freeze()
+    const candidate = await test.create('validated-next', 2)
+    let changed = true
+    const validate = vi.fn((snapshot: import('../src/index.ts').TeamLeadCoordinatorSnapshot) => {
+      expect(snapshot.seat).toMatchObject({ executionId: test.lead.id, term: 1 })
+      expect(snapshot.composition?.phase).toBe(fixed ? 'fixed' : undefined)
+      expect(snapshot.records.some(record => record.recordId === 'prepared')).toBe(true)
+      if (changed) throw new Error('captured settings changed')
+    })
+    await test.coordinator.runAtSafePoint(test.lead, test.safeRequest(), async (safe) => {
+      await safe.record({ recordId: 'prepared', dataJson: '{}' }, true)
+      const plan = { binding: test.binding(candidate.agent), releases: [],
+        record: { recordId: 'validated-commit', dataJson: '{}' }, validate }
+      await expect(safe.commitLeadTransaction(plan)).rejects.toThrow('captured settings changed')
+      expect(test.state().leadCoordination?.phase).toBe('prepared')
+      expect(test.state().lead).toBeUndefined()
+      expect(test.lead.session.snapshotEvents().filter(event => event.type === 'team/lead/transaction')).toHaveLength(0)
+      changed = false
+      expect(await safe.commitLeadTransaction(plan)).toEqual(plan.binding)
+      changed = true
+      expect(await safe.commitLeadTransaction(plan)).toEqual(plan.binding)
+      expect(validate).toHaveBeenCalledTimes(2)
+      expect(test.lead.session.snapshotEvents().filter(event => event.type === 'team/lead/transaction')).toHaveLength(1)
+    })
+  })
+
   it('freezes only Lead writes, releases work and preloads material before durable readiness', async () => {
     const test = await leadCoordinatorHarness()
     await test.writer.commit(test.lead, snapshot => ({ dataJson: '{}', updates: [{ previousRevision: null,

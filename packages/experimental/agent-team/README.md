@@ -177,6 +177,8 @@ Unconfigured members retain the `team/member` version 2 record. A member with a 
 
 `runAtSafePoint()` checks supplied blockers before waiting for idle and again after occupying the actual incumbent through maintenance. Its callback alone receives the expiring commit capability; a stored safe record is not a live occupation after recovery. The registered Task writer validates the complete prepared release set and supplies its own audit. One Lead transaction commits that audit, all releases, the next seat, independent coordinator JSON and initialization material together. Initialization material precedes pending Lead mail, while existing messages retain their relative order.
 
+A commit may supply a bounded synchronous validator over detached native and coordinator facts. It runs under the Team lock immediately before a fresh event, so changed caller-owned settings can reject stale preparation without a partial seat change. A durable retry confirms the recorded effects rather than rerunning that validator against later settings.
+
 Owned acknowledgements require an explicit successful flush, including retries of an in-memory record. A transition that opens readiness remains closed until confirmation; `leadContext().ready` reflects that admission rather than an early Session event. Confirmed role changes refresh collaboration tools without changing Preset tools. A material-only record can queue factual supplemental notices without pausing a ready Lead, but those notices do not dispatch before their own confirmation. Official compositions without this owner retain their original behavior.
 
 ### Durable mailbox

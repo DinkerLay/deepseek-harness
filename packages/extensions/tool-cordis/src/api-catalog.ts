@@ -2176,6 +2176,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the live Agent or the stable Session-domain failure.',
       },
       {
+        signature: 'resolvePreparedAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>',
+        description: 'Wait for this Controller\'s pending same-id creation or resume before returning its completed execution. This Host-only read does not submit input or request a model wakeup. Own setup and created hooks must use resolveAgent().',
+        parameters: [{ name: 'sessionId', description: 'ordinary Session whose complete factory initialization the Host consumer needs.' }],
+        returns: 'the exact completed Agent or a Session-domain failure; already-live reads retain ordinary ownership policy.',
+      },
+      {
+        signature: 'async initializeModelSelection(agent: Agent, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection>',
+        description: 'Initialize one factory-prepared or exact live execution without changing the deployment default. The factory stores a prepared Session\'s setup suffix before publication; this return does not itself confirm that suffix. A live Session is acknowledged only after its own flush succeeds. No input or model turn is started.',
+        parameters: [{ name: 'agent', description: 'exact live execution or unpublished execution owned by the caller\'s factory setup.' }, { name: 'selection', description: 'provider, model and optional reasoning effort validated by the model service.' }, { name: 'signal', description: 'optional caller cancellation for model resolution.' }],
+        returns: 'the normalized Session-local selection; never saves the global default.',
+        throws: ['when the Controller registration or Agent closes, an identity is replaced, the model cannot resolve, or live durability is unconfirmed.'],
+      },
+      {
         signature: 'registerActivationPreparation(id: string, prepare: import(\'./agent.ts\').SessionActivationPreparer): () => Promise<void>',
         description: 'Register provider-owned cold activation before the selected composition mounts.',
         parameters: [{ name: 'id', description: 'stable registration key.' }, { name: 'prepare', description: 'inspect a retained Session cut and optionally provide its composition.' }],
@@ -6412,7 +6425,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetCompositionLease',
-    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly name?: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
+    declaration: 'export interface PresetCompositionLease extends AsyncDisposable {\n    readonly id: string;\n    readonly name?: string;\n    readonly revision: string | undefined;\n    readonly compositionRows: readonly AgentPresetCompositionRow[];\n    assertCurrent(): void;\n    mount(ctx: Context): Promise<AgentPreset>;\n}',
   },
   {
     name: 'PresetDefinition',
@@ -6840,7 +6853,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionActivationPreparation',
-    declaration: 'export interface SessionActivationPreparation extends AsyncDisposable {\n    readonly setup: AgentSetup;\n}',
+    declaration: 'export interface SessionActivationPreparation extends AsyncDisposable {\n    readonly setup: AgentSetup;\n    readonly agentOptions?: AgentOptions;\n}',
   },
   {
     name: 'SessionActivationPreparer',
@@ -7928,7 +7941,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamLeadCoordinatorCommit',
-    declaration: 'export interface TeamLeadCoordinatorCommit {\n    readonly binding: TeamLeadBinding;\n    readonly releases: readonly TeamTaskTransactionUpdate[];\n    readonly record: TeamExtensionRecord;\n    readonly notices?: readonly TeamExtensionNotice[];\n}',
+    declaration: 'export interface TeamLeadCoordinatorCommit {\n    readonly binding: TeamLeadBinding;\n    readonly releases: readonly TeamTaskTransactionUpdate[];\n    readonly record: TeamExtensionRecord;\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly validate?: (snapshot: TeamLeadCoordinatorSnapshot) => void;\n}',
   },
   {
     name: 'TeamLeadCoordinatorHandle',

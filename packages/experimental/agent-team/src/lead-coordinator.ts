@@ -69,6 +69,11 @@ export interface TeamLeadCoordinatorCommit {
   readonly record: TeamExtensionRecord
   /** Coordinator-created material only; captured source input uses the native custody queue. */
   readonly notices?: readonly TeamExtensionNotice[]
+  /** Recheck owner-captured settings under the Team lock immediately before a fresh append.
+   * Must be synchronous and must not enter another Team operation. Durable retries do not call it.
+   * @param snapshot - detached current native and coordinator facts.
+   */
+  readonly validate?: (snapshot: TeamLeadCoordinatorSnapshot) => void
 }
 
 /** Capability valid only inside the maintenance callback that acquired the old execution. */
@@ -273,6 +278,11 @@ export class TeamLeadCoordinators {
         throw new TeamError('Lead candidate does not match its durable identity', 'TEAM_LEAD_IDENTITY_INVALID')
       }
       release.assertCurrent()
+      plan.validate?.({ seat: { ...this.executions.seat(anchor) }, tasks: structuredClone(state.tasks),
+        members: structuredClone(state.members), nextTaskNumber: state.nextTaskNumber,
+        ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
+        records: state.extensionRecords.filter(item => item.writerId === id)
+          .map(({ recordId, dataJson }) => ({ recordId, dataJson })) })
       await this.journal.appendAndFlush(anchor, 'team/lead/transaction', data, true)
       assertOwner(anchor, signal)
       release.assertCurrent()

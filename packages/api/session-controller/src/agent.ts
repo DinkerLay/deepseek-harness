@@ -69,6 +69,8 @@ export type ApiSessionAgentResult =
 export interface SessionActivationPreparation extends AsyncDisposable {
   /** Mount an already-validated composition before registry publication. */
   readonly setup: AgentSetup
+  /** Owner-captured execution options, detached before setup; absence keeps the deployment default. */
+  readonly agentOptions?: AgentOptions
 }
 
 /** Optional cold preparation; providers must return undefined for Sessions they do not own.
@@ -82,6 +84,11 @@ interface ActivationProvider {
   readonly prepare: SessionActivationPreparer
   readonly jobs: Set<Promise<SessionActivationPreparation | undefined>>
   active: boolean
+}
+
+interface PendingCreation {
+  readonly prepared: Promise<Agent>
+  readonly ordinary: Promise<Agent>
 }
 
 type InstalledSelection = ModelSelectionRef & {
@@ -158,7 +165,7 @@ export async function inspectApiSession(
 /** Owns every operation that may create, resume, or configure a Web Agent. */
 export class ApiSessionAgentController {
   private readonly resumes = new Map<SessionId, Promise<Agent>>()
-  private readonly creations = new Map<SessionId, Promise<Agent>>()
+  private readonly creations = new Map<SessionId, PendingCreation>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
   private readonly activationPreparers = new Map<string, ActivationProvider>()
@@ -226,6 +233,7 @@ export class ApiSessionAgentController {
           throw new Error(`multiple providers own activation of "${observation.header.id}"`)
         }
         accepted = {
+          ...contribution.agentOptions === undefined ? {} : { agentOptions: structuredClone(contribution.agentOptions) },
           setup: async (agentCtx, agent) => {
             assertActive()
             const commit = await contribution.setup(agentCtx, agent)
@@ -256,7 +264,7 @@ export class ApiSessionAgentController {
     }
     return (await this.ctx.agents.resume({
       resumeSessionId: sessionId,
-      agentOptions: this.agentOptions(),
+      agentOptions: preparation?.agentOptions ?? this.agentOptions(),
       setup: composition.setup,
     })).agent
   }
@@ -268,6 +276,23 @@ export class ApiSessionAgentController {
    */
   async resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
     return this.resolve(sessionId)
+  }
+
+  /** Join this Controller's pending factory work before accepting its exact published execution.
+   * A caller must not await this method from that Session's own setup or created hook.
+   * @param sessionId - ordinary Session whose completed activation the Host consumer needs.
+   * @returns the completed exact Agent or the ordinary Session-domain failure; never substitutes a raced identity.
+   */
+  async resolvePreparedAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
+    const pending = this.resumes.get(sessionId) ?? this.creations.get(sessionId)?.prepared
+    if (pending === undefined) return this.resolve(sessionId, undefined, true)
+    try {
+      this.ctx.fiber.assertActive()
+      const agent = await pending
+      return this.preparedAgent(sessionId, agent)
+    } catch (error: unknown) {
+      return this.resolutionFailure(sessionId, error, false)
+    }
   }
 
   /**
@@ -282,6 +307,7 @@ export class ApiSessionAgentController {
   private async resolve(
     sessionId: SessionId,
     observation?: SessionObservation,
+    requirePrepared = false,
   ): Promise<ApiSessionAgentResult> {
     const live = this.liveAgent(sessionId)
     if (live !== undefined) return live
@@ -297,33 +323,52 @@ export class ApiSessionAgentController {
     }
     try {
       const agent = await resume
+      if (requirePrepared) return this.preparedAgent(sessionId, agent)
       // A shared resume can publish an identity that subagent routing adopts
       // before every waiter observes it; apply the live ownership policy again.
       const published = this.liveAgent(sessionId)
       return published ?? { agent }
     } catch (error: unknown) {
-      if (error instanceof ApiSessionNotFound) {
-        return { error: new RemoteError('session/not-found', error.message, { sessionId }) }
-      }
-      if (error instanceof ApiSessionSubagentOwnership) {
-        return { error: apiSessionSubagentOwnershipError(error.sessionId) }
-      }
+      return this.resolutionFailure(sessionId, error, !requirePrepared)
+    }
+  }
+
+  private preparedAgent(sessionId: SessionId, agent: Agent): ApiSessionAgentResult {
+    this.ctx.fiber.assertActive()
+    if (this.ctx.agents.get(sessionId) !== agent || this.ctx.sessions.get(sessionId) !== agent.session) {
+      throw new Error(`prepared execution for session "${sessionId}" is no longer current`)
+    }
+    agent.ctx.fiber.assertActive()
+    if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
+      throw new ApiSessionSubagentOwnership(sessionId)
+    }
+    return { agent }
+  }
+
+  private resolutionFailure(sessionId: SessionId, error: unknown, recoverPublished: boolean): ApiSessionAgentResult {
+    if (error instanceof ApiSessionNotFound) {
+      return { error: new RemoteError('session/not-found', error.message, { sessionId }) }
+    }
+    if (error instanceof ApiSessionSubagentOwnership) {
+      return { error: apiSessionSubagentOwnershipError(error.sessionId) }
+    }
+    if (recoverPublished) {
       const raced = this.liveAgent(sessionId)
       if (raced !== undefined) return raced
       const racedSession = this.ctx.sessions.get(sessionId)
       if (racedSession !== undefined && hasApiSessionSubagentOwner(this.ctx, racedSession, undefined)) {
         return { error: apiSessionSubagentOwnershipError(sessionId) }
       }
-      if (error instanceof Error && error.name === 'SessionAlreadyOwnedError') {
-        return { error: new RemoteError('session/writer-held', error.message, { sessionId }) }
-      }
-      return {
-        error: new RemoteError(
-          'gateway/internal',
-          `resume failed for session "${sessionId}": ${String(error)}`,
-          {},
-        ),
-      }
+    }
+    if (error instanceof Error && error.name === 'SessionAlreadyOwnedError') {
+      return { error: new RemoteError('session/writer-held', error.message, { sessionId }) }
+    }
+    return {
+      error: new RemoteError(
+        'gateway/internal',
+        `resume failed for session "${sessionId}": ${String(error)}`,
+        {},
+      ),
     }
   }
 
@@ -343,7 +388,8 @@ export class ApiSessionAgentController {
   ): Promise<Agent> {
     let creation = this.creations.get(sessionId)
     if (creation === undefined) {
-      creation = this.createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId)
+      const prepared = this.createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId)
+      const ordinary = prepared
         .catch((error: unknown) => {
           const live = this.ctx.agents.get(sessionId)
           if (live !== undefined) {
@@ -359,9 +405,10 @@ export class ApiSessionAgentController {
           throw error
         })
         .finally(() => { this.creations.delete(sessionId) })
+      creation = { prepared, ordinary }
       this.creations.set(sessionId, creation)
     }
-    const agent = await creation
+    const agent = await creation.ordinary
     if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }

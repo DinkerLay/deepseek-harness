@@ -792,6 +792,25 @@ Host service backing the generated `ctx.remote.session` namespace.
  */
 resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>
 
+/** Wait for this Controller's pending same-id creation or resume before returning its completed execution.
+ * This Host-only read does not submit input or request a model wakeup. Own setup and created hooks must use resolveAgent().
+ * @param sessionId - ordinary Session whose complete factory initialization the Host consumer needs.
+ * @returns the exact completed Agent or a Session-domain failure; already-live reads retain ordinary ownership policy.
+ */
+resolvePreparedAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>
+
+/** Initialize one factory-prepared or exact live execution without changing the deployment default.
+ * The factory stores a prepared Session's setup suffix before publication; this return does not itself confirm that suffix.
+ * A live Session is acknowledged only after its own flush succeeds. No input or model turn is started.
+ * @param agent - exact live execution or unpublished execution owned by the caller's factory setup.
+ * @param selection - provider, model and optional reasoning effort validated by the model service.
+ * @param signal - optional caller cancellation for model resolution.
+ * @returns the normalized Session-local selection; never saves the global default.
+ * @throws when the Controller registration or Agent closes, an identity is replaced,
+ * the model cannot resolve, or live durability is unconfirmed.
+ */
+async initializeModelSelection(agent: Agent, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection>
+
 /** Register provider-owned cold activation before the selected composition mounts.
  * @param id - stable registration key.
  * @param prepare - inspect a retained Session cut and optionally provide its composition.
@@ -957,7 +976,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
+Types: [Agent](core.zh.md) · [ModelSelection](core.zh.md) · [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

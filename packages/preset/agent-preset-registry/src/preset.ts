@@ -21,6 +21,11 @@ export interface PresetCompositionLease extends AsyncDisposable {
   readonly revision: string | undefined
   /** Rows captured from the same retained generation used by mount(), avoiding an inventory/revision race. */
   readonly compositionRows: readonly AgentPresetCompositionRow[]
+  /** Require this retained generation to remain the registry's available current definition.
+   * This synchronous check does not change the lease's retained mount behavior.
+   * @throws when released, replaced, removed, unavailable, or the registry is closed.
+   */
+  assertCurrent(): void
   /**
    * Bind an unpublished, unbound Agent scope to this exact retained revision.
    * @param ctx - Agent factory setup context; never a live published Agent scope.

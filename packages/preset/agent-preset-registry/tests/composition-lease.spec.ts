@@ -12,6 +12,33 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
 async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
 
 describe('creation composition lease', () => {
+  it('confirms the same live generation, then rejects removal and a same-revision replacement', async () => {
+    const ctx = await setup()
+    const definition = await declare(ctx, contribution('standard'))
+    const selected = await ctx.agentPresets.acquireComposition('standard')
+    expect(() => { selected.assertCurrent() }).not.toThrow()
+    await definition.dispose()
+    expect(() => { selected.assertCurrent() }).toThrow('current definition')
+    await declare(ctx, contribution('standard'))
+    await using replacement = await ctx.agentPresets.acquireComposition('standard')
+    expect(replacement.revision).toBe(selected.revision)
+    expect(() => { selected.assertCurrent() }).toThrow('current definition')
+    expect(() => { replacement.assertCurrent() }).not.toThrow()
+    await selected[Symbol.asyncDispose]()
+    expect(() => { selected.assertCurrent() }).toThrow('released')
+  })
+
+  it('rejects a selected generation when one real plugin row has been disposed', async () => {
+    const ctx = await setup()
+    await declare(ctx, contribution('standard'))
+    await using selected = await ctx.agentPresets.acquireComposition('standard')
+    const mount = livePresetMounts(ctx.fiber).find(item => item.presetId === 'standard')
+    const row = mount === undefined ? undefined : [...mount.tree.entries()].find(entry => !entry.disabled)
+    if (row?.fiber === undefined) throw new Error('fixture Preset row did not activate')
+    await row.fiber.dispose()
+    expect(() => { selected.assertCurrent() }).toThrow('unavailable plugin row')
+  })
+
   it('captures the Preset display name with its declaration revision', async () => {
     const ctx = await setup()
     const first = await declare(ctx, { ...contribution('standard'), name: 'Standard display' })
@@ -47,6 +74,7 @@ describe('creation composition lease', () => {
     const selected = await ctx.agentPresets.acquireComposition()
     const target = createScope(ctx, {})
     await registry.dispose()
+    expect(() => { selected.assertCurrent() }).toThrow('registry has been closed')
     await expect(selected.mount(target.ctx)).rejects.toThrow('registry has been closed')
     await unregister()
     await selected[Symbol.asyncDispose]()

@@ -69,6 +69,8 @@ An independent `TeamLeadCoordinatorHandle` owns native transition records withou
 
 `runAtSafePoint` checks the product's blockers before waiting for idle and again after it occupies the actual incumbent execution through maintenance. Its `TeamLeadSafePointHandle` expires when that maintenance callback ends; a persisted safe record does not establish a new live occupation after recovery. The bound Task writer generates its own release audit, and the atomic Lead transaction changes the seat, every prepared Lead Task revision, queued material and independent coordinator record together. Retries compare the recorded effects and require a successful durable flush; source custody and readiness still use the mailbox receipts below.
 
+`TeamLeadCoordinatorCommit.validate` optionally checks detached current settings and native facts synchronously under the lock before a fresh commit. It cannot enter another Team operation; throwing leaves the seat and Task releases unchanged. Confirming an already-recorded commit does not rerun the check against later settings.
+
 ## Durable mailbox
 
 The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable. The Lead can cancel undelivered messages with a reason before retiring an unavailable member. The recovery mailbox is queued-minus-delivered-minus-cancelled.

@@ -84,6 +84,10 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 
 `selectModel` 成功返回表示会话级模型选择已生效，不等待默认 profile 设置保存。默认设置在后台按提交顺序保存；保存失败会记录警告，并保留会话选择。新会话读取最近一次成功保存的默认值。
 
+Host 拥有者可调用 `initializeModelSelection(agent, selection, signal?)`，记录某个执行的模型选择，不保存部署默认值，也不启动轮次。该操作与此 Agent 的图像准入共用顺序，验证路由，并在解析后重新核对 Controller 的注册拥有者和确切执行。已准备执行的工厂在发布前持久保存 setup 后缀；初始化器本身不确认尚未发布的数据已经落盘。已运行执行仅在其 Session flush 确认成功后返回；取消或失去所有权会拒绝确认。冷激活提供方可随 setup 提供 `agentOptions`；Controller 在异步挂载前复制这些选项，使其脱离原对象。已记录的待用模型选择仍决定首次请求；无人认领的 Session 保持普通部署默认值。
+
+需要完整工厂初始化的 Host 消费者使用 `resolvePreparedAgent(sessionId)`。它等待此 Controller 同 id 的待处理创建或恢复，并拒绝失败或已被替换的执行，不采用竞态中出现的已运行 Agent；它自行发起的冷激活也使用同一严格策略。已完成的读取保留普通 Session 所有权规则，包括拒绝 subagent。该方法不提交输入，也不请求唤醒。Session 自己的 setup 或 created 钩子必须使用普通 `resolveAgent`，后者保留已发布时可重入的行为，不等待自身完成。
+
 -----
 
 <a id="configuration"></a>

@@ -51,6 +51,8 @@ Host code preparing a new Agent can retain one composition with `acquireComposit
 
 The lease also exposes the captured display `name` and `compositionRows` from that same retained generation. A caller can inspect the enabled plugin rows before creating an Agent without racing a separately queried declaration against the revision it will mount. The registry does not filter a bound Agent's tools.
 
+Before committing an operation that requires the selected declaration to remain current, call the lease's synchronous `assertCurrent()`. It rejects a released lease, closed registry, replaced or removed generation, or unavailable plugin row. This optional check does not change `mount()`: ordinary creation may still mount its retained revision after definition replacement.
+
 The lease revision hashes the preset ID and captured JSON child plugins, not the resolver's absolute base URL. A declaration that itself contains an absolute plugin URL still contains that machine path in its digest; use package specifiers for portable bindings. The digest identifies a declaration, not plugin binaries or evaluated environment values. Recovery must reject an unavailable or changed revision rather than substitute a current same-named definition.
 
 <a id="understand-the-implementation"></a>

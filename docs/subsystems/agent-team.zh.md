@@ -69,6 +69,8 @@ interface TeamControlledMode {
 
 `runAtSafePoint` 在等待空闲之前检查产品阻塞项，通过维护任务占住实际现任执行后再次检查。维护回调结束时，其 `TeamLeadSafePointHandle` 即失效；恢复后仅有持久安全点记录，不代表已重新获得实时占用。绑定的 Task 写入方生成自己的释放审计，原子 Lead 事务同时变更席位、全部已准备的 Lead Task 修订、排队材料和独立协调器记录。重试比较已记录的完整效果，并要求持久刷新成功；来源保留与就绪仍使用下方的邮箱回执。
 
+`TeamLeadCoordinatorCommit.validate` 可在首次提交前、锁内同步检查独立的当前设置和原生事实。它不能进入另一条 Team 操作；抛错时席位和 Task 释放均不变。确认已记录的提交时，不再针对后来的设置重跑检查。
+
 ## 持久 mailbox
 
 Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event。退队前，Lead 可说明原因并取消无法投递的消息。恢复 mailbox 是 queued-minus-delivered-minus-cancelled。

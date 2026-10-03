@@ -2,7 +2,7 @@
 
 import { hostname } from 'node:os'
 import { resolve } from 'node:path'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -120,6 +120,7 @@ export class SessionController extends TypertRemoteService {
   })
 
   private readonly agents: ApiSessionAgentController
+  private readonly ownerContext: Context
   private readonly commands: SessionCommandController
   private readonly controlState: SessionControlController
   private readonly history: SessionHistoryController
@@ -138,6 +139,7 @@ export class SessionController extends TypertRemoteService {
    */
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
+    this.ownerContext = ctx
     installModelSelectionProjection(ctx)
     this.agents = new ApiSessionAgentController(ctx)
     this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
@@ -222,6 +224,54 @@ export class SessionController extends TypertRemoteService {
    */
   resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
     return this.agents.resolveAgent(sessionId)
+  }
+
+  /** Wait for this Controller's pending same-id creation or resume before returning its completed execution.
+   * This Host-only read does not submit input or request a model wakeup. Own setup and created hooks must use resolveAgent().
+   * @param sessionId - ordinary Session whose complete factory initialization the Host consumer needs.
+   * @returns the exact completed Agent or a Session-domain failure; already-live reads retain ordinary ownership policy.
+   */
+  resolvePreparedAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
+    return this.agents.resolvePreparedAgent(sessionId)
+  }
+
+  /** Initialize one factory-prepared or exact live execution without changing the deployment default.
+   * The factory stores a prepared Session's setup suffix before publication; this return does not itself confirm that suffix.
+   * A live Session is acknowledged only after its own flush succeeds. No input or model turn is started.
+   * @param agent - exact live execution or unpublished execution owned by the caller's factory setup.
+   * @param selection - provider, model and optional reasoning effort validated by the model service.
+   * @param signal - optional caller cancellation for model resolution.
+   * @returns the normalized Session-local selection; never saves the global default.
+   * @throws when the Controller registration or Agent closes, an identity is replaced,
+   * the model cannot resolve, or live durability is unconfirmed.
+   */
+  async initializeModelSelection(agent: Agent, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection> {
+    return await this.agents.serializeImageAdmission(agent, async () => {
+      const initialOwner = this.ctx.agents.get(agent.id)
+      const assertOwner = (): void => {
+        signal?.throwIfAborted()
+        this.ownerContext.fiber.assertActive()
+        agent.ctx.fiber.assertActive()
+        const owner = this.ctx.agents.get(agent.id)
+        const session = this.ctx.sessions.get(agent.id)
+        if (initialOwner === agent && owner !== agent
+          || owner !== undefined && owner !== agent || session !== undefined && session !== agent.session) {
+          throw new Error('model initialization belongs to another execution')
+        }
+      }
+      assertOwner()
+      const resolved = await this.ctx.llm.resolveCallConfig({ provider: selection.provider, model: selection.model,
+        ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort } }, signal)
+      assertOwner()
+      const normalized: ModelSelection = { provider: resolved.provider, model: resolved.model,
+        ...resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort } }
+      this.agents.selectForNextRequest(agent, normalized)
+      if (this.ctx.agents.get(agent.id) === agent) {
+        if (!await this.ctx.sessions.flush(agent.session)) throw new Error('model initialization durability was not confirmed')
+        assertOwner()
+      }
+      return { ...normalized }
+    })
   }
 
   /** Register provider-owned cold activation before the selected composition mounts.

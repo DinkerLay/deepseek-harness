@@ -84,6 +84,10 @@ GUI model selection requires the exact provider/model pair in the available cata
 
 A successful `selectModel` response acknowledges the Session-local selection without waiting for the default profile setting to save. Default saves run in the background in submission order; a failure logs a warning and leaves the Session selection intact. New Sessions read the last successfully saved default.
 
+Host owners can call `initializeModelSelection(agent, selection, signal?)` to record one execution's model selection without saving the deployment default or starting a turn. The operation shares the Agent's image-admission ordering, validates the route, and rechecks the registered Controller owner and exact execution after resolution. A prepared execution's factory persists the setup suffix before publication; the initializer itself does not confirm unpublished persistence. A live execution returns only after its Session flush confirms success; cancellation or loss of ownership rejects acknowledgement. Cold activation providers may supply `agentOptions` with their setup; the Controller detaches these options before asynchronous mounting. The recorded pending selection still governs the first request; an unowned Session keeps ordinary deployment defaults.
+
+Host consumers that need complete factory initialization use `resolvePreparedAgent(sessionId)`. It joins this Controller's pending same-id creation or resume and rejects a failed or replaced execution without adopting a raced live Agent; a cold activation it starts uses the same strict policy. Already-completed reads keep ordinary Session ownership rules, including the subagent refusal. The method submits no input and requests no wakeup. A Session's own setup or created hook must use ordinary `resolveAgent`, which retains its published reentrant behavior and does not wait for itself.
+
 -----
 
 <a id="configuration"></a>

@@ -1,5 +1,5 @@
 /** Declarative Agent capability sets, activation and session binding. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context, FiberState } from '@deepseek-ai/cordis'
 import { createHash } from 'node:crypto'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import z from '@deepseek-ai/schemastery'
@@ -372,12 +372,30 @@ export class AgentPresetRegistry extends TypertRemoteService {
    */
   async acquireComposition(id?: string): Promise<PresetCompositionLease> {
     const generation = await this.retain(id)
+    const expectedEntries = [...generation.mount.tree.entries()].filter(entry => !entry.disabled)
     let disposed = false
     return {
       id: generation.mount.presetId,
       ...generation.name === undefined ? {} : { name: generation.name },
       revision: generation.revision,
       compositionRows: mountedCompositionRows(generation.mount.tree),
+      assertCurrent: () => {
+        if (disposed) throw new Error('Preset composition lease has been released')
+        if (CLOSED_FIBER_STATES.has(this.owner.fiber.state)) throw new Error('Preset composition registry has been closed')
+        const current = this.definitions.get(generation.mount.presetId)
+        if (current?.generation !== generation || generation.retired || current.broken !== undefined
+          || CLOSED_FIBER_STATES.has(generation.scope.ctx.fiber.state)) {
+          throw new Error('Preset composition lease is no longer the available current definition')
+        }
+        const currentEntries = new Set(generation.mount.tree.entries())
+        for (const entry of expectedEntries) {
+          const fiber = entry.fiber
+          if (!currentEntries.has(entry) || entry.disabled || fiber === undefined || fiber.state !== FiberState.ACTIVE
+            || Object.keys(fiber.inject).some(name => fiber.ctx.get(name) === undefined)) {
+            throw new Error('Preset composition lease has an unavailable plugin row')
+          }
+        }
+      },
       // oxlint-disable-next-line typescript/require-await -- setup callers receive rejected promises for invalid leases.
       mount: async (ctx) => {
         if (disposed) throw new Error('Preset composition lease has been released')
