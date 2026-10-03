@@ -147,7 +147,7 @@ export class TeamLeadExecutions {
       const releasing = preparations.get(lease)
       if (releasing !== undefined) return releasing
       if (!preparations.has(lease)) return Promise.resolve()
-      const released = lease[Symbol.asyncDispose]()
+      const released = Promise.resolve(lease[Symbol.asyncDispose]())
       preparations.set(lease, released)
       const settled = () => { preparations.delete(lease) }
       void released.then(settled, settled)
