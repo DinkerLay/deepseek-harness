@@ -329,7 +329,7 @@
     {
       "name": "@deepseek-ai/dsh-session-title-llm",
       "path": "packages/session/session-title-llm",
-      "purpose": "Exact auxiliary title input sizing and excerpt provenance",
+      "purpose": "Auxiliary title input sizing and exact excerpt source identity",
       "source": [
         "src/index.ts"
       ]
@@ -397,7 +397,7 @@
     {
       "name": "@deepseek-ai/dsh-system-prompt",
       "path": "packages/core/system-prompt",
-      "purpose": "Provider-owned durable prompt provenance, legacy source declarations, and awaited lazy input preparation",
+      "purpose": "Awaited scope-aware preparation of lazy prompt inputs and tool schemas",
       "source": [
         "src/index.ts"
       ]

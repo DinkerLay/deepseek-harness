@@ -210,6 +210,12 @@ export class ClientEntries {
     for (const row of manifest.modules) {
       if (!this.current(generation)) break
       try {
+        if (!wanted.has(row.id)) {
+          await this.modules.prefetch(row.id)
+          if (!this.current(generation)) break
+          await this.modules.import(row.id, '', {})
+          continue
+        }
         const entry = this.managed.get(row.id)
         if (entry === undefined) {
           await this.modules.prefetch(row.id)

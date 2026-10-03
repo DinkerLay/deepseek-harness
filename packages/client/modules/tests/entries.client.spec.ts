@@ -81,6 +81,29 @@ function visible(id: string, effects: { mounted: number; disposed: number; hits:
 }
 
 describe('client manifest entries', () => {
+  it('materializes a library export without creating a plugin or invoking apply', async () => {
+    const apply = vi.fn(() => { throw new Error('library apply must remain inactive') })
+    const b = await bench(graph(row('library', 'r0', { library: true })), {
+      library: () => ({ value: 42, inject: ['unavailable-service'], apply }),
+    })
+    expect(await b.modules.import('library')).toMatchObject({ value: 42 })
+    expect(apply).not.toHaveBeenCalled()
+    expect([...b.ctx.loader.entries()]).toHaveLength(0)
+    expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+  })
+
+  it('activates and disposes only the plugin generation when a library changes ownership', async () => {
+    const effects = { mounted: 0, disposed: 0, hits: 0 }
+    const b = await bench(graph(row('library', 'r0', { library: true })), { library: visible('library', effects) })
+    expect(effects.mounted).toBe(0)
+    await b.modules.entries.sync(graph(row('library')))
+    expect(effects.mounted).toBe(1)
+    await b.modules.entries.sync(graph(row('library', 'r0', { library: true })))
+    expect(effects.disposed).toBe(1)
+    expect([...b.ctx.loader.entries()]).toHaveLength(0)
+    expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+  })
+
   it('adds, drains removal and re-enables one instance with styles; unrelated entries survive', async () => {
     const effects = { mounted: 0, disposed: 0, hits: 0 }
     const cleanup = deferred()
