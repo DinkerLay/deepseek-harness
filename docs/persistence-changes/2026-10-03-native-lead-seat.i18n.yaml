@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-03-native-lead-seat.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-03-native-lead-seat.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-03-native-lead-seat:
+  en: 4d602f6c20c7304c
+  zh: 9c7ef54e8862c782
+/2026-10-03-native-lead-seat/summary:
+  en: 49b0814a685cba7c
+  zh: a2744a649f8a1219
+/2026-10-03-native-lead-seat/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-03-native-lead-seat/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-03-native-lead-seat/compatibility:
+  en: 8a18b96ea028a744
+  zh: 34eb1f9b28bec531
+/2026-10-03-native-lead-seat/verification:
+  en: 8863a75ab902a3fb
+  zh: 6bf4682d420c5fb2
+/2026-10-03-native-lead-seat/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

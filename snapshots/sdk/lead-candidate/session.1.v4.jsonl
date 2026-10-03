@@ -1,0 +1,6 @@
+{"type":"session","version":4,"id":"{{session:2}}","createdAt":1785097381465,"cwd":"{{cwd}}","parentSession":"{{session:1}}","isSeeded":false,"delegationDepth":0,"agentPreset":"snapshot-lead"}
+{"type":"team/lead/execution","data":{"version":1,"teamId":"{{session:1}}","term":2,"presetId":"snapshot-lead","revision":"9cbac62f383b37a47be6731e0dac8a8b5eb03fb61e63504fe8ab0b73c317ac56"}}
+{"type":"agent/input/controller-bound","data":{"version":1,"controllerId":"native-team-lead"}}
+{"type":"permission/preset","data":{"preset":"workspace-write"}}
+{"type":"sandbox/mode","data":{"mode":"workspace-write"}}
+{"type":"approval/policy","data":{"policy":"ask"}}

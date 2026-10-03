@@ -52,6 +52,10 @@ interface AgentHandle {
 
 ## The agent handle
 
+Optional input control uses `AgentInput` to retain a user message, its inbox target and original wake intent. `InputReceipt` confirms durable custody in an inbox, held record or settled source; it does not confirm model processing. `InputControlState` retains these audit facts without becoming another executable queue. `AgentInputMutation` describes replacement, removal or steering of input that is still pending.
+
+An `InputControllerId` identifies one registered `AgentInputController`. Its admission, start, claim and preparation callbacks do not confer tool authority. The owner receives an `InputControllerHandle` for binding, non-waking preloading, capture and release; disposal closes and drains its admitted operations. A `ControlledInputDriver` supplies the concrete queue mutation and wake callbacks. The [Agent package](../../packages/core/agent/README.md#control-input-before-it-becomes-executable) owns persistence failures, retry identity and ordinary-path behavior.
+
 `Agent` is the surface every plugin (UI, hooks, orchestrators) programs against; `ctx.agents.get(id)` returns it, and the [initiator scope](#initiating-agent) carries it. The concrete implementation is package-internal to dsh-agent-loop; nothing outside the loop depends on it. The unified `send` method exposes target and wakeup routing directly; `followup`, `steer`, and `inject` are fixed-preset aliases.
 
 Source: [`packages/core/agent/src/types.ts`](../../packages/core/agent/src/types.ts)
@@ -598,6 +602,86 @@ Agent service (`ctx.agents`): tracks live agents and carries the initiating Agen
 Initiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.
 
 ```ts cordis-catalog
+/** Register an optional provider and its exclusive preload capability.
+ * @param id - durable provider identity.
+ * @param policy - input, execution and preparation policy.
+ * @returns an owner-scoped capability whose disposal drains admitted work.
+ */
+registerInputController(id: InputControllerId, policy: AgentInputController): InputControllerHandle
+
+/** Register a concrete driver's input operations under its Agent scope.
+ * @param agent - unpublished or live driver identity.
+ * @param driver - concrete non-waking enqueue and wake operations.
+ * @returns the owned asynchronous disposer.
+ */
+attachInputDriver(agent: Agent, driver: ControlledInputDriver): () => Promise<void>
+
+/** Read durable policy/custody facts, including processed input identities.
+ * @param session - observed Session.
+ * @returns host-only derived state, never a second executable queue.
+ */
+inputControlState(session: Session): InputControlState
+
+/** Detect the reliable receipt path without changing an unbound driver's timing.
+ * @param session - driver Session.
+ * @returns whether a persistent controller binding exists.
+ */
+isInputControlled(session: Session): boolean
+
+/** Prepare a bound execution before scoped composition.
+ * @param session - unpublished prepared Session.
+ * @returns completion of the registered preparation, or rejection without fallback.
+ */
+prepareInput(session: Session): Promise<void>
+
+/** Prepare optional input ownership before caller composition mounts.
+ * @param session - unpublished Session owned by the creation factory.
+ * @param source - fresh creation or persisted resumption.
+ * @returns provider preparation, or undefined for the original synchronous path.
+ */
+initializeInput(session: Session, source: SessionStartSource): Promise<void> | undefined
+
+/** Receive controlled input and wait for durable custody before permitting wake.
+ * @param agent - concrete controlled driver.
+ * @param input - original identity, source, queue and wake intent.
+ * @returns confirmed custody, not model or Task completion.
+ */
+receiveInput(agent: Agent, input: AgentInput): Promise<InputReceipt>
+
+/** Durably edit, remove or steer one pending controlled input under its admission policy.
+ * @param agent - receiving controlled driver.
+ * @param action - pending identity and requested mutation.
+ * @returns durable mutation confirmation, including retry of an uncertain removal; rejected or uncertain changes never wake the model.
+ * @throws InputMutationUnavailableError when no audited pending input or exact uncertain removal is available.
+ */
+mutateInput(agent: Agent, action: AgentInputMutation): Promise<void>
+
+/** Preserve synchronous unbound delivery; controlled callers await the returned receipt.
+ * @param agent - receiving driver.
+ * @param input - producer identity, queue and wake intent.
+ * @returns a durable receipt Promise only for a controlled Session; otherwise undefined after synchronous send.
+ */
+sendInput(agent: Agent, input: AgentInput): Promise<InputReceipt> | undefined
+
+/** Submit a best-effort notice without claiming durable acceptance to its producer.
+ * @param agent - receiver whose driver owns and drains admitted input work.
+ * @param input - original notice identity, source and intent.
+ * @returns no receipt; controlled failures are logged, while unbound synchronous failures still throw.
+ */
+sendInputNotice(agent: Agent, input: AgentInput): void
+
+/** Test new-turn admission without starting or claiming anything.
+ * @param agent - concrete driver.
+ * @returns false while custody is uncertain, work drains, or its policy is closed.
+ */
+canStartInput(agent: Agent): boolean
+
+/** Test admission before the inbox removes a batch.
+ * @param agent - concrete driver.
+ * @returns whether pending input may be claimed.
+ */
+canClaimInput(agent: Agent): boolean
+
 /**
  * Read the Agent that initiated the inherited asynchronous driver chain.
  * Use this optional form for logging, tracing, metrics, or host attribution
@@ -763,6 +847,8 @@ list(): Agent[]
  */
 roots(): Agent[]
 ```
+
+Types: [Session](session.md)
 
 Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 

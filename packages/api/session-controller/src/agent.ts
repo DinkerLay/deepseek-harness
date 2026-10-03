@@ -65,6 +65,25 @@ export type ApiSessionAgentResult =
   | { readonly agent: Agent }
   | { readonly error: ApiSessionAgentError }
 
+/** Provider-owned composition for an exact cold Session cut. */
+export interface SessionActivationPreparation extends AsyncDisposable {
+  /** Mount an already-validated composition before registry publication. */
+  readonly setup: AgentSetup
+}
+
+/** Optional cold preparation; providers must return undefined for Sessions they do not own.
+ * @param observation - caller-retained immutable cut, valid only during this call.
+ * @returns an owned composition, or undefined to preserve default activation.
+ */
+export type SessionActivationPreparer = (observation: SessionObservation)
+=> Promise<SessionActivationPreparation | undefined> | SessionActivationPreparation | undefined
+
+interface ActivationProvider {
+  readonly prepare: SessionActivationPreparer
+  readonly jobs: Set<Promise<SessionActivationPreparation | undefined>>
+  active: boolean
+}
+
 type InstalledSelection = ModelSelectionRef & {
   current: AgentModelSelection
   consume(provider: string, model: string, reasoningEffort: string | undefined): boolean
@@ -142,6 +161,7 @@ export class ApiSessionAgentController {
   private readonly creations = new Map<SessionId, Promise<Agent>>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
+  private readonly activationPreparers = new Map<string, ActivationProvider>()
 
   /** @param ctx - Host context carrying Agent, model, persistence, and Typert services. */
   constructor(private readonly ctx: Context) {
@@ -160,6 +180,85 @@ export class ApiSessionAgentController {
       if ('error' in found) throw found.error
       return found.agent.ctx
     })
+  }
+
+  /** Register optional cold preparation before Preset resolution and mounting.
+   * @param owner - registration lifetime.
+   * @param id - stable provider registration key.
+   * @param prepare - ownership selection and validation for the retained Session cut.
+   * @returns an effect-scoped disposer; a bound Session never falls back after rejection.
+   */
+  registerActivationPreparation(owner: Context, id: string, prepare: SessionActivationPreparer): () => Promise<void> {
+    const entry: ActivationProvider = { prepare, jobs: new Set(), active: true }
+    const dispose = owner.effect(() => {
+      if (this.activationPreparers.has(id)) throw new Error(`activation preparer "${id}" is already registered`)
+      this.activationPreparers.set(id, entry)
+      return async () => {
+        entry.active = false
+        await Promise.allSettled([...entry.jobs])
+        this.activationPreparers.delete(id)
+      }
+    }, 'session.activationPreparation()')
+    return async () => { await dispose() }
+  }
+
+  private async prepareActivation(observation: SessionObservation): Promise<SessionActivationPreparation | undefined> {
+    let accepted: SessionActivationPreparation | undefined
+    try {
+      for (const entry of this.activationPreparers.values()) {
+        if (!entry.active) continue
+        const job = Promise.resolve().then(() => entry.prepare(observation))
+        entry.jobs.add(job)
+        const contribution = await job.finally(() => { entry.jobs.delete(job) })
+        // Registration may close while the provider is awaited; sample its
+        // current state rather than retaining the pre-await narrowing.
+        const isActive = () => entry.active
+        const assertActive = () => {
+          if (!entry.active) throw new Error('activation preparation registration is closed')
+        }
+        if (!isActive()) {
+          await contribution?.[Symbol.asyncDispose]()
+          assertActive()
+        }
+        if (contribution === undefined) continue
+        if (accepted !== undefined) {
+          await contribution[Symbol.asyncDispose]()
+          throw new Error(`multiple providers own activation of "${observation.header.id}"`)
+        }
+        accepted = {
+          setup: async (agentCtx, agent) => {
+            assertActive()
+            const commit = await contribution.setup(agentCtx, agent)
+            assertActive()
+            return { commit: () => { assertActive(); commit?.commit() } }
+          },
+          [Symbol.asyncDispose]: () => contribution[Symbol.asyncDispose](),
+        }
+      }
+      return accepted
+    } catch (error: unknown) {
+      await accepted?.[Symbol.asyncDispose]()
+      throw error
+    }
+  }
+
+  private async activateObserved(sessionId: SessionId, observation: SessionObservation): Promise<Agent> {
+    await using preparation = this.activationPreparers.size === 0 ? undefined : await this.prepareActivation(observation)
+    const composition = preparation === undefined
+      ? await this.composeAgent(this.presetForObservation(observation))
+      : { setup: ((agentCtx, agent) => {
+        this.installSelection(agent)
+        return preparation.setup(agentCtx, agent)
+      }) satisfies AgentSetup }
+    const attached = this.ctx.sessions.get(sessionId)
+    if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, this.ctx.agents.get(sessionId))) {
+      throw new ApiSessionSubagentOwnership(sessionId)
+    }
+    return (await this.ctx.agents.resume({
+      resumeSessionId: sessionId,
+      agentOptions: this.agentOptions(),
+      setup: composition.setup,
+    })).agent
   }
 
   /**
@@ -428,17 +527,12 @@ export class ApiSessionAgentController {
     if (hasApiSessionSubagentOwner(this.ctx, { header: observation.header }, undefined)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    const composition = await this.composeAgent(this.presetForObservation(observation))
     const published = this.ctx.sessions.get(sessionId)
     const live = this.ctx.agents.get(sessionId)
     if (published !== undefined && hasApiSessionSubagentOwner(this.ctx, published, live)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    return (await this.ctx.agents.resume({
-      resumeSessionId: sessionId,
-      agentOptions: this.agentOptions(),
-      setup: composition.setup,
-    })).agent
+    return this.activateObserved(sessionId, observation)
   }
 
   private async createOrAdopt(
@@ -465,12 +559,7 @@ export class ApiSessionAgentController {
         }
         const storedPreset = this.presetForObservation(observation)
         this.assertPresetUnchanged(sessionId, presetId, storedPreset)
-        const composition = await this.composeAgent(storedPreset)
-        return (await this.ctx.agents.resume({
-          resumeSessionId: sessionId,
-          agentOptions: this.agentOptions(),
-          setup: composition.setup,
-        })).agent
+        return await this.activateObserved(sessionId, observation)
       } catch (error: unknown) {
         if (!(error instanceof SessionQueryError)
           || error.code !== 'SESSION_QUERY_SESSION_NOT_FOUND') throw error

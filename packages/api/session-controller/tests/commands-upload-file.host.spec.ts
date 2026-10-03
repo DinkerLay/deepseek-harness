@@ -9,6 +9,7 @@ import type {
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import FileUploads from '@deepseek-ai/dsh-client-file-upload'
@@ -34,6 +35,7 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
 }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(CommandRuntime)
   const session = ctx.sessions.create(SESSION, {
@@ -309,13 +311,10 @@ describe('Session file uploads', () => {
       new AbortController().signal,
     )
     await first.controller.prompt(promptRequest([{ type: 'file', receiptId: observed.receiptId }]))
-    first.ctx.emit('session/event', first.agent.session, {
-      type: 'user/message',
-      data: createUserMessage({
-        content: [{ type: 'text', text: 'extension event' }],
-        source: { kind: 'user', rpcId: 1 } as never,
-      }),
-    } as never)
+    first.agent.session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'extension event' }],
+      source: { kind: 'user', rpcId: 1 } as never,
+    }), { surfaceOp: 'append' })
     expect(first.uploads.resolve(first.agent, observed.receiptId)).toEqual(observed.file)
     first.agent.session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'observed' }],

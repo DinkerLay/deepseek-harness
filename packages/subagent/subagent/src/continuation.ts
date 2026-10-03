@@ -475,11 +475,11 @@ export class SubagentContinuationManager {
   }
 
   /** Deliver one resident continuable child's message to its live direct parent. */
-  private sendToParent(
+  private async sendToParent(
     activation: Activation,
     sender: Agent,
     content: ContentBlock[],
-  ): MessageId {
+  ): Promise<MessageId> {
     /* v8 ignore next 6 -- only synchronous re-entrant teardown can open this
      * transaction between exact-agent authorization and this no-await span. */
     if (activation.inbox.closing !== undefined) {
@@ -496,7 +496,8 @@ export class SubagentContinuationManager {
       )
     }
     const message = createAgentMessage(sender, content)
-    this.sendAgentMessage(parent, message)
+    const receipt = this.sendAgentMessage(parent, message)
+    if (receipt !== undefined) await receipt
     return message.id
   }
 
@@ -504,9 +505,12 @@ export class SubagentContinuationManager {
   private sendAgentMessage(
     parent: Agent,
     message: ReturnType<typeof createUserMessage>,
-  ): void {
+  ): ReturnType<ContinuableActivationRegistry['sendWaking']> {
     try {
-      this.activations.sendWaking(parent, message, 'steer')
+      const receipt = this.activations.sendWaking(parent, message, 'steer')
+      return receipt?.catch((error: unknown) => {
+        throw new SubagentError('direct parent did not acknowledge durable receipt', 'PARENT_UNAVAILABLE', { cause: error })
+      })
     } catch (error: unknown) {
       throw new SubagentError(
         'direct parent is not live; the message was not delivered',

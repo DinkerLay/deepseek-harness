@@ -6,7 +6,8 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import AgentRegistry, { emitAgentEvent } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import { JobId } from '@deepseek-ai/dsh-jobs'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
@@ -47,15 +48,18 @@ interface FakeDelivery {
  * `ctx.agents` with a dedicated lifecycle scope.
  */
 async function fakeAgent(ctx: Context, sessionId: string, delivery: FakeDelivery = {}): Promise<Agent> {
+  if (ctx.get('sessions') === undefined) await ctx.plugin(SessionStore)
+  if (ctx.get('sessionProjections') === undefined) await ctx.plugin(SessionProjectionRegistry)
   const scopeFiber = ctx.plugin(() => {})
   const id = SessionId(sessionId)
+  const session = ctx.sessions.get(id) ?? ctx.sessions.create(id)
   const agent = {
     id,
     ctx: scopeFiber.ctx,
     inject: delivery.inject ?? (() => {}),
     followup: delivery.followup ?? (() => {}),
     status: delivery.status ?? 'running',
-    session: { id, header: { version: 0, id, createdAt: 0 } },
+    session,
   } as unknown as Agent
   agentRegistryDisposers.set(agent, await ctx.agents.register(agent))
   agentScopeFibers.set(agent, scopeFiber)
@@ -677,6 +681,8 @@ describe('completion notices across scoped mounts', () => {
    */
   it('delivers one notice from the owning scope when two mounts share the registry', async () => {
     const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(AgentRegistry)
@@ -697,7 +703,7 @@ describe('completion notices across scoped mounts', () => {
       id: SessionId('sess-scoped'),
       ctx: agentScope.ctx,
       inject,
-      session: { id: SessionId('sess-scoped'), header: { version: 0, id: SessionId('sess-scoped'), createdAt: 0 } },
+      session: ctx.sessions.create(SessionId('sess-scoped')),
     } as unknown as Agent
     const dispose = await ctx.agents.register(owner)
 

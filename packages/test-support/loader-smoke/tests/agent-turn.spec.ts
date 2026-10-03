@@ -1,6 +1,10 @@
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { runFixtureTurn } from '../src/agent-turn.ts'
 
 type Listener = (session: unknown, event: SessionEvent) => void
@@ -29,8 +33,15 @@ function turnHarness(): {
     whenIdle,
     followup: vi.fn((message: { readonly id: unknown }) => { followup(message) }),
   }
+  const agents = {
+    roots: () => [agent],
+    sendInput: (receiver: typeof agent, input: { message: { readonly id: unknown } }): void => {
+      receiver.followup(input.message)
+    },
+  }
   const ctx = {
-    get: (name: string) => name === 'agents' ? { roots: () => [agent] } : undefined,
+    get: (name: string) => name === 'agents' ? agents : undefined,
+    agents,
     on: (_name: string, callback: Listener) => {
       listener = callback
       return disposeListener
@@ -50,6 +61,48 @@ function turnHarness(): {
 }
 
 describe('runFixtureTurn', () => {
+  it.each([false, true])('awaits a controlled receipt before observing idle; receipt fails: %s', async (fails) => {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(AgentRegistry)
+    const session = ctx.sessions.create(SessionId('controlled-fixture-turn'))
+    const whenIdle = vi.fn(() => Promise.resolve())
+    const unsupported = (): never => { throw new Error('fixture turn must use the registry receipt') }
+    const agent: Agent = { id: session.id, session, ctx, status: 'idle', whenIdle, options: {},
+      inbox: { nextTurn: [], nextStep: [], clear: unsupported, append: unsupported, prepend: unsupported,
+        replace: unsupported, remove: unsupported, splice: unsupported },
+      send: unsupported, followup: unsupported, steer: unsupported, inject: unsupported, cancel: unsupported,
+      runMaintenance: task => task(new AbortController().signal),
+    }
+    await ctx.agents.register(agent)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    ctx.on('session/flush', async () => { entered.resolve(undefined); await release.promise })
+    // Hold the receipt-producing call while the real Session flush is pending.
+    const receive = vi.spyOn(ctx.agents, 'sendInput').mockImplementation(async (_agent, input) => {
+      session.append('agent/inbox/spliced', { target: input.target, start: 0, inserted: [input.message] })
+      await ctx.sessions.flush(session)
+      if (fails) throw new Error('fixture custody unavailable')
+      session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createAssistantMessage({
+        content: [{ type: 'text', text: 'confirmed answer' }], source: { provider: 'fixture', model: 'fixture' },
+      }) }, { surfaceOp: 'append' })
+      return { messageId: input.message.id, location: 'inbox' }
+    })
+    const sending = runFixtureTurn(ctx, { task: 'await receipt' })
+    const outcome = sending.then(value => ({ value }), (error: unknown) => ({ error }))
+    try {
+      await entered.promise
+      expect(whenIdle).toHaveBeenCalledOnce()
+      release.resolve(undefined)
+      if (fails) expect(await outcome).toMatchObject({ error: new Error('fixture custody unavailable') })
+      else {
+        expect(await outcome).toMatchObject({ value: { output: 'confirmed answer' } })
+        expect(whenIdle).toHaveBeenCalledTimes(2)
+      }
+    } finally { release.resolve(undefined); await outcome; receive.mockRestore() }
+  })
+
   it.each([
     ['no agent registry', undefined, 0],
     ['multiple roots', { roots: () => [{}, {}] }, 2],

@@ -190,7 +190,8 @@ export class HarnessSdkJsonRpcServer {
       content,
       source: { kind: 'user' },
     })
-    rec.handle.agent.followup(message)
+    const receipt = this.ctx.agents.sendInput(rec.handle.agent, { message, target: 'next-turn', wakeup: true })
+    if (receipt !== undefined) await receipt
     return { messageId: message.id }
   }
 

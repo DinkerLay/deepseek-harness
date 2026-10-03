@@ -32,6 +32,8 @@ import {
 import { assertTaskGraphCandidate } from './task-graph.ts'
 import { applyTaskTransaction } from './task-transaction.ts'
 import { projectTaskView } from './task-view.ts'
+import { teamLeadBindingSchema } from './lead-seat.ts'
+import type { TeamLeadBinding } from './lead-seat.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -185,6 +187,14 @@ const teamTaskTransactionEventSchema = z.object({
   notices: z.array(teamMessageSnapshotSchema).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/task/transaction']>
 
+const teamLeadTransactionEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema, previousTerm: positiveSafeInteger,
+  binding: teamLeadBindingSchema,
+  extension: z.object({ id: z.string().min(1).max(200), dataJson: z.string() }).strict(),
+  releases: z.array(teamTaskTransactionUpdateSchema),
+  notices: z.array(teamMessageSnapshotSchema).optional(),
+}).strict() as z.ZodType<SessionEventMap['team/lead/transaction']>
+
 const teamExtensionEventSchema = z.object({
   version: z.literal(1),
   teamId: teamIdSchema,
@@ -238,6 +248,9 @@ const teamModeEventSchema = z.object({
  */
 export interface TeamState {
   readonly id: TeamId
+  /** Absent before the first authenticated seat transaction; the anchor remains term one. */
+  readonly lead?: TeamLeadBinding
+  readonly leadHistory?: readonly TeamLeadBinding[]
   readonly mode?: TeamControlledMode
   readonly composition?: TeamCompositionState
   readonly members: readonly TeamMemberSnapshot[]
@@ -284,6 +297,8 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 
 const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
+  lead: teamLeadBindingSchema.optional(),
+  leadHistory: z.array(teamLeadBindingSchema).optional(),
   mode: teamControlledModeSchema.optional(),
   composition: teamCompositionStateSchema.optional(),
   members: z.array(teamMemberSnapshotSchema),
@@ -305,6 +320,7 @@ const teamProjectionEntrySchema = z.object({
 
 /** Whether one event belongs to the Team domain. */
 export type TeamEventType =
+  | 'team/lead/transaction'
   | 'team/mode'
   | 'team/composition'
   | 'team/member'
@@ -325,7 +341,8 @@ type TeamSessionEvent = SessionEvent<TeamEventType>
  * @returns whether the event has a Team-owned type.
  */
 export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
-  return event.type === 'team/mode'
+  return event.type === 'team/lead/transaction'
+    || event.type === 'team/mode'
     || event.type === 'team/composition'
     || event.type === 'team/member'
     || event.type === 'team/member/configured'
@@ -349,6 +366,8 @@ function parsePersisted<T>(type: TeamEventType, schema: z.ZodType<T>, value: unk
 /** Decode the complete current-version payload selected by one Team event type. */
 function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
   switch (event.type) {
+    case 'team/lead/transaction':
+      return { ...event, data: parsePersisted(event.type, teamLeadTransactionEventSchema, event.data) }
     case 'team/mode':
       return { ...event, data: parsePersisted(event.type, teamModeEventSchema, event.data) }
     case 'team/composition':
@@ -381,7 +400,7 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return state
-    const expectedVersion = event.type === 'team/mode' || event.type === 'team/composition'
+    const expectedVersion = event.type === 'team/lead/transaction' || event.type === 'team/mode' || event.type === 'team/composition'
       || event.type === 'team/task/transaction'
       || event.type === 'team/extension' ? 1
       : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
@@ -404,6 +423,38 @@ function replaceAt<T>(items: readonly T[], index: number, item: T): T[] {
 
 function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEvent): TeamProjectionState {
   switch (event.type) {
+    case 'team/lead/transaction': {
+      const { previousTerm, binding, extension, releases, notices = [] } = event.data
+      if (state.mode?.kind !== 'controlled') throw new Error('Lead seat requires a controlled Team')
+      if (extension.id !== state.mode.requiredTaskExtensionId) throw new Error('Lead transaction requires the bound Task writer')
+      if (previousTerm !== (state.lead?.term ?? 1) || binding.term !== previousTerm + 1
+        || binding.executionId === brandString<SessionId>(state.id)
+        || state.leadHistory?.some(prior => prior.executionId === binding.executionId)
+        || state.members.some(member => member.id === binding.executionId)) {
+        throw new Error('Lead binding has a stale term or reused execution identity')
+      }
+      try { JSON.parse(extension.dataJson) } catch { throw new Error('Lead extension record is not JSON') }
+      if (releases.length !== state.tasks.filter(task => task.ownerId === brandString<SessionId>(state.id)
+        && task.status === 'in_progress').length) throw new Error('Lead transaction must release every running Lead Task')
+      for (const update of releases) {
+        const prior = state.tasks.find(task => task.id === update.task.id)
+        if (prior?.ownerId !== brandString<SessionId>(state.id) || prior.status !== 'in_progress'
+          || update.previousRevision === null || update.task.status !== 'pending' || update.task.ownerId !== undefined
+          || state.taskWriters.find(writer => writer.taskId === update.task.id)?.writerId !== extension.id) {
+          throw new Error('Lead transaction may only release its writer-owned running Lead Tasks')
+        }
+      }
+      const next = releases.length === 0 ? {} : applyTaskTransaction(state.tasks, state.nextTaskNumber, releases)
+      const seen = new Set<TeamMessageId>()
+      for (const notice of notices) {
+        if (seen.has(notice.id) || state.messages.some(message => message.id === notice.id)) {
+          throw new Error(`team message "${notice.id}" was queued twice`)
+        }
+        seen.add(notice.id)
+      }
+      return { ...state, ...next, lead: binding, leadHistory: [...state.leadHistory ?? [], binding],
+        messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
+    }
     case 'team/mode': {
       if (state.mode !== undefined || state.members.length > 0 || state.tasks.length > 0 || state.messages.length > 0) {
         throw new Error('controlled Team mode must be the first Team event')
@@ -582,6 +633,7 @@ const teamTaskViewSchema = z.object({
 }).strict() as z.ZodType<TeamTaskView>
 
 const teamProjectionSchema = z.object({
+  lead: teamLeadBindingSchema.optional(),
   members: z.array(teamMemberProjectionSchema),
   tasks: z.array(teamTaskViewSchema),
   composition: z.object({
@@ -600,7 +652,8 @@ const teamProjectionViews = new WeakMap<readonly TeamMemberSnapshot[], WeakMap<r
 
 function buildTeamProjection(state: TeamProjectionState): TeamProjection {
   const rootId = brandString<SessionId>(state.id)
-  const members: TeamMemberProjection[] = [{ id: rootId, name: 'lead', role: 'lead', phase: 'active' }]
+  const members: TeamMemberProjection[] = [{ id: rootId, name: 'lead', role: 'lead', phase: 'active',
+    ...state.lead === undefined ? {} : { preset: { id: state.lead.presetId, revision: state.lead.revision } } }]
   for (const member of state.members) {
     members.push({
       id: member.id,
@@ -628,6 +681,7 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
   }
   return {
     members,
+    ...state.lead === undefined ? {} : { lead: state.lead },
     tasks: state.tasks
       .filter(task => task.status !== 'deleted')
       .map(task => projectTaskView(state, task)),
@@ -645,7 +699,8 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
  * @returns the roster and non-deleted task board, plus any projection failure.
  */
 export function teamProjectionView(state: TeamProjectionState): TeamProjection {
-  if (state.failure !== undefined || state.composition !== undefined || state.mode !== undefined) return buildTeamProjection(state)
+  if (state.failure !== undefined || state.composition !== undefined || state.mode !== undefined
+    || state.lead !== undefined) return buildTeamProjection(state)
   let byTasks = teamProjectionViews.get(state.members)
   if (byTasks === undefined) {
     byTasks = new WeakMap()
@@ -662,7 +717,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 16,
+  stateVersion: 17,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

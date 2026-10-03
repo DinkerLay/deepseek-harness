@@ -4,6 +4,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { InputReceipt } from '@deepseek-ai/dsh-agent'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import { GoalError } from '@deepseek-ai/dsh-goal'
@@ -11,7 +12,7 @@ import type { GoalPhase, GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'command-goal'
-export const inject = ['commands', 'goals']
+export const inject = ['commands', 'goals', 'agents']
 
 const USAGE = 'Usage: /goal [<objective>|clear|edit <objective>|pause|resume]'
 
@@ -112,18 +113,21 @@ function missingGoal(action: string): CommandResult {
  * Submit the invocation's admitted composer attachments as one model-visible user
  * message ahead of the goal's next round. The attachments precede a fixed text
  * block naming their role, so a later goal round reads them from ordinary
- * session history without the goal domain storing attachment state.
+ * session history without the goal domain storing attachment state. Controlled
+ * Sessions confirm custody before the command reports success; unbound Sessions
+ * retain synchronous followup delivery.
  */
-function submitObjectiveAttachments(invocation: CommandInvocation): void {
+function submitObjectiveAttachments(ctx: Context, invocation: CommandInvocation): Promise<InputReceipt> | undefined {
   if (invocation.attachments.length === 0) return
-  invocation.agent.followup(createUserMessage({
+  const message = createUserMessage({
     content: [...invocation.attachments, { type: 'text', text: 'Reference attachments for the goal objective.' }],
     source: { kind: 'user' },
-  }))
+  })
+  return ctx.agents.sendInput(invocation.agent, { message, target: 'next-turn', wakeup: true })
 }
 
 /** Execute one parsed human command through the domain that owns persistence. */
-function executeGoalCommand(ctx: Context, invocation: CommandInvocation): CommandResult {
+function executeGoalCommand(ctx: Context, invocation: CommandInvocation): CommandResult | Promise<CommandResult> {
   const command = parseGoalCommand(invocation.rawInput)
   if (invocation.attachments.length > 0 && command.kind !== 'create' && command.kind !== 'edit') {
     return {
@@ -148,19 +152,22 @@ function executeGoalCommand(ctx: Context, invocation: CommandInvocation): Comman
           }
         }
         const created = ctx.goals.create(invocation.agent, { objective: command.objective })
-        submitObjectiveAttachments(invocation)
-        return renderGoal('Goal created', created)
+        const receipt = submitObjectiveAttachments(ctx, invocation)
+        const result = renderGoal('Goal created', created)
+        return receipt === undefined ? result : receipt.then(() => result)
       }
       case 'edit': {
         if (current === undefined) return missingGoal('edit')
         if (current.phase === 'complete') {
           const replaced = ctx.goals.create(invocation.agent, { objective: command.objective })
-          submitObjectiveAttachments(invocation)
-          return renderGoal('Goal created', replaced)
+          const receipt = submitObjectiveAttachments(ctx, invocation)
+          const result = renderGoal('Goal created', replaced)
+          return receipt === undefined ? result : receipt.then(() => result)
         }
         const edited = ctx.goals.edit(invocation.agent, goalRef(current), { objective: command.objective })
-        submitObjectiveAttachments(invocation)
-        return renderGoal('Goal updated', edited)
+        const receipt = submitObjectiveAttachments(ctx, invocation)
+        const result = renderGoal('Goal updated', edited)
+        return receipt === undefined ? result : receipt.then(() => result)
       }
       case 'pause':
         if (current === undefined) return missingGoal('pause')

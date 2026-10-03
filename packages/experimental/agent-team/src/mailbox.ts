@@ -55,16 +55,14 @@ export function teamMessageDeliveryBytes(message: TeamMessageSnapshot, state?: T
   return Buffer.byteLength(JSON.stringify(teamMessageDeliveryContent(message, state)), 'utf8')
 }
 
-/** Preserve author attribution while adding system-owned delivery framing. */
+/** Preserve controlled-member author attribution while adding system-owned delivery framing. */
 function teamMessageSource(teamId: TeamId, message: TeamMessageSnapshot, state: TeamState): TeamMessageSource {
   const framing = teamMessageDeliveryContent(message, state).length - message.content.length
   const parts = message.contentParts?.length === message.content.length
     ? [...message.contentParts] : message.content.map(() => 'fact' as const)
   return { kind: 'team-message', teamId, messageId: message.id, senderId: message.senderId,
     senderName: message.senderName,
-    ...state.mode === undefined ? {} : {
-      contentParts: [...Array.from({ length: framing }, () => 'fact' as const), ...parts],
-    } }
+    contentParts: [...Array.from({ length: framing }, () => 'fact' as const), ...parts] }
 }
 
 /** Owns every process-local state transition for the durable Team mailbox. */
@@ -372,8 +370,14 @@ export class TeamMailbox {
       }
       const content = teamMessageDeliveryContent(message)
       if (message.targetId === root.id) {
-        const input = createUserMessage({ content, source })
-        root.steer(input)
+        const previous = this.ctx.agents.isInputControlled(root.session)
+          ? this.ctx.agents.inputControlState(root.session).records.find(record =>
+            record.input.message.source.kind === 'team-message'
+            && record.input.message.source.messageId === message.id)
+          : undefined
+        const input = previous?.input.message ?? createUserMessage({ content, source })
+        const receipt = this.ctx.agents.sendInput(root, previous?.input ?? { message: input, target: 'next-step', wakeup: true })
+        if (receipt !== undefined && (await receipt).location === 'held') return false
         return await this.checkpointDelivered(root, root.session, message.id)
       }
       if (target === undefined) {
@@ -403,13 +407,15 @@ export class TeamMailbox {
     if (retry.attempts >= this.maxRetries) {
       void this.trackDispatch(this.journal.transact(root.id, async () => {
         const id = TeamMessageId(`team-start-incomplete-${message.id}`)
-        if (this.journal.state(root).messages.some(candidate => candidate.id === id)) return
+        const existing = this.journal.state(root).messages.find(candidate => candidate.id === id)
+        if (existing !== undefined) return existing
+        const notice: TeamMessageSnapshot = { id, senderId: root.id, senderName: 'lead', targetId: root.id,
+          content: [{ type: 'text', text: `Delivery of Team message ${message.id} remains unconfirmed after retries. Inspect its member and Tasks; cancel pending mail explicitly if needed.` }] }
         await this.journal.appendAndFlush(root, 'team/message/queued', { version: 2, teamId: TeamId(root.id),
-          message: { id, senderId: root.id, senderName: 'lead', targetId: root.id,
-            content: [{ type: 'text', text: `Delivery of Team message ${message.id} remains unconfirmed after retries. Inspect its member and Tasks; cancel pending mail explicitly if needed.` }] } })
-      }).then(async () => {
-        const notice = this.journal.state(root).messages.find(candidate => candidate.id === TeamMessageId(`team-start-incomplete-${message.id}`))
-        if (notice !== undefined) await this.tryDispatch(root, notice, this.lifecycle.signal)
+          message: notice })
+        return notice
+      }).then(async (notice) => {
+        await this.tryDispatch(root, notice, this.lifecycle.signal)
       }).catch((error: unknown) => { this.ctx.logger.warn(`Team delivery retry notification failed: ${errorMessage(error)}`) }))
       return
     }

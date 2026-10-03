@@ -214,13 +214,16 @@ export class ApprovalService extends Service {
     const previous = this.ownPolicy(agent.session)
     if (previous === policy) return
     setApprovalPolicy(agent.session, policy)
-    agent.inject(createUserMessage({
+    const message = createUserMessage({
       content: [{
         type: 'text',
         text: `The approval policy changed from "${previous}" to "${policy}" (changed by the user).`,
       }],
       source: { kind: 'user-approval' },
-    }))
+    })
+    const agents = this.ctx.get('agents')
+    if (agents === undefined) agent.inject(message)
+    else agents.sendInputNotice(agent, { message, target: 'next-step', wakeup: false })
   }
 
   /**

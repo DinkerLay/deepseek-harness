@@ -10,14 +10,14 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { boundContextSummary, createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { boundContextSummary, createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
 import { JobId } from '@deepseek-ai/dsh-jobs'
 import type { JobView, JobRead } from '@deepseek-ai/dsh-jobs'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent'
 import { publicJob, renderModelDelta, statusLine } from './render.ts'
 import type { PublicJobSnapshot } from './render.ts'
@@ -258,6 +258,18 @@ export function apply(ctx: Context, config: Config): void {
   // repeat it. A wait needs no entry here — the registry reports a settlement
   // that released a live wait as `awaited`, whichever plugin was waiting.
   const killedByModel = new Set<JobId>()
+  const pendingNotices = new Set<Promise<unknown>>()
+
+  /** Controlled receipts remain plugin-owned until settlement and are drained after unsubscribing. */
+  function deliverNotice(agents: AgentRegistry, owner: Agent, message: UserMessage, wakeup: boolean): void {
+    const receipt = agents.sendInput(owner, { message, target: wakeup ? 'next-turn' : 'next-step', wakeup })
+    if (receipt === undefined) return
+    pendingNotices.add(receipt)
+    void receipt.then(() => { pendingNotices.delete(receipt) }, (error: unknown) => {
+      pendingNotices.delete(receipt)
+      ctx.logger.warn(`job completion input was not durably acknowledged: ${String(error)}`)
+    })
+  }
 
   // A busy owner is injected: the notice waits in its next-step inbox, which
   // the turn cannot close over, so jobs settling together cost one step. An
@@ -268,7 +280,7 @@ export function apply(ctx: Context, config: Config): void {
   // The registry routes each settlement to the scope this plugin was mounted
   // under, so a mount under one preset never sees another preset's agents;
   // this listener owns delivery, not the choice of whom to deliver to.
-  ctx.jobs.events.subscribe({ owners: 'scope' }, (event) => {
+  const unsubscribeNotices = ctx.jobs.events.subscribe({ owners: 'scope' }, (event) => {
     if (event.type === 'removed') {
       killedByModel.delete(event.job.id)
       return
@@ -279,7 +291,9 @@ export function apply(ctx: Context, config: Config): void {
     // The destination is the agent registered for the owner session now. An
     // owned job needed the agent registry to start, so the registry is only
     // absent here when it left before settlement — and then no inbox is left.
-    const owner = ctx.get('agents')?.get(event.job.owner)
+    const agents = ctx.get('agents')
+    if (agents === undefined) return
+    const owner = agents.get(event.job.owner)
     if (owner === undefined) return
     const message = createUserMessage({
       content: [{
@@ -294,18 +308,22 @@ export function apply(ctx: Context, config: Config): void {
     })
     if (delivery === 'wakeup' && owner.status === 'idle') {
       if (wakeBudget === undefined) {
-        owner.followup(message)
+        deliverNotice(agents, owner, message, true)
         return
       }
       const spent = spentWakes.get(owner) ?? 0
       if (spent < wakeBudget) {
         spentWakes.set(owner, spent + 1)
-        owner.followup(message)
+        deliverNotice(agents, owner, message, true)
         return
       }
     }
-    owner.inject(message)
+    deliverNotice(agents, owner, message, false)
   })
+  ctx.effect(() => async () => {
+    unsubscribeNotices()
+    await Promise.allSettled([...pendingNotices])
+  }, 'toolJobs.completionInputs()')
 
   ctx.tools.register(defineTool({
     name: 'job_output',

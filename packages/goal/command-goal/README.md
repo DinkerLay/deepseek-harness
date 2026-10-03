@@ -46,11 +46,11 @@ Control words (`clear`, `pause`, `resume`, `edit`) are recognized only when they
 
 ### Attachments
 
-`/goal` declares attachment support. Attachments accompany only an objective: after a successful create or edit, the command submits one user followup carrying the admitted image and file blocks in selection order plus the fixed text `Reference attachments for the goal objective.` Later goal rounds read that ordinary session history; the goal domain stores no attachment state. Every other sub-command, and any refused create or edit, returns a direct error before a domain mutation and leaves the dispatching composer's draft and cards intact.
+`/goal` declares attachment support. Attachments accompany only an objective: after a successful create or edit, the command submits one user followup carrying the admitted image and file blocks in selection order plus the fixed text `Reference attachments for the goal objective.` For an input-controlled Session, command success waits for durable custody of that message; a receipt failure rejects dispatch. Unbound Sessions retain synchronous followup delivery. Later goal rounds read that ordinary session history; the goal domain stores no attachment state. Every other sub-command, and any refused create or edit, returns a direct error before a domain mutation and leaves the dispatching composer's draft and cards intact.
 
 ### Compose it
 
-The command injects the commands registry and the goal service. A custom app mounts their owners plus this plugin; automatic continuation remains an independent choice:
+The command injects the commands registry, goal service, and agent registry required by the goal service. A custom app mounts their owners plus this plugin; automatic continuation remains an independent choice:
 
 ```yaml
 - id: commands

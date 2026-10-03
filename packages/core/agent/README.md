@@ -58,6 +58,13 @@ handle.agent.steer({
 await handle.agent.whenIdle()
 ```
 
+<a id="control-input-before-it-becomes-executable"></a>
+### Control input before it becomes executable
+
+An optional input-controller provider binds selected Sessions before composition mounts. Unbound Sessions retain synchronous `followup`, `steer` and `inject`; bound Sessions use `ctx.agents.sendInput()` and await its receipt. The provider can accept, reject or persistently hold input, and can prevent new turns or inbox claims without removing pending work. Provider removal closes bound Sessions rather than restoring ordinary execution.
+
+A receipt confirms custody only after `sessions.flush()` returns true without error; it does not confirm model processing. Failed confirmation preserves the original identity for retry. An uncertain removal can be retried by its exact `MessageId` while the driver remains live; confirmation never reinserts input or clears another identity's uncertainty. Missing or settled pending mutations reject with `InputMutationUnavailableError`. Only the provider's capability can preload without waking, capture audited pending input or release held custody. Pending edits retain their original receipt identity, and capture refuses pre-binding input whose wake intent is unknown. Core input control does not decide tool permissions or application routing.
+
 ### Scope registrations to one agent
 
 `Agent.ctx` is the agent's scoped context: registrations made through it (tools, prompt sections, variables, event listeners, restrictions) apply to that agent alone and unwind on disposal. The same mechanism is what agent presets use to give one session a different capability set without affecting its neighbors.
@@ -97,6 +104,8 @@ The package is built on one separation: the public `Agent` surface and registry 
 | [`src/index.ts`](src/index.ts) | Plugin entry: `AgentRegistry`, factory slot, initiator scope, `CreateAgentOptions`/`ResumeAgentOptions` |
 | [`src/runtime-types.ts`](src/runtime-types.ts) | `Agent`, structural `Inbox`, `AgentStatus`, and the `agent/*` event declarations |
 | [`src/types.ts`](src/types.ts) | `AgentOptions`, cancellation causes, and inbox projection vocabulary |
+| [`src/input-control.ts`](src/input-control.ts) | Optional provider ownership, durable receipts and admission |
+| [`src/input-control-projection.ts`](src/input-control-projection.ts) | Host-only custody audit, excluding inherited bindings |
 | [`src/dispatch.ts`](src/dispatch.ts) | `agentEvents` fused dispatcher and `assembleContextFor(agent)` |
 | [`src/consumed-work.ts`](src/consumed-work.ts) | `foldConsumedWork(events)`: what the log's consumed work became |
 | [`src/model-selection.ts`](src/model-selection.ts) | `installModelSelection`: coupling one selection to assembly and routing |

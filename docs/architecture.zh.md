@@ -114,7 +114,9 @@ turn/end
 
 驱动器唯一的持久 `inbox` 在没有活跃 Agent 时也能暴露待处理输入。注入的上下文等待一条唤醒消息；可选 `wakePending()` 唤醒已排队的输入，不重新入队。
 
-`agent/pre-step` 决定接纳的输入。监听器可以改写或拒绝已领取消息；首次领取被拒绝或为空时，关闭不含步骤的持久轮次。enter 决策可设置 `startsRequestSeries`：循环记录新的 `request/header`（原因为 `series`，或在封装同时变化时为携带 `startsSeries: true` 的 `change`）。包装监听器通过 `{ ...decision, messages }` 保留该声明。组装与 `step/start` 之后，`agent/request` 和 `prepareCall()` 先解析实际路由，再提交系统提示词与已接纳用户消息；在任一异步阶段取消都不会提交这两者。提示词准入依据已准备调用的能力，而非先前的 `request/context`。每次尝试同步协调同一份已渲染组装结果、仅在首次尝试追加用户消息、按需记录 header/context、派生并冻结请求，再通过绑定调用发起流式请求。重试不重复组装或 `agent/pre-step`。附接后的 surface 替换和图片省略决定开启新请求序列，包括恢复后的首次 pre-step 中发生的替换；未变化的恢复延续序列。首次接纳的步骤在用户消息之前预留系统头节点，即使提示词为空（不产生协议消息）。提示词仅通过 `system/message` 历史传递：空渲染文本清除所有生效的系统节点，模型不再看到旧提示词；具备能力的路由可在缓存前缀之后追加非空更新，包括同时发生的受支持工具更新；不具备能力的路由与新请求序列将非空提示词文本归并到首个系统节点，并为非空的后续系统节点记录空内容替换（[决策](../.agents/notes/implemented/architecture/2026-09-02-system-prompt-as-surface-node.zh.md)；[决策规则](../packages/core/agent-loop/README.zh.md#understand-the-implementation)）。
+可选的[输入控制](../packages/core/agent/README.zh.md#control-input-before-it-becomes-executable) 在组合、轮次开始与收件箱领取前运行。已绑定的接收方只有取得持久接管确认后才唤醒；提供方可以把输入暂存在可执行队列之外。没有绑定时保留普通同步路径。
+
+`agent/pre-step` 决定被接纳的输入。监听器可以改写或拒绝已领取的消息；拒绝或首个空决策会关闭轮次，不进入步骤。组装与路由准备成功后，接纳的输入才提交。重试复用已接纳的组装；请求头标识路由、工具变化或新消息系列。系统提示变化保留在持久历史中，由提供方能力决定追加更新还是整合前缀。[Agent Loop 实现](../packages/core/agent-loop/README.zh.md#understand-the-implementation) 定义确切的请求头、提示更新与取消规则。
 
 循环发送不可变请求，同时保持取消有效，仅对完全冻结的对象复用冻结证据；[agent-loop](../packages/core/agent-loop/README.zh.md) 负责请求构建与取消原因。
 

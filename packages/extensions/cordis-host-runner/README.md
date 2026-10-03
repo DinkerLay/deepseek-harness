@@ -55,7 +55,7 @@ Programmatic callers use `define`, `run`, `stop`, and `undefine`; the browser pa
 
 ### What happens to definitions
 
-Definitions are session-scoped and process-local: other sessions read them as absent, and restart clears them. Historical logs retain tool arguments and receipts but do not restore the registry. Reloading a browser page requires another explicit run to load its Client half.
+Definitions are session-scoped and process-local: other sessions read them as absent, and restart clears them. Each defined Plugin retains at least one Package until `undefine`; its version pointers name those retained Packages. Removing a Plugin first settles and removes its pending approval. Historical logs retain tool arguments and receipts but do not restore the registry. Reloading a browser page requires another explicit run to load its Client half.
 
 ### Trust stance
 

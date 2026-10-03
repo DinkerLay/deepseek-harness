@@ -21,8 +21,11 @@
   en: e305441a5a4a9b44
   zh: 3e997b12ce0ce04c
 /deepseek-ai-dsh-agent/use-this-package/drive-an-agent-s-conversation:
-  en: 71e258897e2e7d73
-  zh: abf0991012faa17e
+  en: 23f36590e7a14330
+  zh: ed3971ea10a78c39
+/deepseek-ai-dsh-agent/use-this-package/control-input-before-it-becomes-executable:
+  en: ba4fd995b52eb47a
+  zh: 8d481aa58fe1a92d
 /deepseek-ai-dsh-agent/use-this-package/scope-registrations-to-one-agent:
   en: 2594a1e02adea801
   zh: cae8860369728efb
@@ -42,8 +45,8 @@
   en: f6802c7f94f623b3
   zh: cc3885db80765970
 /deepseek-ai-dsh-agent/understand-the-implementation/source-map:
-  en: c08cf19efc131171
-  zh: 7e9f7b6a85e0aa1d
+  en: d3cbd19482951637
+  zh: a03d2b80cb6e1952
 /deepseek-ai-dsh-agent/understand-the-implementation/registry-and-lifecycle:
   en: df92e97cedd0d02e
   zh: f6040c145bffd933

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, ModelSelection as AgentModelSelection } from '@deepseek-ai/dsh-agent'
+import { InputMutationUnavailableError } from '@deepseek-ai/dsh-agent'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
 import type {
   AttachmentAdmissionPart, FileAttachmentRef, ImageAttachmentRef,
@@ -327,7 +328,15 @@ export class SessionCommandController {
       )
     }
     const agent = await this.resolveAgent(request.sessionId)
-    if (hasPromptRequest(agent, request.requestId)) return { accepted: true }
+    if (this.ctx.agents.isInputControlled(agent.session)) {
+      const prior = this.ctx.agents.inputControlState(agent.session).records.find(record =>
+        record.input.message.source.kind === 'user' && 'rpcId' in record.input.message.source
+        && record.input.message.source.rpcId === request.requestId)
+      if (prior !== undefined) {
+        await this.ctx.agents.receiveInput(agent, prior.originalInput ?? prior.input)
+        return { accepted: true }
+      }
+    } else if (hasPromptRequest(agent, request.requestId)) return { accepted: true }
     const source: MessageSource = {
       kind: 'user',
       rpcId: request.requestId,
@@ -361,8 +370,9 @@ export class SessionCommandController {
           )
         }
         using binding = this.ctx.fileUploads.bindPrompt(agent, admission.receiptIds, request.requestId)
-        if (request.mode === 'steer') agent.steer(message)
-        else agent.followup(message)
+        const receipt = this.ctx.agents.sendInput(agent, { message,
+          target: request.mode === 'steer' ? 'next-step' : 'next-turn', wakeup: true })
+        if (receipt !== undefined) await receipt
         binding.commit()
       } catch (error) {
         if (remoteErrorOf(error) !== undefined) throw error
@@ -427,7 +437,7 @@ export class SessionCommandController {
   /**
    * Mutate one pending Inbox occurrence, restoring an ordinary cold Agent when needed.
    * @param request - Session, queue item, and requested mutation.
-   * @returns acknowledgement that the queue mutation was applied.
+   * @returns acknowledgement that the mutation was applied; controlled removals, including uncertain retries, require durable confirmation.
    */
   async updateQueue(request: SessionUpdateQueueRequest): Promise<SessionUpdateQueueValue> {
     if (request.action.kind === 'edit') {
@@ -471,11 +481,36 @@ export class SessionCommandController {
       ? nextStep === undefined ? undefined : { target: 'next-step' as const, message: nextStep }
       : { target: 'next-turn' as const, message: nextTurn }
     if (located === undefined) {
+      if (request.action.kind === 'remove' && this.ctx.agents.isInputControlled(agent.session)) {
+        const record = this.ctx.agents.inputControlState(agent.session).records
+          .find(item => item.input.message.id === request.itemId)
+        if (record === undefined) {
+          throw new RemoteError('session/queue-item-not-found', 'queued item is no longer pending', { itemId: request.itemId })
+        }
+        try {
+          await this.ctx.agents.mutateInput(agent, { kind: 'remove', messageId: request.itemId })
+        } catch (error: unknown) {
+          if (!(error instanceof InputMutationUnavailableError)) throw error
+          throw new RemoteError('session/queue-item-not-found', 'queued item is no longer pending', { itemId: request.itemId })
+        }
+        const source = record.input.message.source
+        if (source.kind === 'user' && 'rpcId' in source) this.ctx.fileUploads.retirePrompt(agent, source.rpcId)
+        return { accepted: true }
+      }
       throw new RemoteError('session/queue-item-not-found', 'queued item is no longer pending', { itemId: request.itemId })
     }
     const { target, message } = located
     if (request.action.kind === 'steer' && (target !== 'next-turn' || agent.status !== 'running')) {
       throw new RemoteError('session/steer-unavailable', 'current turn no longer accepts steering', { itemId: request.itemId })
+    }
+    if (this.ctx.agents.isInputControlled(agent.session)) {
+      await this.ctx.agents.mutateInput(agent, request.action.kind === 'edit'
+        ? { kind: 'replace', messageId: request.itemId, content: request.action.content }
+        : { kind: request.action.kind, messageId: request.itemId })
+      if (request.action.kind === 'remove' && message.source.kind === 'user' && 'rpcId' in message.source) {
+        this.ctx.fileUploads.retirePrompt(agent, message.source.rpcId)
+      }
+      return { accepted: true }
     }
     switch (request.action.kind) {
       case 'edit':

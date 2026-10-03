@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentStatus, InputReceipt } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import GoalService from '@deepseek-ai/dsh-goal'
 import type { GoalRef } from '@deepseek-ai/dsh-goal'
@@ -92,7 +92,7 @@ describe('@deepseek-ai/dsh-command-goal registration', () => {
   it('registers one global command with Loader-safe exports and disposes it', async () => {
     const test = await harness()
     expect(commandGoal.name).toBe('command-goal')
-    expect(commandGoal.inject).toEqual(['commands', 'goals'])
+    expect(commandGoal.inject).toEqual(['commands', 'goals', 'agents'])
     expect('default' in commandGoal).toBe(false)
     const loader = Object.create(Loader.prototype) as Loader
     expect(loader.unwrapExports(commandGoal)).toBe(commandGoal)
@@ -285,6 +285,37 @@ describe('/goal attachments', () => {
     if (execution === undefined) throw new Error('goal command was not registered')
     return execution.result
   }
+
+  it.each(['create', 'edit', 'recreate'] as const)('waits for attachment custody before reporting %s success', async (action) => {
+    const test = await harness()
+    onTestFinished(async () => { await test.ctx.fiber.dispose() })
+    provideStore(test)
+    if (action !== 'create') {
+      const current = test.ctx.goals.create(test.agent, { objective: 'old objective' })
+      if (action === 'recreate') test.ctx.goals.complete(test.agent, ref(current))
+    }
+    const custody = Promise.withResolvers<InputReceipt>()
+    const send = vi.spyOn(test.ctx.agents, 'sendInput').mockReturnValueOnce(custody.promise)
+    const completed = runWithAttachments(test, action === 'create' ? ' new objective' : ' edit new objective')
+    await expect.poll(() => send.mock.calls.length).toBe(1)
+    expect(test.session.snapshotEvents().some(event => event.type === 'command/done')).toBe(false)
+    const request = send.mock.calls[0]![1]
+    expect(request).toMatchObject({ target: 'next-turn', wakeup: true, message: { source: { kind: 'user' } } })
+    custody.resolve({ messageId: request.message.id, location: 'held' })
+    await expect(completed).resolves.toMatchObject({ kind: 'success' })
+    expect(test.session.snapshotEvents().some(event => event.type === 'command/done')).toBe(true)
+  })
+
+  it('records an attachment receipt rejection as a failed command', async () => {
+    const test = await harness()
+    onTestFinished(async () => { await test.ctx.fiber.dispose() })
+    provideStore(test)
+    vi.spyOn(test.ctx.agents, 'sendInput').mockRejectedValueOnce(new Error('attachment custody failed'))
+    await expect(runWithAttachments(test, ' new objective')).rejects.toThrow('attachment custody failed')
+    expect(test.session.snapshotEvents().find(event => event.type === 'command/done')).toMatchObject({
+      data: { kind: 'error' },
+    })
+  })
 
   it('submits one user followup carrying mixed attachments ahead of the round prompt', async () => {
     const test = await harness()

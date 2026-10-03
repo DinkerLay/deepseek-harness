@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { type Agent, type AgentHandle, type AgentInput } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 
@@ -108,6 +108,13 @@ async function settleSubagent(
   }
 }
 
+function deliverFixtureInput(agent: Agent, input: AgentInput): undefined {
+  expect(input.target).toBe('next-turn')
+  expect(input.wakeup).toBe(true)
+  agent.followup(input.message)
+  return undefined
+}
+
 describe('HarnessSdkJsonRpcServer', () => {
   it('creates a harness agent and calls the configured OpenAI-compatible endpoint', { timeout: 15_000 }, async () => {
     const storageDir = await mkdtemp(join(tmpdir(), 'dsh-jsonrpc-'))
@@ -198,7 +205,7 @@ describe('HarnessSdkJsonRpcServer', () => {
     const liveAgents = new Map<string, Agent>([['main', mainAgent], ['other', otherAgent]])
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create, get: (id: SessionId) => liveAgents.get(String(id)) },
+      agents: { create, get: (id: SessionId) => liveAgents.get(String(id)), sendInput: deliverFixtureInput },
       get: () => undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
@@ -234,7 +241,7 @@ describe('HarnessSdkJsonRpcServer', () => {
     const saveImages = vi.fn(async () => [ref])
     const ctx = {
       on: vi.fn(() => () => undefined),
-      agents: { create: vi.fn(async () => handle), get: () => agent },
+      agents: { create: vi.fn(async () => handle), get: () => agent, sendInput: deliverFixtureInput },
       get: (name: string) => name === 'attachments' ? { saveImages } : undefined,
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
@@ -330,6 +337,7 @@ describe('HarnessSdkJsonRpcServer', () => {
       agents: {
         create: vi.fn(async () => handle),
         get: (id: SessionId) => (live && String(id) === 'zombie' ? agent : undefined),
+        sendInput: deliverFixtureInput,
       },
       get: () => undefined,
     } as unknown as Context

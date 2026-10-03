@@ -25,14 +25,16 @@ import type {
   TeamMemberView,
 } from './types.ts'
 import { requiredText } from './validation.ts'
+import type {} from './lead-execution.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 /** Caller identity inside one implicit Team. */
 export interface TeamMembership {
   readonly root: Agent
   readonly id: TeamId
-  readonly role: 'lead' | 'teammate'
+  readonly role: 'lead' | 'teammate' | 'host'
   readonly name: string
+  readonly term?: number
 }
 
 /**
@@ -92,7 +94,8 @@ export class TeamRoster {
     private readonly maxMembers: number,
     private readonly maxActiveMembers: number,
     private readonly validateMemberGroup: (caller: Agent, group: string | undefined) => void,
-    private readonly defaultMemberPresetId?: string,
+    private readonly defaultMemberPresetId: string | undefined,
+    private readonly ready: (anchor: Agent) => boolean,
   ) {}
 
   /**
@@ -102,7 +105,7 @@ export class TeamRoster {
    */
   membership(agent: Agent): TeamMembership {
     const membership = this.tryMembership(agent)
-    if (membership === undefined) {
+    if (membership === undefined || membership.role === 'host') {
       throw new TeamError(`agent "${agent.id}" is not a member of an active Agent Team`, 'TEAM_NOT_MEMBER')
     }
     return membership
@@ -116,6 +119,17 @@ export class TeamRoster {
   tryMembership(agent: Agent): TeamMembership | undefined {
     if (this.ctx.agents.get(agent.id) !== agent) return undefined
     try {
+      const execution = this.ctx.sessionProjections.stateOf(agent.session, 'teamLeadExecutionRecord')
+      if (execution === undefined || execution.failure !== undefined) return undefined
+      if (execution.identity !== null) {
+        const root = this.ctx.agents.get(brandString<SessionId>(execution.identity.teamId))
+        if (root === undefined) return undefined
+        const seat = this.journal.state(root).lead
+        const marker = execution.identity
+        if (seat === undefined || seat.executionId !== agent.id || seat.term !== marker.term
+          || seat.presetId !== marker.presetId || seat.revision !== marker.revision || !this.ready(root)) return undefined
+        return { root, id: TeamId(root.id), role: 'lead', name: 'lead', term: seat.term }
+      }
       const parentId = agent.session.header.parentSession
       if (parentId !== undefined) {
         const root = this.ctx.agents.get(parentId)
@@ -128,7 +142,7 @@ export class TeamRoster {
           // host forks are independent roots; subagent descriptors distinguish
           // provider-owned workers that must not receive a nested Team identity.
           if (this.subagentDescriptor(agent)) return undefined
-          return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
+          return this.implicitMembership(agent)
         }
       }
       // A continuation can briefly outlive its parent during child-first teardown.
@@ -136,13 +150,20 @@ export class TeamRoster {
       // resumed ordinary fork has no descriptor in its own suffix and remains a
       // valid new root whose inherited Team records stay outside its projected Team state.
       if (this.subagentDescriptor(agent)) return undefined
-      return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
+      return this.implicitMembership(agent)
     } catch {
       // This method is used by lifecycle observers and teardown discovery. A
       // malformed durable stream is surfaced by authoritative Team operations;
       // the non-throwing probe must not veto unrelated Agent lifecycle edges.
       return undefined
     }
+  }
+
+  /** Independent roots keep their own Team; dormant or frozen anchors confer no operation authority. */
+  private implicitMembership(agent: Agent): TeamMembership {
+    const seat = this.journal.state(agent).lead
+    return { root: agent, id: TeamId(agent.id), role: seat === undefined && this.ready(agent) ? 'lead' : 'host',
+      name: 'lead', ...seat === undefined ? {} : { term: seat.term } }
   }
 
   /**
@@ -153,13 +174,15 @@ export class TeamRoster {
   list(membership: TeamMembership): TeamMemberView[] {
     const { root } = membership
     const state = this.journal.state(root)
+    const current = state.lead === undefined ? root : this.ctx.agents.get(state.lead.executionId)
     const leadModel = state.mode === undefined ? root.options.model
-      : root.session.requestHeader()?.config.model ?? root.options.model
+      : current?.session.requestHeader()?.config.model ?? current?.options.model
     const result: TeamMemberView[] = [{
       id: root.id,
       name: 'lead',
       role: 'lead',
-      status: availability(root),
+      status: availability(current),
+      ...state.lead === undefined ? {} : { preset: { id: state.lead.presetId, revision: state.lead.revision } },
       ...leadModel === undefined ? {} : { model: leadModel },
       diagnostics: [],
     }]
@@ -275,9 +298,8 @@ export class TeamRoster {
       return retiring
     })
     if (member.phase !== 'retired') await this.finishRetirement(root, member.id)
-    const result = this.list(membership).find(row => row.id === member.id)
-    if (result === undefined) throw new TeamError(`retired teammate "${name}" disappeared`, 'TEAM_MEMBER_NOT_FOUND')
-    return result
+    // Retirement retains the reserved id in the append-only roster, so its row remains in this list.
+    return this.list(membership).find(row => row.id === member.id) as TeamMemberView
   }
 
   /**
@@ -343,8 +365,8 @@ export class TeamRoster {
     this.journal.assertWriteAdmission(root)
     const name = this.memberName(request.name)
     const group = request.group === undefined ? undefined : requiredText(request.group, 'group', 64)
-    let preset: ContinuablePresetBinding | undefined
-    let presetLabel: string | undefined
+    let selection: { kind: 'official'; preset?: ContinuablePresetBinding }
+      | { kind: 'controlled'; preset: ContinuablePresetBinding; label: string } = { kind: 'official' }
     const mode = this.journal.state(root).mode
     if (mode !== undefined && request.context !== 'fresh') {
       throw new TeamError('controlled teammates require fresh context', 'TEAM_INVALID_ARGUMENT')
@@ -363,15 +385,14 @@ export class TeamRoster {
         throw new TeamError(`preset "${lease.id}" declaration differs from the requested Profile revision`,
           'TEAM_PRESET_UNAVAILABLE')
       }
-      preset = { id: lease.id, revision: lease.revision }
-      presetLabel = lease.name ?? lease.id
+      const preset = { id: lease.id, revision: lease.revision }
+      selection = mode === undefined ? { kind: 'official', preset }
+        : { kind: 'controlled', preset, label: lease.name ?? lease.id }
     }
-    if (mode !== undefined && presetLabel === undefined) {
-      throw new TeamError('controlled member Preset has no display label', 'TEAM_PRESET_UNAVAILABLE')
-    }
-    const description = mode === undefined
+    const preset = selection.preset
+    const description = selection.kind === 'official'
       ? requiredText(request.description ?? '', 'description', 200)
-      : requiredText(presetLabel ?? '', 'Preset label', 200)
+      : requiredText(selection.label, 'Preset label', 200)
     const childId = brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,

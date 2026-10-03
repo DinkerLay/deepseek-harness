@@ -117,6 +117,10 @@ function harness(options: HarnessOptions = {}): SessionHarness {
       },
     },
     agents: {
+      sendInput(target: typeof agent, input: { message: unknown }) {
+        target.followup(input.message)
+        return undefined
+      },
       async create(createOptions: { setup?: (ctx: unknown, agent: unknown) => Promise<void> }) {
         calls.push('agent-create')
         if (options.failAt === 'agent') throw new Error('agent failed')

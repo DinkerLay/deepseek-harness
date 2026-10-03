@@ -81,6 +81,7 @@ export function foldConsumedWork(events: readonly SessionEvent[]): ConsumedWork 
         stepped.add(event.data.turn)
         break
       case 'agent/inbox/spliced': {
+        if (event.data.heldInput !== undefined) break
         const { removedCount, outcome, inserted } = event.data
         if (removedCount === undefined) break
         // A replacement keeps the work pending under a new identity, so only a

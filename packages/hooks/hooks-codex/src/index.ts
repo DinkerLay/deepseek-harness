@@ -193,7 +193,14 @@ export function apply(ctx: Context, config: Config): void {
     const run = runPoint('SessionStart', source, { ...base(agent, 'SessionStart', model), source }, { agent, plainStdoutAsContext: true, signal: ownerSignal })
       .then((merged) => {
         const context = contextFrom(merged)
-        if (context) agent.inject(context)
+        if (context) {
+          const agents = ctx.get('agents')
+          if (agents === undefined) agent.inject(context)
+          else {
+            const receipt = agents.sendInput(agent, { message: context, target: 'next-step', wakeup: false })
+            if (receipt !== undefined) return receipt.then(() => undefined)
+          }
+        }
       })
       .catch((error: unknown) => { ctx.logger.warn(`hooks-codex: SessionStart hook failed: ${String(error)}`) })
     detached.track(run)
@@ -271,7 +278,13 @@ export function apply(ctx: Context, config: Config): void {
       // empty stderr) still forces it — fall back to a generic steering line
       // rather than letting the turn stop.
       const text = merged.reason ?? 'continue: blocked by Stop hook'
-      agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: CONTEXT_SOURCE }))
+      const message = createUserMessage({ content: [{ type: 'text', text }], source: CONTEXT_SOURCE })
+      const agents = ctx.get('agents')
+      if (agents === undefined) agent.steer(message)
+      else {
+        const receipt = agents.sendInput(agent, { message, target: 'next-step', wakeup: true })
+        if (receipt !== undefined) await receipt
+      }
     }
   })
 }

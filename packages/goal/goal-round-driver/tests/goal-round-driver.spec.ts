@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
+import { InputControllerId } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
@@ -150,6 +151,26 @@ async function waitForRequests(adapter: ScriptedAdapter, count: number): Promise
 }
 
 describe('goal-round outcome policy', () => {
+  it('waits for controlled round custody before starting the model', async () => {
+    const test = await harness([textResponse('finished controlled round')])
+    const cap = test.ctx.agents.registerInputController(InputControllerId('goal-round-custody'), {
+      admit: () => ({ kind: 'accept' }), canStart: () => true, canClaim: () => true,
+    })
+    cap.bind(test.agent.session)
+    const custody = Promise.withResolvers<boolean>()
+    const flush = vi.spyOn(test.ctx.sessions, 'flush').mockResolvedValue(true)
+    test.ctx.on('agent/inbox/inserted', ({ message }) => {
+      if (message.source.kind === 'goal' && message.source.round > 0) flush.mockReturnValueOnce(custody.promise)
+    })
+    test.ctx.goals.create(test.agent, { objective: 'controlled round', maxGoalRounds: 1 })
+    await expect.poll(() => test.agent.inbox.nextTurn.length).toBe(1)
+    expect(test.adapter.requests).toHaveLength(0)
+    expect(test.ctx.goals.get(test.agent)?.roundsStarted).toBe(0)
+    custody.resolve(true)
+    await waitForGoal(test.ctx, test.agent, goal => goal?.phase === 'blocked')
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ roundsStarted: 1, blockedReason: { code: 'round-limit' } })
+  })
   it('renders the objective, round budget, authority boundary, and completion protocol', () => {
     const goal: GoalView = {
       id: GoalId('goal-prompt'),

@@ -232,7 +232,18 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
  *   question of the call exactly once, or `REPLY_QUEUED` when a reply is
  *   already waiting for admission.
  */
-@Remote answer(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): boolean
+answer(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): boolean
+
+/** Answer through the unchanged Remote name, waiting for controlled custody when required.
+ * @param agent - exact live interactive root owning the question.
+ * @param callId - continued question identity.
+ * @param answer - validated complete answer batch.
+ * @returns whether the continued question accepted the reply, not model processing.
+ *   A repeated controlled batch confirms the same pending message identity,
+ *   including after a failed flush or Session recovery. Different answers
+ *   cannot replace a reply still in custody.
+ */
+@Remote('answer') async answerConfirmed(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): Promise<boolean>
 
 /**
  * Let one answer UI hold a live timed wait. Closing the stream releases its claim.

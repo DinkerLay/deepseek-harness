@@ -5,11 +5,13 @@
  */
 
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
+import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 // Type-only: the Workspace registry's archive-admission family map this registry merges `turn` into.
 import type {} from '@deepseek-ai/dsh-workspace/types'
 import type { OptionalSessionSeq, SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { TypertContext, TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+export type * from './input-control-types.ts'
 
 /** Public live-agent handle; the runtime face augments its live capabilities. */
 export interface Agent {
@@ -99,6 +101,12 @@ declare module '@deepseek-ai/dsh-session/types' {
       removedCount?: number
       inserted: UserMessage[]
       outcome?: 'canceled'
+      /** Optional per-batch producer wake intent; old records retain unknown intent. */
+      wakeup?: boolean
+      /** Provider-owned removal into recorded custody; neither a claim nor cancellation. */
+      heldInput?: MessageId
+      /** Original queue request when abort-time classification changed the effective target. */
+      requestedTarget?: InboxTarget
     }
   }
 }

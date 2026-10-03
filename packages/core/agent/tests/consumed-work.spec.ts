@@ -36,6 +36,22 @@ function steppedTurn(session: Session, turn: number, reason: TurnEndReason): voi
 }
 
 describe('foldConsumedWork', () => {
+  it('does not count an input custody transfer as a claim or cancelled work', () => {
+    const session = Session.create(SessionId('held-custody'))
+    const pending = message('pending transfer')
+    accept(session, 'previous input')
+    steppedTurn(session, 1, { kind: 'completed' })
+    session.append('turn/start', { turn: 2 })
+    session.append('agent/inbox/spliced', {
+      target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      heldInput: pending.id,
+    })
+    session.append('turn/end', { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } })
+    expect(foldConsumedWork(session.snapshotEvents())).toEqual({
+      end: session.snapshotEvents().find(event => event.type === 'turn/end'), droppedUnrun: false,
+    })
+  })
+
   it('reports nothing for a log that consumed no work', () => {
     const session = Session.create(SessionId('empty'))
     accept(session, 'queued')

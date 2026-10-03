@@ -150,7 +150,7 @@ export async function createWebhookSession(
     signal.throwIfAborted()
     ctx.permissionPresets.set(handle.agent.session, resolved.permissionPreset)
     ctx.sessionTitle.rename(handle.agent.session, resolved.title)
-    handle.agent.followup(createUserMessage({
+    const message = createUserMessage({
       content: [{ type: 'text', text: resolved.prompt }],
       source: {
         kind: 'webhook',
@@ -161,7 +161,9 @@ export async function createWebhookSession(
         form: 'notice',
         summary: boundContextSummary(`${delivery.kind} webhook handled by ${ruleId}`),
       },
-    }))
+    })
+    const receipt = ctx.agents.sendInput(handle.agent, { message, target: 'next-turn', wakeup: true })
+    if (receipt !== undefined) await receipt
   } catch (error: unknown) {
     if (attached) {
       try {

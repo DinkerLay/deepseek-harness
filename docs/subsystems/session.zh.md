@@ -792,6 +792,13 @@ Host service backing the generated `ctx.remote.session` namespace.
  */
 resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>
 
+/** Register provider-owned cold activation before the selected composition mounts.
+ * @param id - stable registration key.
+ * @param prepare - inspect a retained Session cut and optionally provide its composition.
+ * @returns the owner-scoped disposer.
+ */
+registerActivationPreparation(id: string, prepare: import('./agent.ts').SessionActivationPreparer): () => Promise<void>
+
 /**
  * Inspect one attached or persisted Session without activating its Agent.
  * @param sessionId - durable Session identity.

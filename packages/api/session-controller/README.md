@@ -62,7 +62,7 @@ A resume blocked by an existing write handle returns `session/writer-held` with 
 
 The Client's initial `follow`, reconnect openings, and `loadOlder()` request at least 50 append-origin `user/message` and `assistant/message` events and cross at least two `turn/start` events, including the partial Turn at the loaded window's beginning. The Host stops at the first Turn start satisfying both minima, or at 500 counted messages or history exhaustion, whichever comes first. Steering does not add a Turn boundary. Intervening events accompany the page without counting toward the message budget. The optional `turnWindow` on page and follow requests supplies these minima under `maxMessages`. `loadThrough()` uses the same rules with a 200-message minimum per page; the 500-message cap does not limit the whole jump. Requests without `turnWindow` retain message-aligned paging.
 
-Queue edits replace pending content with non-empty text only.
+Queue edits replace pending content with non-empty text only. While a controlled driver remains live, repeating Remove after failed durability confirmation retries the exact removal without reinserting the message; the controller acknowledges and retires its prompt receipts only after confirmation succeeds.
 
 Attachment authorization reads declared content fields of built-in Session events and completed assistant stream blocks, including flat V4 tool-role messages. Unknown event payloads and unrelated fields cannot authorize attachment reads.
 

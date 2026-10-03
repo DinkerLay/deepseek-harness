@@ -15,6 +15,11 @@ import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh
 import { installTurnArchiveAdmission } from './archive-admission.ts'
 import type { Agent } from './types.ts'
 import type { AgentOptions, SessionStartSource } from './runtime-types.ts'
+import { AgentInputControls } from './input-control.ts'
+import { inputControlProjection } from './input-control-projection.ts'
+import type { AgentInputController, ControlledInputDriver, InputControllerHandle } from './input-control.ts'
+import type { AgentInput, AgentInputMutation, InputControllerId, InputControlState, InputReceipt } from './input-control-types.ts'
+import type { Session } from '@deepseek-ai/dsh-session'
 
 export * from './runtime-types.ts'
 export * from './types.ts'
@@ -22,6 +27,8 @@ export type * from './projection.ts'
 export * from './consumed-work.ts'
 export * from './model-selection.ts'
 export { agentCarrier, agentEvents, assembleContextFor, emitAgentEvent } from './dispatch.ts'
+export { InputControllerId, InputMutationUnavailableError } from './input-control.ts'
+export type { AgentInputController, ControlledInputDriver, InputControllerHandle, InputAdmission } from './input-control.ts'
 export type { AgentEventDispatch, AgentSubjectEvent } from './dispatch.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -243,6 +250,7 @@ interface FactorySlot {
  * nested lineage that starts an owning-fiber unload is excluded from its own drain.
  */
 export class AgentRegistry extends Service {
+  private readonly inputControl: AgentInputControls
   private store = new Map<SessionId, AgentEntry>()
   private factory: FactorySlot | undefined
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
@@ -254,6 +262,10 @@ export class AgentRegistry extends Service {
 
   constructor(ctx: Context) {
     super(ctx, 'agents')
+    this.inputControl = new AgentInputControls(ctx)
+    ctx.inject(['sessionProjections'], (scope) => {
+      scope.sessionProjections.register(inputControlProjection)
+    })
     ctx.inject(['typert'], (typeCtx) => {
       typeCtx.typert.lookups.register('agent', {
         parameter: 'agent',
@@ -281,6 +293,104 @@ export class AgentRegistry extends Service {
     // Session before hiding it; a running turn answers here, for every Agent.
     installTurnArchiveAdmission(ctx, sessionId => this.get(sessionId))
   }
+
+  /** Register an optional provider and its exclusive preload capability.
+   * @param id - durable provider identity.
+   * @param policy - input, execution and preparation policy.
+   * @returns an owner-scoped capability whose disposal drains admitted work.
+   */
+  registerInputController(id: InputControllerId, policy: AgentInputController): InputControllerHandle {
+    return this.inputControl.register(this.ctx, id, policy)
+  }
+
+  /** Register a concrete driver's input operations under its Agent scope.
+   * @param agent - unpublished or live driver identity.
+   * @param driver - concrete non-waking enqueue and wake operations.
+   * @returns the owned asynchronous disposer.
+   */
+  attachInputDriver(agent: Agent, driver: ControlledInputDriver): () => Promise<void> {
+    return this.inputControl.attach(agent, driver)
+  }
+
+  /** Read durable policy/custody facts, including processed input identities.
+   * @param session - observed Session.
+   * @returns host-only derived state, never a second executable queue.
+   */
+  inputControlState(session: Session): InputControlState { return this.inputControl.state(session) }
+
+  /** Detect the reliable receipt path without changing an unbound driver's timing.
+   * @param session - driver Session.
+   * @returns whether a persistent controller binding exists.
+   */
+  isInputControlled(session: Session): boolean { return this.inputControl.bound(session) }
+
+  /** Prepare a bound execution before scoped composition.
+   * @param session - unpublished prepared Session.
+   * @returns completion of the registered preparation, or rejection without fallback.
+   */
+  prepareInput(session: Session): Promise<void> { return this.inputControl.prepare(session) }
+
+  /** Prepare optional input ownership before caller composition mounts.
+   * @param session - unpublished Session owned by the creation factory.
+   * @param source - fresh creation or persisted resumption.
+   * @returns provider preparation, or undefined for the original synchronous path.
+   */
+  initializeInput(session: Session, source: SessionStartSource): Promise<void> | undefined {
+    return this.inputControl.initialize(session, source)
+  }
+
+  /** Receive controlled input and wait for durable custody before permitting wake.
+   * @param agent - concrete controlled driver.
+   * @param input - original identity, source, queue and wake intent.
+   * @returns confirmed custody, not model or Task completion.
+   */
+  receiveInput(agent: Agent, input: AgentInput): Promise<InputReceipt> { return this.inputControl.receive(agent, input) }
+
+  /** Durably edit, remove or steer one pending controlled input under its admission policy.
+   * @param agent - receiving controlled driver.
+   * @param action - pending identity and requested mutation.
+   * @returns durable mutation confirmation, including retry of an uncertain removal; rejected or uncertain changes never wake the model.
+   * @throws InputMutationUnavailableError when no audited pending input or exact uncertain removal is available.
+   */
+  mutateInput(agent: Agent, action: AgentInputMutation): Promise<void> { return this.inputControl.mutate(agent, action) }
+
+  /** Preserve synchronous unbound delivery; controlled callers await the returned receipt.
+   * @param agent - receiving driver.
+   * @param input - producer identity, queue and wake intent.
+   * @returns a durable receipt Promise only for a controlled Session; otherwise undefined after synchronous send.
+   */
+  sendInput(agent: Agent, input: AgentInput): Promise<InputReceipt> | undefined {
+    if (this.isInputControlled(agent.session)) return this.receiveInput(agent, input)
+    if (input.target === 'next-step' && !input.wakeup) agent.inject(input.message)
+    else if (input.target === 'next-step') agent.steer(input.message)
+    else if (input.wakeup) agent.followup(input.message)
+    else agent.send(input.message, input.target, input.wakeup)
+    return undefined
+  }
+
+  /** Submit a best-effort notice without claiming durable acceptance to its producer.
+   * @param agent - receiver whose driver owns and drains admitted input work.
+   * @param input - original notice identity, source and intent.
+   * @returns no receipt; controlled failures are logged, while unbound synchronous failures still throw.
+   */
+  sendInputNotice(agent: Agent, input: AgentInput): void {
+    const receipt = this.sendInput(agent, input)
+    if (receipt !== undefined) void receipt.catch((error: unknown) => {
+      this.ctx.logger.warn(`input notice durability was not confirmed: ${String(error)}`)
+    })
+  }
+
+  /** Test new-turn admission without starting or claiming anything.
+   * @param agent - concrete driver.
+   * @returns false while custody is uncertain, work drains, or its policy is closed.
+   */
+  canStartInput(agent: Agent): boolean { return this.inputControl.canStart(agent) }
+
+  /** Test admission before the inbox removes a batch.
+   * @param agent - concrete driver.
+   * @returns whether pending input may be claimed.
+   */
+  canClaimInput(agent: Agent): boolean { return this.inputControl.canClaim(agent) }
 
   /**
    * Read the Agent that initiated the inherited asynchronous driver chain.

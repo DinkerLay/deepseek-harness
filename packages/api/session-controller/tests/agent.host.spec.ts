@@ -75,6 +75,209 @@ function unpublishedAgent(ctx: Context, meta: SessionHeader): Agent {
   } as unknown as Agent
 }
 
+function activationCut(meta: SessionHeader): SessionObservation {
+  const cut: SessionObservation = {
+    source: 'prepared', header: meta, inheritedEventCount: SessionLogOffset(0),
+    events: [], cursor: -1, projections: { asOfSeq: -1, values: {} },
+    retain: () => cut, [Symbol.dispose]: () => {},
+  }
+  return cut
+}
+
+function expectActivationFailure(result: Awaited<ReturnType<ApiSessionAgentController['resolveObservedAgent']>>, fragment: string): void {
+  if (!('error' in result)) throw new Error('activation unexpectedly published an Agent')
+  expect(result.error.message).toContain(fragment)
+}
+
+describe('optional cold activation preparation', () => {
+  it('skips a closing provider retained by an earlier preparation while another activation advances', async () => {
+    const { ctx, agents } = await harness()
+    const firstEntered = Promise.withResolvers<undefined>()
+    const firstRelease = Promise.withResolvers<undefined>()
+    const secondEntered = Promise.withResolvers<undefined>()
+    const secondRelease = Promise.withResolvers<undefined>()
+    const drainingMeta = header('draining-preparation')
+    const concurrentMeta = header('concurrent-preparation')
+    const concurrentAgent = agent(ctx, concurrentMeta)
+    agents.registerActivationPreparation(ctx, 'earlier', async (observation) => {
+      if (observation.header.id === concurrentMeta.id) {
+        firstEntered.resolve(undefined)
+        await firstRelease.promise
+      }
+      return undefined
+    })
+    const prepareClosing = vi.fn(async () => {
+      secondEntered.resolve(undefined)
+      await secondRelease.promise
+      return undefined
+    })
+    const dispose = agents.registerActivationPreparation(ctx, 'closing', prepareClosing)
+    vi.spyOn(ctx.agents, 'resume').mockResolvedValue({ agent: concurrentAgent, dispose: () => Promise.resolve() })
+    const draining = agents.resolveObservedAgent(activationCut(drainingMeta))
+    let concurrent: ReturnType<ApiSessionAgentController['resolveObservedAgent']> | undefined
+    let disposed = false
+    let disposal: Promise<void> | undefined
+    try {
+      await secondEntered.promise
+      concurrent = agents.resolveObservedAgent(activationCut(concurrentMeta))
+      await firstEntered.promise
+      disposal = dispose().then(() => { disposed = true })
+      expect(disposed).toBe(false)
+      firstRelease.resolve(undefined)
+      expect(await concurrent).toEqual({ agent: concurrentAgent })
+      expect(prepareClosing).toHaveBeenCalledOnce()
+      secondRelease.resolve(undefined)
+      expectActivationFailure(await draining, 'registration is closed')
+      await disposal
+      expect(disposed).toBe(true)
+    } finally {
+      firstRelease.resolve(undefined); secondRelease.resolve(undefined)
+      await Promise.all([concurrent, draining, disposal]); await dispose()
+    }
+  })
+
+  it('rejects owner removal even when its pending preparation returns no contribution', async () => {
+    const { ctx, agents } = await harness()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const dispose = agents.registerActivationPreparation(ctx, 'empty-owner', async () => {
+      entered.resolve(undefined)
+      await release.promise
+      return undefined
+    })
+    const activating = agents.resolveObservedAgent(activationCut(header('closed-empty-owner')))
+    try {
+      await entered.promise
+      const disposal = dispose()
+      release.resolve(undefined)
+      expectActivationFailure(await activating, 'registration is closed')
+      await disposal
+    } finally { release.resolve(undefined); await activating; await dispose() }
+  })
+
+  it.each(['before setup', 'during setup', 'before commit'] as const)('rejects preparation removed %s', async (stage) => {
+    const { ctx, agents } = await harness()
+    const meta = header(`removed-${stage}`)
+    const target = agent(ctx, meta)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const cleanup = vi.fn(() => Promise.resolve())
+    const mounted = vi.fn(async () => {
+      if (stage === 'during setup') { entered.resolve(undefined); await release.promise }
+      return { commit: vi.fn() }
+    })
+    const dispose = agents.registerActivationPreparation(ctx, 'closing-setup', () => ({
+      setup: mounted, [Symbol.asyncDispose]: cleanup,
+    }))
+    vi.spyOn(ctx.agents, 'resume').mockImplementation(async (options) => {
+      if (stage === 'before setup') await dispose()
+      const commit = await options.setup?.(ctx, target)
+      if (stage === 'before commit') await dispose()
+      commit?.commit()
+      return { agent: target, dispose: () => Promise.resolve() }
+    })
+    const activating = agents.resolveObservedAgent(activationCut(meta))
+    try {
+      if (stage === 'during setup') { await entered.promise; await dispose(); release.resolve(undefined) }
+      expectActivationFailure(await activating, 'registration is closed')
+      expect(cleanup).toHaveBeenCalledOnce()
+      expect(mounted).toHaveBeenCalledTimes(stage === 'before setup' ? 0 : 1)
+    } finally { release.resolve(undefined); await activating; await dispose() }
+  })
+
+  it('prepares the host before exact composition and releases the preparation after publication', async () => {
+    const { ctx, agents } = await harness()
+    const order: string[] = []
+    const meta = { ...header('prepared-activation'), agentPreset: 'target' }
+    const target = agent(ctx, meta)
+    const defaultComposition = vi.spyOn(agents, 'composeAgent')
+    const dispose = agents.registerActivationPreparation(ctx, 'owner', (observation) => {
+      expect(observation.header.id).toBe(meta.id)
+      order.push('host prepared')
+      return { setup: () => { order.push('exact composition'); return { commit: () => { order.push('validated') } } },
+        [Symbol.asyncDispose]: () => { order.push('lease released'); return Promise.resolve() } }
+    })
+    vi.spyOn(ctx.agents, 'resume').mockImplementation(async (options) => {
+      const commit = await options.setup?.(ctx, target)
+      commit?.commit()
+      order.push('published')
+      return { agent: target, dispose: () => Promise.resolve() }
+    })
+    expect(await agents.resolveObservedAgent(activationCut(meta))).toEqual({ agent: target })
+    expect(order).toEqual(['host prepared', 'exact composition', 'validated', 'published', 'lease released'])
+    expect(defaultComposition).not.toHaveBeenCalled()
+    await dispose()
+  })
+
+  it('does not resolve or mount a default Preset after preparation rejects', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('rejected-activation')
+    const composition = vi.spyOn(agents, 'composeAgent')
+    const resume = vi.spyOn(ctx.agents, 'resume')
+    agents.registerActivationPreparation(ctx, 'owner', () => { throw new Error('restore the recorded declaration') })
+    expectActivationFailure(await agents.resolveObservedAgent(activationCut(meta)), 'recorded declaration')
+    expect(composition).not.toHaveBeenCalled()
+    expect(resume).not.toHaveBeenCalled()
+  })
+
+  it('rejects competing owners and releases both contributions without mounting either', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('competing-activation')
+    const mount = vi.fn()
+    const releaseFirst = vi.fn(() => Promise.resolve())
+    const releaseSecond = vi.fn(() => Promise.resolve())
+    agents.registerActivationPreparation(ctx, 'first', () => ({ setup: mount, [Symbol.asyncDispose]: releaseFirst }))
+    agents.registerActivationPreparation(ctx, 'second', () => ({ setup: mount, [Symbol.asyncDispose]: releaseSecond }))
+    const resume = vi.spyOn(ctx.agents, 'resume')
+    expectActivationFailure(await agents.resolveObservedAgent(activationCut(meta)), 'multiple providers')
+    expect(releaseFirst).toHaveBeenCalledOnce()
+    expect(releaseSecond).toHaveBeenCalledOnce()
+    expect(mount).not.toHaveBeenCalled()
+    expect(resume).not.toHaveBeenCalled()
+  })
+
+  it('drains a preparing owner on removal and rejects its late contribution', async () => {
+    const { ctx, agents } = await harness()
+    const entered = Promise.withResolvers<undefined>()
+    const ready = Promise.withResolvers<undefined>()
+    const released = vi.fn(() => Promise.resolve())
+    const mount = vi.fn()
+    const dispose = agents.registerActivationPreparation(ctx, 'owner', async () => {
+      entered.resolve(undefined)
+      await ready.promise
+      return { setup: mount, [Symbol.asyncDispose]: released }
+    })
+    expect(() => agents.registerActivationPreparation(ctx, 'owner', () => undefined)).toThrow(/already registered/)
+    const activation = agents.resolveObservedAgent(activationCut(header('unloaded-activation')))
+    await entered.promise
+    let removed = false
+    const removal = dispose().then(() => { removed = true })
+    expect(removed).toBe(false)
+    ready.resolve(undefined)
+    expectActivationFailure(await activation, 'registration is closed')
+    await removal
+    expect(released).toHaveBeenCalledOnce()
+    expect(mount).not.toHaveBeenCalled()
+  })
+
+  it('keeps default composition when no owner accepts the Session and after disposal', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('unowned-activation')
+    const target = agent(ctx, meta)
+    const prepare = vi.fn(() => undefined)
+    const dispose = agents.registerActivationPreparation(ctx, 'owner', prepare)
+    vi.spyOn(ctx.agents, 'resume').mockResolvedValue({ agent: target, dispose: () => Promise.resolve() })
+    const composition = vi.spyOn(agents, 'composeAgent')
+    await agents.resolveObservedAgent(activationCut(meta))
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(composition).toHaveBeenCalledOnce()
+    await dispose()
+    await agents.resolveObservedAgent(activationCut(meta))
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(composition).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('ApiSession identity failures', () => {
   it('describes cwd conflicts with and without a recorded cwd', () => {
     expect(new ApiSessionCwdConflict(SessionId('missing-cwd'), '/wanted', undefined).message)
@@ -140,6 +343,18 @@ describe('ApiSession identity failures', () => {
 })
 
 describe('ApiSession Agent lookup and recovery', () => {
+  it('rejects an attached subagent published while a cold observation is being acquired', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('raced-cold-owner')
+    vi.spyOn(ctx.sessionQuery, 'observeSession').mockImplementation(async () => {
+      ctx.sessions.create(meta.id, { meta: { ...meta, origin: 'subagent' } })
+      return activationCut(meta)
+    })
+    const resume = vi.spyOn(ctx.agents, 'resume')
+    expect(await agents.resolveAgent(meta.id)).toMatchObject({ error: { code: 'session/agent-busy' } })
+    expect(resume).not.toHaveBeenCalled()
+  })
+
   it('resumes directly from a retained observation and rejects an invalid observed header', async () => {
     const { ctx, agents } = await harness()
     const meta = header('observed-resume')

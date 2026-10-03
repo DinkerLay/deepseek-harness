@@ -10,12 +10,14 @@ export function apply(ctx) {
   const ready = new WeakSet()
   ctx.on('agent/created', async ({ agent }) => {
     await setImmediate()
-    agent.inject({
+    const message = {
       id: randomUUID(),
       role: 'user',
       content: [{ type: 'text', text: 'Serial agent creation completed.' }],
       source: { kind: `plugin:${name}` },
-    })
+    }
+    const receipt = ctx.agents.sendInput(agent, { message, target: 'next-step', wakeup: false })
+    if (receipt !== undefined) await receipt
     ready.add(agent)
   })
   ctx.on('agent/created', ({ agent }) => {

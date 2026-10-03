@@ -312,6 +312,46 @@ describe('controlled member settlement notices', () => {
 })
 
 describe('Team identity and provisioning', () => {
+  it('reads a detached composition cut under the Team lock and refuses member callers', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const member = await spawn(ctx, lead, 'composition-reader')
+    const child = await waitRunning(ctx, member.member.id)
+    const detached = await ctx.agentTeams.readCompositionLocked(lead, snapshot => snapshot)
+    expect(detached.composition.phase).toBe('dynamic')
+    expect(detached.members).toHaveLength(1)
+    expect(detached.members[0]?.name).toBe(member.member.name)
+    await expect(ctx.agentTeams.readCompositionLocked(child, () => 'not permitted'))
+      .rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    const original = ctx.agents.get.bind(ctx.agents)
+    const changed = vi.spyOn(ctx.agents, 'get')
+    changed.mockImplementationOnce(original).mockImplementation(id => id === lead.id ? undefined : original(id))
+    await expect(ctx.agentTeams.readCompositionLocked(lead, () => 'stale'))
+      .rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    changed.mockRestore()
+    await expect(ctx.agentTeams.commitComposition(child, () => ({ kind: 'lock' })))
+      .rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    expect(await ctx.agentTeams.commitComposition(lead, () => undefined)).toEqual({ phase: 'dynamic' })
+  })
+
+  it('rechecks a composition caller after waiting for the native lock', async () => {
+    const { ctx, lead } = await setup([])
+    const entered = Promise.withResolvers<undefined>()
+    const released = Promise.withResolvers<undefined>()
+    const occupied = ctx.agentTeams.readCompositionLocked(lead, async () => {
+      entered.resolve(undefined)
+      await released.promise
+    })
+    await entered.promise
+    const pending = ctx.agentTeams.commitComposition(lead, () => ({ kind: 'lock' }))
+    const original = ctx.agents.get.bind(ctx.agents)
+    const changed = vi.spyOn(ctx.agents, 'get').mockImplementation(id => id === lead.id ? undefined : original(id))
+    released.resolve(undefined)
+    await occupied
+    await expect(pending).rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    changed.mockRestore()
+    expect(ctx.agentTeams.composition(lead).phase).toBe('dynamic')
+  })
+
   it('keeps the official Team dynamic until a Host composition operation locks it', async () => {
     const { ctx, lead } = await setup(['hang'])
     expect(ctx.agentTeams.composition(lead)).toEqual({ phase: 'dynamic' })
@@ -1304,6 +1344,890 @@ describe('Team identity and provisioning', () => {
     expect(second.ctx.agentTeams.tryMembership(child.agent)).toBeUndefined()
     journal.state = state
     await child.dispose()
+  })
+})
+
+describe('prepared Lead identity admission', () => {
+  async function coldLifecycle() {
+    const test = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'cold-lifecycle-writer',
+      permissionTableId: 'cold-lifecycle-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = test.ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(test.lead) })
+    await using selected = await test.ctx.agentPresets.acquireComposition('reviewer')
+    if (selected.revision === undefined) throw new Error('fixture needs a revision')
+    const candidate = await coordinator.create(test.lead, { sessionId: SessionId('cold-lifecycle-source'), term: 2,
+      presetId: selected.id, revision: selected.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    await candidate.dispose()
+    const observation = await test.ctx.sessionQuery.observeSession(SessionId('cold-lifecycle-source'))
+    return { ...test, coordinator, observation }
+  }
+
+  it('drains a suspended cold setup scope on registration disposal before a late Preset mount can bind it', async () => {
+    const { ctx, lead, coordinator, observation, adapter } = await coldLifecycle()
+    using cut = observation
+    const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<undefined>()
+    const release = vi.fn()
+    let target: Context | undefined
+    let mounted = false
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementationOnce(async (id) => {
+      const lease = await acquire(id)
+      return { ...lease,
+        mount: async (agentCtx) => {
+          target = agentCtx
+          entered.resolve(undefined)
+          await gate.promise
+          const result = await lease.mount(agentCtx)
+          mounted = true
+          return result
+        },
+        [Symbol.asyncDispose]: async () => { release(); await lease[Symbol.asyncDispose]() },
+      }
+    })
+    const prepared = await coordinator.prepareActivation(cut)
+    if (prepared === undefined) throw new Error('candidate was not recognized')
+    const resumed = ctx.agents.resume({ resumeSessionId: cut.header.id,
+      agentOptions: { provider: 'mock', model: 'mock' }, setup: prepared.setup })
+    const rejected = expect(resumed).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+    await entered.promise
+    let disposed = false
+    const disposal = coordinator.dispose().then(() => { disposed = true })
+    try {
+      await expect.poll(() => disposed).toBe(true)
+      await rejected
+      expect(target?.fiber.uid).toBeNull()
+      expect(release).toHaveBeenCalledOnce()
+      expect(ctx.agents.get(cut.header.id)).toBeUndefined()
+      expect(ctx.agents.get(lead.id)).toBe(lead)
+    } finally {
+      gate.resolve(undefined)
+      await Promise.allSettled([resumed, disposal, rejected])
+      await prepared[Symbol.asyncDispose]()
+    }
+    expect(mounted).toBe(false)
+    expect(release).toHaveBeenCalledOnce()
+    expect(adapter.requests).toHaveLength(0)
+  })
+
+  it('keeps a failed cold mount observable while the factory rolls its scope back', async () => {
+    const { ctx, coordinator, observation } = await coldLifecycle()
+    using cut = observation
+    await using prepared = await coordinator.prepareActivation(cut)
+    if (prepared === undefined) throw new Error('candidate was not recognized')
+    await expect(ctx.agents.resume({ resumeSessionId: cut.header.id,
+      agentOptions: { provider: 'mock', model: 'mock' }, setup: async (agentCtx, agent) => {
+        await ctx.agentPresets.mount(agentCtx, 'standard')
+        return await prepared.setup(agentCtx, agent)
+      } })).rejects.toThrow('cannot replace an existing binding')
+    expect(ctx.agents.get(cut.header.id)).toBeUndefined()
+    await coordinator.dispose()
+  })
+
+  it('preserves caller cancellation during anchor resolution and leaves the registration reusable', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'caller-cancel-writer',
+      permissionTableId: 'caller-cancel-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const caller = new AbortController()
+    const reason = new Error('caller stopped preparation')
+    let abortOnce = true
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: (_id, signal?: AbortSignal) => {
+      if (!abortOnce) return Promise.resolve(lead)
+      abortOnce = false
+      caller.abort(reason)
+      expect(signal?.aborted).toBe(true)
+      return Promise.reject(reason)
+    } })
+    await using selected = await ctx.agentPresets.acquireComposition('reviewer')
+    if (selected.revision === undefined) throw new Error('fixture needs a revision')
+    const request = { sessionId: SessionId('caller-cancel-candidate'), term: 2, presetId: selected.id,
+      revision: selected.revision, agentOptions: { provider: 'mock', model: 'mock' } }
+    await expect(coordinator.create(lead, { ...request, signal: caller.signal })).rejects.toBe(reason)
+    expect(ctx.agents.get(request.sessionId)).toBeUndefined()
+    const current = await coordinator.create(lead, request)
+    await current.dispose()
+    await coordinator.dispose()
+  })
+
+  it('releases an acquired lease when registration closes between receipt and its active check', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'receipt-cancel-writer',
+      permissionTableId: 'receipt-cancel-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    const selected = await ctx.agentPresets.acquireComposition('reviewer')
+    const revision = selected.revision
+    if (revision === undefined) throw new Error('fixture needs a revision')
+    await selected[Symbol.asyncDispose]()
+    const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+    const released = vi.fn()
+    let disposal: Promise<void> | undefined
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementationOnce((id) => {
+      const pending = acquire(id).then(lease => ({ ...lease,
+        [Symbol.asyncDispose]: async () => { released(); await lease[Symbol.asyncDispose]() },
+      }))
+      void pending.then(() => { queueMicrotask(() => { disposal = coordinator.dispose() }) })
+      return pending
+    })
+    await expect(coordinator.create(lead, { sessionId: SessionId('receipt-cancel-candidate'), term: 2,
+      presetId: selected.id, revision, agentOptions: { provider: 'mock', model: 'mock' } })).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+    await disposal
+    expect(released).toHaveBeenCalledOnce()
+    expect(ctx.agents.get(SessionId('receipt-cancel-candidate'))).toBeUndefined()
+  })
+
+  it('propagates a missing declaration without scheduling canceled-lease cleanup', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'missing-declaration-writer',
+      permissionTableId: 'missing-declaration-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    await expect(coordinator.create(lead, { sessionId: SessionId('missing-declaration-candidate'), term: 2,
+      presetId: 'not-declared', revision: 'a'.repeat(64), agentOptions: { provider: 'mock', model: 'mock' } }))
+      .rejects.toMatchObject({ code: 'agent-preset/not-found' })
+    expect(ctx.agents.get(SessionId('missing-declaration-candidate'))).toBeUndefined()
+    await coordinator.dispose()
+  })
+
+  it('drains all retained preparation leases before reporting a cleanup failure', async () => {
+    const { ctx, coordinator, observation } = await coldLifecycle()
+    using cut = observation
+    const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+    const gate = Promise.withResolvers<undefined>()
+    const entered = Promise.withResolvers<undefined>()
+    const released: string[] = []
+    let selected = 0
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementation(async (id) => {
+      const lease = await acquire(id)
+      const number = selected++
+      return { ...lease, [Symbol.asyncDispose]: async () => {
+        if (number === 1) { entered.resolve(undefined); await gate.promise }
+        await lease[Symbol.asyncDispose]()
+        released.push(String(number))
+        if (number === 0) throw new Error('retained lease cleanup failed')
+      } }
+    })
+    const first = await coordinator.prepareActivation(cut)
+    const second = await coordinator.prepareActivation(cut)
+    if (first === undefined || second === undefined) throw new Error('candidate was not recognized')
+    let settled = false
+    const disposal = coordinator.dispose().finally(() => { settled = true })
+    const rejected = expect(disposal).rejects.toThrow('Lead activation lease cleanup failed')
+    await entered.promise
+    try {
+      expect(settled).toBe(false)
+      gate.resolve(undefined)
+      await rejected
+      expect(released.toSorted()).toEqual(['0', '1'])
+      expect(ctx.agents.canStartInput(ctx.agents.get(SessionId('lead'))!)).toBe(false)
+    } finally {
+      gate.resolve(undefined)
+      await Promise.allSettled([disposal, rejected])
+      await first[Symbol.asyncDispose]()
+      await second[Symbol.asyncDispose]()
+    }
+  })
+
+  it('waits for a retained lease already being released by its caller during provider disposal', async () => {
+    const { ctx, coordinator, observation } = await coldLifecycle()
+    using cut = observation
+    const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<undefined>()
+    const released = vi.fn()
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementationOnce(async (id) => {
+      const lease = await acquire(id)
+      return { ...lease, [Symbol.asyncDispose]: async () => {
+        entered.resolve(undefined)
+        await gate.promise
+        await lease[Symbol.asyncDispose]()
+        released()
+      } }
+    })
+    const prepared = await coordinator.prepareActivation(cut)
+    if (prepared === undefined) throw new Error('candidate was not recognized')
+    const release = prepared[Symbol.asyncDispose]()
+    await entered.promise
+    let disposed = false
+    const disposal = coordinator.dispose().then(() => { disposed = true })
+    try {
+      // Deregistration and finished jobs only await settled Promises; this checkpoint drains them before the held lease.
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      expect(released).not.toHaveBeenCalled()
+      gate.resolve(undefined)
+      await Promise.all([release, disposal])
+      expect(disposed).toBe(true)
+      expect(released).toHaveBeenCalledOnce()
+      await prepared[Symbol.asyncDispose]()
+      expect(released).toHaveBeenCalledOnce()
+    } finally {
+      gate.resolve(undefined)
+      await Promise.allSettled([release, disposal])
+    }
+  })
+
+  it('cancels a suspended caller setup when the Lead registration closes and releases its leases before returning', async () => {
+    const { ctx, lead, adapter } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'setup-cancel-writer',
+      permissionTableId: 'setup-cancel-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const selected = await ctx.agentPresets.acquireComposition('reviewer')
+    const revision = selected.revision
+    if (revision === undefined) throw new Error('fixture needs a revision')
+    await selected[Symbol.asyncDispose]()
+    const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+    const mounts: Array<ReturnType<typeof vi.fn>> = []
+    const releases: Array<ReturnType<typeof vi.fn>> = []
+    vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementation(async (id) => {
+      const lease = await acquire(id)
+      const mount = vi.fn(lease.mount.bind(lease))
+      const release = vi.fn(lease[Symbol.asyncDispose].bind(lease))
+      mounts.push(mount)
+      releases.push(release)
+      return { ...lease, mount, [Symbol.asyncDispose]: release }
+    })
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<undefined>()
+    const creation = coordinator.create(lead, { sessionId: SessionId('suspended-lead-setup'), term: 2,
+      presetId: 'reviewer', revision, agentOptions: { provider: 'mock', model: 'mock' },
+      setup: () => { entered.resolve(undefined); return gate.promise } })
+    const rejected = expect(creation).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+    await entered.promise
+    let disposed = false
+    const disposal = coordinator.dispose().then(() => { disposed = true })
+    try {
+      await expect.poll(() => disposed).toBe(true)
+      await rejected
+      expect(ctx.agents.get(SessionId('suspended-lead-setup'))).toBeUndefined()
+      expect(releases.every(release => release.mock.calls.length === 1)).toBe(true)
+    } finally {
+      gate.resolve(undefined)
+      await Promise.allSettled([creation, disposal, rejected])
+    }
+    expect(mounts.every(mount => mount.mock.calls.length === 0)).toBe(true)
+    expect(adapter.requests).toHaveLength(0)
+  })
+
+  it('cancels a suspended cold anchor resolver on registration disposal and ignores its late result', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'resolver-cancel-writer',
+      permissionTableId: 'resolver-cancel-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    let blocked = false
+    let resolverSignal: AbortSignal | undefined
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<Agent>()
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: (_id, signal?: AbortSignal) => {
+      if (!blocked) return Promise.resolve(lead)
+      resolverSignal = signal
+      entered.resolve(undefined)
+      return gate.promise
+    } })
+    const selected = await ctx.agentPresets.acquireComposition('reviewer')
+    if (selected.revision === undefined) throw new Error('fixture needs a revision')
+    const candidate = await coordinator.create(lead, { sessionId: SessionId('cold-resolver-source'), term: 2,
+      presetId: selected.id, revision: selected.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    await selected[Symbol.asyncDispose]()
+    await candidate.dispose()
+    using observation = await ctx.sessionQuery.observeSession(SessionId('cold-resolver-source'))
+    blocked = true
+    const acquire = vi.spyOn(ctx.agentPresets, 'acquireComposition')
+    const preparing = coordinator.prepareActivation(observation)
+    const rejected = expect(preparing).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+    await entered.promise
+    let disposed = false
+    const disposal = coordinator.dispose().then(() => { disposed = true })
+    try {
+      await expect.poll(() => disposed).toBe(true)
+      await rejected
+      expect(resolverSignal?.aborted).toBe(true)
+    } finally {
+      gate.resolve(lead)
+      await Promise.allSettled([preparing, disposal, rejected])
+    }
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'release-failed', 'acquire-failed'] as const)(
+    'settles %s late cold composition cleanup after registration disposal', async (outcome) => {
+      const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'lease-cancel-writer',
+        permissionTableId: 'lease-cancel-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+      const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+      const selected = await ctx.agentPresets.acquireComposition('reviewer')
+      if (selected.revision === undefined) throw new Error('fixture needs a revision')
+      const candidate = await coordinator.create(lead, { sessionId: SessionId('cold-lease-source'), term: 2,
+        presetId: selected.id, revision: selected.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+      await selected[Symbol.asyncDispose]()
+      await candidate.dispose()
+      using observation = await ctx.sessionQuery.observeSession(SessionId('cold-lease-source'))
+      const acquire = ctx.agentPresets.acquireComposition.bind(ctx.agentPresets)
+      const gate = Promise.withResolvers<undefined>()
+      const entered = Promise.withResolvers<undefined>()
+      const released = vi.fn()
+      const warn = vi.spyOn(ctx.logger, 'warn')
+      vi.spyOn(ctx.agentPresets, 'acquireComposition').mockImplementationOnce(async (id) => {
+        const lease = await acquire(id)
+        entered.resolve(undefined)
+        await gate.promise
+        if (outcome === 'acquire-failed') {
+          await lease[Symbol.asyncDispose]()
+          released()
+          throw new Error('late acquisition failed')
+        }
+        return { ...lease, [Symbol.asyncDispose]: async () => {
+          released()
+          await lease[Symbol.asyncDispose]()
+          if (outcome === 'release-failed') throw new Error('late lease release failed')
+        } }
+      })
+      const preparing = coordinator.prepareActivation(observation)
+      const rejected = expect(preparing).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+      await entered.promise
+      let disposed = false
+      const disposal = coordinator.dispose().then(() => { disposed = true })
+      try {
+        await expect.poll(() => disposed).toBe(true)
+        await rejected
+        expect(released).not.toHaveBeenCalled()
+      } finally {
+        gate.resolve(undefined)
+        await Promise.allSettled([preparing, disposal, rejected])
+      }
+      await expect.poll(() => released.mock.calls.length).toBe(1)
+      if (outcome === 'release-failed') {
+        await expect.poll(() => warn.mock.calls.length).toBe(1)
+        expect(warn).toHaveBeenCalledWith('Lead preparation lease cleanup failed: Error: late lease release failed')
+      }
+    })
+
+  it('keeps a persistently bound host closed after coordinator unload without changing unrelated Teams', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'closed-writer',
+      permissionTableId: 'closed-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    await coordinator.prepareAnchor(lead)
+    expect(ctx.agentTeams.membership(lead).role).toBe('lead')
+    await coordinator.dispose()
+    expect(ctx.agents.canStartInput(lead)).toBe(false)
+    expect(ctx.agentTeams.tryMembership(lead)?.role).toBe('host')
+    expect(() => ctx.agentTeams.membership(lead)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    const unrelated = await ctx.agents.create({ sessionId: SessionId('unbound-after-coordinator'),
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(ctx.agentTeams.membership(unrelated.agent).role).toBe('lead')
+    await unrelated.dispose()
+  })
+
+  it('preserves cwd and explicit cancellation while committing caller setup before publication', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'settings-writer',
+      permissionTableId: 'settings-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: async (id) => {
+      const live = ctx.agents.get(id)
+      if (live === undefined) throw new Error('missing anchor')
+      return live
+    } })
+    const host = await ctx.agents.create({ sessionId: SessionId('settings-anchor'),
+      meta: { cwd: join(tmpdir(), 'lead-creation-workspace'), agentPreset: 'standard' },
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(ctx.agentTeams.leadSeat(host.agent).presetId).toBe('standard')
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    const revision = lease.revision
+    if (revision === undefined) throw new Error('fixture needs a revision')
+    const commit = vi.fn()
+    const current = await coordinator.create(host.agent, { sessionId: SessionId('settings-candidate'), term: 2,
+      presetId: lease.id, revision, signal: new AbortController().signal,
+      agentOptions: { provider: 'mock', model: 'mock' }, setup: () => ({ commit }) })
+    expect(current.agent.session.header.cwd).toBe(host.agent.session.header.cwd)
+    expect(commit).toHaveBeenCalledOnce()
+    host.agent.session.append('team/lead/transaction', { version: 1, teamId: TeamId(host.agent.id), previousTerm: 1,
+      binding: { executionId: current.agent.id, term: 2, presetId: lease.id, revision },
+      extension: { id: 'settings-writer', dataJson: '{}' }, releases: [] })
+    await ctx.sessions.flush(host.agent.session)
+    expect(ctx.agents.canClaimInput(current.agent)).toBe(false)
+    const originalGet = ctx.agents.get.bind(ctx.agents)
+    const missingHost = vi.spyOn(ctx.agents, 'get').mockImplementation(id => id === host.agent.id ? undefined : originalGet(id))
+    await expect(coordinator.capture(current.agent)).rejects.toMatchObject({ code: 'TEAM_LEAD_ANCHOR_INVALID' })
+    missingHost.mockRestore()
+    await current.dispose()
+    await host.dispose()
+    await coordinator.dispose()
+    expect(ctx.agentTeams.leadSeat(lead).term).toBe(1)
+  })
+
+  it('rejects missing identity or Team projections before granting initialization', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'projection-writer',
+      permissionTableId: 'projection-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    const stateOf = ctx.sessionProjections.stateOf.bind(ctx.sessionProjections)
+    const missingIdentity = vi.spyOn(ctx.sessionProjections, 'stateOf').mockImplementation((session, key) =>
+      key === 'teamLeadExecutionRecord' ? undefined : stateOf(session, key))
+    await expect(coordinator.prepareAnchor(lead)).rejects.toThrow(/identity projection/)
+    missingIdentity.mockRestore()
+    const missingTeam = vi.spyOn(ctx.sessionProjections, 'stateOf').mockImplementation((session, key) =>
+      key === 'agentTeam' ? undefined : stateOf(session, key))
+    await expect(ctx.agents.create({ sessionId: SessionId('missing-Team-projection'),
+      agentOptions: { provider: 'mock', model: 'mock' } })).rejects.toThrow(/Team projection/)
+    missingTeam.mockRestore()
+    await coordinator.dispose()
+  })
+
+  it('rejects a corrupt persisted identity both live and during cold preparation', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'corrupt-writer',
+      permissionTableId: 'corrupt-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    const corrupted = await ctx.agents.create({ sessionId: SessionId('corrupt-execution'),
+      meta: { parentSession: lead.id, agentPreset: 'standard' }, agentOptions: { provider: 'mock', model: 'mock' },
+      setup: (_agentCtx, agent) => {
+        const marker = { version: 1 as const, teamId: TeamId(lead.id), term: 2, presetId: 'standard', revision: 'a'.repeat(64) }
+        agent.session.append('team/lead/execution', marker)
+        agent.session.append('team/lead/execution', marker)
+      } })
+    await ctx.sessions.flush(corrupted.agent.session)
+    await expect(coordinator.capture(corrupted.agent)).rejects.toMatchObject({ code: 'TEAM_LEAD_IDENTITY_INVALID' })
+    using cut = await ctx.sessionQuery.observeSession(corrupted.agent.id, { projectionMode: 'none' })
+    await expect(coordinator.prepareActivation(cut)).rejects.toMatchObject({ code: 'TEAM_LEAD_IDENTITY_INVALID' })
+    await corrupted.dispose()
+    await coordinator.dispose()
+  })
+
+  it.each(['missing', 'team', 'term', 'preset', 'revision'] as const)(
+    'rejects a cold preparation mounted on a different durable identity (%s)', async (change) => {
+      const { ctx, lead } = await setup([], {
+        controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'identity-change-writer',
+          permissionTableId: 'identity-change-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 },
+      }, true)
+      const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+      await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+      const revision = lease.revision
+      if (revision === undefined) throw new Error('fixture needs a revision')
+      const candidate = await coordinator.create(lead, { sessionId: SessionId('identity-change-source'), term: 2,
+        presetId: lease.id, revision, agentOptions: { provider: 'mock', model: 'mock' } })
+      await candidate.dispose()
+      using cut = await ctx.sessionQuery.observeSession(SessionId('identity-change-source'))
+      await using prepared = await coordinator.prepareActivation(cut)
+      if (prepared === undefined) throw new Error('candidate identity was not recognized')
+      const parentSession = change === 'team' ? SessionId('another-anchor') : lead.id
+      const presetId = change === 'preset' ? 'standard' : lease.id
+      await expect(ctx.agents.create({ sessionId: SessionId('wrong-preparation-target'),
+        meta: { parentSession, agentPreset: presetId }, agentOptions: { provider: 'mock', model: 'mock' },
+        setup: async (agentCtx, agent) => {
+          if (change !== 'missing') agent.session.append('team/lead/execution', {
+            version: 1, teamId: TeamId(parentSession), term: change === 'term' ? 3 : 2,
+            presetId, revision: change === 'revision' ? 'b'.repeat(64) : revision,
+          })
+          return await prepared.setup(agentCtx, agent)
+        } })).rejects.toMatchObject({ code: 'TEAM_LEAD_IDENTITY_INVALID' })
+      expect(ctx.agents.get(SessionId('wrong-preparation-target'))).toBeUndefined()
+      await coordinator.dispose()
+    },
+  )
+
+  it('refuses an absent Preset provider and an anchor resolver returning a different Team', async () => {
+    const config = { controlledMode: { kind: 'controlled' as const, requiredTaskExtensionId: 'missing-writer',
+      permissionTableId: 'missing-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }
+    const without = await setup([], config)
+    const missing = without.ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(without.lead) })
+    await expect(missing.create(without.lead, { sessionId: SessionId('missing-preset'), term: 2,
+      presetId: 'reviewer', revision: 'a'.repeat(64), agentOptions: { provider: 'mock', model: 'mock' } }))
+      .rejects.toMatchObject({ code: 'TEAM_PRESET_UNAVAILABLE' })
+    await missing.dispose()
+    const { ctx, lead } = await setup([], config, true)
+    const other = await ctx.agents.create({ sessionId: SessionId('wrong-anchor'),
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(other.agent) })
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a revision')
+    await expect(coordinator.create(lead, { sessionId: SessionId('wrong-anchor-candidate'), term: 2,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } }))
+      .rejects.toMatchObject({ code: 'TEAM_LEAD_ANCHOR_INVALID' })
+    await other.dispose()
+    await coordinator.dispose()
+  })
+
+  it('loads the stable host before resuming the committed execution in a fresh runtime without a model request', async () => {
+    const config = { controlledMode: { kind: 'controlled' as const, requiredTaskExtensionId: 'cold-seat-writer',
+      permissionTableId: 'cold-seat-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }
+    const first = await setup([], config, true)
+    const coordinator = first.ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(first.lead),
+      isReady: () => true })
+    await using lease = await first.ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a revision')
+    const candidate = await coordinator.create(first.lead, { sessionId: SessionId('cold-committed-seat'), term: 2,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    first.lead.session.append('team/lead/transaction', { version: 1, teamId: TeamId(first.lead.id), previousTerm: 1,
+      binding: { executionId: candidate.agent.id, term: 2, presetId: lease.id, revision: lease.revision },
+      extension: { id: 'cold-seat-writer', dataJson: '{}' }, releases: [] })
+    await first.ctx.sessions.flush(first.lead.session)
+    await candidate.dispose()
+    await coordinator.dispose()
+    await first.ctx.fiber.dispose()
+
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(Loader)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(AgentPresets, { default: 'standard' })
+    await ctx.agentPresets.register({ id: 'standard', plugins: [] })
+    await ctx.agentPresets.register({ id: 'reviewer', plugins: [{ name: PRESET_TOOL, config: { tool: 'review_only' } }] })
+    await ctx.plugin(JsonlSessionPersistence, { root: first.storageRoot })
+    await ctx.plugin(TestSessionQuery)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    await ctx.plugin(TeamService, config)
+    const adapter = new MockAdapter([])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const handles: import('@deepseek-ai/dsh-agent').AgentHandle[] = []
+    const order: string[] = []
+    ctx.on('agent/created', ({ agent }) => { order.push(agent.id) })
+    const restored = ctx.agentTeams.installLeadExecutions({ isReady: () => true,
+      resolveAnchor: async (id) => {
+        const live = ctx.agents.get(id)
+        if (live !== undefined) return live
+        const host = await ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
+        handles.push(host)
+        return host.agent
+      } })
+    using cut = await ctx.sessionQuery.observeSession(SessionId('cold-committed-seat'))
+    await using prepared = await restored.prepareActivation(cut)
+    if (prepared === undefined) throw new Error('marked execution was not prepared')
+    const current = await ctx.agents.resume({ resumeSessionId: cut.header.id, setup: prepared.setup,
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(order).toEqual([first.lead.id, current.agent.id])
+    const host = ctx.agents.get(first.lead.id)
+    if (host === undefined) throw new Error('stable host was not activated')
+    expect(ctx.agentTeams.tryMembership(host)?.role).toBe('host')
+    expect(ctx.agents.canStartInput(host)).toBe(false)
+    expect(ctx.agents.canClaimInput(host)).toBe(false)
+    expect(ctx.agentTeams.membership(current.agent)).toMatchObject({ role: 'lead', term: 2 })
+    expect(adapter.requests).toHaveLength(0)
+    await current.dispose()
+    for (const handle of handles.reverse()) await handle.dispose()
+    await restored.dispose()
+  })
+
+  it.each(['false', 'throw'] as const)('refuses an uncertain anchor checkpoint (%s)', async (failure) => {
+    const { ctx, lead } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'uncertain-writer',
+        permissionTableId: 'uncertain-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    const flush = vi.spyOn(ctx.sessions, 'flush').mockImplementationOnce(async () => {
+      if (failure === 'throw') throw new Error('checkpoint failed')
+      return false
+    })
+    await expect(coordinator.prepareAnchor(lead)).rejects.toThrow(
+      failure === 'throw' ? /checkpoint failed/ : /not durably confirmed/)
+    flush.mockRestore()
+    await coordinator.prepareAnchor(lead)
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a revision')
+    const unconfirmed = vi.spyOn(ctx.sessions, 'flush').mockResolvedValueOnce(false)
+    await expect(coordinator.create(lead, { sessionId: SessionId('unconfirmed-candidate'), term: 2,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } }))
+      .rejects.toThrow(/not durably confirmed/)
+    unconfirmed.mockRestore()
+    expect(ctx.agents.get(SessionId('unconfirmed-candidate'))).toBeUndefined()
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'agent/input/controller-bound')).toHaveLength(1)
+    await coordinator.dispose()
+  })
+
+  it('does not treat unrelated activation as a marked execution and rejects a non-controlled anchor', async () => {
+    const { ctx, lead } = await setup([], {}, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    using cut = await ctx.sessionQuery.observeSession(lead.id)
+    expect(await coordinator.prepareActivation(cut)).toBeUndefined()
+    await expect(coordinator.prepareAnchor(lead)).rejects.toMatchObject({ code: 'TEAM_LEAD_ANCHOR_INVALID' })
+    const ordinary = await ctx.agents.create({ sessionId: SessionId('uncontrolled-anchor'),
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(ctx.agents.isInputControlled(ordinary.agent.session)).toBe(false)
+    await ordinary.dispose()
+    await coordinator.dispose()
+  })
+
+  it('captures queued input, preloads its original identity without waking and releases source custody once', async () => {
+    const { ctx, lead, adapter } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'capture-writer',
+        permissionTableId: 'capture-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    let ready = true
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead),
+      isReady: () => ready })
+    await coordinator.prepareAnchor(lead)
+    const material = { message: createUserMessage({ content: content('Original non-waking facts'),
+      source: { kind: 'user' } }), target: 'next-step' as const, wakeup: false }
+    await ctx.agents.receiveInput(lead, material)
+    ready = false
+    expect(ctx.agentTeams.tryMembership(lead)?.role).toBe('host')
+    await expect(spawn(ctx, lead, 'frozen-creation')).rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    const captured = await coordinator.capture(lead)
+    expect(captured).toEqual([material])
+    expect(lead.inbox.nextStep).toEqual([])
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a revision')
+    const candidate = await coordinator.create(lead, { sessionId: SessionId('capture-candidate'), term: 2,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(await coordinator.preload(candidate.agent, material, true)).toMatchObject({ location: 'inbox' })
+    expect(await coordinator.preload(candidate.agent, material, true)).toMatchObject({ location: 'inbox' })
+    expect(candidate.agent.inbox.nextStep).toEqual([material.message])
+    expect(adapter.requests).toHaveLength(0)
+    await coordinator.release(lead, material.message.id)
+    await coordinator.release(lead, material.message.id)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'agent/input/released')).toHaveLength(1)
+    await candidate.dispose()
+    await coordinator.dispose()
+  })
+
+  it('does not publish or grant authority after creation fails and closes the disposed capability', async () => {
+    const { ctx, lead } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'failure-writer',
+        permissionTableId: 'failure-table', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a revision')
+    const request = { sessionId: SessionId('failed-candidate'), term: 2, presetId: lease.id,
+      revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } }
+    await expect(coordinator.create(lead, { ...request, term: 1 })).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    await expect(coordinator.create(lead, { ...request, revision: 'b'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'TEAM_PRESET_REVISION_MISMATCH' })
+    await expect(coordinator.create(lead, { ...request, setup: () => { throw new Error('setup stopped') } }))
+      .rejects.toThrow(/setup stopped/)
+    expect(ctx.agents.get(request.sessionId)).toBeUndefined()
+    expect(ctx.agentTeams.leadSeat(lead).term).toBe(1)
+    await coordinator.dispose()
+    await expect(coordinator.create(lead, request)).rejects.toMatchObject({ code: 'TEAM_LEAD_PROVIDER_CLOSED' })
+  })
+
+  it('recognizes only the bound ready Lead and keeps the original anchor dormant across repeated seats', async () => {
+    const { ctx, lead, adapter } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'seat-writer',
+        permissionTableId: 'seat-table', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    let ready = true
+    const coordinator = ctx.agentTeams.installLeadExecutions({
+      resolveAnchor: () => Promise.resolve(lead), isReady: () => ready,
+    })
+    expect(ctx.agentTeams.leadSeat(lead)).toMatchObject({ executionId: lead.id, term: 1 })
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture needs a declaration revision')
+    const second = await coordinator.create(lead, { sessionId: SessionId('seat-second'), term: 2,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    ready = false
+    lead.session.append('team/lead/transaction', { version: 1, teamId: TeamId(lead.id), previousTerm: 1,
+      binding: { executionId: second.agent.id, term: 2, presetId: lease.id, revision: lease.revision },
+      extension: { id: 'seat-writer', dataJson: '{}' }, releases: [] })
+    await ctx.sessions.flush(lead.session)
+    expect(ctx.agentTeams.tryMembership(lead)).toMatchObject({ role: 'host' })
+    expect(ctx.agents.canStartInput(lead)).toBe(false)
+    expect(ctx.agents.canClaimInput(lead)).toBe(false)
+    expect(() => ctx.agentTeams.membership(lead)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    expect(ctx.agentTeams.tryMembership(second.agent)).toBeUndefined()
+    expect(ctx.agents.canStartInput(second.agent)).toBe(false)
+    expect(ctx.agents.canClaimInput(second.agent)).toBe(false)
+    const queued = createUserMessage({ content: content('after commit, before readiness'), source: { kind: 'user' } })
+    expect(await ctx.agents.receiveInput(second.agent, { message: queued, target: 'next-turn', wakeup: true }))
+      .toMatchObject({ messageId: queued.id, location: 'held' })
+    expect(adapter.requests).toHaveLength(0)
+    ready = true
+    expect(ctx.agentTeams.membership(second.agent)).toMatchObject({ role: 'lead', term: 2 })
+    expect(ctx.agentTeams.membership(second.agent).root).toBe(lead)
+    expect(ctx.agents.canStartInput(second.agent)).toBe(true)
+    expect(ctx.agentTeams.listMembers(second.agent)[0]).toMatchObject({ id: lead.id, name: 'lead',
+      preset: { id: lease.id, revision: lease.revision } })
+    const third = await coordinator.create(lead, { sessionId: SessionId('seat-third'), term: 3,
+      presetId: lease.id, revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    ready = false
+    lead.session.append('team/lead/transaction', { version: 1, teamId: TeamId(lead.id), previousTerm: 2,
+      binding: { executionId: third.agent.id, term: 3, presetId: lease.id, revision: lease.revision },
+      extension: { id: 'seat-writer', dataJson: '{}' }, releases: [] })
+    await ctx.sessions.flush(lead.session)
+    ready = true
+    expect(ctx.agentTeams.membership(third.agent)).toMatchObject({ role: 'lead', term: 3 })
+    expect(ctx.agentTeams.membership(third.agent).root).toBe(lead)
+    expect(ctx.agentTeams.tryMembership(second.agent)).toBeUndefined()
+    expect(ctx.agents.canStartInput(second.agent)).toBe(false)
+    expect(ctx.agentTeams.leadSeat(lead)).toMatchObject({ executionId: third.agent.id, term: 3 })
+    expect(adapter.requests).toHaveLength(0)
+    await third.dispose()
+    await second.dispose()
+    await coordinator.dispose()
+  })
+
+  it('creates a durable ordinary candidate through an owned coordinator and refuses all model input', async () => {
+    const { ctx, lead, adapter } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'lead-writer',
+        permissionTableId: 'lead-table', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({
+      resolveAnchor: (id) => {
+        const anchor = ctx.agents.get(id)
+        if (anchor === undefined) return Promise.reject(new Error('anchor is absent'))
+        return Promise.resolve(anchor)
+      },
+    })
+    expect(() => ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) }))
+      .toThrow(expect.objectContaining({ code: 'TEAM_LEAD_PROVIDER_CONFLICT' }))
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture requires a declaration revision')
+    const identityAtPublication: unknown[] = []
+    ctx.on('agent/created', async ({ agent }) => {
+      if (agent.id !== 'coordinator-candidate') return
+      const persisted = await storedEvents(ctx, agent.id)
+      identityAtPublication.push(persisted.find(event => event.type === 'team/lead/execution')?.data)
+      expect(ctx.agents.canStartInput(agent)).toBe(false)
+      expect(ctx.agentPresets.composedPreset(agent.ctx)).toBe('reviewer')
+    })
+    const candidate = await coordinator.create(lead, { sessionId: SessionId('coordinator-candidate'),
+      term: 2, presetId: 'reviewer', revision: lease.revision,
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(identityAtPublication).toEqual([{ version: 1, teamId: TeamId(lead.id), term: 2,
+      presetId: 'reviewer', revision: lease.revision }])
+    expect(ctx.agents.roots()).toContain(candidate.agent)
+    expect(ctx.agents.isOwnedBy(candidate.agent.id, lead)).toBe(false)
+    expect(ctx.agentTeams.tryMembership(candidate.agent)).toBeUndefined()
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    await expect(ctx.agents.receiveInput(candidate.agent, { message: createUserMessage({ content: content('run now'),
+      source: { kind: 'user' } }), target: 'next-turn', wakeup: true })).rejects.toThrow(/not bound and ready/)
+    candidate.agent.wakePending?.()
+    expect(adapter.requests).toHaveLength(0)
+    await candidate.dispose()
+    await coordinator.dispose()
+  })
+
+  it('binds a new controlled anchor before setup and leaves official creation unbound', async () => {
+    const { ctx, lead } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'anchor-writer',
+        permissionTableId: 'anchor-table', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: () => Promise.resolve(lead) })
+    let observed = false
+    const anchor = await ctx.agents.create({ sessionId: SessionId('controlled-new-anchor'),
+      agentOptions: { provider: 'mock', model: 'mock' }, setup: (_agentCtx, agent) => {
+        observed = true
+        expect(ctx.agents.isInputControlled(agent.session)).toBe(true)
+        expect(ctx.sessionProjections.stateOf(agent.session, 'agentTeam')?.mode?.kind).toBe('controlled')
+      } })
+    expect(observed).toBe(true)
+    await anchor.dispose()
+    await coordinator.dispose()
+    const official = await setup([])
+    expect(official.ctx.agents.isInputControlled(official.lead.session)).toBe(false)
+  })
+
+  it('prepares the recorded Lead declaration on cold activation and refuses a changed declaration before mount', async () => {
+    const { ctx, lead, adapter, removeReviewer } = await setup([], {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'cold-writer',
+        permissionTableId: 'cold-table', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 },
+    }, true)
+    const resolve = vi.fn(() => Promise.resolve(lead))
+    const coordinator = ctx.agentTeams.installLeadExecutions({ resolveAnchor: resolve })
+    await using lease = await ctx.agentPresets.acquireComposition('reviewer')
+    if (lease.revision === undefined) throw new Error('fixture requires a declaration revision')
+    const candidate = await coordinator.create(lead, { sessionId: SessionId('cold-lead-candidate'),
+      term: 2, presetId: 'reviewer', revision: lease.revision, agentOptions: { provider: 'mock', model: 'mock' } })
+    await candidate.dispose()
+    using cut = await ctx.sessionQuery.observeSession(SessionId('cold-lead-candidate'))
+    resolve.mockClear()
+    await using prepared = await coordinator.prepareActivation(cut)
+    if (prepared === undefined) throw new Error('Lead activation was not prepared')
+    expect(resolve).toHaveBeenCalledWith(lead.id, expect.any(AbortSignal))
+    const resumed = await ctx.agents.resume({ resumeSessionId: cut.header.id,
+      agentOptions: { provider: 'mock', model: 'mock' }, setup: prepared.setup })
+    expect(ctx.agentPresets.composedPreset(resumed.agent.ctx)).toBe('reviewer')
+    expect(ctx.agents.canStartInput(resumed.agent)).toBe(false)
+    expect(ctx.agentTeams.tryMembership(resumed.agent)).toBeUndefined()
+    expect(adapter.requests).toHaveLength(0)
+    await resumed.dispose()
+    if (removeReviewer === undefined) throw new Error('fixture requires a removable declaration')
+    await removeReviewer()
+    await ctx.agentPresets.register({ id: 'reviewer', plugins: [] })
+    await expect(coordinator.prepareActivation(cut)).rejects.toThrow(
+      expect.objectContaining({ code: 'TEAM_PRESET_REVISION_MISMATCH' }))
+    expect(ctx.agents.get(cut.header.id)).toBeUndefined()
+    expect(adapter.requests).toHaveLength(0)
+    await coordinator.dispose()
+  })
+
+  it.each([false, true])('persists identity without a second Team or member slot (controlled=%s)', async (controlled) => {
+    const { ctx, lead, adapter } = await setup([], controlled ? {
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'identity-writer',
+        permissionTableId: 'identity-table', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 },
+    } : {}, true)
+    await using composition = await ctx.agentPresets.acquireComposition('standard')
+    if (composition.revision === undefined) throw new Error('standard fixture has no revision')
+    const identity = { version: 1 as const, teamId: TeamId(lead.id), term: 2,
+      presetId: 'standard', revision: composition.revision }
+    const publicIdentities: unknown[] = []
+    ctx.on('agent/created', async ({ agent }) => {
+      if (agent.id !== 'prepared-lead') return
+      publicIdentities.push((await storedEvents(ctx, agent.id)).find(event => event.type === 'team/lead/execution')?.data)
+      expect(ctx.agentTeams.tryMembership(agent)).toBeUndefined()
+    })
+    const prepared = await ctx.agents.create({
+      sessionId: SessionId('prepared-lead'),
+      meta: { parentSession: lead.id, agentPreset: 'standard' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+      setup: (_agentCtx, agent) => { agent.session.append('team/lead/execution', identity) },
+    })
+    await ctx.sessions.flush(prepared.agent.session)
+    expect(publicIdentities).toEqual([identity])
+    expect(ctx.agents.roots()).toContain(prepared.agent)
+    expect(prepared.agent.session.header).toMatchObject({ parentSession: lead.id, isSeeded: false })
+    expect(prepared.agent.session.header.origin).toBeUndefined()
+    expect(ctx.sessionProjections.stateOf(prepared.agent.session, 'teamLeadExecutionRecord')).toMatchObject({
+      identity, eligible: true,
+    })
+    expect(ctx.agentTeams.tryMembership(prepared.agent)).toBeUndefined()
+    expect(() => ctx.agentTeams.membership(prepared.agent)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    expect(adapter.requests).toHaveLength(0)
+    await prepared.dispose()
+
+    // Read the marker from persisted storage, not the former Agent handle.
+    const resumed = await ctx.agents.resume({ resumeSessionId: SessionId('prepared-lead'),
+      agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(ctx.agentTeams.tryMembership(resumed.agent)).toBeUndefined()
+    expect(ctx.sessionProjections.stateOf(resumed.agent.session, 'teamLeadExecutionRecord')?.identity).toEqual(identity)
+    expect(adapter.requests).toHaveLength(0)
+    await resumed.dispose()
+  })
+
+  it('does not grant an inherited marker authority to an ordinary fork', async () => {
+    const { ctx, lead } = await setup([])
+    const parent = await ctx.agents.create({ sessionId: SessionId('marked-parent'),
+      meta: { parentSession: lead.id, agentPreset: 'standard' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+      setup: (_agentCtx, agent) => { agent.session.append('team/lead/execution', {
+        version: 1, teamId: TeamId(lead.id), term: 2, presetId: 'standard', revision: 'a'.repeat(64),
+      }) },
+    })
+    await ctx.sessions.flush(parent.agent.session)
+    const seed = await storedEvents(ctx, parent.agent.id)
+    const fork = await ctx.agents.create({ sessionId: SessionId('ordinary-marked-fork'), seed,
+      meta: { parentSession: parent.agent.id, isSeeded: true, agentPreset: 'standard' },
+      inheritedEventCount: SessionLogOffset(seed.length), agentOptions: { provider: 'mock', model: 'mock' } })
+    expect(ctx.sessionProjections.stateOf(fork.agent.session, 'teamLeadExecutionRecord')?.identity).toBeNull()
+    expect(ctx.agentTeams.membership(fork.agent)).toMatchObject({ id: TeamId(fork.agent.id), role: 'lead' })
+    await fork.dispose()
+    await parent.dispose()
+  })
+
+  it('keeps identity admission after Team reload and refuses a failed identity fold', async () => {
+    const { ctx, lead, teamFiber } = await setup([])
+    const prepared = await ctx.agents.create({ sessionId: SessionId('reload-prepared-lead'),
+      meta: { parentSession: lead.id, agentPreset: 'standard' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+      setup: (_agentCtx, agent) => { agent.session.append('team/lead/execution', {
+        version: 1, teamId: TeamId(lead.id), term: 2, presetId: 'standard', revision: 'a'.repeat(64),
+      }) },
+    })
+    const stateOf = ctx.sessionProjections.stateOf.bind(ctx.sessionProjections)
+    const missingProjection = vi.spyOn(ctx.sessionProjections, 'stateOf').mockImplementation((session, key) => (
+      key === 'teamLeadExecutionRecord' ? undefined : stateOf(session, key)
+    ))
+    expect(ctx.agentTeams.tryMembership(lead)).toBeUndefined()
+    missingProjection.mockRestore()
+    await teamFiber.dispose()
+    expect(ctx.sessionProjections.stateOf(prepared.agent.session, 'teamLeadExecutionRecord')).toBeUndefined()
+    await ctx.plugin(TeamService)
+    expect(ctx.agentTeams.membership(lead).role).toBe('lead')
+    expect(ctx.agentTeams.tryMembership(prepared.agent)).toBeUndefined()
+    prepared.agent.session.append('team/lead/execution', {
+      version: 1, teamId: TeamId(lead.id), term: 3, presetId: 'standard', revision: 'a'.repeat(64),
+    })
+    expect(ctx.sessionProjections.stateOf(prepared.agent.session, 'teamLeadExecutionRecord')?.failure).toMatch(/duplicate/)
+    expect(ctx.agentTeams.tryMembership(prepared.agent)).toBeUndefined()
+    await prepared.dispose()
   })
 })
 

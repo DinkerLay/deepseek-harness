@@ -14,6 +14,7 @@ import type {
   InboxState,
   InboxTarget,
   InboxWireState,
+  AgentInput,
 } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
 
@@ -76,6 +77,7 @@ export class ReactLoopInbox implements InboxContract {
     private readonly projections: SessionProjectionRegistry,
     private readonly session: Session,
     private readonly dispatch: AgentEventDispatch,
+    private readonly canClaim?: () => boolean,
   ) {}
 
   /** Prompts awaiting individual turns. */
@@ -107,6 +109,7 @@ export class ReactLoopInbox implements InboxContract {
    * @returns next-step input followed by the queued turn, when requested.
    */
   claim(target: InboxTarget, turn: number): UserMessage[] {
+    if (this.canClaim !== undefined && !this.canClaim()) throw new Error('input claim is blocked before consumption')
     const claimed = this.mutate('next-step', 0, this.nextStep.length, [], false)
     if (target === 'next-turn') claimed.push(...this.mutate('next-turn', 0, 1, [], false))
     for (const message of claimed) this.dispatch.emit('agent/inbox/claimed', { message, turn })
@@ -119,7 +122,7 @@ export class ReactLoopInbox implements InboxContract {
    * @param message - message to append.
    */
   append(target: InboxTarget, message: UserMessage): void {
-    this.splice(target, this.current()[target].length, 0, [message])
+    this.mutate(target, this.current()[target].length, 0, [message], true, this.nonWakingAudit())
   }
 
   /**
@@ -128,7 +131,7 @@ export class ReactLoopInbox implements InboxContract {
    * @param message - message to prepend.
    */
   prepend(target: InboxTarget, message: UserMessage): void {
-    this.splice(target, 0, 0, [message])
+    this.mutate(target, 0, 0, [message], true, this.nonWakingAudit())
   }
 
   /**
@@ -140,7 +143,8 @@ export class ReactLoopInbox implements InboxContract {
   replace(messageId: MessageId, newMessage: UserMessage): boolean {
     const location = this.locate(messageId)
     if (location === undefined) return false
-    this.splice(location.target, location.index, 1, [newMessage])
+    this.mutate(location.target, location.index, 1, [newMessage], true,
+      newMessage.id === messageId ? undefined : this.nonWakingAudit())
     return true
   }
 
@@ -173,6 +177,34 @@ export class ReactLoopInbox implements InboxContract {
     return this.mutate(target, start, deleteCount, inserted, true)
   }
 
+  /** Insert a controller-owned receipt without waking; the registry owns its flush.
+   * @param input - effective queue, identity and original wake intent.
+   * @param prepend - whether coordination material must precede pending input.
+   */
+  spliceControlled(input: AgentInput, prepend: boolean): void {
+    this.mutate(input.target, prepend ? 0 : Infinity, 0, [input.message], true, {
+      wakeup: input.wakeup,
+      ...input.requestedTarget === undefined ? {} : { requestedTarget: input.requestedTarget },
+    })
+  }
+
+  /** Remove one item into previously recorded controller custody, without claiming or cancelling it.
+   * @param messageId - identity with an immediately preceding held fact.
+   * @returns whether the item was still pending.
+   */
+  holdControlled(messageId: MessageId): boolean {
+    const location = this.locate(messageId)
+    if (location === undefined) return false
+    this.mutate(location.target, location.index, 1, [], false, { heldInput: messageId })
+    return true
+  }
+
+  /** Direct producer staging never wakes; unchanged identities retain their earlier receipt intent. */
+  private nonWakingAudit(): { wakeup: false } | undefined {
+    const control = this.projections.stateOf(this.session, 'inputControl')
+    return control !== undefined && control.controllerId !== null ? { wakeup: false } : undefined
+  }
+
   /** Locate one pending identity across both owned lists. */
   private locate(messageId: MessageId): { target: InboxTarget; index: number } | undefined {
     const state = this.current()
@@ -201,6 +233,7 @@ export class ReactLoopInbox implements InboxContract {
     deleteCount: number,
     inserted: UserMessage[],
     discardRemoved: boolean,
+    audit?: Pick<SessionEventMap['agent/inbox/spliced'], 'wakeup' | 'requestedTarget' | 'heldInput'>,
   ): UserMessage[] {
     const state = this.current()
     const inbox = state[target]
@@ -230,6 +263,7 @@ export class ReactLoopInbox implements InboxContract {
       ...(actualDeleteCount === 0 ? {} : { removedCount: actualDeleteCount }),
       inserted,
       ...(outcome === undefined ? {} : { outcome }),
+      ...audit,
     }
     const removed = inbox.slice(actualStart, actualStart + actualDeleteCount)
     const event = this.session.append('agent/inbox/spliced', splice)

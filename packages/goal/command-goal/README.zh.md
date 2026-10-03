@@ -46,11 +46,11 @@ kind: "package-reference"
 
 ### 附件
 
-`/goal` 声明附件支持。附件只随目标本身：create 或 edit 成功后，命令提交一条用户 followup 消息，按选择顺序携带已准入的图片块与文件块，再附加固定文本 `Reference attachments for the goal objective.`。后续 Goal Round 从普通会话历史读取这些内容，goal 领域不存储附件状态。其他任何子命令以及被拒绝的 create 或 edit，都会在领域变更前返回直接错误，并保留 composer 的草稿和附件卡。
+`/goal` 声明附件支持。附件只随目标本身：create 或 edit 成功后，命令提交一条用户 followup 消息，按选择顺序携带已准入的图片块与文件块，再附加固定文本 `Reference attachments for the goal objective.`。对于启用输入控制的 Session，命令在持久保存该消息后才返回成功；回执失败会使分发拒绝。未绑定输入控制的 Session 保留同步 followup 投递。后续 Goal Round 从普通会话历史读取这些内容，goal 领域不存储附件状态。其他任何子命令以及被拒绝的 create 或 edit，都会在领域变更前返回直接错误，并保留 composer 的草稿和附件卡。
 
 ### 组合方式
 
-命令注入命令注册表与 goal 服务。自定义应用会挂载它们的所有者与此插件；自动续行仍是独立选择：
+命令注入命令注册表、goal 服务和 goal 服务所需的 agent 注册表。自定义应用会挂载它们的所有者与此插件；自动续行仍是独立选择：
 
 ```yaml
 - id: commands

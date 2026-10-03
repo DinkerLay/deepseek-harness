@@ -1,0 +1,7 @@
+version: 1
+scenario: controlled-input
+profile: sdk
+composition: sdk-upload
+recording: authored
+header:
+  class: sdk-upload

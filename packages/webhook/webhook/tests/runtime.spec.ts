@@ -242,6 +242,10 @@ describe('WebhookRuntime', () => {
     } as never)
     ctx.provide('sessionTitle', { rename: () => ({}) } as never)
     ctx.provide('agents', {
+      sendInput(agent: { followup(message: unknown): void }, input: { message: unknown }) {
+        agent.followup(input.message)
+        return undefined
+      },
       create: async (options: { setup?: (agentCtx: unknown, agent: unknown) => Promise<void> }) => {
         const agent = {
           session,

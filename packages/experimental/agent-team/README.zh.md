@@ -142,6 +142,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、服务注册、恢复调度 |
 | [`src/roster.ts`](src/roster.ts) | Team 身份、成员关系解析、provisioning 与 roster 拆除 |
+| [`src/lead-execution.ts`](src/lead-execution.ts) | 仅限 Host 的普通执行不可变 Lead 身份校验 |
 | [`src/composition.ts`](src/composition.ts) | 用户管理的锁定与可恢复的应用转换 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
 | [`src/task-board.ts`](src/task-board.ts) | 任务 CAS 命令、DAG 校验与派生视图 |
@@ -156,7 +157,9 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### Team 身份与 roster
 
-每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；官方 Team 没有创建事件，持久状态从第一条成员、消息或任务记录开始。受控产品先写入 `team/mode`。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+每个无标记的普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；官方 Team 没有创建事件，持久状态从第一条成员、消息或任务记录开始。受控产品先写入 `team/mode`。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
+
+Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运行时子 Agent 或 roster 成员。身份和可选的输入所有权在发布前持久记录。只有执行 id、任期、Preset 修订都匹配稳定 Team 席位，且协调器允许就绪时，执行才有 Lead 权限；原锚点随后只有休眠的宿主身份。候选拒绝普通输入，冻结或被替换的执行保留输入但不运行。冷准备先加载锚点，在挂载前拒绝变更过的 Preset 修订。未安装此可选提供方时，官方组合与执行路径不变。
 
 未配置的成员沿用 `team/member` 第 2 版记录。配置了 Preset、分组或 Profile 槽位的成员使用 `team/member/configured` 第 3 版；恢复时，其 Preset 身份与修订值必须和 child 的 continuable-Preset 事件一致。投影接受两种记录，并拒绝更改已有成员的 Preset 绑定、分组或槽位 id。
 

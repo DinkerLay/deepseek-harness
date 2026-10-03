@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -80,6 +80,13 @@ async function reconstructPersistedInbox(
 }
 
 describe('ReactLoopInbox', () => {
+  it('does not remove or report custody for an identity that is not pending', async () => {
+    const { inbox, session } = await inboxAgent('absent-held-input')
+    const before = session.seq
+    expect(inbox.holdControlled(MessageId('absent'))).toBe(false)
+    expect(session.seq).toBe(before)
+  })
+
   it('reads the shared projection without owning its registration', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())

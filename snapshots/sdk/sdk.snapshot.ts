@@ -101,6 +101,8 @@ function dirOf(url: string): string {
 }
 
 interface SdkAssertions {
+  /** Candidate executions have durable lineage, but no delegated run to finish. */
+  ordinaryChildren?: true
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
@@ -125,6 +127,14 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'controlled-input': {
+    patches: [fileURLToPath(new URL('./controlled-input/runtime.cordis.yml', import.meta.url))],
+    expectedFinalResponse: 'SDK snapshot OK',
+  },
+  'lead-candidate': {
+    expectedFinalResponse: 'SDK snapshot OK',
+    ordinaryChildren: true,
+  },
   'dynamic-tool-updates': {
     expectedFinalResponse: 'DONE',
   },
@@ -1073,7 +1083,14 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       }
       if (ordered.length > 1 && assertions.dshSdkChild === undefined) {
         expect(observedMethods.has('subagent.started')).toBe(true)
-        expect(observedMethods.has('subagent.finished')).toBe(true)
+        if (assertions.ordinaryChildren === true) {
+          expect(observedMethods.has('subagent.finished')).toBe(false)
+          for (const child of ordered.slice(1)) {
+            expect(child.header.origin).toBeUndefined()
+            expect(records(child.content).some(event => event.type === 'turn/start')).toBe(false)
+            expect(records(child.content).filter(event => event.type === 'team/lead/execution')).toHaveLength(1)
+          }
+        } else expect(observedMethods.has('subagent.finished')).toBe(true)
       }
     })
   }

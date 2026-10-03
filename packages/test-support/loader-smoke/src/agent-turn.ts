@@ -100,7 +100,8 @@ export async function runFixtureTurn(ctx: Context, options: FixtureTurnOptions):
   })
 
   try {
-    agent.followup(message)
+    const receipt = ctx.agents.sendInput(agent, { message, target: 'next-turn', wakeup: true })
+    if (receipt !== undefined) await receipt
     await agent.whenIdle()
   } finally {
     disposeListener()

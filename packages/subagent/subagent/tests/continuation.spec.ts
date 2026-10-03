@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { liveConfig } from '../../../settings/settings/tests/live-config.ts'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import { InputControllerId, type Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -231,6 +231,55 @@ describe('identified continuable input', () => {
         preset: { id: 'missing-registry', revision: 'a'.repeat(64) },
       })).rejects.toThrow(/requires the Agent Preset registry/)
       expect(ctx.agents.list().map(agent => agent.id)).toEqual([parent.id])
+    } finally { await drainManager(ctx) }
+  })
+
+  it('mounts the recorded Preset for fresh and cold child execution and releases each lease', async () => {
+    const { ctx, parent, adapter } = await setup([textResponse('preset first'), textResponse('preset resumed')])
+    parkParent(ctx, parent)
+    const revision = 'a'.repeat(64)
+    const mount = vi.fn(async () => ({ id: 'bound-reviewer' }))
+    const release = vi.fn(() => Promise.resolve())
+    const acquire = vi.fn(async () => ({ id: 'bound-reviewer', revision, compositionRows: [], mount,
+      [Symbol.asyncDispose]: release }))
+    ctx.provide('agentPresets', { acquireComposition: acquire, composedPreset: () => undefined } as never)
+    try {
+      const started = await ctx.subagents.startContinuable({ ...startSpec(parent),
+        preset: { id: 'bound-reviewer', revision } })
+      await waitNoActivation(ctx, started.childId)
+      await queuePrompt(ctx, parent, started.childId, message('use the recorded preset again'))
+      await waitNoActivation(ctx, started.childId)
+      expect(acquire).toHaveBeenCalledTimes(2)
+      expect(acquire).toHaveBeenNthCalledWith(2, 'bound-reviewer')
+      expect(mount).toHaveBeenCalledTimes(2)
+      expect(release).toHaveBeenCalledTimes(2)
+      expect(adapter.requests).toHaveLength(2)
+      const stored = await loadStoredSession(ctx.sessionPersistence, started.childId)
+      expect(stored.events.filter(event => event.type === 'subagent/continuable-preset')).toMatchObject([
+        { data: { preset: { id: 'bound-reviewer', revision } } },
+      ])
+    } finally { await drainManager(ctx) }
+  })
+
+  it('rejects changed Preset composition during cold recovery without mounting it', async () => {
+    const { ctx, parent, adapter } = await setup([textResponse('preset first')])
+    parkParent(ctx, parent)
+    let revision = 'a'.repeat(64)
+    const mount = vi.fn(async () => ({ id: 'bound-reviewer' }))
+    const release = vi.fn(() => Promise.resolve())
+    ctx.provide('agentPresets', { acquireComposition: async () => ({ id: 'bound-reviewer', revision,
+      compositionRows: [], mount, [Symbol.asyncDispose]: release }), composedPreset: () => undefined } as never)
+    try {
+      const started = await ctx.subagents.startContinuable({ ...startSpec(parent),
+        preset: { id: 'bound-reviewer', revision } })
+      await waitNoActivation(ctx, started.childId)
+      revision = 'b'.repeat(64)
+      await expect(queuePrompt(ctx, parent, started.childId, message('do not recover another declaration')))
+        .rejects.toMatchObject({ code: 'NOT_RESUMABLE', cause: new Error('continuable preset "bound-reviewer" declaration changed; recovery refused') })
+      expect(mount).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledTimes(2)
+      expect(adapter.requests).toHaveLength(1)
+      expect(ctx.agents.get(started.childId)).toBeUndefined()
     } finally { await drainManager(ctx) }
   })
 
@@ -3077,6 +3126,66 @@ describe('continuable settlement-notice policy', () => {
 })
 
 describe('continuable adjacent-Agent delivery', () => {
+  it.each([false, true])('awaits controlled parent custody for a direct message; receipt denied: %s', async (denied) => {
+    const childGate = Promise.withResolvers<undefined>()
+    const receiptGate = Promise.withResolvers<undefined>()
+    const entered = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: childGate.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    cleanups.unshift(async () => { childGate.resolve(undefined); receiptGate.resolve(undefined) })
+    const cap = ctx.agents.registerInputController(InputControllerId('direct-parent-receipt'), {
+      admit: () => denied ? { kind: 'reject', reason: 'parent receipt refused' } : { kind: 'accept' },
+      canStart: () => false, canClaim: () => false,
+    })
+    cap.bind(parent.session)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = ctx.agents.get(started.childId)
+    if (child === undefined) throw new Error('child was not published')
+    const flush = ctx.sessions.flush.bind(ctx.sessions)
+    const barrier = vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === parent.session) { entered.resolve(undefined); await receiptGate.promise }
+      return flush(session)
+    })
+    let completed = false
+    const sending = ctx.subagents.sendMessage(child, parent.id, message('durable direct report'), { signal: testSignal })
+      .then((value) => { completed = true; return { value } }, (error: unknown) => { completed = true; return { error } })
+    try {
+      if (denied) expect(await sending).toMatchObject({ error: { code: 'PARENT_UNAVAILABLE',
+        cause: new Error('parent receipt refused') } })
+      else {
+        await entered.promise
+        expect(completed).toBe(false)
+        expect(adapter.requests.every(request => request.sessionId === started.childId)).toBe(true)
+        receiptGate.resolve(undefined)
+        const outcome = await sending
+        expect(outcome).toHaveProperty('value')
+        expect(ctx.agents.inputControlState(parent.session).records[0]?.input.message.id).toBe('value' in outcome ? outcome.value : '')
+      }
+    } finally {
+      receiptGate.resolve(undefined); childGate.resolve(undefined); await sending
+      await drainManager(ctx); barrier.mockRestore(); await cap.dispose()
+    }
+  })
+
+  it('routes a parent-authored direct message through the child continuation queue', async () => {
+    const gate = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('first answer'), gate: gate.promise },
+      { chunks: textResponse('second answer') }])
+    const { ctx, parent } = await setupWith(adapter)
+    parkParent(ctx, parent)
+    cleanups.unshift(async () => { gate.resolve(undefined) })
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    try {
+      const id = await ctx.subagents.sendMessage(parent, started.childId, message('follow the direct instruction'), { signal: testSignal })
+      const child = ctx.agents.get(started.childId)
+      expect(child?.inbox.nextStep.some(input => input.id === id)).toBe(true)
+      gate.resolve(undefined)
+      await waitNoActivation(ctx, started.childId)
+      const stored = await loadStoredSession(ctx.sessionPersistence, started.childId)
+      expect(hasUserText(stored.events, 'follow the direct instruction')).toBe(true)
+    } finally { gate.resolve(undefined); await drainManager(ctx) }
+  })
+
   it('rejects a stale sender before resolving either adjacent target', async () => {
     const { ctx, parent } = await setup([])
     const stale = { ...parent, id: parent.id } as Agent
@@ -3198,6 +3307,45 @@ describe('continuable adjacent-Agent delivery', () => {
 })
 
 describe('continuable settlement delivery', () => {
+  it.each([false, true])('awaits controlled settlement custody before teardown completes; parent closing: %s', async (closing) => {
+    const childGate = Promise.withResolvers<undefined>()
+    const receiptGate = Promise.withResolvers<undefined>()
+    const entered = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child result'), gate: childGate.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    cleanups.unshift(async () => { childGate.resolve(undefined); receiptGate.resolve(undefined) })
+    const cap = ctx.agents.registerInputController(InputControllerId('settlement-receipt'), {
+      admit: () => ({ kind: 'accept' }), canStart: () => false, canClaim: () => false,
+    })
+    cap.bind(parent.session)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+    const original = ctx.sessions.flush.bind(ctx.sessions)
+    const barrier = vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === parent.session) { entered.resolve(undefined); await receiptGate.promise }
+      return original(session)
+    })
+    let completed = false
+    let draining: Promise<void> | undefined
+    try {
+      if (closing) draining = ctx.subagents.drainContinuableDescendants([parent]).then(() => { completed = true })
+      childGate.resolve(undefined)
+      await entered.promise
+      if (!closing) draining = drainManager(ctx).then(() => { completed = true })
+      expect(completed).toBe(false)
+      expect(parent.status).toBe('idle')
+      const record = ctx.agents.inputControlState(parent.session).records[0]
+      expect(record?.input).toMatchObject({ wakeup: !closing, message: { source: { kind: 'subagent-settled', senderSessionId: started.childId } } })
+      receiptGate.resolve(undefined)
+      await draining
+      expect(completed).toBe(true)
+      expect(adapter.requests).toHaveLength(1)
+    } finally {
+      childGate.resolve(undefined); receiptGate.resolve(undefined); await draining
+      await drainManager(ctx); barrier.mockRestore(); await cap.dispose()
+    }
+  })
+
   it('tells the parent what the child finished with, without being asked', async () => {
     const { ctx, parent } = await setup([textResponse('the answer'), textResponse('parent ack')])
     const started = await ctx.subagents.startContinuable(startSpec(parent))

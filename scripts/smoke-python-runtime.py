@@ -118,6 +118,9 @@ SNAPSHOT_WORKFLOW_SCRIPT = (
 ADVANCED_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "advanced"
 )
+CONTROLLED_INPUT_SNAPSHOT_DIRECTORY = (
+    Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "controlled-input"
+)
 ADVANCED_SNAPSHOT_FILENAMES = (
     "result.json", "session.v3.jsonl", "session.1.v3.jsonl", "session.2.v3.jsonl",
 )
@@ -778,7 +781,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-controlled-input", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -797,9 +800,9 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-controlled-input", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, dynamic-tools, fs-search, spawn-node, snapshot, recovery, restart, office, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-snapshot", "sdk-controlled-input", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
         parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
@@ -852,6 +855,9 @@ def main() -> None:
         if args.scenario in {"all", "sdk-snapshot"}:
             assert args.exe is not None
             smoke_sdk_snapshot(model.url, args.exe.resolve(), args.update_snapshots)
+        if args.scenario in {"all", "sdk-controlled-input"}:
+            assert args.exe is not None
+            smoke_sdk_snapshot(model.url, args.exe.resolve(), args.update_snapshots, controlled_input=True)
         if args.scenario in {"all", "sdk-snapshot", "sdk-recovery"}:
             assert args.exe is not None
             smoke_sdk_scheduler_recovery(model.url, args.exe.resolve(), args.update_snapshots)
@@ -1513,7 +1519,7 @@ def smoke_sdk_profile_plugin(base_url: str) -> None:
         assert_zstd_session_log(dsh_home / "sessions")
 
 
-def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) -> None:
+def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool, *, controlled_input: bool = False) -> None:
     """Drive and compare the advanced SDK/executable behavioral snapshot."""
     from deepseek_harness import DeepSeekHarness
 
@@ -1546,13 +1552,18 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
                 "name": str(Path(__file__).resolve().parents[1] / "packages/core/agent-loop/tests/fixtures/serial-created.mjs"),
             }]},
         ])
+        input_patch = write_profile_patch(root, "controlled-input.patch.yml", sessions, [{"insert": [{
+            "id": "controlled-input-fixture",
+            "name": (Path(__file__).resolve().parents[1] / "packages/core/agent-loop/tests/fixtures/controlled-input.mjs").as_uri(),
+            "config": {"replayProviderName": "DeepSeek"},
+        }]}]) if controlled_input else None
         with DeepSeekHarness(
             provider="deepseek-official",
             model="smoke-model",
             cwd=str(root),
             dsh_bin=str(executable),
             dsh_home=str(dsh_home),
-            patches=(str(patch), str(feedback_patch), str(creation_patch)),
+            patches=(str(patch), str(feedback_patch), str(creation_patch), *(() if input_patch is None else (str(input_patch),))),
             env={
                 "DSH_PERMISSION_MODE": "danger-full-access",
                 "DSH_TELEMETRY_DISABLED": "1",
@@ -1604,10 +1615,19 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
             raise AssertionError("first advanced child log has no direct-subagent result")
         if "WORKFLOW_CHILD_OK" not in render_jsonl(logs[child_ids[1]]):
             raise AssertionError("second advanced child log has no workflow-subagent result")
+        if controlled_input:
+            parent_events = logs[SNAPSHOT_SESSION_ID]
+            bindings = [event for event in parent_events if event.get("type") == "agent/input/controller-bound"]
+            assert len(bindings) == 1, bindings
+            assert all(not any(event.get("type") == "agent/input/controller-bound" for event in logs[child_id])
+                       for child_id in child_ids), "ordinary subagents must remain unbound"
+            assert any(event.get("type") == "agent/inbox/spliced" and event["data"].get("wakeup") is True
+                       for event in parent_events), "controlled parent must retain wake intent"
 
         files = build_snapshot_files(result, logs, child_ids, root)
         compare_snapshot_files(
-            files, update_snapshots, ADVANCED_SNAPSHOT_DIRECTORY, ADVANCED_SNAPSHOT_FILENAMES,
+            files, update_snapshots, CONTROLLED_INPUT_SNAPSHOT_DIRECTORY if controlled_input else ADVANCED_SNAPSHOT_DIRECTORY,
+            ADVANCED_SNAPSHOT_FILENAMES,
             native_writer_output=True,
         )
 

@@ -65,6 +65,7 @@ import type {
 
 export type * from './types.ts'
 export { ApiSessionNotFound } from './agent.ts'
+export type { SessionActivationPreparation, SessionActivationPreparer } from './agent.ts'
 export { SessionFileReferences } from './file-references.ts'
 export { SessionSkillCatalog } from './skill-catalog.ts'
 
@@ -221,6 +222,15 @@ export class SessionController extends TypertRemoteService {
    */
   resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
     return this.agents.resolveAgent(sessionId)
+  }
+
+  /** Register provider-owned cold activation before the selected composition mounts.
+   * @param id - stable registration key.
+   * @param prepare - inspect a retained Session cut and optionally provide its composition.
+   * @returns the owner-scoped disposer.
+   */
+  registerActivationPreparation(id: string, prepare: import('./agent.ts').SessionActivationPreparer): () => Promise<void> {
+    return this.agents.registerActivationPreparation(this.ctx, id, prepare)
   }
 
   /**

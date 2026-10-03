@@ -13,6 +13,7 @@ import { createUserMessage, HarnessError, type MessageId, type ToolCallId, type 
 import type { Session } from '@deepseek-ai/dsh-session'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import type AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import z from '@deepseek-ai/schemastery'
@@ -128,7 +129,7 @@ export class UserQuestionService extends TypertRemoteService {
     calls.delete(callId)
   }
 
-  private assertLiveRoot(agent: Agent): void {
+  private assertLiveRoot(agent: Agent): AgentRegistry {
     const agents = this.ctx.get('agents')
     if (agents === undefined || agents.get(agent.id) !== agent) {
       throw new UserQuestionError(
@@ -141,6 +142,7 @@ export class UserQuestionService extends TypertRemoteService {
         + "include the unresolved question or decision in the child agent's final result",
         'DELEGATED_CALLER')
     }
+    return agents
   }
 
   private continued(agent: Agent): readonly PendingUserQuestion[] {
@@ -161,14 +163,69 @@ export class UserQuestionService extends TypertRemoteService {
    *   question of the call exactly once, or `REPLY_QUEUED` when a reply is
    *   already waiting for admission.
    */
-  @Remote
   answer(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): boolean {
-    this.assertLiveRoot(agent)
+    const message = this.prepareReply(agent, callId, answer)
+    if (message === undefined) return false
+    try {
+      agent.steer(message)
+    } catch (error: unknown) {
+      this.releaseReply(agent.session, callId, message.id)
+      throw error
+    }
+    return true
+  }
+
+  /** Answer through the unchanged Remote name, waiting for controlled custody when required.
+   * @param agent - exact live interactive root owning the question.
+   * @param callId - continued question identity.
+   * @param answer - validated complete answer batch.
+   * @returns whether the continued question accepted the reply, not model processing.
+   *   A repeated controlled batch confirms the same pending message identity,
+   *   including after a failed flush or Session recovery. Different answers
+   *   cannot replace a reply still in custody.
+   */
+  @Remote('answer')
+  async answerConfirmed(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): Promise<boolean> {
+    const message = this.prepareReply(agent, callId, answer, true)
+    if (message === undefined) return false
+    try {
+      const receipt = this.assertLiveRoot(agent).sendInput(agent, { message, target: 'next-step', wakeup: true })
+      if (receipt !== undefined) await receipt
+    } catch (error: unknown) {
+      this.releaseReply(agent.session, callId, message.id)
+      throw error
+    }
+    return true
+  }
+
+  private prepareReply(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer, retryControlled = false): UserMessage | undefined {
+    const agents = this.assertLiveRoot(agent)
     const question = this.continued(agent).find(item => item.callId === callId)
-    if (question === undefined) return false
+    if (question === undefined) return undefined
     const queued = this.queuedReplies.get(agent.session)
     const matches = (message: UserMessage): boolean =>
       message.source.kind === 'user-question-reply' && message.source.callId === callId
+    if (retryControlled && agents.isInputControlled(agent.session)) {
+      const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep]
+      const record = agents.inputControlState(agent.session).records.find(item =>
+        matches(item.input.message) && (item.location === 'held'
+          || item.location === 'inbox' && pending.some(message => message.id === item.input.message.id)))
+      if (record !== undefined) {
+        const input = record.originalInput ?? record.input
+        const text = JSON.stringify({
+          kind: 'answer_to_pending_question', tool: 'ask_user_question', callId,
+          questions: question.questions, answers: answer.answers,
+        })
+        if (input.message.content.length !== 1 || input.message.content[0]?.type !== 'text'
+          || input.message.content[0].text !== text) {
+          throw new UserQuestionError('a reply is already queued for this question', 'REPLY_QUEUED')
+        }
+        const calls = queued ?? new Map<ToolCallId, QueuedReply>()
+        calls.set(callId, { messageId: input.message.id })
+        this.queuedReplies.set(agent.session, calls)
+        return input.message
+      }
+    }
     if (queued?.has(callId) || agent.inbox.nextTurn.some(matches) || agent.inbox.nextStep.some(matches)) {
       throw new UserQuestionError('a reply is already queued for this question', 'REPLY_QUEUED')
     }
@@ -196,13 +253,7 @@ export class UserQuestionService extends TypertRemoteService {
     const calls = queued ?? new Map<ToolCallId, QueuedReply>()
     calls.set(callId, { messageId: message.id })
     this.queuedReplies.set(agent.session, calls)
-    try {
-      agent.steer(message)
-    } catch (error: unknown) {
-      this.releaseReply(agent.session, callId, message.id)
-      throw error
-    }
-    return true
+    return message
   }
 
   /**

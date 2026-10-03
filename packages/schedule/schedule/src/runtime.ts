@@ -120,7 +120,8 @@ export class ScheduleRuntime {
           content: [{ type: 'text', text }], source: { kind: 'schedule' },
         })
         // followup synchronously appends the inbox splice before flush observes the Session.
-        resolved.agent.followup(message)
+        const receipt = this.ctx.agents.sendInput(resolved.agent, { message, target: 'next-turn', wakeup: true })
+        if (receipt !== undefined) await receipt
         const flushed = await this.ctx.sessions.flush(resolved.agent.session)
         if (!flushed) throw new Error('Session persistence did not acknowledge the reminder')
         const deliveredAt = new Date(Date.now()).toISOString()

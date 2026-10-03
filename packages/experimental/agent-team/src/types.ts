@@ -208,6 +208,8 @@ export interface TeamMemberProjection {
  * record; members and tasks then stay at the last valid state.
  */
 export interface TeamProjection {
+  /** Present after the first native seat transaction; no product transition phase is embedded here. */
+  readonly lead?: import('./lead-seat.ts').TeamLeadBinding
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   /** Absent for an untouched official Team, which remains dynamic. */

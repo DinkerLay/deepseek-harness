@@ -660,6 +660,8 @@ export class AgentLoop extends Service implements AgentFactory {
       throw error
     }
     return (await this.initializeAgent(prepared, async () => {
+      const inputPreparation = this.runtime.ctx.agents.initializeInput(preparation.session, 'startup')
+      if (inputPreparation !== undefined) await raceAbort(inputPreparation, prepared.signal, id)
       await this.appendUnstoredSuffix(stored, preparation.session)
       return await prepared.publish('startup')
     })).agent
@@ -772,6 +774,8 @@ export class AgentLoop extends Service implements AgentFactory {
       throw error
     }
     return await this.initializeAgent(prepared, async () => {
+      const inputPreparation = this.runtime.ctx.agents.initializeInput(session, source)
+      if (inputPreparation !== undefined) await raceAbort(inputPreparation, prepared.signal, id)
       const setupCommit = await raceAbort(setup?.(prepared.agent.ctx, prepared.agent), prepared.signal, id)
       setupCommit?.commit()
       await this.appendUnstoredSuffix(stored, session)

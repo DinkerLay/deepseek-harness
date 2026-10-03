@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { RUN_CODE_NAME, defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { Session, SessionId, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, type Agent, type InputReceipt } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import UserQuestionService, {
   UserQuestionError, type AskUserQuestionAnswer, type AskUserQuestionRequest,
@@ -613,6 +613,27 @@ describe('no execution gating beyond the exit tool', () => {
 })
 
 describe('/plan', () => {
+  it('waits for command-input custody and reports a receipt failure through the command executor', async () => {
+    const ctx = await setup()
+    onTestFinished(async () => { await ctx.fiber.dispose() })
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(CommandRuntime)
+    await expect.poll(() => ctx.get('commands')).toBeDefined()
+    const agent = await agentWithSession(ctx, 'plan-command-custody')
+    openTurn(agent.session)
+    const custody = Promise.withResolvers<InputReceipt>()
+    const send = vi.spyOn(ctx.agents, 'sendInput').mockReturnValueOnce(custody.promise)
+    const completed = ctx.commands.execute(agent, '/plan draft the migration', [], new AbortController().signal)
+    await expect.poll(() => send.mock.calls.length).toBe(1)
+    expect(agent.session.snapshotEvents().some(event => event.type === 'command/done')).toBe(false)
+    const input = send.mock.calls[0]![1]
+    expect(input).toMatchObject({ target: 'next-step', wakeup: true, message: { content: [{ type: 'text', text: 'draft the migration' }] } })
+    custody.resolve({ messageId: input.message.id, location: 'held' })
+    await expect(completed).resolves.toMatchObject({ result: { kind: 'success' } })
+    send.mockRejectedValueOnce(new Error('plan input custody failed'))
+    await expect(ctx.commands.execute(agent, '/plan continue drafting', [], new AbortController().signal))
+      .rejects.toThrow('plan input custody failed')
+  })
   it('registers only when a commands service is composed and optionally submits the next-step message', async () => {
     const bare = await setup()
     expect(bare.get('commands')).toBeUndefined()

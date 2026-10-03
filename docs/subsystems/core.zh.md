@@ -56,6 +56,10 @@ interface AgentHandle {
 
 ## Agent 句柄
 
+可选输入控制通过 `AgentInput` 保留用户消息、收件箱目标及原始唤醒意图。`InputReceipt` 确认收件箱、暂存记录或已结算来源中的持久交付责任，不确认模型已经处理。`InputControlState` 保留这些审计事实，不成为另一个可执行队列。`AgentInputMutation` 描述仍待处理输入的替换、移除或转为 steering。
+
+一个 `InputControllerId` 标识唯一登记的 `AgentInputController`；它的接收、启动、领取与准备回调不授予工具权限。拥有者获得 `InputControllerHandle`，用于绑定、不唤醒的预投递、接管和释放；释放注册时关闭接收并等待已接受操作结束。`ControlledInputDriver` 提供具体队列修改及唤醒回调。[Agent 包](../../packages/core/agent/README.zh.md#control-input-before-it-becomes-executable)说明持久失败、重试身份与普通路径行为。
+
 `Agent` 是每个插件（UI、钩子、orchestrator）面向编程的 surface；`ctx.agents.get(id)` 返回它，[发起者作用域](#initiating-agent)携带它。具体实现为 dsh-agent-loop 包内部细节；循环外没有任何组件依赖它。统一的 `send` 方法直接暴露 target 与 wakeup 路由；`followup`、`steer` 与 `inject` 是固定预设的别名方法。
 
 源码：[`packages/core/agent/src/types.ts`](../../packages/core/agent/src/types.ts)
@@ -608,6 +612,86 @@ Agent service (`ctx.agents`): tracks live agents and carries the initiating Agen
 Initiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.
 
 ```ts cordis-catalog
+/** Register an optional provider and its exclusive preload capability.
+ * @param id - durable provider identity.
+ * @param policy - input, execution and preparation policy.
+ * @returns an owner-scoped capability whose disposal drains admitted work.
+ */
+registerInputController(id: InputControllerId, policy: AgentInputController): InputControllerHandle
+
+/** Register a concrete driver's input operations under its Agent scope.
+ * @param agent - unpublished or live driver identity.
+ * @param driver - concrete non-waking enqueue and wake operations.
+ * @returns the owned asynchronous disposer.
+ */
+attachInputDriver(agent: Agent, driver: ControlledInputDriver): () => Promise<void>
+
+/** Read durable policy/custody facts, including processed input identities.
+ * @param session - observed Session.
+ * @returns host-only derived state, never a second executable queue.
+ */
+inputControlState(session: Session): InputControlState
+
+/** Detect the reliable receipt path without changing an unbound driver's timing.
+ * @param session - driver Session.
+ * @returns whether a persistent controller binding exists.
+ */
+isInputControlled(session: Session): boolean
+
+/** Prepare a bound execution before scoped composition.
+ * @param session - unpublished prepared Session.
+ * @returns completion of the registered preparation, or rejection without fallback.
+ */
+prepareInput(session: Session): Promise<void>
+
+/** Prepare optional input ownership before caller composition mounts.
+ * @param session - unpublished Session owned by the creation factory.
+ * @param source - fresh creation or persisted resumption.
+ * @returns provider preparation, or undefined for the original synchronous path.
+ */
+initializeInput(session: Session, source: SessionStartSource): Promise<void> | undefined
+
+/** Receive controlled input and wait for durable custody before permitting wake.
+ * @param agent - concrete controlled driver.
+ * @param input - original identity, source, queue and wake intent.
+ * @returns confirmed custody, not model or Task completion.
+ */
+receiveInput(agent: Agent, input: AgentInput): Promise<InputReceipt>
+
+/** Durably edit, remove or steer one pending controlled input under its admission policy.
+ * @param agent - receiving controlled driver.
+ * @param action - pending identity and requested mutation.
+ * @returns durable mutation confirmation, including retry of an uncertain removal; rejected or uncertain changes never wake the model.
+ * @throws InputMutationUnavailableError when no audited pending input or exact uncertain removal is available.
+ */
+mutateInput(agent: Agent, action: AgentInputMutation): Promise<void>
+
+/** Preserve synchronous unbound delivery; controlled callers await the returned receipt.
+ * @param agent - receiving driver.
+ * @param input - producer identity, queue and wake intent.
+ * @returns a durable receipt Promise only for a controlled Session; otherwise undefined after synchronous send.
+ */
+sendInput(agent: Agent, input: AgentInput): Promise<InputReceipt> | undefined
+
+/** Submit a best-effort notice without claiming durable acceptance to its producer.
+ * @param agent - receiver whose driver owns and drains admitted input work.
+ * @param input - original notice identity, source and intent.
+ * @returns no receipt; controlled failures are logged, while unbound synchronous failures still throw.
+ */
+sendInputNotice(agent: Agent, input: AgentInput): void
+
+/** Test new-turn admission without starting or claiming anything.
+ * @param agent - concrete driver.
+ * @returns false while custody is uncertain, work drains, or its policy is closed.
+ */
+canStartInput(agent: Agent): boolean
+
+/** Test admission before the inbox removes a batch.
+ * @param agent - concrete driver.
+ * @returns whether pending input may be claimed.
+ */
+canClaimInput(agent: Agent): boolean
+
 /**
  * Read the Agent that initiated the inherited asynchronous driver chain.
  * Use this optional form for logging, tracing, metrics, or host attribution
@@ -773,6 +857,8 @@ list(): Agent[]
  */
 roots(): Agent[]
 ```
+
+Types: [Session](session.zh.md)
 
 Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 

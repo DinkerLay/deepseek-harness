@@ -15,6 +15,7 @@ import type {
   AgentHandle,
   AgentOptions,
   CreateAgentOptions,
+  InputReceipt,
 } from '@deepseek-ai/dsh-agent'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
@@ -337,8 +338,9 @@ export class ContinuableActivationRegistry {
    * @param parent - exact live Agent receiving the message.
    * @param message - durable user message to deliver.
    * @param delivery - receiving inbox destination.
+   * @returns a durable receipt only for a controlled parent; ordinary and Activation delivery remain synchronous.
    */
-  sendWaking(parent: Agent, message: UserMessage, delivery: SubagentDelivery): void {
+  sendWaking(parent: Agent, message: UserMessage, delivery: SubagentDelivery): Promise<InputReceipt> | undefined {
     const parentActivation = this.resident.get(parent.id)
     if (parentActivation !== undefined && parentActivation.handle.agent === parent) {
       try {
@@ -348,8 +350,7 @@ export class ContinuableActivationRegistry {
       }
       return
     }
-    if (delivery === 'steer') parent.steer(message)
-    else parent.followup(message)
+    return this.ctx.agents.sendInput(parent, { message, target: delivery === 'steer' ? 'next-step' : 'next-turn', wakeup: true })
   }
 
   /**
@@ -913,10 +914,12 @@ export class ContinuableActivationRegistry {
       const message = createSettlementMessage(activation.childId, terminal,
         typeof decision === 'object' ? decision : undefined)
       if (this.closingTeardownFor(parent) !== undefined) {
-        parent.inject(message)
+        const receipt = this.ctx.agents.sendInput(parent, { message, target: 'next-step', wakeup: false })
+        if (receipt !== undefined) await receipt
         return
       }
-      this.sendWaking(parent, message, parent.status === 'idle' ? 'queue' : 'steer')
+      const receipt = this.sendWaking(parent, message, parent.status === 'idle' ? 'queue' : 'steer')
+      if (receipt !== undefined) await receipt
     } catch (error: unknown) {
       this.ctx.logger.warn(
         `subagent "${activation.childId}" settlement notice was not delivered to its parent: `

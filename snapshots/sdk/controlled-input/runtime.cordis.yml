@@ -1,0 +1,13 @@
+- insert:
+    - id: controlled-input-fixture
+      name: '../../../packages/core/agent-loop/tests/fixtures/controlled-input.mjs'
+
+- id: llm-replay
+  name: '@deepseek-ai/dsh-llm-replay'
+  disabled: false
+  config:
+    providers:
+      - id: deepseek-official
+        name: Controlled Snapshot Replay
+        models:
+          - id: deepseek-v4-flash

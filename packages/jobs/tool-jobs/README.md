@@ -41,6 +41,8 @@ When a job finishes, the owning agent receives `background job <id> (<kind>: <la
 
 Waking is unbounded by default: an unattended agent that chains background commands and one-shot subagents is woken for every completion. `maxConsecutiveWakes` caps that: each owner may be woken that many times before further notices degrade to injection, and claiming any user-authored message restores the budget. The cap bounds the self-exciting chain — a woken turn may start the background job whose completion wakes it again — but a notice past it waits silently until the next user input, so a session that relies on wakes to finish its work stalls there. `completionDelivery: quiet` keeps even idle owners on the injection lane, which deterministic transcripts need.
 
+For an owner bound to input control, a completion notice can wake execution only after the Session durably acknowledges its input. A rejected receipt is logged while the job remains settled. Plugin disposal unregisters the settlement subscription and waits for outstanding receipts; ordinary unbound delivery retains its synchronous timing.
+
 ### Minimal configuration
 
 Loading the plugin with no config is the common path; a `waitTimeoutMs` above `maxWaitTimeoutMs` fails at load.

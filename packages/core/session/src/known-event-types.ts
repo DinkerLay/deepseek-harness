@@ -22,6 +22,9 @@
 export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent-preset/selected',
   'agent/inbox/spliced',
+  'agent/input/controller-bound',
+  'agent/input/held',
+  'agent/input/released',
   'approval/answerer-route',
   'approval/asked',
   'approval/decided',
@@ -65,6 +68,8 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'system/message',
   'team/composition',
   'team/extension',
+  'team/lead/execution',
+  'team/lead/transaction',
   'team/member',
   'team/member/configured',
   'team/message/cancelled',

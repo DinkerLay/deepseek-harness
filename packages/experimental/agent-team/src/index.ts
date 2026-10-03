@@ -8,6 +8,9 @@ import { TeamActivity } from './activity.ts'
 import { applyCompositionTransition, compositionOf } from './composition.ts'
 import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
+import { leadExecutionProjection } from './lead-execution.ts'
+import { TeamLeadExecutions } from './lead-runtime.ts'
+import type { LeadExecutionProvider, LeadExecutionHandle } from './lead-runtime.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
@@ -36,6 +39,9 @@ import type {
 
 export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
+export type { TeamLeadExecutionIdentity } from './lead-execution.ts'
+export type { TeamLeadBinding, TeamLeadSeat, TeamLeadCommitPlan } from './lead-seat.ts'
+export type { CreateLeadExecutionRequest, LeadExecutionProvider, LeadExecutionHandle, LeadActivationPreparation } from './lead-runtime.ts'
 export type { TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
 export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
 export { TeamError } from './error.ts'
@@ -95,6 +101,7 @@ export class TeamService extends Service {
   private readonly roster: TeamRoster
   private readonly mailbox: TeamMailbox
   private readonly tasks: TeamTaskBoard
+  private readonly leadExecutions: TeamLeadExecutions
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -131,10 +138,12 @@ export class TeamService extends Service {
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
     this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) },
       this.config.controlledMode !== undefined)
+    this.leadExecutions = new TeamLeadExecutions(ctx, this.journal, this.config.controlledMode)
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
       (caller, group) => { this.tasks.validateMemberGroup(caller, group) },
       this.config.defaultMemberPresetId,
+      anchor => this.leadExecutions.isReady(anchor),
     )
     this.mailbox = new TeamMailbox(
       ctx,
@@ -194,10 +203,12 @@ export class TeamService extends Service {
     })
     ctx.effect(() => {
       const disposeProjection = ctx.root.sessionProjections.register(teamProjectionDefinition)
+      const disposeLeadIdentity = ctx.root.sessionProjections.register(leadExecutionProjection)
       return async () => {
         try {
           await this.disposeRuntime()
         } finally {
+          disposeLeadIdentity()
           disposeProjection()
         }
       }
@@ -212,6 +223,24 @@ export class TeamService extends Service {
    */
   membership(agent: Agent): TeamMembership {
     return this.roster.membership(agent)
+  }
+
+  /** Install one authenticated Host owner of ordinary Lead execution preparation.
+   * @param provider - stable anchor activation, without driving its model.
+   * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
+   */
+  installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle {
+    return this.leadExecutions.install(this.ctx, provider)
+  }
+
+  /** Read the stable seat through an exact live Team caller, including its dormant host.
+   * @param agent - exact live anchor, member or current execution.
+   * @returns detached native seat identity; no activation or write occurs.
+   */
+  leadSeat(agent: Agent): import('./lead-seat.ts').TeamLeadSeat {
+    const membership = this.roster.tryMembership(agent)
+    if (membership === undefined) throw new TeamError('Agent has no current Team identity', 'TEAM_NOT_MEMBER')
+    return { ...this.leadExecutions.seat(membership.root) }
   }
 
   /**

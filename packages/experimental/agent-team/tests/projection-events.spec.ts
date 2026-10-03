@@ -90,6 +90,111 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
 }
 
 describe('Agent Teams projection events', () => {
+  it('keeps controlled mode first and rejects conversion after Team facts exist', () => {
+    const mode = event('team/mode', { version: 1, teamId: TEAM, mode: { kind: 'controlled',
+      requiredTaskExtensionId: 'writer', permissionTableId: 'table', permissionRevision: 'rev' } }, SessionSeq(1))
+    expect(project(ROOT, [mode, mode]).failure).toMatch(/first Team event/)
+    for (const prior of [
+      event('team/member', { version: 2, teamId: TEAM, member: member() }, SessionSeq(0)),
+      event('team/task', { version: 2, teamId: TEAM, task: task() }, SessionSeq(0)),
+      event('team/message/queued', { version: 2, teamId: TEAM, message: message() }, SessionSeq(0)),
+    ]) expect(project(ROOT, [prior, mode]).failure).toMatch(/first Team event/)
+  })
+
+  it('marks only a registered member with no successful first delivery as failed', () => {
+    const mode = event('team/mode', { version: 1, teamId: TEAM, mode: { kind: 'controlled',
+      requiredTaskExtensionId: 'writer', permissionTableId: 'table', permissionRevision: 'rev' } }, SessionSeq(0))
+    const provisional = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember() }, SessionSeq(1))
+    const active = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ phase: 'active' }) }, SessionSeq(2))
+    const failed = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ phase: 'failed', error: 'startup failed' }) }, SessionSeq(5))
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: message() }, SessionSeq(3))
+    expect(project(ROOT, [mode, provisional, active, queued, failed]).failure).toBeUndefined()
+    const unrelated = event('team/message/queued', { version: 2, teamId: TEAM,
+      message: message({ id: TeamMessageId('other-target'), targetId: ROOT }) }, SessionSeq(3))
+    expect(project(ROOT, [mode, provisional, active, unrelated, failed]).failure).toBeUndefined()
+    const delivered = event('team/message/delivered', { version: 2, teamId: TEAM,
+      messageId: message().id, targetId: CHILD }, SessionSeq(4))
+    expect(project(ROOT, [mode, provisional, active, queued, delivered, failed]).failure).toMatch(/invalid active -> failed/)
+  })
+
+  it('checks transaction notice identity against both its batch and the prior mailbox', () => {
+    const notice = message()
+    const transaction = event('team/task/transaction', { version: 1, teamId: TEAM,
+      updates: [{ previousRevision: null, task: task() }],
+      extension: { id: 'writer', dataJson: '{}' }, notices: [notice, notice] }, SessionSeq(1))
+    expect(project(ROOT, [transaction]).failure).toMatch(/queued twice/)
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: notice }, SessionSeq(0))
+    expect(project(ROOT, [queued, { ...transaction, data: { ...transaction.data, notices: [notice] } }])
+      .failure).toMatch(/queued twice/)
+    const maximum = event('team/task', { version: 2, teamId: TEAM,
+      task: task({ id: TeamTaskId(`task-${Number.MAX_SAFE_INTEGER}`) }) }, SessionSeq(0))
+    expect(project(ROOT, [maximum]).nextTaskNumber).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
+  it('rejects invalid extension JSON, reused records and notices without mutating the valid prefix', () => {
+    const base = event('team/extension', { version: 1, teamId: TEAM,
+      extension: { id: 'writer', recordId: 'record-1', dataJson: '{}' } }, SessionSeq(0))
+    const cases = [
+      { id: 'writer', recordId: 'record-2', dataJson: 'invalid JSON' },
+      { id: 'writer', recordId: 'record-1', dataJson: '{}' },
+      { id: 'w'.repeat(201), recordId: 'record-2', dataJson: '{}' },
+      { id: 'writer', recordId: 'r'.repeat(201), dataJson: '{}' },
+    ]
+    for (const extension of cases) {
+      expect(project(ROOT, [base, event('team/extension', { version: 1, teamId: TEAM, extension }, SessionSeq(1))])
+        .failure).toBeDefined()
+    }
+    const notice = message()
+    const duplicate = event('team/extension', { version: 1, teamId: TEAM,
+      extension: { id: 'writer', recordId: 'record-2', dataJson: '{}' }, notices: [notice, notice] }, SessionSeq(1))
+    expect(project(ROOT, [base, duplicate]).failure).toMatch(/queued twice/)
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: notice }, SessionSeq(1))
+    const reused = event('team/extension', { version: 1, teamId: TEAM,
+      extension: { id: 'writer', recordId: 'record-2', dataJson: '{}' }, notices: [notice] }, SessionSeq(2))
+    expect(project(ROOT, [base, queued, reused]).failure).toMatch(/queued twice/)
+  })
+
+  it('rejects duplicate, mistargeted and already settled cancellation identities', () => {
+    const notice = message()
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: notice }, SessionSeq(0))
+    const cancel = (messageIds: readonly typeof notice.id[], targetId = CHILD) => event('team/message/cancelled', {
+      version: 3, teamId: TEAM, messageIds: [...messageIds], targetId, reason: 'cancel' }, SessionSeq(2))
+    expect(project(ROOT, [queued, cancel([notice.id, notice.id])]).failure).toMatch(/cancelled twice/)
+    expect(project(ROOT, [cancel([notice.id])]).failure).toMatch(/before queueing/)
+    expect(project(ROOT, [queued, cancel([notice.id], ROOT)]).failure).toMatch(/target changed/)
+    const delivered = event('team/message/delivered', { version: 2, teamId: TEAM,
+      messageId: notice.id, targetId: CHILD }, SessionSeq(1))
+    expect(project(ROOT, [queued, delivered, cancel([notice.id])]).failure).toMatch(/already settled/)
+    expect(project(ROOT, [queued, cancel([notice.id]), cancel([notice.id])]).failure).toMatch(/already settled/)
+  })
+
+  it('publishes applying diagnostics and receipt-derived execution state without inferring a model', () => {
+    const begin = event('team/composition', { version: 1, teamId: TEAM, transition: {
+      kind: 'begin', applicationId: 'view-application', profileId: 'view-profile', profileVersion: 2,
+      targetJson: '{}', retiringMemberIds: [], previousPhase: 'dynamic' } }, SessionSeq(0))
+    const diagnostic = event('team/composition', { version: 1, teamId: TEAM, transition: {
+      kind: 'diagnostic', applicationId: 'view-application', message: 'waiting for capacity' } }, SessionSeq(1))
+    const view = teamProjectionView(project(ROOT, [begin, diagnostic]))
+    expect(teamProjectionView(project(ROOT, [begin])).composition?.application?.diagnostic).toBeUndefined()
+    expect(view.composition?.application).toEqual({ id: 'view-application', profileId: 'view-profile',
+      profileVersion: 2, diagnostic: 'waiting for capacity' })
+    const mode = event('team/mode', { version: 1, teamId: TEAM, mode: { kind: 'controlled',
+      requiredTaskExtensionId: 'writer', permissionTableId: 'table', permissionRevision: 'rev' } }, SessionSeq(0))
+    const provisional = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ group: 'group', slotId: 'slot', preset: { id: 'analyst', revision: 'a'.repeat(64) } }) }, SessionSeq(1))
+    const active = event('team/member/configured', { version: 3, teamId: TEAM,
+      member: configuredMember({ phase: 'active', group: 'group', slotId: 'slot',
+        preset: { id: 'analyst', revision: 'a'.repeat(64) } }) }, SessionSeq(2))
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: message() }, SessionSeq(3))
+    const delivered = event('team/message/delivered', { version: 2, teamId: TEAM,
+      messageId: message().id, targetId: CHILD }, SessionSeq(4))
+    expect(teamProjectionView(project(ROOT, [mode, provisional, active, queued, delivered])).members[1])
+      .toMatchObject({ executionStarted: true, group: 'group', slotId: 'slot', preset: { id: 'analyst' } })
+  })
+
   it('replays composition policy, slot identity, and Profile modification from one Team log', () => {
     const begin = event('team/composition', { version: 1, teamId: TEAM, transition: {
       kind: 'begin', applicationId: 'apply-1', profileId: 'stock', profileVersion: 1,

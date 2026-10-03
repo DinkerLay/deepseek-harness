@@ -271,7 +271,8 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 </system-reminder>
 
 ` },
-              { type: 'text', text: args.prompt ?? '' },
+              // The normal catalog requires prompt; the controlled catalog has no prompt field.
+              { type: 'text', text: args.prompt as string },
             ],
             context,
             provider: context === 'fork' ? config.forkProvider : config.freshProvider,
@@ -520,7 +521,13 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
+    const membership = ctx.agentTeams.tryMembership(agent)
+    if (membership === undefined || membership.role === 'host') {
+      installed.get(agent)?.()
+      installed.delete(agent)
+      return
+    }
+    if (installed.has(agent)) return
     const controlled = ctx.agentTeams.controlledMode(agent) !== undefined
     if (resolved.controlledTasks && !controlled) return
     installed.set(agent, install(agent, ctx, {
@@ -531,6 +538,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   for (const agent of ctx.agents.list()) maybeInstall(agent)
   ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
+  ctx.on('session/event', (_session, event) => {
+    if (event.type !== 'team/lead/transaction' && event.type !== 'team/extension') return
+    for (const agent of ctx.agents.list()) maybeInstall(agent)
+  })
   ctx.on('agent/disposed', ({ agent }) => {
     installed.get(agent)?.()
     installed.delete(agent)

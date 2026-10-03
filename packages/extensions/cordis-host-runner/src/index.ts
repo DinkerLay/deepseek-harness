@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Fiber } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'cordis-host-runner': { kind: 'cordis-host-runner' }
@@ -127,6 +127,9 @@ interface ActivationPlan {
   mode: CordisDynamicRunMode
 }
 
+type CommittedRunResponse = Extract<DynamicCordisRunResponse, { ok: true }> & { currentPackageId: CordisDynamicPackageId }
+type SettledRunResponse = CommittedRunResponse | Extract<DynamicCordisRunResponse, { ok: false }>
+
 /** Dynamic Plugin registry and Host-half lifecycle. */
 export class DynamicCordisRunnerService extends TypertRemoteService {
   static inject = ['tools']
@@ -220,7 +223,8 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     if (plugin === undefined) return { ok: false, reason: 'plugin-missing', message: missingPluginMessage(pluginId) }
     const wasRunning = plugin.run !== undefined
     this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was removed before approval`)
-    if (plugin.run !== undefined) await this.retract(plugin)
+    const run = plugin.run
+    if (run !== undefined) await this.retract(plugin, run)
     this.registry.delete(pluginId)
     return { ok: true, wasRunning }
   }
@@ -424,10 +428,10 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   ): Promise<DynamicCordisResolveAck> {
     const pending = this.registry.peekRequest(requestId)
     if (pending === undefined) return { accepted: false }
-    const plugin = this.registry.get(pending.pluginId)
-    if (resolution.ok && plugin?.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
+    const plugin = this.pendingPlugin(pending)
+    if (resolution.ok && plugin.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
     if (!resolution.ok && resolution.pluginRunId !== undefined
-      && plugin?.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
+      && plugin.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
     this.registry.claimRequest(requestId)
     const settled = await this.settleActivation(plugin, resolution, requestId)
     this.announceResolved(requestId, resolution, pending.requiresApproval ? undefined : 'completed')
@@ -469,12 +473,12 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       return { ok: false, reason: 'not-running', message: `dynamic plugin "${pluginId}" is not running` }
     }
     if (pending !== undefined) this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was stopped before approval`)
-    if (plugin.run !== undefined) await this.retract(plugin)
-    if (plugin.latestRun !== undefined) {
-      plugin.latestRun.status = 'stopped'
-      if (plugin.latestRun.host.status !== 'absent') plugin.latestRun.host = { status: 'stopped', waitingFor: [] }
-      if (plugin.latestRun.client.status !== 'absent') plugin.latestRun.client = { status: 'stopped', waitingFor: [] }
-    }
+    const run = plugin.run
+    if (run !== undefined) await this.retract(plugin, run)
+    const attempt = this.latestAttempt(plugin)
+    attempt.status = 'stopped'
+    if (attempt.host.status !== 'absent') attempt.host = { status: 'stopped', waitingFor: [] }
+    if (attempt.client.status !== 'absent') attempt.client = { status: 'stopped', waitingFor: [] }
     return { ok: true }
   }
 
@@ -591,15 +595,17 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   reference(agent: Agent, pluginId: CordisDynamicPluginId): DynamicCordisReference | undefined {
     const plugin = this.owned(agent, pluginId)
     if (plugin === undefined) return undefined
-    const packageId = plugin.nextPackageId
-      ?? plugin.currentPackageId
-      ?? [...plugin.packages.keys()].at(-1)
-    if (packageId === undefined) return undefined
-    const definition = plugin.packages.get(packageId)
-    if (definition === undefined) return undefined
+    return this.referenceFor(plugin)
+  }
+
+  private referenceFor(plugin: DynamicCordisPlugin): DynamicCordisReference {
+    // define retains at least one Package; current and next pointers name retained Packages.
+    const definition = (plugin.nextPackageId !== undefined ? plugin.packages.get(plugin.nextPackageId)
+      : plugin.currentPackageId !== undefined ? plugin.packages.get(plugin.currentPackageId)
+        : [...plugin.packages.values()].at(-1)) as DynamicCordisDefinition
     return {
-      pluginId,
-      packageId,
+      pluginId: plugin.pluginId,
+      packageId: definition.packageId,
       name: definition.name,
       purpose: definition.purpose,
       ...plugin.currentPackageId === undefined ? {} : { currentPackageId: plugin.currentPackageId },
@@ -629,10 +635,8 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   inspectPlugin(agent: Agent, pluginId: CordisDynamicPluginId): DynamicCordisPluginInspection {
     const plugin = this.owned(agent, pluginId)
     if (plugin === undefined) throw new Error(missingPluginMessage(pluginId))
-    const reference = this.reference(agent, pluginId)
-    if (reference === undefined) throw new Error(`dynamic plugin "${pluginId}" has no package`)
     return {
-      ...reference,
+      ...this.referenceFor(plugin),
       packages: [...plugin.packages.values()].map(definition => ({
         packageId: definition.packageId,
         name: definition.name,
@@ -848,7 +852,8 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         startedHere: false,
       }
     }
-    if (plugin.run !== undefined) await this.retract(plugin)
+    const previous = plugin.run
+    if (previous !== undefined) await this.retract(plugin, previous)
     if (mode === 'update' || plugin.currentPackageId === undefined) plugin.nextPackageId = definition.packageId
     const run: DynamicCordisRun = {
       pluginRunId: attempt.pluginRunId,
@@ -924,11 +929,10 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   }
 
   private async settleActivation(
-    plugin: DynamicCordisPlugin | undefined,
+    plugin: DynamicCordisPlugin,
     resolution: DynamicCordisRunResolution,
     requestId?: ApprovalRequestId,
-  ): Promise<DynamicCordisRunResponse> {
-    if (plugin === undefined) return { ok: false, reason: 'plugin-missing', message: 'the dynamic plugin was removed during activation' }
+  ): Promise<SettledRunResponse> {
     const attempt = plugin.latestRun
     if (!resolution.ok) {
       if (resolution.reason === 'rejected') {
@@ -944,7 +948,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         && resolution.pluginRunId === run.pluginRunId
         && (requestId === undefined || run.startedForRequest === requestId)
         && resolution.startedHere !== false
-      if (ownsRun) await this.retract(plugin)
+      if (ownsRun) await this.retract(plugin, run)
       if (attempt !== undefined && (resolution.pluginRunId === undefined || attempt.pluginRunId === resolution.pluginRunId)) {
         this.failAttempt(
           plugin,
@@ -1003,7 +1007,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   private runResponse(
     plugin: DynamicCordisPlugin,
     started: Extract<DynamicCordisHostHalfResult, { ok: true }>,
-  ): Extract<DynamicCordisRunResponse, { ok: true }> {
+  ): CommittedRunResponse {
     return {
       ok: true,
       status: 'running',
@@ -1027,7 +1031,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
 
   private steerRunOutcome(
     pending: DynamicCordisPendingRequest,
-    settled: DynamicCordisRunResponse,
+    settled: SettledRunResponse,
   ): void {
     const agents = this.rootCtx.get('agents')
     const agent = agents?.get(pending.agentId)
@@ -1037,7 +1041,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     let text: string
     if (settled.ok) {
       text = `Cordis ${pending.mode} ${identity} completed successfully. `
-        + `currentPackageId is ${settled.currentPackageId ?? pending.packageId}. Continue using the running Plugin.`
+        + `currentPackageId is ${settled.currentPackageId}. Continue using the running Plugin.`
     } else if (settled.reason === 'rejected') {
       text = `The user rejected Cordis ${pending.mode} ${identity}. `
         + 'Do not request the same activation again unless the user asks.'
@@ -1049,7 +1053,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
         + `nextPackageId: ${plugin?.nextPackageId ?? pending.packageId}\n`
         + 'Report the failure to the user; the definition can be managed through the Cordis panel.'
     }
-    agent.steer(createUserMessage({
+    this.steerInputNotice(agent, createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: 'cordis-host-runner' },
     }))
@@ -1062,7 +1066,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     pluginRunId: CordisDynamicPluginRunId,
     failure: DynamicCordisRenderFailure,
   ): void {
-    agent.steer(createUserMessage({
+    this.steerInputNotice(agent, createUserMessage({
       content: [{
         type: 'text',
         text: `Cordis Client UI ${plugin.pluginId}/${definition.packageId} (${pluginRunId}) failed while rendering `
@@ -1086,7 +1090,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     const agents = this.rootCtx.get('agents')
     const agent = agents?.get(plugin.sessionId)
     if (agent === undefined) return
-    agent.steer(createUserMessage({
+    this.steerInputNotice(agent, createUserMessage({
       content: [{
         type: 'text',
         text: `Cordis Host handler ${plugin.pluginId}/${run.packageId} (${run.pluginRunId}) failed when the Client called `
@@ -1111,7 +1115,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     const agents = this.rootCtx.get('agents')
     const agent = agents?.get(plugin.sessionId)
     if (agent === undefined) return
-    agent.steer(createUserMessage({
+    this.steerInputNotice(agent, createUserMessage({
       content: [{
         type: 'text',
         text: `Cordis ${platform} guard rejected runtime code in ${plugin.pluginId}/${run.packageId} `
@@ -1156,25 +1160,46 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   private injectUserContext(agent: Agent, text: string): void {
     const agents = this.rootCtx.get('agents')
     if (agents?.get(agent.id) !== agent) return
-    agent.inject(createUserMessage({
+    agents.sendInputNotice(agent, { message: createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: 'cordis-host-runner' },
-    }))
+    }), target: 'next-step', wakeup: false })
+  }
+
+  private steerInputNotice(agent: Agent, message: UserMessage): void {
+    const agents = this.rootCtx.get('agents')
+    if (agents === undefined) agent.steer(message)
+    else agents.sendInputNotice(agent, { message, target: 'next-step', wakeup: true })
   }
 
   private cancelPending(pluginId: CordisDynamicPluginId, message: string): void {
-    const requestId = this.registry.pendingRequestFor(pluginId)
-    if (requestId === undefined) return
-    const pending = this.registry.claimRequest(requestId)
-    if (pending === undefined) return
-    const plugin = this.registry.get(pluginId)
-    if (plugin?.latestRun?.pluginRunId === pending.pluginRunId) {
-      plugin.latestRun.status = 'cancelled'
-      plugin.latestRun.error = this.diagnostic(plugin, plugin.latestRun, 'approval', message)
-      delete plugin.latestRun.approvalRequestId
-      delete plugin.latestRun.requiresApproval
-    }
+    const claimed = this.takePending(pluginId)
+    if (claimed === undefined) return
+    const { requestId, pending } = claimed
+    const plugin = this.pendingPlugin(pending)
+    const attempt = this.latestAttempt(plugin)
+    attempt.status = 'cancelled'
+    attempt.error = this.diagnostic(plugin, attempt, 'approval', message)
+    delete attempt.approvalRequestId
+    delete attempt.requiresApproval
     this.announceResolved(requestId, { ok: false, reason: 'rejected' }, 'cancelled')
+  }
+
+  private pendingPlugin(pending: DynamicCordisPendingRequest): DynamicCordisPlugin {
+    // undefine removes the pending request before removing its Plugin.
+    return this.registry.get(pending.pluginId) as DynamicCordisPlugin
+  }
+
+  private latestAttempt(plugin: DynamicCordisPlugin): DynamicCordisRunAttempt {
+    // Every live or pending activation creates latestRun; no lifecycle operation deletes it.
+    return plugin.latestRun as DynamicCordisRunAttempt
+  }
+
+  private takePending(pluginId: CordisDynamicPluginId): { requestId: ApprovalRequestId; pending: DynamicCordisPendingRequest } | undefined {
+    const requestId = this.registry.pendingRequestFor(pluginId)
+    if (requestId === undefined) return undefined
+    // No callback or await separates this lookup from the exclusive claim.
+    return { requestId, pending: this.registry.claimRequest(requestId) as DynamicCordisPendingRequest }
   }
 
   private createAttempt(plan: ActivationPlan): DynamicCordisRunAttempt {
@@ -1222,9 +1247,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     }
   }
 
-  private async retract(plugin: DynamicCordisPlugin): Promise<void> {
-    const run = plugin.run
-    if (run === undefined) return
+  private async retract(plugin: DynamicCordisPlugin, run: DynamicCordisRun): Promise<void> {
     delete plugin.run
     for (const dispose of run.handlerDisposers.splice(0)) dispose()
     if (run.fiber !== undefined) await run.fiber.dispose()

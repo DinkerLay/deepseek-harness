@@ -6,6 +6,8 @@ Types shared by the experimental implicit-root Team domain, model tools, and hos
 
 ## Identity and roster
 
+The optional stable Lead seat keeps `TeamLeadBinding` with an execution id, contiguous term, Preset id and declaration revision. `TeamLeadSeat` also describes the initial anchor at term one, whose Preset fields may be absent. A `LeadExecutionProvider` prepares the anchor and supplies current readiness; its owner receives a `LeadExecutionHandle` for ordinary candidate creation, exact-revision cold preparation and non-waking input custody. This capability does not itself implement a product transition workflow. The [package implementation](../../packages/experimental/agent-team/README.md#understand-the-implementation) owns identity and lifecycle behavior.
+
 `TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
 
 ```ts type-equiv
@@ -216,6 +218,8 @@ interface TeamTaskView {
  * record; members and tasks then stay at the last valid state.
  */
 interface TeamProjection {
+  /** Present after the first native seat transaction; no product transition phase is embedded here. */
+  readonly lead?: import('./lead-seat.ts').TeamLeadBinding
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   /** Absent for an untouched official Team, which remains dynamic. */
@@ -249,6 +253,18 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/** Install one authenticated Host owner of ordinary Lead execution preparation.
+ * @param provider - stable anchor activation, without driving its model.
+ * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
+ */
+installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
+
+/** Read the stable seat through an exact live Team caller, including its dormant host.
+ * @param agent - exact live anchor, member or current execution.
+ * @returns detached native seat identity; no activation or write occurs.
+ */
+leadSeat(agent: Agent): import('./lead-seat.ts').TeamLeadSeat
 
 /**
  * Read the immutable controlled-mode binding, if this Team opted in.

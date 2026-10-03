@@ -6,6 +6,8 @@
 
 ## 身份与 roster
 
+可选的稳定 Lead 席位用 `TeamLeadBinding` 保存执行 id、连续任期、Preset id 和声明修订。`TeamLeadSeat` 也表示第一任锚点，其 Preset 字段可能缺席。`LeadExecutionProvider` 准备锚点并提供当前就绪判断；拥有者获得 `LeadExecutionHandle`，用于创建普通候选、按准确修订冷准备，以及不唤醒的输入保留。此能力本身不实现产品交接流程。[包实现说明](../../packages/experimental/agent-team/README.zh.md#understand-the-implementation)负责身份及生命周期行为。
+
 `TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的 Session id 始终是持久身份，而 `name` 是不可变的模型／UI 标签。
 
 ```ts type-equiv
@@ -216,6 +218,8 @@ interface TeamTaskView {
  * record; members and tasks then stay at the last valid state.
  */
 interface TeamProjection {
+  /** Present after the first native seat transaction; no product transition phase is embedded here. */
+  readonly lead?: import('./lead-seat.ts').TeamLeadBinding
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   /** Absent for an untouched official Team, which remains dynamic. */
@@ -249,6 +253,18 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/** Install one authenticated Host owner of ordinary Lead execution preparation.
+ * @param provider - stable anchor activation, without driving its model.
+ * @returns an owner-scoped creation and cold-activation capability; no seat authority is granted.
+ */
+installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
+
+/** Read the stable seat through an exact live Team caller, including its dormant host.
+ * @param agent - exact live anchor, member or current execution.
+ * @returns detached native seat identity; no activation or write occurs.
+ */
+leadSeat(agent: Agent): import('./lead-seat.ts').TeamLeadSeat
 
 /**
  * Read the immutable controlled-mode binding, if this Team opted in.

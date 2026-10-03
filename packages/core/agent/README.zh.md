@@ -58,6 +58,13 @@ handle.agent.steer({
 await handle.agent.whenIdle()
 ```
 
+<a id="control-input-before-it-becomes-executable"></a>
+### 在输入可执行之前进行控制
+
+可选的输入控制器提供方在组合挂载前绑定指定会话。未绑定的会话保留同步的 `followup`、`steer` 与 `inject`；绑定后的会话使用 `ctx.agents.sendInput()` 并等待回执。提供方可以放行、拒绝或持久暂存输入，也可以在不移除待处理工作的情况下阻止新轮次或收件箱领取。提供方卸载后，已绑定会话保持关闭，不回退为普通执行。
+
+只有 `sessions.flush()` 返回 true 且未报错时，回执才确认输入已接下；它不确认模型已处理。未取得确认时保留原身份供重试。驱动仍在线时，可以按原 `MessageId` 重试尚未确认的移除；确认不会重新插入输入，也不会清除其他身份的不确定状态。已不存在或已结算的待处理变更以 `InputMutationUnavailableError` 拒绝。只有提供方能力可以不唤醒地预投递、接管已记录的待处理输入，或释放暂存责任。待处理编辑保留原回执身份；接管会拒绝绑定前尚无可靠唤醒意图的输入。核心输入控制不决定工具权限或应用路由。
+
 ### 将注册限定到单个 agent
 
 `Agent.ctx` 是该 agent 的作用域上下文：通过它进行的注册（工具、提示词段、变量、事件监听器、限制）只对该 agent 生效，并在 dispose（资源释放）时全部撤销。同一机制也是 agent preset 用来让一个会话获得不同能力集、同时不影响其邻居的方式。
@@ -97,6 +104,8 @@ await handle.agent.whenIdle()
 | [`src/index.ts`](src/index.ts) | 插件入口：`AgentRegistry`、工厂槽位、发起方作用域、`CreateAgentOptions`/`ResumeAgentOptions` |
 | [`src/runtime-types.ts`](src/runtime-types.ts) | `Agent`、结构化 `Inbox`、`AgentStatus` 与 `agent/*` 事件声明 |
 | [`src/types.ts`](src/types.ts) | `AgentOptions`、取消原因与收件箱投影词汇 |
+| [`src/input-control.ts`](src/input-control.ts) | 可选的提供方所有权、持久回执与准入 |
+| [`src/input-control-projection.ts`](src/input-control-projection.ts) | 排除继承绑定的宿主侧接管审计 |
 | [`src/dispatch.ts`](src/dispatch.ts) | `agentEvents` 融合分发器与 `assembleContextFor(agent)` |
 | [`src/consumed-work.ts`](src/consumed-work.ts) | `foldConsumedWork(events)`：日志消费掉的工作最终怎样了 |
 | [`src/model-selection.ts`](src/model-selection.ts) | `installModelSelection`：把一个选择耦合到组装与路由 |

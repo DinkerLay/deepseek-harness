@@ -211,7 +211,14 @@ export function apply(ctx: Context, config: Config): void {
     const run = runPoint('SessionStart', source, sessionStartPayload(agent, source), { agent, signal: ownerSignal })
       .then((merged) => {
         const context = contextFrom(merged)
-        if (context) agent.inject(context)
+        if (context) {
+          const agents = ctx.get('agents')
+          if (agents === undefined) agent.inject(context)
+          else {
+            const receipt = agents.sendInput(agent, { message: context, target: 'next-step', wakeup: false })
+            if (receipt !== undefined) return receipt.then(() => undefined)
+          }
+        }
       })
       .catch((error: unknown) => {
         ctx.logger.warn(`hooks-claude-code: SessionStart hook failed: ${String(error)}`)
@@ -278,7 +285,13 @@ export function apply(ctx: Context, config: Config): void {
     if (merged.decision === 'deny') {
       // A blocking Stop hook forces continuation.
       const text = merged.reason ?? 'continue: blocked by Stop hook'
-      agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: CONTEXT_SOURCE }))
+      const message = createUserMessage({ content: [{ type: 'text', text }], source: CONTEXT_SOURCE })
+      const agents = ctx.get('agents')
+      if (agents === undefined) agent.steer(message)
+      else {
+        const receipt = agents.sendInput(agent, { message, target: 'next-step', wakeup: true })
+        if (receipt !== undefined) await receipt
+      }
     }
   })
 
@@ -290,7 +303,14 @@ export function apply(ctx: Context, config: Config): void {
     detached.track(runPoint('SubagentStart', SUBAGENT_TYPE, subagentPayload('SubagentStart', info, child), { ...child ? { agent: child } : {}, signal: detached.signal })
       .then((merged) => {
         const context = contextFrom(merged)
-        if (context && child) child.inject(context)
+        if (context && child) {
+          const agents = ctx.get('agents')
+          if (agents === undefined) child.inject(context)
+          else {
+            const receipt = agents.sendInput(child, { message: context, target: 'next-step', wakeup: false })
+            if (receipt !== undefined) return receipt.then(() => undefined)
+          }
+        }
       })
       .catch((error: unknown) => { ctx.logger.warn(`hooks-claude-code: SubagentStart hook failed: ${String(error)}`) }))
   })

@@ -296,7 +296,8 @@ export class AcpSession {
         inflight.messageQueued = true
         if (promptSelection !== undefined) this.pendingSelections.set(message.id, promptSelection)
         try {
-          this.agent.followup(message)
+          const receipt = this.ctx.agents.sendInput(this.agent, { message, target: 'next-turn', wakeup: true })
+          if (receipt !== undefined) await receipt
         } catch (error: unknown) {
           inflight.messageQueued = false
           this.pendingSelections.delete(message.id)

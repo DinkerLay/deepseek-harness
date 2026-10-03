@@ -362,10 +362,12 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   const stopReasoning = projection === undefined ? streamReasoning(ctx, agent, io.stderr) : undefined
   try {
     try {
-      agent.followup(createUserMessage({
+      const message = createUserMessage({
         content: [{ type: 'text', text: task }],
         source: { kind: 'user' },
-      }))
+      })
+      const receipt = agents.sendInput(agent, { message, target: 'next-turn', wakeup: true })
+      if (receipt !== undefined) await receipt
       await agent.whenIdle()
     } finally {
       stopReasoning?.()

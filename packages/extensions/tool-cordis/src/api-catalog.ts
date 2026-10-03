@@ -227,6 +227,79 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Agent service (`ctx.agents`): tracks live agents and carries the initiating Agent through one process-local asynchronous driver chain. Agent *creation* is provided by whichever plugin implements the AgentFactory (`@deepseek-ai/dsh-agent-loop`), registered via setFactory.\n\nInitiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.',
     methods: [
       {
+        signature: 'registerInputController(id: InputControllerId, policy: AgentInputController): InputControllerHandle',
+        description: 'Register an optional provider and its exclusive preload capability.',
+        parameters: [{ name: 'id', description: 'durable provider identity.' }, { name: 'policy', description: 'input, execution and preparation policy.' }],
+        returns: 'an owner-scoped capability whose disposal drains admitted work.',
+      },
+      {
+        signature: 'attachInputDriver(agent: Agent, driver: ControlledInputDriver): () => Promise<void>',
+        description: 'Register a concrete driver\'s input operations under its Agent scope.',
+        parameters: [{ name: 'agent', description: 'unpublished or live driver identity.' }, { name: 'driver', description: 'concrete non-waking enqueue and wake operations.' }],
+        returns: 'the owned asynchronous disposer.',
+      },
+      {
+        signature: 'inputControlState(session: Session): InputControlState',
+        description: 'Read durable policy/custody facts, including processed input identities.',
+        parameters: [{ name: 'session', description: 'observed Session.' }],
+        returns: 'host-only derived state, never a second executable queue.',
+      },
+      {
+        signature: 'isInputControlled(session: Session): boolean',
+        description: 'Detect the reliable receipt path without changing an unbound driver\'s timing.',
+        parameters: [{ name: 'session', description: 'driver Session.' }],
+        returns: 'whether a persistent controller binding exists.',
+      },
+      {
+        signature: 'prepareInput(session: Session): Promise<void>',
+        description: 'Prepare a bound execution before scoped composition.',
+        parameters: [{ name: 'session', description: 'unpublished prepared Session.' }],
+        returns: 'completion of the registered preparation, or rejection without fallback.',
+      },
+      {
+        signature: 'initializeInput(session: Session, source: SessionStartSource): Promise<void> | undefined',
+        description: 'Prepare optional input ownership before caller composition mounts.',
+        parameters: [{ name: 'session', description: 'unpublished Session owned by the creation factory.' }, { name: 'source', description: 'fresh creation or persisted resumption.' }],
+        returns: 'provider preparation, or undefined for the original synchronous path.',
+      },
+      {
+        signature: 'receiveInput(agent: Agent, input: AgentInput): Promise<InputReceipt>',
+        description: 'Receive controlled input and wait for durable custody before permitting wake.',
+        parameters: [{ name: 'agent', description: 'concrete controlled driver.' }, { name: 'input', description: 'original identity, source, queue and wake intent.' }],
+        returns: 'confirmed custody, not model or Task completion.',
+      },
+      {
+        signature: 'mutateInput(agent: Agent, action: AgentInputMutation): Promise<void>',
+        description: 'Durably edit, remove or steer one pending controlled input under its admission policy.',
+        parameters: [{ name: 'agent', description: 'receiving controlled driver.' }, { name: 'action', description: 'pending identity and requested mutation.' }],
+        returns: 'durable mutation confirmation, including retry of an uncertain removal; rejected or uncertain changes never wake the model.',
+        throws: ['InputMutationUnavailableError when no audited pending input or exact uncertain removal is available.'],
+      },
+      {
+        signature: 'sendInput(agent: Agent, input: AgentInput): Promise<InputReceipt> | undefined',
+        description: 'Preserve synchronous unbound delivery; controlled callers await the returned receipt.',
+        parameters: [{ name: 'agent', description: 'receiving driver.' }, { name: 'input', description: 'producer identity, queue and wake intent.' }],
+        returns: 'a durable receipt Promise only for a controlled Session; otherwise undefined after synchronous send.',
+      },
+      {
+        signature: 'sendInputNotice(agent: Agent, input: AgentInput): void',
+        description: 'Submit a best-effort notice without claiming durable acceptance to its producer.',
+        parameters: [{ name: 'agent', description: 'receiver whose driver owns and drains admitted input work.' }, { name: 'input', description: 'original notice identity, source and intent.' }],
+        returns: 'no receipt; controlled failures are logged, while unbound synchronous failures still throw.',
+      },
+      {
+        signature: 'canStartInput(agent: Agent): boolean',
+        description: 'Test new-turn admission without starting or claiming anything.',
+        parameters: [{ name: 'agent', description: 'concrete driver.' }],
+        returns: 'false while custody is uncertain, work drains, or its policy is closed.',
+      },
+      {
+        signature: 'canClaimInput(agent: Agent): boolean',
+        description: 'Test admission before the inbox removes a batch.',
+        parameters: [{ name: 'agent', description: 'concrete driver.' }],
+        returns: 'whether pending input may be claimed.',
+      },
+      {
         signature: 'currentInitiator(): Agent | undefined',
         description: 'Read the Agent that initiated the inherited asynchronous driver chain. Use this optional form for logging, tracing, metrics, or host attribution that also supports agentless calls. When a parent creates a child, setup reports the causal parent while the setup callback\'s Agent parameter identifies the child.',
         parameters: [],
@@ -327,6 +400,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve one exact live Agent\'s Team role.',
         parameters: [{ name: 'agent', description: 'exact live Agent used as the authority credential.' }],
         returns: 'its root, Team identity, role, and model-facing name.',
+      },
+      {
+        signature: 'installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle',
+        description: 'Install one authenticated Host owner of ordinary Lead execution preparation.',
+        parameters: [{ name: 'provider', description: 'stable anchor activation, without driving its model.' }],
+        returns: 'an owner-scoped creation and cold-activation capability; no seat authority is granted.',
+      },
+      {
+        signature: 'leadSeat(agent: Agent): import(\'./lead-seat.ts\').TeamLeadSeat',
+        description: 'Read the stable seat through an exact live Team caller, including its dormant host.',
+        parameters: [{ name: 'agent', description: 'exact live anchor, member or current execution.' }],
+        returns: 'detached native seat identity; no activation or write occurs.',
       },
       {
         signature: 'controlledMode(agent: Agent): TeamControlledMode | undefined',
@@ -2046,6 +2131,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the live Agent or the stable Session-domain failure.',
       },
       {
+        signature: 'registerActivationPreparation(id: string, prepare: import(\'./agent.ts\').SessionActivationPreparer): () => Promise<void>',
+        description: 'Register provider-owned cold activation before the selected composition mounts.',
+        parameters: [{ name: 'id', description: 'stable registration key.' }, { name: 'prepare', description: 'inspect a retained Session cut and optionally provide its composition.' }],
+        returns: 'the owner-scoped disposer.',
+      },
+      {
         signature: 'inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspection>',
         description: 'Inspect one attached or persisted Session without activating its Agent.',
         parameters: [{ name: 'sessionId', description: 'durable Session identity.' }, { name: 'signal', description: 'optional caller cancellation for persistence reads.' }],
@@ -3564,11 +3655,17 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: '`ctx.userQuestions`: validation plus the scoped answerer waterfall.',
     methods: [
       {
-        signature: '@Remote answer(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): boolean',
+        signature: 'answer(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): boolean',
         description: 'Answer a continued question. The reply is steered into the agent as a user message whose source names the call; that message is also the record that closes the question in the projection.',
         parameters: [{ name: 'agent', description: 'Live root agent for the owning Session.' }, { name: 'callId', description: 'Continued question identity.' }, { name: 'answer', description: 'Complete structured answer batch, one item per question of the call.' }],
         returns: 'Whether the question is still continued; an accepted reply stays queued until the agent admits its user message.',
         throws: ['{UserQuestionError} `BAD_ANSWER` when the batch does not name each question of the call exactly once, or `REPLY_QUEUED` when a reply is already waiting for admission.'],
+      },
+      {
+        signature: '@Remote(\'answer\') async answerConfirmed(agent: Agent, callId: ToolCallId, answer: AskUserQuestionAnswer): Promise<boolean>',
+        description: 'Answer through the unchanged Remote name, waiting for controlled custody when required.',
+        parameters: [{ name: 'agent', description: 'exact live interactive root owning the question.' }, { name: 'callId', description: 'continued question identity.' }, { name: 'answer', description: 'validated complete answer batch.' }],
+        returns: 'whether the continued question accepted the reply, not model processing. A repeated controlled batch confirms the same pending message identity, including after a failed flush or Session recovery. Different answers cannot replace a reply still in custody.',
       },
       {
         signature: '@Remote({ mode: \'stream\' }) async *attachWait(agent: Agent, callId: ToolCallId, signal: AbortSignal): AsyncIterable<{ remainingMs: number }>',
@@ -4641,6 +4738,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AgentHandle {\n    agent: Agent;\n    dispose(): Promise<void>;\n}',
   },
   {
+    name: 'AgentInput',
+    declaration: 'export interface AgentInput {\n    readonly message: UserMessage;\n    readonly target: InboxTarget;\n    readonly wakeup: boolean;\n    readonly requestedTarget?: InboxTarget;\n}',
+  },
+  {
+    name: 'AgentInputController',
+    declaration: 'export interface AgentInputController {\n    admit(agent: Agent, input: AgentInput): InputAdmission;\n    canStart(agent: Agent): boolean;\n    canClaim(agent: Agent): boolean;\n    prepare?(session: Session): Promise<void>;\n    initialize?(session: Session, source: SessionStartSource): Promise<void> | void;\n}',
+  },
+  {
+    name: 'AgentInputMutation',
+    declaration: 'export type AgentInputMutation = {\n    readonly kind: \'replace\';\n    readonly messageId: MessageId;\n    readonly content: readonly ContentBlock[];\n} | {\n    readonly kind: \'remove\' | \'steer\';\n    readonly messageId: MessageId;\n};',
+  },
+  {
     name: 'AgentOptions',
     declaration: 'export interface AgentOptions {\n    provider?: string;\n    model?: string;\n    reasoningEffort?: ReasoningEffortId;\n    maxTokens?: number;\n}',
   },
@@ -5069,6 +5178,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ContinuableSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'continuable\';\n    readonly label: string;\n    readonly agentProvider?: string;\n    readonly agentModel?: string;\n    readonly agentReasoningEffort?: ReasoningEffortId;\n    readonly persona?: string;\n    readonly toolFilter?: ToolRestriction;\n}',
   },
   {
+    name: 'ControlledInputDriver',
+    declaration: 'export interface ControlledInputDriver {\n    resolve(input: AgentInput): AgentInput;\n    enqueue(input: AgentInput, prepend: boolean): void;\n    wake(): void;\n    remove(messageId: MessageId): boolean;\n    replace(messageId: MessageId, message: UserMessage): boolean;\n    hold(messageId: MessageId): boolean;\n}',
+  },
+  {
+    name: 'ControlledInputRecord',
+    declaration: 'export interface ControlledInputRecord {\n    readonly input: AgentInput;\n    readonly originalInput?: AgentInput | undefined;\n    readonly location: \'inbox\' | \'held\' | \'released\';\n    readonly captured?: true | undefined;\n}',
+  },
+  {
     name: 'CordisDynamicPackageId',
     declaration: 'export type CordisDynamicPackageId = Branded<\'CordisDynamicPackageId\'>;',
   },
@@ -5147,6 +5264,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CreateGoalResult',
     declaration: 'export interface CreateGoalResult {\n    readonly ref: GoalRef;\n}',
+  },
+  {
+    name: 'CreateLeadExecutionRequest',
+    declaration: 'export interface CreateLeadExecutionRequest {\n    readonly sessionId: SessionId;\n    readonly term: number;\n    readonly presetId: string;\n    readonly revision: string;\n    readonly agentOptions: AgentOptions;\n    readonly setup?: AgentSetup;\n    readonly signal?: AbortSignal;\n}',
   },
   {
     name: 'CreateSessionOptions',
@@ -5537,6 +5658,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ImageVariantId = Branded<\'ImageVariantId\'>;',
   },
   {
+    name: 'InboxTarget',
+    declaration: 'export type InboxTarget = \'next-turn\' | \'next-step\';',
+  },
+  {
     name: 'IncompatiblePlugin',
     declaration: 'export interface IncompatiblePlugin {\n    name: string;\n    version: string;\n    runtimeVersion: string;\n    peers: Record<string, string>;\n}',
   },
@@ -5547,6 +5672,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'IndexInjectionPlacement',
     declaration: 'export type IndexInjectionPlacement = \'head\' | \'body\';',
+  },
+  {
+    name: 'InputAdmission',
+    declaration: 'export type InputAdmission = {\n    readonly kind: \'accept\' | \'hold\';\n} | {\n    readonly kind: \'reject\';\n    readonly reason: string;\n};',
+  },
+  {
+    name: 'InputControllerHandle',
+    declaration: 'export interface InputControllerHandle {\n    readonly id: ControllerId;\n    bind(session: Session): void;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    holdPending(agent: Agent): Promise<readonly AgentInput[]>;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'InputControlState',
+    declaration: 'export interface InputControlState {\n    readonly inheritedEventCount: SessionLogOffset;\n    readonly controllerId: InputControllerId | null;\n    readonly records: readonly ControlledInputRecord[];\n}',
+  },
+  {
+    name: 'InputReceipt',
+    declaration: 'export interface InputReceipt {\n    readonly messageId: MessageId;\n    readonly location: \'inbox\' | \'held\' | \'released\';\n}',
   },
   {
     name: 'InspectOptions',
@@ -5759,6 +5900,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'KvUnitDescriptor',
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
+  },
+  {
+    name: 'LeadActivationPreparation',
+    declaration: 'export interface LeadActivationPreparation extends AsyncDisposable {\n    readonly setup: AgentSetup;\n}',
+  },
+  {
+    name: 'LeadExecutionHandle',
+    declaration: 'export interface LeadExecutionHandle {\n    prepareAnchor(anchor: Agent): Promise<void>;\n    capture(agent: Agent): Promise<readonly AgentInput[]>;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    create(anchor: Agent, request: CreateLeadExecutionRequest): Promise<AgentHandle>;\n    prepareActivation(observation: SessionObservation): Promise<LeadActivationPreparation | undefined>;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'LeadExecutionProvider',
+    declaration: 'export interface LeadExecutionProvider {\n    resolveAnchor(id: SessionId, signal?: AbortSignal): Promise<Agent>;\n    isReady?(anchor: Agent): boolean;\n}',
   },
   {
     name: 'LlmAdapter',
@@ -6623,6 +6776,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionAccess',
     declaration: 'export type SessionAccess = \'read\' | \'write\';',
+  },
+  {
+    name: 'SessionActivationPreparation',
+    declaration: 'export interface SessionActivationPreparation extends AsyncDisposable {\n    readonly setup: AgentSetup;\n}',
+  },
+  {
+    name: 'SessionActivationPreparer',
+    declaration: 'export type SessionActivationPreparer = (observation: SessionObservation) => Promise<SessionActivationPreparation | undefined> | SessionActivationPreparation | undefined;',
   },
   {
     name: 'SessionActivity',
@@ -7677,12 +7838,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamId = Branded<\'TeamId\'>;',
   },
   {
+    name: 'TeamLeadSeat',
+    declaration: 'export interface TeamLeadSeat {\n    readonly executionId: SessionId;\n    readonly term: number;\n    readonly presetId?: string;\n    readonly revision?: string;\n}',
+  },
+  {
     name: 'TeamMemberPhase',
     declaration: 'export type TeamMemberPhase = \'provisioning\' | \'active\' | \'failed\' | \'retiring\' | \'retired\';',
   },
   {
     name: 'TeamMembership',
-    declaration: 'export interface TeamMembership {\n    readonly root: Agent;\n    readonly id: TeamId;\n    readonly role: \'lead\' | \'teammate\';\n    readonly name: string;\n}',
+    declaration: 'export interface TeamMembership {\n    readonly root: Agent;\n    readonly id: TeamId;\n    readonly role: \'lead\' | \'teammate\' | \'host\';\n    readonly name: string;\n    readonly term?: number;\n}',
   },
   {
     name: 'TeamMemberSnapshot',

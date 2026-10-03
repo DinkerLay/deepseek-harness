@@ -189,7 +189,8 @@ export function apply(ctx: Context): void {
     }
     state.attempt = reservation
     try {
-      agent.followup(message)
+      const receipt = ctx.agents.sendInput(agent, { message, target: 'next-turn', wakeup: true })
+      if (receipt !== undefined) await receipt
     } catch (error: unknown) {
       state.attempt = undefined
       ctx.logger.warn(`goal-round-driver: could not queue round ${round} for agent "${agent.id}": ${renderThrown(error)}`)

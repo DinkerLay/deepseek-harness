@@ -26,7 +26,8 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent, PreStepDecision, InputReceipt } from '@deepseek-ai/dsh-agent'
+import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
@@ -233,7 +234,7 @@ export class PlanModeController extends Service {
         name: 'plan',
         description: 'Enter or leave plan mode',
         input: { hint: '[off|message]', attachments: true },
-        handler: ({ agent, rawInput, attachments }) => {
+        handler: ({ agent, rawInput, attachments }): CommandResult | Promise<CommandResult> => {
           const message = rawInput.trim()
           if (message === 'off' && attachments.length > 0) {
             return { kind: 'error', text: 'Attachments cannot accompany /plan off.' }
@@ -256,21 +257,26 @@ export class PlanModeController extends Service {
             }
           }
           const outcome = this.set(agent, true)
+          let receipt: Promise<InputReceipt> | undefined
           if (message !== '' || attachments.length > 0) {
-            agent.steer(createUserMessage({
+            const input = createUserMessage({
               content: [
                 ...attachments,
                 ...(message === '' ? [] : [{ type: 'text' as const, text: message }]),
               ],
               source: { kind: 'user' },
-            }))
+            })
+            const agents = ctx.get('agents')
+            if (agents === undefined) agent.steer(input)
+            else receipt = agents.sendInput(agent, { message: input, target: 'next-step', wakeup: true })
           }
-          return {
+          const result: CommandResult = {
             kind: 'success',
             text: outcome === 'committed'
               ? 'Plan mode on. Use /plan off to leave.'
               : 'Entering plan mode (applies from the next step). Use /plan off to leave.',
           }
+          return receipt === undefined ? result : receipt.then(() => result)
         },
       })
     })
@@ -434,7 +440,11 @@ export class PlanModeController extends Service {
     session.append('plan/mode', { active })
     this.pendingIntents.delete(session)
     const narration = this.narration(session, active)
-    if (narration !== undefined) agent.inject(narration)
+    if (narration !== undefined) {
+      const agents = this.ctx.get('agents')
+      if (agents === undefined) agent.inject(narration)
+      else agents.sendInputNotice(agent, { message: narration, target: 'next-step', wakeup: false })
+    }
     return 'committed'
   }
 

@@ -129,7 +129,20 @@ export class ReactLoopAgent implements Agent {
     this.dispatch = agentEvents(loopCtx, this)
     this.scope = createScope(loopCtx, this)
     this.ctx = this.scope.ctx
-    this.inbox = new ReactLoopInbox(this.ctx.sessionProjections, session, this.dispatch)
+    this.inbox = new ReactLoopInbox(this.ctx.sessionProjections, session, this.dispatch,
+      () => this.loopCtx.agents.canClaimInput(this))
+    this.loopCtx.agents.attachInputDriver(this, {
+      resolve: (input) => {
+        const aborted = input.wakeup && this.phase.kind !== 'idle' && this.phase.abort.signal.aborted
+        return aborted && input.target !== 'next-turn'
+          ? { ...input, target: 'next-turn', requestedTarget: input.target } : input
+      },
+      enqueue: (input, prepend) => { this.inbox.spliceControlled(input, prepend) },
+      wake: () => { this.wakePending() },
+      remove: messageId => this.inbox.remove(messageId),
+      replace: (messageId, message) => this.inbox.replace(messageId, message),
+      hold: messageId => this.inbox.holdControlled(messageId),
+    })
     /* v8 ignore next -- the loop registers its own turnBoundary unit, so the key is always present */
     const lastTurn = this.loopCtx.sessionProjections.stateOf(session, 'turnBoundary')?.lastTurn ?? 0
     this.phase = { kind: 'idle', lastTurn }
@@ -152,6 +165,9 @@ export class ReactLoopAgent implements Agent {
   }
 
   send(message: UserMessage, target: InboxTarget, wakeup: boolean): void {
+    if (this.loopCtx.agents.isInputControlled(this.session)) {
+      throw new Error('controlled input requires agents.receiveInput() and a durable receipt')
+    }
     // Waking input cannot join an aborted activity, so it starts the next turn.
     // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
     const wakingAfterAbort = wakeup && this.phase.kind !== 'idle' && this.phase.abort.signal.aborted
@@ -217,6 +233,7 @@ export class ReactLoopAgent implements Agent {
    *   the inbox insertion so a reentrant cancel cannot reclassify it.
    */
   private wakeDriver(wakeAfterAbort = false): void {
+    if (!this.loopCtx.agents.canStartInput(this)) return
     if (this.phase.kind !== 'idle') {
       // Maintenance and aborted drivers cannot deliver the wake: latch it for
       // replay at convergence. Live drivers claim queued work themselves;
@@ -273,6 +290,7 @@ export class ReactLoopAgent implements Agent {
     /* v8 ignore next -- private callers establish the running phase before proposing a step */
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": pre-step outside running phase`)
     const signal = this.phase.abort.signal
+    if (!this.loopCtx.agents.canClaimInput(this)) return { kind: 'reject' }
     const claimed = this.inbox.claim(target, position.turn)
     const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
     signal.throwIfAborted()
@@ -306,6 +324,7 @@ export class ReactLoopAgent implements Agent {
     const { signal } = phase.abort
     signal.throwIfAborted()
     const turn = phase.turn + 1
+    if (!this.loopCtx.agents.canStartInput(this)) return false
     try {
       this.session.append('turn/start', { turn })
     } catch (error: unknown) {
