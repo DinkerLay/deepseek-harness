@@ -1,0 +1,24 @@
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        controlledMode:
+          kind: controlled
+          requiredTaskExtensionId: snapshot-task-writer
+          permissionTableId: snapshot-permissions
+          permissionRevision: snapshot-revision
+          maxOrdinaryMessageBytes: 4096
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+    - id: team-freeze-admission
+      name: './freeze-before-task.mjs'

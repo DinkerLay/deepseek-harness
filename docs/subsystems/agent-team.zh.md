@@ -63,6 +63,12 @@ interface TeamControlledMode {
 }
 ```
 
+## Lead 协调
+
+独立的 `TeamLeadCoordinatorHandle` 拥有原生过渡记录，但不获得模型 Lead 身份。同步记录规划器与 Profile 应用共用 Team 锁，并在写入事件前捕获产品事实。可选的 `leadTransition` 元数据控制冻结写入和就绪；产品数据仍保存在协调器自己的扩展命名空间中。现任 Lead 冻结时，成员仍可提交工作。
+
+`runAtSafePoint` 在等待空闲之前检查产品阻塞项，通过维护任务占住实际现任执行后再次检查。维护回调结束时，其 `TeamLeadSafePointHandle` 即失效；恢复后仅有持久安全点记录，不代表已重新获得实时占用。绑定的 Task 写入方生成自己的释放审计，原子 Lead 事务同时变更席位、全部已准备的 Lead Task 修订、排队材料和独立协调器记录。重试比较已记录的完整效果，并要求持久刷新成功；来源保留与就绪仍使用下方的邮箱回执。
+
 ## 持久 mailbox
 
 Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event。退队前，Lead 可说明原因并取消无法投递的消息。恢复 mailbox 是 queued-minus-delivered-minus-cancelled。
@@ -270,6 +276,12 @@ membership(agent: Agent): TeamMembership
  */
 installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
 
+/** Install the independent Host-only owner of native Lead coordination.
+ * @param coordinator - registered opaque namespace, distinct from the Task writer.
+ * @returns owned durable records, safe-point occupation and atomic seat commit.
+ */
+installLeadCoordinator(coordinator: TeamLeadCoordinator): TeamLeadCoordinatorHandle
+
 /** Read the stable Team host and committed execution independently of operation authority.
  * @param agent - exact live Team member, dormant host or marked execution.
  * @returns the current seat, optional live execution, and execution readiness.
@@ -441,6 +453,28 @@ tryMembership(agent: Agent): TeamMembership | undefined
 ```
 
 Types: [Agent](core.zh.md) · [SessionId](core.zh.md)
+
+Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
+
+<a id="agent-team-events"></a>
+
+### `agent-team/*` events
+
+<a id="agent-teamconfirmed--parallel"></a>
+
+#### `agent-team/confirmed` — parallel
+
+A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.
+
+```ts cordis-catalog
+/** A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.
+ * @mode parallel
+ * @param anchor - exact stable Team journal owner after successful confirmation.
+ */
+'agent-team/confirmed'(anchor: Agent): void
+```
+
+Types: [Agent](core.zh.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 <!-- END GENERATED cordis-surface -->

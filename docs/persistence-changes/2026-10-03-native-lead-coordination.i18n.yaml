@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-03-native-lead-coordination.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-03-native-lead-coordination.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-03-native-lead-coordination:
+  en: 92042c23f98e6777
+  zh: 6b7e6c7327f6d00f
+/2026-10-03-native-lead-coordination/summary:
+  en: 0b5f759e0b5c5540
+  zh: d9debd1fceba5f91
+/2026-10-03-native-lead-coordination/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-03-native-lead-coordination/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-03-native-lead-coordination/compatibility:
+  en: d3cb01bf236a561a
+  zh: 5891253789881c06
+/2026-10-03-native-lead-coordination/verification:
+  en: 4594edc73d19e2a5
+  zh: 45440d0abcce3b26
+/2026-10-03-native-lead-coordination/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

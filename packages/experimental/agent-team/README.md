@@ -144,6 +144,8 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/roster.ts`](src/roster.ts) | Team identity, membership resolution, provisioning, and roster teardown |
 | [`src/lead-execution.ts`](src/lead-execution.ts) | Host-only validation of an ordinary execution's immutable Lead identity |
 | [`src/lead-runtime.ts`](src/lead-runtime.ts) | Owned Lead preparation, readiness and cancellable cold activation |
+| [`src/lead-coordination.ts`](src/lead-coordination.ts) | Durable transition admission and Profile exclusion |
+| [`src/lead-coordinator.ts`](src/lead-coordinator.ts) | Owned maintenance authority, confirmed records and atomic Lead commits |
 | [`src/lead-mail.ts`](src/lead-mail.ts) | Logical Lead delivery receipts and original-input custody in the existing mailbox |
 | [`src/composition.ts`](src/composition.ts) | User-managed lock and recoverable application transitions |
 | [`src/mailbox.ts`](src/mailbox.ts) | Durable queue, target-local dispatch, acknowledgement, and recovery |
@@ -168,6 +170,14 @@ A Host coordinator can prepare ordinary, unseeded Lead executions without making
 An optional owned `resolveExecution(id, signal)` restores a recorded current recipient or historical source without running its model. The runtime shares concurrent resolution, cancels it when registration closes, and rechecks the exact live identity and full Preset binding. Owned queue and preload operations also carry that registration cancellation through persisted reads and transaction waits, and recheck it before late mutations or wakeup. Missing resolution, changed declarations, invalid identities and cancellation leave queued work or source custody intact with a diagnostic; no default model or Preset is selected.
 
 Unconfigured members retain the `team/member` version 2 record. A member with a Preset, group, or Profile slot uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding, group, or slot id.
+
+### Host-owned Lead coordination
+
+`installLeadCoordinator()` registers an independent Host owner, not a model Lead. Its record planner captures product facts synchronously under the same Team lock as Profile application. Frozen incumbents retain read access, but every Team mutation rechecks the actual author under that lock; members continue their own work. The coordinator does not parse product approvals, summaries or workflow rules.
+
+`runAtSafePoint()` checks supplied blockers before waiting for idle and again after occupying the actual incumbent through maintenance. Its callback alone receives the expiring commit capability; a stored safe record is not a live occupation after recovery. The registered Task writer validates the complete prepared release set and supplies its own audit. One Lead transaction commits that audit, all releases, the next seat, independent coordinator JSON and initialization material together. Initialization material precedes pending Lead mail, while existing messages retain their relative order.
+
+Owned acknowledgements require an explicit successful flush, including retries of an in-memory record. A transition that opens readiness remains closed until confirmation; `leadContext().ready` reflects that admission rather than an early Session event. Confirmed role changes refresh collaboration tools without changing Preset tools. A material-only record can queue factual supplemental notices without pausing a ready Lead, but those notices do not dispatch before their own confirmation. Official compositions without this owner retain their original behavior.
 
 ### Durable mailbox
 
@@ -203,7 +213,7 @@ Team events are appended to the exact live Lead Session and flushed before the o
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 18 rebuilds checkpoints from earlier cache versions from the Session log, including the Lead delivery receipt metadata; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 19 rebuilds earlier checkpoints from the Session log, including Lead delivery and coordinator facts; the Session format version is unchanged.
 
 ### Disposal
 
@@ -250,6 +260,8 @@ Each peer delivery adds the sender prefix plus message content to the target his
 Peer messages append after the target's reusable history prefix. Cold resume reuses the persisted conversation before appending a previously undelivered item.
 
 ## Known Limitations and Deferred Work
+
+The native coordination capability does not provide a product switch command, summary generation or a client workflow. Its Host consumer owns those policies and must supply actual blockers before requesting the safe point.
 
 <a id="known-limitations-and-deferred-work"></a>
 

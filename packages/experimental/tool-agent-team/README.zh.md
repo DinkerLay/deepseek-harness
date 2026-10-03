@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。默认情况下，每个成员获得相同的十一个工具与协作策略。受控模式中 Lead 拥有比 teammate 更多的工具；`spawn_teammate` 使用固定待命提醒启动成员，而不是模型撰写的首个任务。
+当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。默认情况下，每个成员获得相同的十一个工具与协作策略。受控模式中 Lead 拥有比 teammate 更多的协作工具；`spawn_teammate` 只登记成员，首次真实 mailbox 输入才启动其执行。
 
 ### 何时选择
 
@@ -112,6 +112,8 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 `maybeInstall` 对每个 live Agent 运行，并订阅 `agent/created`；它跳过没有 Team 成员关系的 Agent。Agent 的 dispose（资源释放）会运行已安装的 disposer，插件 HMR（热模块替换）会在重新安装前对每个已安装的 scope 执行 dispose。每个 disposer 按逆序撤销注册，因此失败的安装不会留下残缺 scope。
 
+原生记录变更刷新协作作用域。拥有者开放准入的转换在持久检查点确认后通过 `agent-team/confirmed` 刷新，而不依据提前发布的 ready 事件。因此已提交但未确认的执行不会过早获得 Lead 工具；确认后的新执行无需多跑一次模型回合即可获得协作工具。此监听不筛选 Preset 工具，也不改变官方未协调会话。
+
 </details>
 
 -----
@@ -135,7 +137,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务，Team 服务会提供包含成员名字、分组、Preset 标签、仅联系 Lead 规则和首轮不调用工具或发消息的待命确认要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与协作工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务。登记不请求模型，首次 mailbox 输入携带成员名字、分组、仅联系 Lead 的规则，以及只在获指派的进行中 Task 上工作的要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
 
 #### Token 影响
 

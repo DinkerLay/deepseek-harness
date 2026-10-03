@@ -234,7 +234,7 @@ export class TeamMailbox {
     }
     const explanation = requiredText(reason, 'reason', 200)
     return await this.trackDispatch(this.serializeTarget(target.id, async () => await this.journal.transact(root.id, async () => {
-      const state = this.journal.state(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       const pending = state.messages.filter(message => message.targetId === target.id
         && !state.delivered.includes(message.id)
         && !state.cancelled.some(item => item.messageId === message.id))
@@ -252,13 +252,14 @@ export class TeamMailbox {
     caller: Agent,
     request: SendTeamMessageRequest,
   ): Promise<SendTeamMessageResult> {
-    const membership = this.roster.membership(caller)
+    const initial = this.roster.membership(caller)
     request.signal.throwIfAborted()
-    const root = membership.root
+    const root = initial.root
     const content = structuredClone(request.content)
     const queued = await this.journal.transact(root.id, async () => {
       request.signal.throwIfAborted()
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
+      const membership = this.roster.membership(caller)
       const target = resolveActiveMember(root, state, request.target)
       if (state.mode?.kind === 'controlled' && membership.role === 'teammate' && target.id !== root.id) {
         throw new TeamError('controlled teammates may message only the Lead', 'TEAM_MESSAGE_TARGET_DENIED')

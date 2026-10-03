@@ -56,6 +56,7 @@ export class TeamTaskBoard {
     private readonly membershipOf: (caller: Agent) => TeamMembership,
     private readonly isDisposed: () => boolean,
     private readonly dispatchNotices: (root: Agent) => void,
+    private readonly anchorForRead: (agent: Agent) => Agent,
   ) {}
 
   /**
@@ -68,12 +69,71 @@ export class TeamTaskBoard {
     if (this.extension !== undefined) throw new TeamError('Team Task extension is already installed', 'TEAM_TASK_EXTENSION_CONFLICT')
     const id = requiredText(writer.id, 'extension id', 200)
     const handle: TeamTaskExtensionHandle = {
+      read: async (anchor, read) => await this.journal.transact(anchor.id, () => {
+        if (this.isDisposed() || this.extension?.writer !== writer || this.anchorForRead(anchor) !== anchor) {
+          throw new TeamError('Task reader no longer owns the live Team anchor', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+        const state = this.journal.state(anchor)
+        if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== id) {
+          throw new TeamError('Task reader does not match the bound writer', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+        return Promise.resolve(read(this.snapshot(state)))
+      }),
       commit: async (caller, build) => await this.commitExtension(writer, id, caller, build),
       commitRecord: async (caller, build) => await this.commitExtensionRecord(writer, id, caller, build),
       dispose: () => { if (this.extension?.handle === handle) this.extension = undefined },
     }
     this.extension = { writer, handle }
     return handle
+  }
+
+  /** Ask only the currently registered Task writer for Lead-release audit material.
+   * @param anchor - exact live Team journal owner.
+   * @param state - locked authoritative native state.
+   * @param releases - validated prepared native releases.
+   * @returns registered writer identity, bounded audit JSON and its final live-owner check.
+   */
+  planLeadRelease(anchor: Agent, state: TeamState, releases: readonly TeamTaskTransactionUpdate[]): {
+    id: string
+    dataJson: string
+    assertCurrent: () => void
+  } {
+    const owner = this.leadReleaseOwner(state)
+    const dataJson = owner.plan(anchor, this.snapshot(state), structuredClone(releases))
+    if (Buffer.byteLength(dataJson, 'utf8') > this.maxTaskExtensionBytes) {
+      throw new TeamError('Lead release audit exceeds the Task extension byte limit', 'TEAM_TASK_EXTENSION_TOO_LARGE')
+    }
+    try { JSON.parse(dataJson) } catch {
+      throw new TeamError('Lead release audit must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
+    }
+    return { id: owner.id, dataJson, assertCurrent: owner.assertCurrent }
+  }
+
+  /** Retain the current writer generation for a fresh commit or durable retry.
+   * @param state - locked authoritative native state selecting the required writer.
+   * @returns the registered planner and live-owner check, granting no Task or journal write access.
+   */
+  leadReleaseOwner(state: TeamState): {
+    id: string
+    plan: NonNullable<TeamTaskExtension['planLeadRelease']>
+    assertCurrent: () => void
+  } {
+    const extension = this.extension
+    if (this.isDisposed() || extension === undefined || extension.writer.id !== state.mode?.requiredTaskExtensionId
+      || extension.writer.planLeadRelease === undefined) {
+      throw new TeamError('Lead releases require the registered Task writer', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+    }
+    return { id: extension.writer.id, plan: extension.writer.planLeadRelease.bind(extension.writer), assertCurrent: () => {
+      if (this.isDisposed() || this.extension !== extension) {
+        throw new TeamError('Lead release writer changed before acknowledgement', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
+    } }
+  }
+
+  private snapshot(state: TeamState): import('./types.ts').TeamTaskTransactionSnapshot {
+    return { tasks: structuredClone(state.tasks), members: structuredClone(state.members),
+      ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
+      nextTaskNumber: state.nextTaskNumber }
   }
 
   /**
@@ -143,7 +203,7 @@ export class TeamTaskBoard {
     if (extension !== undefined) return await extension.writer.create(caller, request, extension.handle)
     const { root } = membership
     return this.journal.transact(root.id, async () => {
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined) {
         throw new TeamError('controlled Task writer is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
@@ -213,7 +273,7 @@ export class TeamTaskBoard {
     if (extension !== undefined) return await extension.writer.update(caller, request, extension.handle)
     const root = membership.root
     return this.journal.transact(root.id, async () => {
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined) {
         throw new TeamError('controlled Task writer is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
@@ -335,7 +395,7 @@ export class TeamTaskBoard {
       if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
       if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       if (this.membershipOf(caller).root !== root) throw new TeamError('Team member changed during Task transaction', 'TEAM_NOT_MEMBER')
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
         throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
@@ -430,7 +490,7 @@ export class TeamTaskBoard {
       if (this.isDisposed() || this.extension?.writer !== writer || this.membershipOf(caller).root !== root) {
         throw new TeamError('Team Task extension changed during record transaction', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
         throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }

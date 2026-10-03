@@ -11,6 +11,9 @@ import { TeamJournal } from './journal.ts'
 import { leadExecutionProjection } from './lead-execution.ts'
 import { TeamLeadExecutions } from './lead-runtime.ts'
 import type { LeadExecutionProvider, LeadExecutionHandle } from './lead-runtime.ts'
+import { TeamLeadCoordinators } from './lead-coordinator.ts'
+import type { TeamLeadCoordinator, TeamLeadCoordinatorHandle } from './lead-coordinator.ts'
+import { leadCoordinationActive } from './lead-coordination.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
@@ -41,14 +44,25 @@ export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
 export type { TeamLeadExecutionIdentity } from './lead-execution.ts'
 export type { TeamLeadBinding, TeamLeadSeat, TeamLeadCommitPlan } from './lead-seat.ts'
+export type { TeamLeadCoordination, TeamLeadTransition, TeamLeadCoordinationPhase } from './lead-coordination.ts'
+export type { TeamLeadCoordinator, TeamLeadCoordinatorHandle, TeamLeadCoordinatorRecord, TeamLeadCoordinatorCommit,
+  TeamLeadBlocker, TeamLeadSafePointHandle, TeamLeadCoordinatorOperation, TeamLeadCoordinatorSnapshot,
+  TeamLeadCoordinatorRecordBuilder, TeamLeadCoordinatorMaterial } from './lead-coordinator.ts'
 export type { CreateLeadExecutionRequest, LeadExecutionProvider, LeadExecutionHandle, LeadActivationPreparation } from './lead-runtime.ts'
 export type { TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
-export { TeamId, TeamMessageId, TeamTaskId } from './types.ts'
+export { TeamId, TeamMessageId, TeamTaskId, TeamLeadOperationId } from './types.ts'
 export { TeamError } from './error.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     agentTeams: TeamService
+  }
+  interface Events {
+    /** A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.
+     * @mode parallel
+     * @param anchor - exact stable Team journal owner after successful confirmation.
+     */
+    'agent-team/confirmed'(anchor: Agent): void
   }
 }
 
@@ -102,6 +116,7 @@ export class TeamService extends Service {
   private readonly mailbox: TeamMailbox
   private readonly tasks: TeamTaskBoard
   private readonly leadExecutions: TeamLeadExecutions
+  private readonly leadCoordinators: TeamLeadCoordinators
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -143,7 +158,7 @@ export class TeamService extends Service {
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
       (caller, group) => { this.tasks.validateMemberGroup(caller, group) },
       this.config.defaultMemberPresetId,
-      anchor => this.leadExecutions.isReady(anchor),
+      anchor => this.leadExecutions.hasSeatAuthority(anchor),
     )
     this.mailbox = new TeamMailbox(
       ctx,
@@ -170,7 +185,9 @@ export class TeamService extends Service {
           if (!this.lifecycle.disposed) this.ctx.logger.warn(`Team Task notice dispatch failed: ${errorMessage(error)}`)
         })
       },
+      agent => this.leadContext(agent).anchor,
     )
+    this.leadCoordinators = new TeamLeadCoordinators(ctx, this.journal, this.leadExecutions, this.tasks, this.config)
 
     ctx.effect(() => ctx.subagents.registerSettlementNoticePolicy(async (facts) => {
       const root = ctx.agents.get(facts.parentSessionId)
@@ -208,6 +225,7 @@ export class TeamService extends Service {
       await this.initializeControlledMode(agent, source)
       this.scheduleRecovery(agent)
     })
+    ctx.on('agent-team/confirmed', (anchor) => { this.scheduleRecovery(anchor) })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)
       if (membership !== undefined) this.activity.notify(membership.id)
@@ -246,6 +264,15 @@ export class TeamService extends Service {
       queueHeld: (source, input, signal) => this.mailbox.queueHeld(source, input, signal),
       preloadLeadMail: (anchor, seat, input, signal) => this.mailbox.preloadLeadMail(anchor, seat, input, signal),
     })
+  }
+
+  /** Install the independent Host-only owner of native Lead coordination.
+   * @param coordinator - registered opaque namespace, distinct from the Task writer.
+   * @returns owned durable records, safe-point occupation and atomic seat commit.
+   */
+  installLeadCoordinator(coordinator: TeamLeadCoordinator): TeamLeadCoordinatorHandle {
+    if (this.lifecycle.disposed) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
+    return this.leadCoordinators.install(coordinator)
   }
 
   /** Read the stable Team host and committed execution independently of operation authority.
@@ -331,9 +358,13 @@ export class TeamService extends Service {
     const root = membership.root
     return await this.journal.transact(root.id, async () => {
       if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
-      const state = this.journal.assertWriteAdmission(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       const transition = await build(this.compositionSnapshot(root))
       if (transition === undefined) return structuredClone(compositionOf(state.composition))
+      this.journal.assertCallerWrite(root, caller)
+      if (transition.kind === 'begin' && leadCoordinationActive(state.leadCoordination)) {
+        throw new TeamError('Profile application conflicts with Lead coordination', 'TEAM_COMPOSITION_APPLYING')
+      }
       const next = applyCompositionTransition(state.composition, transition, state.members)
       await this.journal.appendAndFlush(root, 'team/composition', {
         version: 1, teamId: membership.id, transition,

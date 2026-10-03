@@ -359,6 +359,28 @@ function turnReasonFromSession(log: string): JsonObject | undefined {
   return endings.at(-1)
 }
 
+/** Check the denied original tool dispatch and its native frozen state, not model self-report. */
+function verifyFrozenLeadWrite(log: string): void {
+  const rows = records(log)
+  const phases = rows.flatMap(row => {
+    if (row.type !== 'team/extension') return []
+    const data = row.data as JsonObject
+    const extension = data.extension as JsonObject
+    if (extension.id !== 'snapshot-coordinator') return []
+    const transition = data.leadTransition as JsonObject
+    expect(transition.previousTerm).toBe(1)
+    return [transition.phase]
+  })
+  expect(phases).toEqual(['requested', 'frozen'])
+  expect(rows.some(row => row.type === 'team/task' || row.type === 'team/task/transaction')).toBe(false)
+  const result = rows.find(row => row.type === 'tool/result'
+    && ((row.data as JsonObject).message as JsonObject).toolCallId === 'freeze-task-1')
+  const message = (result?.data as JsonObject | undefined)?.message as JsonObject | undefined
+  expect(message?.isError).toBe(true)
+  expect((result?.data as JsonObject | undefined)?.error).toMatchObject({ code: 'TEAM_LEAD_FROZEN' })
+  expect(turnReasonFromSession(log)).toEqual({ kind: 'blocked' })
+}
+
 function stderrFromSession(log: string): string {
   let output = ''
   let started = false
@@ -807,6 +829,20 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
 }
 
 describe('headless recorded-session snapshots', () => {
+  it('rejects a frozen Lead snapshot with a Task write or an unrelated tool failure', async () => {
+    const dir = join(snapshotsRoot, 'team-freeze-admission')
+    const fixture = await readFile(join(dir, await primaryFixtureFile(dir)), 'utf8')
+    verifyFrozenLeadWrite(fixture)
+    const rows = records(fixture)
+    expect(() => verifyFrozenLeadWrite([...rows, { type: 'team/task', data: {} }]
+      .map(row => JSON.stringify(row)).join('\n'))).toThrow()
+    const unrelated = rows.map(row => {
+      if (row.type !== 'tool/result') return row
+      return { ...row, data: { ...row.data as JsonObject, error: { name: 'Error', code: 'UNRELATED_FAILURE' } } }
+    })
+    expect(() => verifyFrozenLeadWrite(unrelated.map(row => JSON.stringify(row)).join('\n'))).toThrow()
+  })
+
   it('gives every composition and header class exactly one current-writer pin', () => {
     for (const scenario of scenarios) {
       expect(ownerOf(scenario), `${scenario.name}: composition owner`).toBeDefined()
@@ -1211,6 +1247,7 @@ describe('headless recorded-session snapshots', () => {
             if (scenario.name === 'background-confinement-failure') {
               await verifyBackgroundConfinementFailure(actualLogs[0]!.content, cwd)
             }
+            if (scenario.name === 'team-freeze-admission') verifyFrozenLeadWrite(actualLogs[0]!.content)
             finalWorkspace = await captureWorkspaceSnapshot(cwd, {
               ignoredRootEntries: RUNTIME_WORKSPACE_ENTRIES,
             })

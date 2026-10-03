@@ -42,6 +42,38 @@ export function TeamMessageId(id: string): TeamMessageId {
   return id as TeamMessageId
 }
 
+/** Opaque identity of one registered Host Lead transition. */
+export type TeamLeadOperationId = Branded<'TeamLeadOperationId'>
+
+/** Brand a validated Host transition identity.
+ * @param id - generated or validated operation identifier.
+ * @returns the same string as a native Lead operation identity.
+ */
+export function TeamLeadOperationId(id: string): TeamLeadOperationId {
+  return id as TeamLeadOperationId
+}
+
+/** Native transition phases; product material remains in its separate extension record. */
+export type TeamLeadCoordinationPhase = 'requested' | 'frozen' | 'safe' | 'prepared' | 'committed'
+  | 'ready' | 'cancelled' | 'failed'
+
+/** One registered coordinator's durable admission state. */
+export interface TeamLeadCoordination {
+  readonly coordinatorId: string
+  readonly operationId: TeamLeadOperationId
+  readonly previousTerm: number
+  readonly previousExecutionId: SessionId
+  readonly phase: TeamLeadCoordinationPhase
+}
+
+/** Optional native control accompanying a coordinator-owned extension record. */
+export interface TeamLeadTransition {
+  readonly operationId: TeamLeadOperationId
+  readonly previousTerm: number
+  readonly previousExecutionId: SessionId
+  readonly phase: Exclude<TeamLeadCoordinationPhase, 'committed'>
+}
+
 /** Durable teammate lifecycle. */
 export type TeamMemberPhase = 'provisioning' | 'active' | 'failed' | 'retiring' | 'retired'
 
@@ -528,6 +560,10 @@ declare module '@deepseek-ai/dsh-session/types' {
       notices?: TeamPeerMessageSnapshot[]
       /** A product permission-table change invalidates any associated Profile. */
       affectsComposition?: true
+      /** Native admission accompanying an independently owned coordinator record. */
+      leadTransition?: TeamLeadTransition
+      /** Registered owner and term of an opaque coordination record, including non-transition material. */
+      coordinatorOperation?: { readonly operationId: TeamLeadOperationId; readonly previousTerm: number }
     }
     /** Durable mailbox enqueue, stored before delivery is attempted. */
     'team/message/queued': { version: 2; teamId: TeamId; message: TeamPeerMessageSnapshot }

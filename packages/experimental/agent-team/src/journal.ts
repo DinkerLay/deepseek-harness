@@ -5,6 +5,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import { TeamError } from './error.ts'
 import type { TeamEventType, TeamState } from './projection.ts'
+import type { TeamMessageId } from './types.ts'
+import { leadCoordinationFrozen } from './lead-coordination.ts'
 
 type AppendTeamEvent = <T extends TeamEventType>(type: T, data: SessionEventMap[T]) => void
 type MutableTeamEventType = TeamEventType
@@ -12,6 +14,7 @@ type MutableTeamEventType = TeamEventType
 /** Owns per-Lead transaction order and committed Team event publication. */
 export class TeamJournal {
   private readonly tails = new Map<SessionId, Promise<void>>()
+  private readonly unconfirmed = new Map<SessionId, { blockAdmission: boolean; mailIds: Set<TeamMessageId> }>()
 
   /**
    * @param ctx - Team service context with the injected Session service.
@@ -48,6 +51,59 @@ export class TeamJournal {
     return state
   }
 
+  /** Recheck a model mutation's exact author after entering the native transaction lock.
+   * @param root - stable journal owner selected before queuing.
+   * @param caller - exact live author, never a coordinator credential.
+   * @returns authoritative state admitted for this author's mutation.
+   */
+  assertCallerWrite(root: Agent, caller: Agent): TeamState {
+    if (this.ctx.agents.get(root.id) !== root || this.ctx.agents.get(caller.id) !== caller) {
+      throw new TeamError('Team mutation author is no longer live', 'TEAM_NOT_MEMBER')
+    }
+    const state = this.assertWriteAdmission(root)
+    const executionId = state.lead?.executionId ?? root.id
+    if (caller.id === executionId) {
+      if (leadCoordinationFrozen(state.leadCoordination)) {
+        throw new TeamError('Lead Team writes are frozen during coordination', 'TEAM_LEAD_FROZEN')
+      }
+    } else if (caller.session.header.parentSession !== root.id
+      || !state.members.some(member => member.id === caller.id && (member.phase === 'active' || member.phase === 'provisioning'))) {
+      throw new TeamError('Team mutation author no longer holds this seat', 'TEAM_NOT_MEMBER')
+    }
+    return state
+  }
+
+  /** Confirm an existing coordinator fact before acknowledging a recovered operation.
+   * @param root - exact live journal owner.
+   */
+  async confirm(root: Agent): Promise<void> {
+    if (!await this.ctx.sessions.flush(root.session)) {
+      throw new TeamError('Lead coordination durability was not confirmed', 'TEAM_INPUT_DURABILITY')
+    }
+    const coordinated = this.unconfirmed.delete(root.id)
+    this.onCommit(root)
+    if (coordinated) void this.ctx.parallel('agent-team/confirmed', root).catch((error: unknown) => {
+      this.ctx.logger.warn(`Team confirmation observer failed: ${String(error)}`)
+    })
+  }
+
+  /** Read the same-process durability barrier without treating a raw append as acknowledgement.
+   * @param root - stable Team journal owner.
+   * @returns whether coordinated events have a confirmed checkpoint or came from durable recovery.
+   */
+  coordinationConfirmed(root: Agent): boolean {
+    return this.unconfirmed.get(root.id)?.blockAdmission !== true
+  }
+
+  /** Check a coordinated queue item's source checkpoint without gating unrelated execution.
+   * @param root - stable Team journal owner.
+   * @param messageId - native queued notice identity.
+   * @returns whether ordinary delivery may inspect this item.
+   */
+  messageConfirmed(root: Agent, messageId: TeamMessageId): boolean {
+    return this.unconfirmed.get(root.id)?.mailIds.has(messageId) !== true
+  }
+
   /**
    * Serialize one Lead's asynchronous mutation operation.
    * @param rootId - Lead Session identity selecting the transaction queue.
@@ -71,18 +127,37 @@ export class TeamJournal {
    * @param root - exact live Lead whose Session owns the event.
    * @param type - Team event discriminant.
    * @param data - payload correlated with the event type.
+   * @param requireDurability - whether a false checkpoint must reject the owned acknowledgement.
+   * @param blockAdmission - whether this coordinated event opens execution and must retain its barrier until confirmation.
    */
   async appendAndFlush<T extends MutableTeamEventType>(
     root: Agent,
     type: T,
     data: SessionEventMap[T],
+    requireDurability = false,
+    blockAdmission = false,
   ): Promise<void> {
     // Team events never enter the conversation surface. This narrower local
     // capability removes Session.append's conditional surface argument while
     // preserving the event-key/payload correlation.
     const append = root.session.append.bind(root.session) as unknown as AppendTeamEvent
-    append(type, data)
-    await this.ctx.sessions.flush(root.session)
-    this.onCommit(root)
+    const previous = this.unconfirmed.get(root.id)
+    if (requireDurability) {
+      const pending = { blockAdmission: previous?.blockAdmission ?? false,
+        mailIds: new Set<TeamMessageId>(previous?.mailIds) }
+      pending.blockAdmission ||= blockAdmission
+      if ('notices' in data) for (const notice of data.notices) pending.mailIds.add(notice.id)
+      this.unconfirmed.set(root.id, pending)
+    }
+    try { append(type, data) } catch (error: unknown) {
+      if (previous === undefined) this.unconfirmed.delete(root.id)
+      else this.unconfirmed.set(root.id, previous)
+      throw error
+    }
+    if (requireDurability) await this.confirm(root)
+    else {
+      await this.ctx.sessions.flush(root.session)
+      this.onCommit(root)
+    }
   }
 }

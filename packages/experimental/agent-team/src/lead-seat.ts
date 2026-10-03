@@ -31,6 +31,16 @@ export interface TeamLeadTransaction {
   readonly extension: { readonly id: string; readonly dataJson: string }
   readonly releases: readonly TeamTaskTransactionUpdate[]
   readonly notices?: readonly TeamPeerMessageSnapshot[]
+  /** Owned initialization material precedes existing undelivered logical Lead mail. */
+  readonly preloadNoticesFirst?: true
+  /** Independent coordinator audit; extension above remains the bound Task writer. */
+  readonly handoffRecord?: {
+    readonly id: string
+    readonly recordId: string
+    readonly dataJson: string
+    /** Native hash of the complete requested commit effects for uncertain-durability retries. */
+    readonly effectsHash?: string
+  }
 }
 
 /** Authenticated coordinator plan; notices are framed by the native mailbox before writing. */

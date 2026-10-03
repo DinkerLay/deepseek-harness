@@ -144,6 +144,8 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/roster.ts`](src/roster.ts) | Team 身份、成员关系解析、provisioning 与 roster 拆除 |
 | [`src/lead-execution.ts`](src/lead-execution.ts) | 仅限 Host 的普通执行不可变 Lead 身份校验 |
 | [`src/lead-runtime.ts`](src/lead-runtime.ts) | 有所有权的 Lead 准备、就绪与可取消的冷激活 |
+| [`src/lead-coordination.ts`](src/lead-coordination.ts) | 持久过渡准入与 Profile 互斥 |
+| [`src/lead-coordinator.ts`](src/lead-coordinator.ts) | 有所有权的维护权限、确认记录与原子 Lead 提交 |
 | [`src/lead-mail.ts`](src/lead-mail.ts) | 既有信箱中的逻辑 Lead 投递回执与原始输入保管 |
 | [`src/composition.ts`](src/composition.ts) | 用户管理的锁定与可恢复的应用转换 |
 | [`src/mailbox.ts`](src/mailbox.ts) | 持久队列、目标本地投递、确认与恢复 |
@@ -168,6 +170,14 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 可选、受所有权约束的 `resolveExecution(id, signal)` 可恢复已记录的现任接收方或历史来源，但不运行模型。运行时共享并发恢复，在注册关闭时取消，并复核准确的活对象身份与完整 Preset 绑定。有所有权的排队和预投递操作也把注册取消传入持久读取和事务等待，并在迟到变更或唤醒前复核。恢复能力缺失、声明变化、身份无效和取消均保留排队工作或来源保管并报告诊断，不选择默认模型或 Preset。
 
 未配置的成员沿用 `team/member` 第 2 版记录。配置了 Preset、分组或 Profile 槽位的成员使用 `team/member/configured` 第 3 版；恢复时，其 Preset 身份与修订值必须和 child 的 continuable-Preset 事件一致。投影接受两种记录，并拒绝更改已有成员的 Preset 绑定、分组或槽位 id。
+
+### Host 拥有的 Lead 协调
+
+`installLeadCoordinator()` 注册独立的 Host 拥有者，不授予模型 Lead 身份。记录规划器与 Profile 应用共用 Team 锁，在锁内同步捕获产品事实。冻结的现任执行保留只读权限，但每次 Team 变更都在锁内重核实际作者；成员继续自己的工作。协调器不解析产品审批、摘要或流程规则。
+
+`runAtSafePoint()` 在等待空闲前检查提供的阻塞项，通过维护任务占住实际现任后再次检查。只有其回调获得会失效的提交能力；恢复后的持久安全点记录不代表实时占用。注册的 Task 写入方校验完整已准备释放集并生成自己的审计。一条 Lead 事务同时提交审计、全部释放、下一任席位、独立协调 JSON 与初始化材料。初始化材料排在待投递 Lead 邮件之前，原消息之间的相对顺序不变。
+
+拥有者回执要求明确成功的 flush，已有内存记录重试时也要确认。开放就绪的转换在确认前保持关闭；`leadContext().ready` 反映实际准入，而非提前发布的 Session 事件。确认后的席位变化刷新协作工具，不改变 Preset 工具。只追加材料的记录可以排入资料性质的补充通知而不暂停就绪的 Lead，但其通知在自身确认前不投递。没有此拥有者的官方组合保持原行为。
 
 ### 持久 mailbox
 
@@ -203,7 +213,7 @@ Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤�
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
-Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 18 从 Session 日志重建较早缓存版本的 checkpoint，包括 Lead 投递回执元数据；Session 格式版本保持不变。
+Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 19 从 Session 日志重建较早 checkpoint，包括 Lead 投递与协调事实；Session 格式版本保持不变。
 
 ### Dispose
 
@@ -250,6 +260,8 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用持久对话，再追加尚未投递的消息。
 
 ## 已知限制与延期工作
+
+原生协调能力不提供产品切换命令、摘要生成或客户端流程。Host 消费方拥有这些策略，并须在请求安全点前提供真实阻塞项。
 
 <a id="known-limitations-and-deferred-work"></a>
 

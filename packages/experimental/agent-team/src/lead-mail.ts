@@ -132,6 +132,7 @@ export class TeamLeadMail {
     expectedSeat?: Pick<TeamLeadSeat, 'executionId' | 'term'>, signal = this.lifecycle.signal): Promise<TeamLeadDeliveryReceipt | undefined> {
     let wake: Agent | undefined
     signal.throwIfAborted()
+    if (!this.journal.messageConfirmed(anchor, message.id)) return
     if (input === undefined && !this.operations.canDeliver(anchor)) return
     const resolved = this.receipt(this.journal.state(anchor), message.id) === undefined
       ? await this.operations.resolve(anchor, signal) : undefined

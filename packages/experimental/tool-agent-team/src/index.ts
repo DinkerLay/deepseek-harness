@@ -542,6 +542,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (event.type !== 'team/lead/transaction' && event.type !== 'team/extension') return
     for (const agent of ctx.agents.list()) maybeInstall(agent)
   })
+  ctx.on('agent-team/confirmed', () => {
+    for (const agent of ctx.agents.list()) maybeInstall(agent)
+  })
   ctx.on('agent/disposed', ({ agent }) => {
     installed.get(agent)?.()
     installed.delete(agent)

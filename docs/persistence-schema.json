@@ -6595,6 +6595,85 @@
       }
     },
     {
+      "key": "event:approval/interrupted-rejected",
+      "kind": "event",
+      "event": "approval/interrupted-rejected",
+      "surface": false,
+      "digest": "a57d2d97b9a04472e1bf489a6aaf4796e76f8562ce0d2d1eb67ee71e0c48ecba",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "id",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "approval/interrupted-rejected"
+          }
+        ]
+      }
+    },
+    {
       "key": "event:approval/policy",
       "kind": "event",
       "event": "approval/policy",
@@ -19619,7 +19698,7 @@
       "kind": "event",
       "event": "team/extension",
       "surface": false,
-      "digest": "a4a9a534ec4620e6d6cd46a524c98e232b657e0b2141e0fef48cae3601c75e2e",
+      "digest": "6f0ee24b137470c294d0f3b19ddf8f47450793d5e4ddc0ad7b5e49ae3d0ed27b",
       "schema": {
         "root": 0,
         "nodes": [
@@ -19638,17 +19717,17 @@
               },
               {
                 "name": "seq",
-                "type": 22,
+                "type": 5,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 22,
+                "type": 5,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 42,
+                "type": 52,
                 "optional": false
               }
             ],
@@ -19663,13 +19742,23 @@
                 "optional": true
               },
               {
-                "name": "extension",
+                "name": "coordinatorOperation",
                 "type": 3,
+                "optional": true
+              },
+              {
+                "name": "extension",
+                "type": 6,
                 "optional": false
               },
               {
+                "name": "leadTransition",
+                "type": 7,
+                "optional": true
+              },
+              {
                 "name": "notices",
-                "type": 5,
+                "type": 16,
                 "optional": true
               },
               {
@@ -19679,7 +19768,7 @@
               },
               {
                 "name": "version",
-                "type": 41,
+                "type": 51,
                 "optional": false
               }
             ],
@@ -19688,6 +19777,30 @@
           {
             "kind": "literal",
             "value": true
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "operationId",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "previousTerm",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
           },
           {
             "kind": "object",
@@ -19711,29 +19824,91 @@
             "indices": []
           },
           {
-            "kind": "primitive",
-            "type": "string"
+            "kind": "object",
+            "properties": [
+              {
+                "name": "operationId",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "phase",
+                "type": 8,
+                "optional": false
+              },
+              {
+                "name": "previousExecutionId",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "previousTerm",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "cancelled"
+          },
+          {
+            "kind": "literal",
+            "value": "failed"
+          },
+          {
+            "kind": "literal",
+            "value": "prepared"
+          },
+          {
+            "kind": "literal",
+            "value": "frozen"
+          },
+          {
+            "kind": "literal",
+            "value": "ready"
+          },
+          {
+            "kind": "literal",
+            "value": "requested"
+          },
+          {
+            "kind": "literal",
+            "value": "safe"
           },
           {
             "kind": "array",
-            "element": 6
+            "element": 17
           },
           {
             "kind": "object",
             "properties": [
               {
                 "name": "content",
-                "type": 7,
+                "type": 18,
                 "optional": false
               },
               {
                 "name": "contentAuthors",
-                "type": 33,
+                "type": 43,
                 "optional": true
               },
               {
                 "name": "contentParts",
-                "type": 37,
+                "type": 47,
                 "optional": true
               },
               {
@@ -19753,7 +19928,7 @@
               },
               {
                 "name": "senderTerm",
-                "type": 22,
+                "type": 5,
                 "optional": true
               },
               {
@@ -19766,31 +19941,41 @@
           },
           {
             "kind": "array",
-            "element": 8
+            "element": 19
           },
           {
             "kind": "union",
             "types": [
-              9,
-              11,
-              13,
-              16,
-              18,
               20,
-              30
+              22,
+              31,
+              34,
+              36,
+              38,
+              41
             ]
           },
           {
             "kind": "object",
             "properties": [
               {
-                "name": "text",
+                "name": "arguments",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "id",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "name",
                 "type": 4,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 10,
+                "type": 21,
                 "optional": false
               }
             ],
@@ -19798,7 +19983,155 @@
           },
           {
             "kind": "literal",
-            "value": "text"
+            "value": "tool-call"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachment",
+                "type": 23,
+                "optional": false
+              },
+              {
+                "name": "offloaded",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "type",
+                "type": 30,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachmentId",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "bytes",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "height",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "mediaType",
+                "type": 24,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "originalDimensions",
+                "type": 29,
+                "optional": true
+              },
+              {
+                "name": "width",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              25,
+              26,
+              27,
+              28
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "image/webp"
+          },
+          {
+            "kind": "literal",
+            "value": "image/gif"
+          },
+          {
+            "kind": "literal",
+            "value": "image/jpeg"
+          },
+          {
+            "kind": "literal",
+            "value": "image/png"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "height",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "width",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "image"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachment",
+                "type": 32,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 33,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachmentId",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "bytes",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 4,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "file"
           },
           {
             "kind": "object",
@@ -19810,7 +20143,7 @@
               },
               {
                 "name": "type",
-                "type": 12,
+                "type": 35,
                 "optional": false
               }
             ],
@@ -19824,8 +20157,28 @@
             "kind": "object",
             "properties": [
               {
+                "name": "text",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 37,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "text"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
                 "name": "tool",
-                "type": 14,
+                "type": 39,
                 "optional": true
               },
               {
@@ -19835,7 +20188,7 @@
               },
               {
                 "name": "type",
-                "type": 15,
+                "type": 40,
                 "optional": false
               }
             ],
@@ -19859,7 +20212,7 @@
               },
               {
                 "name": "type",
-                "type": 17,
+                "type": 42,
                 "optional": false
               }
             ],
@@ -19870,196 +20223,14 @@
             "value": "tool-removal"
           },
           {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "arguments",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "id",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 19,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "tool-call"
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "attachment",
-                "type": 21,
-                "optional": false
-              },
-              {
-                "name": "offloaded",
-                "type": 2,
-                "optional": true
-              },
-              {
-                "name": "type",
-                "type": 29,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "attachmentId",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "bytes",
-                "type": 22,
-                "optional": false
-              },
-              {
-                "name": "height",
-                "type": 22,
-                "optional": false
-              },
-              {
-                "name": "mediaType",
-                "type": 23,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 4,
-                "optional": true
-              },
-              {
-                "name": "originalDimensions",
-                "type": 28,
-                "optional": true
-              },
-              {
-                "name": "width",
-                "type": 22,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "union",
-            "types": [
-              24,
-              25,
-              26,
-              27
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "image/gif"
-          },
-          {
-            "kind": "literal",
-            "value": "image/jpeg"
-          },
-          {
-            "kind": "literal",
-            "value": "image/png"
-          },
-          {
-            "kind": "literal",
-            "value": "image/webp"
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "height",
-                "type": 22,
-                "optional": false
-              },
-              {
-                "name": "width",
-                "type": 22,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "image"
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "attachment",
-                "type": 31,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 32,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "attachmentId",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "bytes",
-                "type": 22,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 4,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "literal",
-            "value": "file"
-          },
-          {
             "kind": "array",
-            "element": 34
+            "element": 44
           },
           {
             "kind": "union",
             "types": [
-              35,
-              36
+              45,
+              46
             ]
           },
           {
@@ -20072,7 +20243,7 @@
               },
               {
                 "name": "term",
-                "type": 22,
+                "type": 5,
                 "optional": false
               }
             ],
@@ -20084,22 +20255,22 @@
           },
           {
             "kind": "array",
-            "element": 38
+            "element": 48
           },
           {
             "kind": "union",
             "types": [
-              39,
-              40
+              49,
+              50
             ]
           },
           {
             "kind": "literal",
-            "value": "fact"
+            "value": "sender"
           },
           {
             "kind": "literal",
-            "value": "sender"
+            "value": "fact"
           },
           {
             "kind": "literal",
@@ -20211,7 +20382,7 @@
       "kind": "event",
       "event": "team/lead/transaction",
       "surface": false,
-      "digest": "1f03c60cefa9f7b7560d66871e2b63ebcf1b2eb534742747f20c41a3d472a8f8",
+      "digest": "155b5354bec57e47bfef91341021268a6d14d0c61db6923006333b95e1fe5059",
       "schema": {
         "root": 0,
         "nodes": [
@@ -20225,7 +20396,7 @@
               },
               {
                 "name": "ignorable",
-                "type": 18,
+                "type": 19,
                 "optional": true
               },
               {
@@ -20240,7 +20411,7 @@
               },
               {
                 "name": "type",
-                "type": 53,
+                "type": 54,
                 "optional": false
               }
             ],
@@ -20260,8 +20431,18 @@
                 "optional": false
               },
               {
-                "name": "notices",
+                "name": "handoffRecord",
                 "type": 6,
+                "optional": true
+              },
+              {
+                "name": "notices",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "preloadNoticesFirst",
+                "type": 19,
                 "optional": true
               },
               {
@@ -20271,7 +20452,7 @@
               },
               {
                 "name": "releases",
-                "type": 42,
+                "type": 43,
                 "optional": false
               },
               {
@@ -20281,7 +20462,7 @@
               },
               {
                 "name": "version",
-                "type": 52,
+                "type": 53,
                 "optional": false
               }
             ],
@@ -20338,25 +20519,51 @@
             "indices": []
           },
           {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "dataJson",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "effectsHash",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "id",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "recordId",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
             "kind": "array",
-            "element": 7
+            "element": 8
           },
           {
             "kind": "object",
             "properties": [
               {
                 "name": "content",
-                "type": 8,
+                "type": 9,
                 "optional": false
               },
               {
                 "name": "contentAuthors",
-                "type": 34,
+                "type": 35,
                 "optional": true
               },
               {
                 "name": "contentParts",
-                "type": 38,
+                "type": 39,
                 "optional": true
               },
               {
@@ -20389,18 +20596,18 @@
           },
           {
             "kind": "array",
-            "element": 9
+            "element": 10
           },
           {
             "kind": "union",
             "types": [
-              10,
-              20,
-              23,
-              25,
-              27,
-              30,
-              32
+              11,
+              21,
+              24,
+              26,
+              28,
+              31,
+              33
             ]
           },
           {
@@ -20408,17 +20615,17 @@
             "properties": [
               {
                 "name": "attachment",
-                "type": 11,
+                "type": 12,
                 "optional": false
               },
               {
                 "name": "offloaded",
-                "type": 18,
+                "type": 19,
                 "optional": true
               },
               {
                 "name": "type",
-                "type": 19,
+                "type": 20,
                 "optional": false
               }
             ],
@@ -20444,7 +20651,7 @@
               },
               {
                 "name": "mediaType",
-                "type": 12,
+                "type": 13,
                 "optional": false
               },
               {
@@ -20454,7 +20661,7 @@
               },
               {
                 "name": "originalDimensions",
-                "type": 17,
+                "type": 18,
                 "optional": true
               },
               {
@@ -20468,10 +20675,10 @@
           {
             "kind": "union",
             "types": [
-              13,
               14,
               15,
-              16
+              16,
+              17
             ]
           },
           {
@@ -20519,12 +20726,12 @@
             "properties": [
               {
                 "name": "attachment",
-                "type": 21,
+                "type": 22,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 22,
+                "type": 23,
                 "optional": false
               }
             ],
@@ -20565,7 +20772,7 @@
               },
               {
                 "name": "type",
-                "type": 24,
+                "type": 25,
                 "optional": false
               }
             ],
@@ -20585,7 +20792,7 @@
               },
               {
                 "name": "type",
-                "type": 26,
+                "type": 27,
                 "optional": false
               }
             ],
@@ -20600,7 +20807,7 @@
             "properties": [
               {
                 "name": "tool",
-                "type": 28,
+                "type": 29,
                 "optional": true
               },
               {
@@ -20610,7 +20817,7 @@
               },
               {
                 "name": "type",
-                "type": 29,
+                "type": 30,
                 "optional": false
               }
             ],
@@ -20634,7 +20841,7 @@
               },
               {
                 "name": "type",
-                "type": 31,
+                "type": 32,
                 "optional": false
               }
             ],
@@ -20664,7 +20871,7 @@
               },
               {
                 "name": "type",
-                "type": 33,
+                "type": 34,
                 "optional": false
               }
             ],
@@ -20676,13 +20883,13 @@
           },
           {
             "kind": "array",
-            "element": 35
+            "element": 36
           },
           {
             "kind": "union",
             "types": [
-              36,
-              37
+              37,
+              38
             ]
           },
           {
@@ -20707,13 +20914,13 @@
           },
           {
             "kind": "array",
-            "element": 39
+            "element": 40
           },
           {
             "kind": "union",
             "types": [
-              40,
-              41
+              41,
+              42
             ]
           },
           {
@@ -20726,19 +20933,19 @@
           },
           {
             "kind": "array",
-            "element": 43
+            "element": 44
           },
           {
             "kind": "object",
             "properties": [
               {
                 "name": "previousRevision",
-                "type": 44,
+                "type": 45,
                 "optional": false
               },
               {
                 "name": "task",
-                "type": 45,
+                "type": 46,
                 "optional": false
               }
             ],
@@ -20748,7 +20955,7 @@
             "kind": "union",
             "types": [
               4,
-              37
+              38
             ]
           },
           {
@@ -20756,7 +20963,7 @@
             "properties": [
               {
                 "name": "blockedBy",
-                "type": 46,
+                "type": 47,
                 "optional": false
               },
               {
@@ -20776,7 +20983,7 @@
               },
               {
                 "name": "resultUnavailable",
-                "type": 18,
+                "type": 19,
                 "optional": true
               },
               {
@@ -20786,7 +20993,7 @@
               },
               {
                 "name": "status",
-                "type": 47,
+                "type": 48,
                 "optional": false
               },
               {
@@ -20796,7 +21003,7 @@
               },
               {
                 "name": "writeScopes",
-                "type": 46,
+                "type": 47,
                 "optional": false
               }
             ],
@@ -20809,10 +21016,10 @@
           {
             "kind": "union",
             "types": [
-              48,
               49,
               50,
-              51
+              51,
+              52
             ]
           },
           {
@@ -30974,7 +31181,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMessageSource"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:358"
+        "packages/experimental/agent-team/src/types.ts:390"
       ]
     },
     {
@@ -31009,7 +31216,7 @@
         "packages/interaction/user-approval/src/index.ts#ApprovalPolicy"
       ],
       "sources": [
-        "packages/interaction/user-approval/src/index.ts:71"
+        "packages/interaction/user-approval/src/index.ts:74"
       ]
     },
     {
@@ -31082,7 +31289,7 @@
       "digest": "0ab879d862527f6da3fcf9c48c0152ba410628b0460300a159676b27352cf70d",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:275"
+        "packages/experimental/agent-team/src/types.ts:307"
       ]
     },
     {
@@ -31112,7 +31319,7 @@
       "digest": "0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:539"
+        "packages/experimental/agent-team/src/types.ts:575"
       ]
     },
     {
@@ -31227,6 +31434,11 @@
       ]
     },
     {
+      "digest": "12136401bae0866e06990ddfd9ea529eac10ebf7b7905085fe6ebf6fa856e238",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "129af5ad99236dd33ab58cdc5f9d156575810d040f63bd38ddd85c473588473c",
       "names": [],
       "sources": []
@@ -31289,6 +31501,11 @@
     },
     {
       "digest": "15495614ccfa9cbdeefb0ec2abd76406435f4c6ff3dae42acae8e09ef42025c9",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "155b5354bec57e47bfef91341021268a6d14d0c61db6923006333b95e1fe5059",
       "names": [],
       "sources": []
     },
@@ -31480,17 +31697,17 @@
       "sources": []
     },
     {
+      "digest": "1e83e946e1c3808f56274ddafdf5f60f53f376929c11de48c33ca4918276c6fd",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "1ebc6f9ff3aa9e3a38f8695f49bacdab1f8b7a3832741853ca46f40af56ccd01",
       "names": [],
       "sources": []
     },
     {
       "digest": "1f0133217eeeffd8d387baf1ec8ed9856e719bcd999dc08e48624cba96d75fd7",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "1f03c60cefa9f7b7560d66871e2b63ebcf1b2eb534742747f20c41a3d472a8f8",
       "names": [],
       "sources": []
     },
@@ -31517,7 +31734,7 @@
       "digest": "205bcab5974e82beef9a7333952b23cc1f16432c60e6cbc1fe3e3df435ace94e",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:280"
+        "packages/experimental/agent-team/src/types.ts:312"
       ]
     },
     {
@@ -31532,7 +31749,7 @@
       "names": [],
       "sources": [
         "packages/experimental/agent-team/src/lead-seat.ts:31",
-        "packages/experimental/agent-team/src/types.ts:520"
+        "packages/experimental/agent-team/src/types.ts:552"
       ]
     },
     {
@@ -31773,6 +31990,11 @@
       ]
     },
     {
+      "digest": "319224b1a1efcdad2f331efb0089e8a2072fe5e69d03dc2520bdc5ec70013345",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "321ac0bdcca57d8fc652ec5936e5ce27f2ba1510e0666f196829833fddde084d",
       "names": [],
       "sources": []
@@ -31835,7 +32057,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamInputTransfer"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:307"
+        "packages/experimental/agent-team/src/types.ts:339"
       ]
     },
     {
@@ -31857,7 +32079,7 @@
       "digest": "3731e2ceb804ee350886763f4573df29cfd3509e154de57b56821fdc54aea7d2",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:533"
+        "packages/experimental/agent-team/src/types.ts:569"
       ]
     },
     {
@@ -31955,7 +32177,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMemberSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:66"
+        "packages/experimental/agent-team/src/types.ts:98"
       ]
     },
     {
@@ -31971,16 +32193,7 @@
       ],
       "sources": [
         "packages/core/tools/src/index.ts:705",
-        "packages/experimental/agent-team/src/types.ts:371"
-      ]
-    },
-    {
-      "digest": "3d23e873baf9bbf6e7e15f4e4b3edb6385466a898aaa15c9385de8aa0fb69e0b",
-      "names": [
-        "packages/experimental/agent-team/src/lead-seat.ts#TeamLeadTransaction"
-      ],
-      "sources": [
-        "packages/experimental/agent-team/src/lead-seat.ts:26"
+        "packages/experimental/agent-team/src/types.ts:403"
       ]
     },
     {
@@ -32088,14 +32301,23 @@
       "digest": "45f2a07ea94573123b6ae14db787a40062dec3834f36d8be92c523d40ba28448",
       "names": [],
       "sources": [
-        "packages/interaction/user-approval/src/types.ts:56"
+        "packages/interaction/user-approval/src/types.ts:74"
       ]
     },
     {
       "digest": "46c5de4cd527104160dcedf8650e91010c1cdbf978e57365ab9e5556a03826e7",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:512"
+        "packages/experimental/agent-team/src/types.ts:544"
+      ]
+    },
+    {
+      "digest": "470ffee04cd159cddc9d5f31fec9e4fe084fab08932add9339dafc827486f051",
+      "names": [
+        "packages/experimental/agent-team/src/lead-seat.ts#TeamLeadTransaction"
+      ],
+      "sources": [
+        "packages/experimental/agent-team/src/lead-seat.ts:26"
       ]
     },
     {
@@ -32103,6 +32325,15 @@
       "names": [],
       "sources": [
         "packages/compaction/compaction-image-offload/src/projection.ts:25"
+      ]
+    },
+    {
+      "digest": "477e4da1715ac65b57b2235277f69d93a42c1229e0a4fbc5838345c441741a36",
+      "names": [
+        "packages/experimental/agent-team/src/types.ts#TeamLeadTransition"
+      ],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:70"
       ]
     },
     {
@@ -32223,6 +32454,7 @@
         "packages/core/agent/src/input-control-types.ts#InputControllerId",
         "packages/core/session/src/types.ts#SessionId",
         "packages/experimental/agent-team/src/types.ts#TeamId",
+        "packages/experimental/agent-team/src/types.ts#TeamLeadOperationId",
         "packages/experimental/agent-team/src/types.ts#TeamMessageId",
         "packages/experimental/agent-team/src/types.ts#TeamTaskId",
         "packages/feedback/message-feedback/src/types.ts#MessageFeedbackVersion",
@@ -32252,6 +32484,7 @@
         "packages/experimental/agent-team/src/types.ts:10",
         "packages/experimental/agent-team/src/types.ts:22",
         "packages/experimental/agent-team/src/types.ts:34",
+        "packages/experimental/agent-team/src/types.ts:46",
         "packages/feedback/message-feedback/src/types.ts:14",
         "packages/goal/goal/src/types.ts:17",
         "packages/interaction/commands/src/brand.ts:31",
@@ -32396,7 +32629,7 @@
       "digest": "562df237597939f185c89b26212c4eab4024832edf34fa6983ce24c2294a8eb5",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:268"
+        "packages/experimental/agent-team/src/types.ts:300"
       ]
     },
     {
@@ -32469,6 +32702,13 @@
       "digest": "5b232a9b9bfcc0fc6794dab7865bcf203a65785c5de5aa647a51228bff628413",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "5b25232a8911dbea8097da16c0418c9e817e95c053d51d4936af9c94163520bf",
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/lead-seat.ts:37"
+      ]
     },
     {
       "digest": "5b2e04d4c8d3bad16378cd6032af2c50e29a340b98fc6d9146a2b80ae43296a9",
@@ -32631,7 +32871,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMemberLegacySnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:55"
+        "packages/experimental/agent-team/src/types.ts:87"
       ]
     },
     {
@@ -32647,7 +32887,7 @@
       "digest": "6667a10ec9f922fbba12770c9f7fc9b6bcd7b1ecfdfec3dfbc7da660c0cb96bb",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:535"
+        "packages/experimental/agent-team/src/types.ts:571"
       ]
     },
     {
@@ -32761,7 +33001,7 @@
       "digest": "6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:527"
+        "packages/experimental/agent-team/src/types.ts:559"
       ]
     },
     {
@@ -32797,7 +33037,7 @@
       "digest": "6dfc841b1dd68be012d0c4c9b296cc69305eb7d9baab66884646f1be01b06472",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:279"
+        "packages/experimental/agent-team/src/types.ts:311"
       ]
     },
     {
@@ -32818,7 +33058,17 @@
       "sources": []
     },
     {
+      "digest": "6ebebbc76259849864dc0d8c85b778c3eecd4f2ddc186e3b0d835e57a06c1398",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "6f091fe32ab24407236090ca9d710bbaf59bb57466e9f3b8f1f6e4862bc863c6",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "6f0ee24b137470c294d0f3b19ddf8f47450793d5e4ddc0ad7b5e49ae3d0ed27b",
       "names": [],
       "sources": []
     },
@@ -32935,7 +33185,7 @@
       "digest": "76cffff3c77c204a82188bdbb3c21fbf116c4f7e65951b7048d8d7750429dec3",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:276"
+        "packages/experimental/agent-team/src/types.ts:308"
       ]
     },
     {
@@ -33022,7 +33272,7 @@
       "digest": "7e78ed670ff281b5b68829e83852302a6f31fc81433e985da3746f25dfab1107",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:546"
+        "packages/experimental/agent-team/src/types.ts:582"
       ]
     },
     {
@@ -33067,7 +33317,7 @@
       "digest": "8059c0f39fe32bc67540e9e8e78d57f63b77aa21a68edd0c374f2f0247d43a74",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:277"
+        "packages/experimental/agent-team/src/types.ts:309"
       ]
     },
     {
@@ -33265,7 +33515,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamControlledMode"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:379"
+        "packages/experimental/agent-team/src/types.ts:411"
       ]
     },
     {
@@ -33367,6 +33617,13 @@
       ]
     },
     {
+      "digest": "903d53fef145fc8097c1c79a50e6ee52bffaf38c38fa895f8830fd4c3a526105",
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:566"
+      ]
+    },
+    {
       "digest": "904bf499d98be4a3a5f836fcac533b6c4899569b018071e6604e1d32657d00fd",
       "names": [],
       "sources": []
@@ -33377,7 +33634,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamContentAuthor"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:301"
+        "packages/experimental/agent-team/src/types.ts:333"
       ]
     },
     {
@@ -33415,7 +33672,7 @@
       "digest": "93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9",
       "names": [],
       "sources": [
-        "packages/interaction/user-approval/src/types.ts:67"
+        "packages/interaction/user-approval/src/types.ts:85"
       ]
     },
     {
@@ -33489,6 +33746,11 @@
       "sources": []
     },
     {
+      "digest": "986da13a236032abd7bf7cc58736d9b8080dc9277a42d93d7afdf0a6fce0e75c",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "9890113e97dd3541787bfe6704f2b223d3a890b5325ca0acae2b0398909b413e",
       "names": [],
       "sources": [
@@ -33524,7 +33786,7 @@
       "digest": "9a12cff08bd51e627f69c220087a23941e43300c241b5a50c4ef644293758ebc",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:508"
+        "packages/experimental/agent-team/src/types.ts:540"
       ]
     },
     {
@@ -33556,7 +33818,7 @@
       "digest": "9aaf258369b3cfc4272b333930de42a621ffba217f4dcdb4f7cc7606c3cef1b4",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:278"
+        "packages/experimental/agent-team/src/types.ts:310"
       ]
     },
     {
@@ -33579,6 +33841,13 @@
       "names": [],
       "sources": [
         "packages/core/agent/src/input-control-types.ts:58"
+      ]
+    },
+    {
+      "digest": "9bec64e7e5cf80f0c304f570c8e9dcb10d0e0d58ca28f07e8790e42761bbba66",
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:556"
       ]
     },
     {
@@ -33667,7 +33936,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskTransactionUpdate"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:118"
+        "packages/experimental/agent-team/src/types.ts:150"
       ]
     },
     {
@@ -33698,7 +33967,7 @@
       "sources": []
     },
     {
-      "digest": "a4a9a534ec4620e6d6cd46a524c98e232b657e0b2141e0fef48cae3601c75e2e",
+      "digest": "a57d2d97b9a04472e1bf489a6aaf4796e76f8562ce0d2d1eb67ee71e0c48ecba",
       "names": [],
       "sources": []
     },
@@ -33944,7 +34213,7 @@
       "digest": "b1ebd5cda47d90d980bb05bffc3f970c51537b9aff15b3bc3d639811727741b1",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:510"
+        "packages/experimental/agent-team/src/types.ts:542"
       ]
     },
     {
@@ -33973,7 +34242,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskStatus"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:101"
+        "packages/experimental/agent-team/src/types.ts:133"
       ]
     },
     {
@@ -34101,6 +34370,13 @@
       "sources": []
     },
     {
+      "digest": "b81141f82b3b65737746ae43d971b8e8a789cfa6ad652a9f942644aec3687b67",
+      "names": [],
+      "sources": [
+        "packages/interaction/user-approval/src/types.ts:92"
+      ]
+    },
+    {
       "digest": "b815d7b91cdd9fc6ccc7dcba05cfc5ce1d55fab5fc0c0801803cd3630cedb602",
       "names": [],
       "sources": []
@@ -34151,7 +34427,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamCompositionTransition"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:267"
+        "packages/experimental/agent-team/src/types.ts:299"
       ]
     },
     {
@@ -34256,7 +34532,7 @@
       "digest": "c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:506"
+        "packages/experimental/agent-team/src/types.ts:538"
       ]
     },
     {
@@ -34275,6 +34551,11 @@
     },
     {
       "digest": "c43b119ce579b3e9983a0d3adc4ba402ebb9ba773d89738a2dab01ecf5813943",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "c4ed9098365a9d4d9adbb8c8aad0f8b894f85aed5eb4a39c7f37df4ffdcd0695",
       "names": [],
       "sources": []
     },
@@ -34325,7 +34606,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:104"
+        "packages/experimental/agent-team/src/types.ts:136"
       ]
     },
     {
@@ -34377,14 +34658,7 @@
       "digest": "cbdb068a2440b927a6111309bb9cb8b93805b402c093e88519013d6071c0402d",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:516"
-      ]
-    },
-    {
-      "digest": "cc14b8c6b1d81d153a98e815a8e0d2e460b6953e9fb15345a7ae7800cbaf2f62",
-      "names": [],
-      "sources": [
-        "packages/experimental/agent-team/src/types.ts:524"
+        "packages/experimental/agent-team/src/types.ts:548"
       ]
     },
     {
@@ -34462,7 +34736,7 @@
         "packages/subagent/subagent/src/continuable-preset.ts#ContinuablePresetBinding"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:49",
+        "packages/experimental/agent-team/src/types.ts:81",
         "packages/subagent/subagent/src/continuable-preset.ts:7"
       ]
     },
@@ -34508,7 +34782,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamPeerMessageSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:342"
+        "packages/experimental/agent-team/src/types.ts:374"
       ]
     },
     {
@@ -34577,7 +34851,7 @@
       "digest": "de793be4f7d671ed79c4b8c7ef9747a20480bfb8a3d1e968b5782ce0d5ac609b",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:514"
+        "packages/experimental/agent-team/src/types.ts:546"
       ]
     },
     {
@@ -34721,7 +34995,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMemberPhase"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:46"
+        "packages/experimental/agent-team/src/types.ts:78"
       ]
     },
     {
@@ -34814,6 +35088,11 @@
         "packages/core/session/src/types.ts:299",
         "packages/core/session/src/types.ts:301"
       ]
+    },
+    {
+      "digest": "ef44b72b53051c0eb59ab10d48b9cffb9eab7d5189a38bffb752cda36d703332",
+      "names": [],
+      "sources": []
     },
     {
       "digest": "ef4f00923b9edbae15c7ef05320280bf61147ca17146cf59690359bfd5e5da45",

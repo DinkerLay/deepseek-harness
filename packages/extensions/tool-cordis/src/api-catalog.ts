@@ -408,6 +408,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'an owner-scoped creation and cold-activation capability; no seat authority is granted.',
       },
       {
+        signature: 'installLeadCoordinator(coordinator: TeamLeadCoordinator): TeamLeadCoordinatorHandle',
+        description: 'Install the independent Host-only owner of native Lead coordination.',
+        parameters: [{ name: 'coordinator', description: 'registered opaque namespace, distinct from the Task writer.' }],
+        returns: 'owned durable records, safe-point occupation and atomic seat commit.',
+      },
+      {
         signature: 'leadContext(agent: Agent): import(\'./types.ts\').TeamLeadContext',
         description: 'Read the stable Team host and committed execution independently of operation authority.',
         parameters: [{ name: 'agent', description: 'exact live Team member, dormant host or marked execution.' }],
@@ -553,10 +559,37 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async request(req: ApprovalRequest): Promise<ApprovalOutcome>',
-        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event. A routed grant is accepted only while its captured route remains valid; a false or throwing validity check records `rejected` instead.',
+        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event. A captured routed decision becomes `rejected` when its validity check returns false or throws, including a cancelled or unavailable answer.',
         parameters: [{ name: 'req', description: 'the pending decision (agent, tool identity, reason, signal).' }],
         returns: 'the closed outcome; `\'allowed-once\'` is the only grant.',
         throws: ['when no turn is open or either audit event fails before the session append commit point.'],
+      },
+      {
+        signature: 'pendingRequests(query: PendingApprovalQuery = {}): readonly PendingApprovalRequest[]',
+        description: 'Read unanswered requests without returning borrowed Agents, signals or callbacks.',
+        parameters: [{ name: 'query', description: 'optional exact originating Session, answering Session or route filters.' }],
+        returns: 'detached request identities; a claimed rejection is no longer unanswered even if its flush needs retry.',
+      },
+      {
+        signature: 'async rejectPending(origin: Agent, id: ApprovalRequestId): Promise<boolean>',
+        description: 'Reject one exact live routed question, recording the origin\'s rejection before withdrawing its card. Normal answers and this method share one terminal decision; a late answer cannot grant after rejection claims it.',
+        parameters: [{ name: 'origin', description: 'exact originating Agent retained by the request, not its answerer.' }, { name: 'id', description: 'service-issued question id captured from the pending view.' }],
+        returns: 'true after rejection durability is confirmed; false for absent, unrelated, unrouted or already normally settled requests.',
+        throws: ['when rejection audit or durability fails; retrying the same retained request reconfirms without another terminal event.'],
+      },
+      {
+        signature: 'async rejectInterrupted(session: Session, captured: PendingApprovalRequest): Promise<boolean>',
+        description: 'Reconfirm or write a captured routed question\'s explicit rejection after its original turn has ended. The caller owns the quiet original Session and its writer; this method never activates an Agent or opens a turn.',
+        parameters: [{ name: 'session', description: 'exact originating Session loaded by the Host recovery owner.' }, { name: 'captured', description: 'identity, route and asked sequence retained before interruption; other requests are untouched.' }],
+        returns: 'true only after the existing or new rejection flush succeeds; false for mismatched facts, active requests or other terminal outcomes.',
+        throws: ['when the audit projection is unavailable/invalid or durability is unconfirmed; retries never append a second rejection.'],
+      },
+      {
+        signature: 'rejectInterruptedStored(captured: PendingApprovalRequest, signal?: AbortSignal): Promise<boolean>',
+        description: 'Reject one captured offline question without activating its originating Agent. This service acquires the original Session\'s atomic write lease, repairs its interrupted turn, and appends only the exact rejection suffix. It never writes into the answerer or a replacement execution.',
+        parameters: [{ name: 'captured', description: 'original request facts retained by the Host coordinator.' }, { name: 'signal', description: 'optional cancellation; acquired writers always close to quiescence, including late acquisition.' }],
+        returns: 'true after the original writer\'s durability barrier and close; false for live identities or mismatched/other terminal facts.',
+        throws: ['on unavailable persistence, writer conflict, cancellation or I/O failure; retries reread the original log and do not duplicate a terminal.'],
       },
       {
         signature: 'registerAnswererRoute(id: ApprovalAnswererRouteId, resolver: (origin: Agent, question?: ApprovalRouteQuestion) => ApprovalAnswererRoute | undefined): () => Promise<void> | undefined',
@@ -4038,6 +4071,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'sessionId', description: 'the session whose composition changed.' }, { name: 'agentPreset', description: 'the preset recorded by the committed selection.' }],
   },
   {
+    name: 'agent-team/confirmed',
+    mode: 'parallel',
+    signature: '\'agent-team/confirmed\'(anchor: Agent): void',
+    summary: 'A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.',
+    description: 'A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.',
+    parameters: [{ name: 'anchor', description: 'exact stable Team journal owner after successful confirmation.' }],
+  },
+  {
     name: 'agent/assistant-stream',
     mode: 'emit',
     signature: '\'agent/assistant-stream\'(this: Scoped<Agent>, payload: { agent: Agent; frame: AssistantStreamFrame }): void',
@@ -6270,6 +6311,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PeerScope {\n    readonly id: PeerId;\n    readonly ctx: Context;\n    dispose(): Promise<void>;\n}',
   },
   {
+    name: 'PendingApprovalQuery',
+    declaration: 'export interface PendingApprovalQuery {\n    readonly originSessionId?: SessionId;\n    readonly answererSessionId?: SessionId;\n    readonly routeId?: ApprovalAnswererRouteId;\n}',
+  },
+  {
+    name: 'PendingApprovalRequest',
+    declaration: 'export interface PendingApprovalRequest {\n    readonly id: ApprovalRequestId;\n    readonly originSessionId: SessionId;\n    readonly answererSessionId: SessionId;\n    readonly askedSeq: SessionSeq;\n    readonly toolName: string;\n    readonly callId?: ToolCallId;\n    readonly routeId?: ApprovalAnswererRouteId;\n}',
+  },
+  {
     name: 'PermissionCatalog',
     declaration: 'export interface PermissionCatalog {\n    options: PresetOption[];\n    defaultOptions: PresetOption[];\n    defaultPreset: string;\n}',
   },
@@ -7858,16 +7907,72 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamInputTransfer {\n    readonly sourceExecutionId: SessionId;\n    readonly heldSeq: SessionSeq;\n    readonly input: AgentInput;\n}',
   },
   {
+    name: 'TeamLeadBinding',
+    declaration: 'export interface TeamLeadBinding {\n    readonly executionId: SessionId;\n    readonly term: number;\n    readonly presetId: string;\n    readonly revision: string;\n}',
+  },
+  {
+    name: 'TeamLeadBlocker',
+    declaration: 'export interface TeamLeadBlocker {\n    readonly id: string;\n    readonly description: string;\n}',
+  },
+  {
     name: 'TeamLeadContext',
     declaration: 'export interface TeamLeadContext {\n    readonly anchor: Agent;\n    readonly seat: TeamLeadSeat;\n    readonly execution?: Agent;\n    readonly ready: boolean;\n}',
+  },
+  {
+    name: 'TeamLeadCoordinationPhase',
+    declaration: 'export type TeamLeadCoordinationPhase = \'requested\' | \'frozen\' | \'safe\' | \'prepared\' | \'committed\' | \'ready\' | \'cancelled\' | \'failed\';',
+  },
+  {
+    name: 'TeamLeadCoordinator',
+    declaration: 'export interface TeamLeadCoordinator {\n    readonly id: string;\n}',
+  },
+  {
+    name: 'TeamLeadCoordinatorCommit',
+    declaration: 'export interface TeamLeadCoordinatorCommit {\n    readonly binding: TeamLeadBinding;\n    readonly releases: readonly TeamTaskTransactionUpdate[];\n    readonly record: TeamExtensionRecord;\n    readonly notices?: readonly TeamExtensionNotice[];\n}',
+  },
+  {
+    name: 'TeamLeadCoordinatorHandle',
+    declaration: 'export interface TeamLeadCoordinatorHandle {\n    record(anchor: Agent, record: TeamLeadCoordinatorRecord): Promise<void>;\n    record(anchor: Agent, operation: TeamLeadCoordinatorOperation, build: TeamLeadCoordinatorRecordBuilder): Promise<void>;\n    runAtSafePoint<T>(anchor: Agent, request: {\n        readonly operationId: TeamLeadOperationId;\n        readonly previousTerm: number;\n        readonly record: TeamExtensionRecord;\n        readonly readBlockers: (execution: Agent) => readonly TeamLeadBlocker[] | Promise<readonly TeamLeadBlocker[]>;\n        readonly signal?: AbortSignal;\n    }, task: (handle: TeamLeadSafePointHandle) => Promise<T>): Promise<T>;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'TeamLeadCoordinatorMaterial',
+    declaration: 'export interface TeamLeadCoordinatorMaterial extends TeamExtensionRecord {\n    readonly notices?: readonly TeamExtensionNotice[];\n}',
+  },
+  {
+    name: 'TeamLeadCoordinatorOperation',
+    declaration: 'export type TeamLeadCoordinatorOperation = Pick<TeamLeadCoordinatorRecord, \'operationId\' | \'previousTerm\' | \'phase\'>;',
+  },
+  {
+    name: 'TeamLeadCoordinatorRecord',
+    declaration: 'export interface TeamLeadCoordinatorRecord extends TeamLeadCoordinatorMaterial {\n    readonly operationId: TeamLeadOperationId;\n    readonly previousTerm: number;\n    readonly phase?: TeamLeadTransition[\'phase\'];\n}',
+  },
+  {
+    name: 'TeamLeadCoordinatorRecordBuilder',
+    declaration: 'export type TeamLeadCoordinatorRecordBuilder = (snapshot: TeamLeadCoordinatorSnapshot) => TeamLeadCoordinatorMaterial;',
+  },
+  {
+    name: 'TeamLeadCoordinatorSnapshot',
+    declaration: 'export interface TeamLeadCoordinatorSnapshot extends TeamTaskTransactionSnapshot {\n    readonly seat: TeamLeadSeat;\n    readonly records: readonly TeamExtensionRecord[];\n}',
   },
   {
     name: 'TeamLeadDeliveryReceipt',
     declaration: 'export interface TeamLeadDeliveryReceipt {\n    readonly messageId: TeamMessageId;\n    readonly targetId: SessionId;\n    readonly executionId: SessionId;\n    readonly term: number;\n}',
   },
   {
+    name: 'TeamLeadOperationId',
+    declaration: 'export type TeamLeadOperationId = Branded<\'TeamLeadOperationId\'>;',
+  },
+  {
+    name: 'TeamLeadSafePointHandle',
+    declaration: 'export interface TeamLeadSafePointHandle {\n    readonly execution: Agent;\n    readonly signal: AbortSignal;\n    record(record: TeamExtensionRecord, prepared?: boolean): Promise<void>;\n    commitLeadTransaction(plan: TeamLeadCoordinatorCommit): Promise<TeamLeadSeat>;\n}',
+  },
+  {
     name: 'TeamLeadSeat',
     declaration: 'export interface TeamLeadSeat {\n    readonly executionId: SessionId;\n    readonly term: number;\n    readonly presetId?: string;\n    readonly revision?: string;\n}',
+  },
+  {
+    name: 'TeamLeadTransition',
+    declaration: 'export interface TeamLeadTransition {\n    readonly operationId: TeamLeadOperationId;\n    readonly previousTerm: number;\n    readonly previousExecutionId: SessionId;\n    readonly phase: Exclude<TeamLeadCoordinationPhase, \'committed\'>;\n}',
   },
   {
     name: 'TeamMemberPhase',
@@ -7915,11 +8020,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
-    declaration: 'export interface TeamTaskExtensionHandle {\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    commitRecord(caller: Agent, build: TeamExtensionRecordBuilder): Promise<{\n        recordId: string;\n        committed: boolean;\n    }>;\n    dispose(): void;\n}',
+    declaration: 'export interface TeamTaskExtensionHandle {\n    read<T>(anchor: Agent, read: (snapshot: TeamTaskTransactionSnapshot) => T): Promise<T>;\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    commitRecord(caller: Agent, build: TeamExtensionRecordBuilder): Promise<{\n        recordId: string;\n        committed: boolean;\n    }>;\n    dispose(): void;\n}',
   },
   {
     name: 'TeamTaskId',

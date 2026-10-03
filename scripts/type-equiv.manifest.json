@@ -1147,6 +1147,16 @@
       "source": "packages/interaction/user-approval/src/index.ts"
     },
     {
+      "doc": "docs/subsystems/approval.md",
+      "symbol": "PendingApprovalRequest",
+      "source": "packages/interaction/user-approval/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/approval.md",
+      "symbol": "PendingApprovalQuery",
+      "source": "packages/interaction/user-approval/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/attachment.md",
       "symbol": "ImageMediaType",
       "source": "packages/attachment/attachment/src/types.ts"

@@ -274,7 +274,7 @@ export class TeamRoster {
     const name = targetName.trim()
     const member = await this.journal.transact(root.id, async () => {
       if (this.ctx.agents.get(root.id) !== root) throw new TeamError('Team Lead is no longer live', 'TEAM_NOT_MEMBER')
-      const state = this.journal.state(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       const current = state.members.find(candidate => candidate.name === name)
       if (current === undefined) throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
       assertRosterChange(state, applicationId, current.id)
@@ -312,7 +312,7 @@ export class TeamRoster {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can interrupt teammates', 'TEAM_LEAD_REQUIRED')
     const state = this.journal.state(membership.root)
-    this.journal.assertWriteAdmission(membership.root)
+    this.journal.assertCallerWrite(membership.root, caller)
     const target = resolveActiveMember(membership.root, state, targetName)
     if (target.id === membership.root.id) throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
     const live = this.ctx.agents.get(target.id)
@@ -407,7 +407,7 @@ export class TeamRoster {
     }
 
     await this.journal.transact(root.id, async () => {
-      const state = this.journal.state(root)
+      const state = this.journal.assertCallerWrite(root, caller)
       assertRosterChange(state, request.applicationId)
       if ((request.slotId === undefined) !== (request.applicationId === undefined)) {
         throw new TeamError('Profile members need both an application and a slot id', 'TEAM_INVALID_ARGUMENT')

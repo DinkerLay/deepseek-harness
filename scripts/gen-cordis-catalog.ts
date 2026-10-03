@@ -214,6 +214,7 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
  * {@link EVENT_WALK_EXEMPTIONS} names each one with its documentation owner.
  */
 export const EVENT_SCOPE_PAGE: Record<string, string> = {
+  'agent-team': 'agent-team.md',
   'app-boot': 'boot.md',
   hmr: 'boot.md',
   'plugin-manager': 'boot.md',
@@ -442,6 +443,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   ApprovalPolicy: 'approval.md',
   ApprovalRequest: 'approval.md',
   ApprovalRequestEvent: 'approval.md',
+  PendingApprovalQuery: 'approval.md',
+  PendingApprovalRequest: 'approval.md',
   ApprovalService: 'approval.md',
   ApprovalAnswererRoute: 'approval.md',
   ApprovalAnswererRouteId: 'approval.md',
@@ -705,6 +708,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   TeamLeadBinding: 'agent-team.md',
   TeamLeadSeat: 'agent-team.md',
   LeadExecutionHandle: 'agent-team.md',
+  TeamLeadCoordinator: 'agent-team.md',
+  TeamLeadCoordinatorHandle: 'agent-team.md',
   LeadExecutionProvider: 'agent-team.md',
   TeamTaskId: 'agent-team.md',
   TeamTaskView: 'agent-team.md',

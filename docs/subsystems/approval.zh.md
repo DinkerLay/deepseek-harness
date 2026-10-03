@@ -12,7 +12,7 @@
 
 ```ts type-equiv
 /**
- * Pairs one `approval/asked` audit event with its `approval/decided`.
+ * Pairs one `approval/asked` with its normal decision or interrupted rejection.
  * Service-issued (one fresh id per {@link ApprovalService.request} call).
  */
 type ApprovalRequestId = Branded<'ApprovalRequestId'>
@@ -74,8 +74,9 @@ interface ApprovalRequest extends ApprovalRequestEvent {
   /** The asker's human-readable explanation of WHY it is asking. */
   readonly reason?: string
   /**
-   * Aborting withdraws the question: the request settles `'cancelled'`
-   * immediately and a late answer from a still-pending answerer is discarded.
+   * Aborting withdraws the question immediately; an unrouted request or a
+   * still-valid captured route settles `cancelled`. Host forced denial or an
+   * invalid captured route settles `rejected` instead. A late answer is discarded.
    */
   readonly signal?: AbortSignal
 }
@@ -86,6 +87,30 @@ interface ApprovalRequest extends ApprovalRequestEvent {
 `ctx.approval.request(req)` 要求发起请求的会话处于一个尚未结束的轮次内。它追加 `approval/asked`，获取一个结果，追加对应的 `approval/decided`，然后以该结果完成。`never` 策略在服务内部、waterfall 分发之前强制执行，因此即使后来以 `prepend` 注册的应答者也无法绕过它。应答者在负责处理该请求时返回结果，否则调用 `next()` 委托；第一个应答占据唯一的决策槽位。
 
 审计事件仅写入日志，不进入模型 transcript（文本记录）。模型可见的行为是调用方派生的工具结果与当前运行时上下文快照。服务 dispose（资源释放）时会移除其上下文贡献；应答者监听器独立地通过 effect 绑定到其所属插件。
+
+宿主协调器可以查询脱离实时对象的待答请求身份，并拒绝准确的路由请求，而不代替用户审批。拒绝与普通答复共用唯一终态：先在原 Session 记录审计，再撤下卡片，并要求持久确认。已失效的捕获路由返回明确拒绝；仅权限策略变化不撤销已展示的提问。冷恢复只核对保留的原请求身份，在原轮次结束后使用 `approval/interrupted-rejected`，不启动模型、不伪造轮次，也不改变已有终态。
+
+```ts type-equiv
+/** Detached Host view of one unanswered request; no Agent, callback or live signal is exposed. */
+interface PendingApprovalRequest {
+  readonly id: ApprovalRequestId
+  readonly originSessionId: SessionId
+  readonly answererSessionId: SessionId
+  readonly askedSeq: SessionSeq
+  readonly toolName: string
+  readonly callId?: ToolCallId
+  readonly routeId?: ApprovalAnswererRouteId
+}
+```
+
+```ts type-equiv
+/** Optional exact-id filters for the Host's live pending-request view. */
+interface PendingApprovalQuery {
+  readonly originSessionId?: SessionId
+  readonly answererSessionId?: SessionId
+  readonly routeId?: ApprovalAnswererRouteId
+}
+```
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -124,14 +149,50 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  * violate the pair. Session contains post-commit observer failures, so an
  * authoritative append cannot reject the request or suppress its matching
  * audit event.
- * A routed grant is accepted only while its captured route remains valid;
- * a false or throwing validity check records `rejected` instead.
+ * A captured routed decision becomes `rejected` when its validity check
+ * returns false or throws, including a cancelled or unavailable answer.
  * @param req - the pending decision (agent, tool identity, reason, signal).
  * @returns the closed outcome; `'allowed-once'` is the only grant.
  * @throws when no turn is open or either audit event fails before the session
  *   append commit point.
  */
 async request(req: ApprovalRequest): Promise<ApprovalOutcome>
+
+/** Read unanswered requests without returning borrowed Agents, signals or callbacks.
+ * @param query - optional exact originating Session, answering Session or route filters.
+ * @returns detached request identities; a claimed rejection is no longer unanswered even if its flush needs retry.
+ */
+pendingRequests(query: PendingApprovalQuery = {}): readonly PendingApprovalRequest[]
+
+/** Reject one exact live routed question, recording the origin's rejection before withdrawing its card.
+ * Normal answers and this method share one terminal decision; a late answer cannot grant after rejection claims it.
+ * @param origin - exact originating Agent retained by the request, not its answerer.
+ * @param id - service-issued question id captured from the pending view.
+ * @returns true after rejection durability is confirmed; false for absent, unrelated, unrouted or already normally settled requests.
+ * @throws when rejection audit or durability fails; retrying the same retained request reconfirms without another terminal event.
+ */
+async rejectPending(origin: Agent, id: ApprovalRequestId): Promise<boolean>
+
+/** Reconfirm or write a captured routed question's explicit rejection after its original turn has ended.
+ * The caller owns the quiet original Session and its writer; this method never activates an Agent or opens a turn.
+ * @param session - exact originating Session loaded by the Host recovery owner.
+ * @param captured - identity, route and asked sequence retained before interruption; other requests are untouched.
+ * @returns true only after the existing or new rejection flush succeeds;
+ *   false for mismatched facts, active requests or other terminal outcomes.
+ * @throws when the audit projection is unavailable/invalid or durability is unconfirmed; retries never append a second rejection.
+ */
+async rejectInterrupted(session: Session, captured: PendingApprovalRequest): Promise<boolean>
+
+/** Reject one captured offline question without activating its originating Agent.
+ * This service acquires the original Session's atomic write lease, repairs its interrupted turn,
+ * and appends only the exact rejection suffix. It never writes into the answerer or a replacement execution.
+ * @param captured - original request facts retained by the Host coordinator.
+ * @param signal - optional cancellation; acquired writers always close to quiescence, including late acquisition.
+ * @returns true after the original writer's durability barrier and close; false for live identities or mismatched/other terminal facts.
+ * @throws on unavailable persistence, writer conflict, cancellation or I/O failure;
+ *   retries reread the original log and do not duplicate a terminal.
+ */
+rejectInterruptedStored(captured: PendingApprovalRequest, signal?: AbortSignal): Promise<boolean>
 
 /**
  * Register an optional answerer lookup for its effect lifetime.

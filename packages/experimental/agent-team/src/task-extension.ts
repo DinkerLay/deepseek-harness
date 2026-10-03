@@ -8,6 +8,7 @@ import type {
   TeamExtensionRecordSnapshot,
   TeamTaskTransactionPlan,
   TeamTaskTransactionSnapshot,
+  TeamTaskTransactionUpdate,
   TeamTaskId,
   TeamTaskView,
   UpdateTeamTaskRequest,
@@ -21,6 +22,12 @@ export type TeamExtensionRecordBuilder = (snapshot: TeamExtensionRecordSnapshot)
 
 /** Native commit capability held only by the registered extension. */
 export interface TeamTaskExtensionHandle {
+  /** Read a detached native cut without granting its dormant anchor Lead authority.
+   * @param anchor - exact live stable Team journal owner.
+   * @param read - synchronous registered-writer observer; it must not enter another transaction.
+   * @returns the observer's result under the native Team lock.
+   */
+  read<T>(anchor: Agent, read: (snapshot: TeamTaskTransactionSnapshot) => T): Promise<T>
   /**
    * Commit one Task batch and opaque extension record in the Lead Session.
    * An existing result returns without another event.
@@ -39,6 +46,14 @@ export interface TeamTaskExtensionHandle {
 export interface TeamTaskExtension {
   /** Stable identifier stored with each extension-owned Task event. */
   readonly id: string
+  /** Validate prepared Lead releases and generate this writer's atomic product audit.
+   * @param anchor - stable Team journal owner, not a model author.
+   * @param snapshot - detached native state while the Team transaction is locked.
+   * @param releases - exact prepared next revisions of every running Lead-owned Task.
+   * @returns opaque writer-owned JSON committed with the releases and seat change.
+   */
+  planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot,
+    releases: readonly TeamTaskTransactionUpdate[]): string
   /** Optional product-owned next-action hints appended to a controlled member's release result. */
   releaseHints?(caller: Agent): readonly string[]
   /**

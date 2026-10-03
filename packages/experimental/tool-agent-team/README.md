@@ -25,7 +25,7 @@ This package lets the model create teammates, message them, wait, interrupt work
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. By default every member gets the same eleven tools and coordination policy. In controlled mode the Lead receives a wider tool set than teammates; `spawn_teammate` starts a teammate with a fixed standby reminder instead of a model-authored first task.
+Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. By default every member gets the same eleven tools and coordination policy. In controlled mode the Lead receives a wider collaboration tool set than teammates; `spawn_teammate` only registers the member, whose first real mailbox input starts its execution.
 
 ### When to choose it
 
@@ -112,6 +112,8 @@ One `team:policy` section on the member scope states the shared coordination rul
 
 `maybeInstall` runs for every live Agent and subscribes to `agent/created`; it skips Agents without Team membership. Disposal of an Agent runs the installed disposer, and plugin HMR disposes every installed scope before reinstall. Each disposer unwinds registrations in reverse order, so a failed install cannot leave a partial scope.
 
+Native recorded changes refresh the collaboration scope. Owned transitions that open admission refresh it through `agent-team/confirmed` after the durable checkpoint, not an early ready event. A committed but unconfirmed execution therefore receives no premature Lead tools; the confirmed new execution acquires its tools without another model turn. This listener does not filter Preset tools or alter official uncoordinated sessions.
+
 </details>
 
 -----
@@ -135,7 +137,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. The independent autonomy switch replaces only its recruitment guidance. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and tool lists. Its `spawn_teammate` accepts neither a model-authored responsibility nor an initial task; the Team service supplies a fixed standby reminder with the member name, group, Preset label, Lead-only message rule, and first-turn instruction to confirm readiness without tools or messages. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. The independent autonomy switch replaces only its recruitment guidance. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and collaboration tool lists. Its `spawn_teammate` accepts neither a model-authored responsibility nor an initial task. Registration makes no model request; the first mailbox input carries the member name, group, Lead-only coordination rule and instruction to work only on an assigned running Task. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task.
 
 #### Token effect
 

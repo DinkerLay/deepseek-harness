@@ -12,7 +12,8 @@ import { TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { Config, TeamLeadContext, TeamLeadDeliveryReceipt, TeamMessageId } from './types.ts'
 import { TeamId } from './types.ts'
-import type { TeamLeadSeat } from './lead-seat.ts'
+import type { TeamLeadBinding, TeamLeadSeat } from './lead-seat.ts'
+import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordination.ts'
 
 /** A caller-owned candidate creation request, not a seat change. */
 export interface CreateLeadExecutionRequest {
@@ -376,6 +377,9 @@ export class TeamLeadExecutions {
       if (source !== undefined) forward(source)
     })
     owner.on('agent/created', ({ agent }) => { forward(agent) })
+    owner.on('agent-team/confirmed', () => {
+      for (const agent of owner.agents.list()) forward(agent)
+    })
     for (const agent of owner.agents.list()) forward(agent)
     return handle
   }
@@ -487,13 +491,38 @@ export class TeamLeadExecutions {
         && identity.presetId === seat.presetId && identity.revision === seat.revision
   }
 
+  /** Validate an unbound candidate against its own recorded immutable identity.
+   * @param agent - exact candidate already loaded by its creation owner.
+   * @param anchor - stable Team journal owner.
+   * @param binding - proposed native seat binding.
+   * @returns whether the execution marker exactly matches this proposal.
+   */
+  matchesBinding(agent: Agent, anchor: Agent, binding: TeamLeadBinding): boolean {
+    const identity = this.identity(agent.session)
+    return identity !== null && agent.session.header.parentSession === anchor.id
+      && identity.teamId === TeamId(anchor.id) && agent.id === binding.executionId
+      && identity.term === binding.term && identity.presetId === binding.presetId && identity.revision === binding.revision
+  }
+
   /** Read the optional coordinator's current readiness without granting a missing provider authority.
    * @param anchor - stable Team journal owner.
    * @returns initial execution readiness or the installed provider's decision.
    */
   isReady(anchor: Agent): boolean {
+    if (!this.journal.coordinationConfirmed(anchor)) return false
+    if (leadCoordinationFrozen(this.journal.state(anchor).leadCoordination)) return false
     if (this.provider === undefined && this.isInputBound(anchor)) return false
     return this.provider?.isReady?.(anchor) ?? this.seat(anchor).term === 1
+  }
+
+  /** Keep incumbent read authority while a native transition freezes its model writes.
+   * @param anchor - exact stable journal owner.
+   * @returns whether the current seat may expose collaboration reads.
+   */
+  hasSeatAuthority(anchor: Agent): boolean {
+    const coordination = this.journal.state(anchor).leadCoordination
+    return leadCoordinationActive(coordination) && coordination?.previousTerm === this.seat(anchor).term
+      || this.isReady(anchor)
   }
 
   /** Recognize durable native ownership even while its provider is temporarily unloaded.

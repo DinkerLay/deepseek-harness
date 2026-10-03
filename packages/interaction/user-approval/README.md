@@ -49,13 +49,19 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Requesting a decision
 
-`request(req)` names the agent, tool, optional call id and reason, and an abort signal. Optional `displayReason` supplies localized presentation text without changing the logged reason. It requires an open turn: an idle or between-turn caller throws before auditing anything. Aborting withdraws the question — the request settles `cancelled` and a late answer is discarded. A failure that prevents either audit append from committing rejects instead of returning an unlogged decision.
+`request(req)` names the agent, tool, optional call id and reason, and an abort signal. Optional `displayReason` supplies localized presentation text without changing the logged reason. It requires an open turn: an idle or between-turn caller throws before auditing anything. Aborting withdraws the question; an unrouted or still-valid routed request settles `cancelled`, and a late answer is discarded. A captured route's definite invalidation or a Host rejection settles `rejected` instead. A failure that prevents the audit append from committing rejects instead of returning an unlogged decision.
 
 ### What the model and user see
 
 Host integrations can bind an optional answerer route before the first model operation. Decisions and policy statements then use the current answerer's policy; the origin retains its audit. Routed presentations carry the original operation supplied from the origin log, and missing details prohibit a grant. Disposing the route withdraws pending questions. Browser disconnection alone does not decide a question; transport can replay it on reconnect.
 
-A resolved route may supply `isValid()` to recheck its captured ownership and readiness. A false result or thrown error makes answerer lookup unavailable and rejects new requests. The service rechecks the same captured route immediately before recording a grant, so a late `allowed-once` becomes `rejected` if ownership or readiness changed. A permission-policy switch alone does not withdraw an already-presented question; the callback must not treat that switch as invalidation. Routes without this callback retain their existing behavior.
+A resolved route may supply `isValid()` to recheck its captured ownership and readiness. A false result or thrown error makes answerer lookup unavailable and rejects new requests. The service rechecks the same captured route before dispatch and final settlement: definite invalidation records `rejected`, including an underlying cancellation or unavailable answer. A permission-policy switch alone does not withdraw an already-presented question; the callback must not treat that switch as invalidation. A valid route's unregistration still withdraws questions as `cancelled`; routes without this callback retain their existing behavior.
+
+### Host rejection and recovery
+
+`pendingRequests(query)` returns detached unanswered-request identities, with optional origin, answerer and route filters. `rejectPending(origin, id)` rejects only the exact originating routed request. It commits the originating audit before withdrawing that card, shares one terminal decision with normal answers, and cannot grant a late answer. If the original turn already ended, rejection uses a log-only interrupted terminal; another open turn causes an explicit refusal before the decision is claimed. Unrouted requests retain their borrowed request and signal and are not Host-rejectable through this API.
+
+Recovery processes only request DTOs the caller retained. `rejectInterrupted(session, captured)` uses a quiet original Session owned by the caller. `rejectInterruptedStored(captured, signal)` acquires that original Session's exclusive persistence writer, applies standard interrupted-turn repair and writes only the exact rejection suffix; it activates no Agent or Session. Both verify the original id, route, asked sequence, tool and call. Other terminal outcomes or mismatched facts return false and are never rewritten; an already-rejected request still requires durability confirmation. A write, flush, cancellation or close failure does not report success, and retrying rereads or reconfirms without another terminal. Stored recovery refuses live identities and conflicting writers. Disposal waits for late-acquired writers to close, and reports cleanup failures through the owning Cordis lifecycle.
 
 The model sees only the asking consumer's eventual tool outcome — allowed, rejected, cancelled, or unavailable — plus the current policy in the runtime-context snapshot; the audit events and the human permission UI are not model context. A `never` switch is announced to the model by a sourced user message, and both policies contribute their complete current meaning to the snapshot.
 
@@ -75,7 +81,9 @@ The observable behavior is covered in [Use this package](#use-this-package); thi
 |---|---|
 | [`src/index.ts`](src/index.ts) | `ApprovalService`: request dispatch, policy fold and write path, runtime-context contribution |
 | [`src/types.ts`](src/types.ts) | `ApprovalRequestId` brand and outcome types |
-| [`src/invariant.ts`](src/invariant.ts) | Invariant companion pairing `approval/asked` with `approval/decided` inside an open turn |
+| [`src/invariant.ts`](src/invariant.ts) | Invariant companion validating the original turn, route and sole terminal outcome |
+| [`src/audit.ts`](src/audit.ts) | Host audit projection matching exact original question facts for recovery |
+| [`src/stored-rejection.ts`](src/stored-rejection.ts) | Quiet original-Session write lease, interrupted repair and confirmed rejection suffix |
 
 ### Dispatch
 
@@ -87,7 +95,7 @@ The system-prompt contribution `approval:policy` states the complete current mea
 
 ### Audit
 
-`request()` appends `approval/asked` with the request identity and tool, then `approval/decided` with the closed outcome; the exact appended fields live in [`src/index.ts`](src/index.ts). Both are log-only; the invariant validates the pair by id within one open turn and the closed outcome vocabulary.
+`request()` appends `approval/asked` with the request identity and tool, then normally `approval/decided` within that same turn. A captured routed question whose turn ended can instead receive the log-only `approval/interrupted-rejected` terminal. The invariant and Host projection reject a duplicate terminal, an unrelated id or out-of-turn ordinary decision. Recovery does not invent a new question, reopen a turn or replay a tool operation.
 
 </details>
 
@@ -138,7 +146,7 @@ Append-only after retained history. An `ask`/`never` switch preserves the stable
 
 #### What the model sees
 
-`approval/asked` and `approval/decided` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context.
+`approval/asked`, `approval/decided` and `approval/interrupted-rejected` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context.
 
 #### Token effect
 
@@ -155,11 +163,11 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 These limits define when the seam is a poor fit or needs special composition care. They are current package constraints, not a general permission comparison.
 
-- **Requests are valid only inside an open turn** — an idle or between-turn caller throws before auditing; a durable out-of-turn approval workflow is deferred.
+- **New requests require an open turn** — idle or between-turn callers throw before auditing. Recovery only rejects existing captured routed questions; it does not create out-of-turn questions or grants.
 - **Only one-shot grants exist** — the outcome vocabulary has `allowed-once` but no `allow-always`, remembered rule, revocation, or grant store; session policy is only `ask` / `never`.
 - **The request carries no tool arguments** — an answerer sees the tool name, reason, and optional call id; the ACP machine channel requires a call id and delegates requests without one.
 - **No built-in answerer** — headless or incompletely composed deployments resolve `unavailable` and fail closed; the service itself never prompts a human.
-- **Route validity is checked at lookup and grant** — invalidation does not itself withdraw an open prompt, and Session replay does not reconstruct the Host callback or its captured state.
+- **Route validity does not itself withdraw an open prompt** — explicit Host rejection handles withdrawal; Session replay does not reconstruct callbacks or captured Host state.
 
 <a id="dev-note"></a>
 ### Dev Note

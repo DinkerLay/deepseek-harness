@@ -75,12 +75,12 @@ changes:
 <a id="compatibility"></a>
 ## Compatibility
 
-The two new version-one events are required on read. Existing message fields and versions are unchanged; added provenance is optional. Ordinary queued messages and Task or extension notices cannot carry captured transfers. Official non-Handoff delivery keeps its original event. Lead delivery records the logical anchor and actual execution and term once, without also writing the old delivery event. Session format remains version four; no existing data is migrated or rewritten.
+The two new version-one events are required on read. Existing message fields and versions are unchanged; the added sender-term and per-content author fields are optional. Ordinary queued messages and Task or extension notices cannot carry captured transfers. Official non-Handoff delivery keeps its original event. Lead delivery records the logical anchor and actual execution and term once, without also writing the old delivery event. Session format remains version four; no existing data is migrated or rewritten.
 
 <a id="verification"></a>
 ## Verification
 
-Real Loader, Agent Loop and JSONL tests exercise the same input across two seats, fresh capture after cancellation or editing, non-waking preload, offline source cleanup, stale operation replies, sender provenance and failed durability confirmation. TypeScript Host and Client checks pass. Native per-file coverage and package acceptance are recorded separately in the outer H2 evidence; these tests do not claim product coordination or real-model Handoff acceptance.
+Real Loader, Agent Loop and JSONL tests exercise the same input across two seats, fresh capture after cancellation or editing, non-waking preload, offline source cleanup, stale operation replies, sender identity and content authors, and failed durability confirmation. TypeScript Host and Client checks pass. Native per-file coverage and package acceptance are recorded separately in the outer H2 evidence; these tests do not claim product coordination or real-model Handoff acceptance.
 
 <a id="dev-note"></a>
 ## Dev Note

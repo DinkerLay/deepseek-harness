@@ -31,12 +31,15 @@ import {
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
   TeamTaskId as toTeamTaskId,
+  TeamLeadOperationId,
 } from './types.ts'
 import { assertTaskGraphCandidate } from './task-graph.ts'
 import { applyTaskTransaction } from './task-transaction.ts'
 import { projectTaskView } from './task-view.ts'
 import { teamLeadBindingSchema } from './lead-seat.ts'
 import type { TeamLeadBinding } from './lead-seat.ts'
+import { applyLeadTransition, leadCoordinationActive, teamLeadCoordinationSchema, teamLeadTransitionSchema } from './lead-coordination.ts'
+import type { TeamLeadCoordination } from './lead-coordination.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -216,6 +219,9 @@ const teamLeadTransactionEventSchema = z.object({
   extension: z.object({ id: z.string().min(1).max(200), dataJson: z.string() }).strict(),
   releases: z.array(teamTaskTransactionUpdateSchema),
   notices: z.array(ordinaryTeamMessageSnapshotSchema).optional(),
+  handoffRecord: z.object({ id: z.string().min(1).max(200), recordId: z.string().min(1).max(200),
+    dataJson: z.string(), effectsHash: z.string().regex(/^[a-f0-9]{64}$/u).optional() }).strict().optional(),
+  preloadNoticesFirst: z.literal(true).optional(),
 }).strict() as z.ZodType<SessionEventMap['team/lead/transaction']>
 
 const teamExtensionEventSchema = z.object({
@@ -224,6 +230,9 @@ const teamExtensionEventSchema = z.object({
   extension: z.object({ id: z.string().min(1), recordId: z.string().min(1), dataJson: z.string() }).strict(),
   notices: z.array(ordinaryTeamMessageSnapshotSchema).optional(),
   affectsComposition: z.literal(true).optional(),
+  leadTransition: teamLeadTransitionSchema.optional(),
+  coordinatorOperation: z.object({ operationId: z.string().min(1).max(200).transform(TeamLeadOperationId),
+    previousTerm: positiveSafeInteger }).strict().optional(),
 }).strict() as z.ZodType<SessionEventMap['team/extension']>
 
 const teamMessageQueuedEventSchema = z.object({
@@ -282,6 +291,7 @@ export interface TeamState {
   /** Absent before the first authenticated seat transaction; the anchor remains term one. */
   readonly lead?: TeamLeadBinding
   readonly leadHistory?: readonly TeamLeadBinding[]
+  readonly leadCoordination?: TeamLeadCoordination
   readonly mode?: TeamControlledMode
   readonly composition?: TeamCompositionState
   readonly members: readonly TeamMemberSnapshot[]
@@ -289,7 +299,15 @@ export interface TeamState {
   /** Durable event-derived writer identity for Tasks claimed by an extension. */
   readonly taskWriters: readonly { readonly taskId: TeamTaskId; readonly writerId: string }[]
   /** Writer-scoped idempotency and recovery index for extension-only records. */
-  readonly extensionRecords: readonly { readonly writerId: string; readonly recordId: string; readonly dataJson: string }[]
+  readonly extensionRecords: readonly {
+    readonly writerId: string
+    readonly recordId: string
+    readonly dataJson: string
+    readonly leadTransition?: import('./lead-coordination.ts').TeamLeadTransition
+    readonly coordinatorOperation?: { readonly operationId: TeamLeadOperationId; readonly previousTerm: number }
+    readonly leadEffectsHash?: string
+    readonly noticeIds?: readonly TeamMessageId[]
+  }[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
   /** Recipient metadata for the same terminal delivered index, never another acknowledgement set. */
@@ -332,6 +350,7 @@ const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
   lead: teamLeadBindingSchema.optional(),
   leadHistory: z.array(teamLeadBindingSchema).optional(),
+  leadCoordination: teamLeadCoordinationSchema.optional(),
   mode: teamControlledModeSchema.optional(),
   composition: teamCompositionStateSchema.optional(),
   members: z.array(teamMemberSnapshotSchema),
@@ -339,6 +358,11 @@ const teamProjectionEntrySchema = z.object({
   taskWriters: z.array(z.object({ taskId: teamTaskIdSchema, writerId: z.string().min(1) }).strict()),
   extensionRecords: z.array(z.object({
     writerId: z.string().min(1), recordId: z.string().min(1), dataJson: z.string(),
+    leadTransition: teamLeadTransitionSchema.optional(),
+    coordinatorOperation: z.object({ operationId: z.string().min(1).max(200).transform(TeamLeadOperationId),
+      previousTerm: positiveSafeInteger }).strict().optional(),
+    leadEffectsHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    noticeIds: z.array(teamMessageIdSchema).optional(),
   }).strict()).default([]),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
@@ -467,7 +491,7 @@ function replaceAt<T>(items: readonly T[], index: number, item: T): T[] {
 function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEvent): TeamProjectionState {
   switch (event.type) {
     case 'team/lead/transaction': {
-      const { previousTerm, binding, extension, releases, notices = [] } = event.data
+      const { previousTerm, binding, extension, releases, notices = [], handoffRecord } = event.data
       if (state.mode?.kind !== 'controlled') throw new Error('Lead seat requires a controlled Team')
       if (extension.id !== state.mode.requiredTaskExtensionId) throw new Error('Lead transaction requires the bound Task writer')
       if (previousTerm !== (state.lead?.term ?? 1) || binding.term !== previousTerm + 1
@@ -477,6 +501,12 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         throw new Error('Lead binding has a stale term or reused execution identity')
       }
       try { JSON.parse(extension.dataJson) } catch { throw new Error('Lead extension record is not JSON') }
+      if (event.data.preloadNoticesFirst === true && handoffRecord === undefined) {
+        throw new Error('Lead initialization order requires an independent coordinator record')
+      }
+      if (leadCoordinationActive(state.leadCoordination) && handoffRecord === undefined) {
+        throw new Error('Lead coordination commit is missing its independent record')
+      }
       if (releases.length !== state.tasks.filter(task => task.ownerId === brandString<SessionId>(state.id)
         && task.status === 'in_progress').length) throw new Error('Lead transaction must release every running Lead Task')
       for (const update of releases) {
@@ -485,6 +515,11 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
           || update.previousRevision === null || update.task.status !== 'pending' || update.task.ownerId !== undefined
           || state.taskWriters.find(writer => writer.taskId === update.task.id)?.writerId !== extension.id) {
           throw new Error('Lead transaction may only release its writer-owned running Lead Tasks')
+        }
+        const { ownerId: _owner, revision: _revision, status: _status, ...unchanged } = prior
+        const { ownerId: _nextOwner, revision: _nextRevision, status: _nextStatus, ...nextUnchanged } = update.task
+        if (JSON.stringify(unchanged) !== JSON.stringify(nextUnchanged)) {
+          throw new Error('Lead release cannot alter Task requirements or result availability')
         }
       }
       const next = releases.length === 0 ? {} : applyTaskTransaction(state.tasks, state.nextTaskNumber, releases)
@@ -495,8 +530,30 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         }
         seen.add(notice.id)
       }
+      let leadCoordination = state.leadCoordination
+      let extensionRecords = state.extensionRecords
+      if (handoffRecord !== undefined) {
+        if (leadCoordination?.phase !== 'prepared' || leadCoordination.coordinatorId !== handoffRecord.id
+          || leadCoordination.previousTerm !== previousTerm || handoffRecord.id === extension.id) {
+          throw new Error('Lead transaction requires its prepared independent coordinator')
+        }
+        try { JSON.parse(handoffRecord.dataJson) } catch { throw new Error('Lead coordinator record is not JSON') }
+        if (extensionRecords.some(record => record.writerId === handoffRecord.id && record.recordId === handoffRecord.recordId)) {
+          throw new Error('Lead coordinator commit record already exists')
+        }
+        extensionRecords = [...extensionRecords, { writerId: handoffRecord.id,
+          recordId: handoffRecord.recordId, dataJson: handoffRecord.dataJson,
+          ...handoffRecord.effectsHash === undefined ? {} : { leadEffectsHash: handoffRecord.effectsHash } }]
+        leadCoordination = { ...leadCoordination, phase: 'committed' }
+      }
+      const first = event.data.preloadNoticesFirst === true ? state.messages.findIndex(message =>
+        message.targetId === brandString<SessionId>(state.id) && !state.delivered.includes(message.id)
+        && !state.cancelled.some(item => item.messageId === message.id)) : -1
+      const messages = notices.length === 0 ? state.messages : first < 0 ? [...state.messages, ...notices]
+        : [...state.messages.slice(0, first), ...notices, ...state.messages.slice(first)]
       return { ...state, ...next, lead: binding, leadHistory: [...state.leadHistory ?? [], binding],
-        messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
+        extensionRecords, ...leadCoordination === undefined ? {} : { leadCoordination },
+        messages }
     }
     case 'team/mode': {
       if (state.mode !== undefined || state.members.length > 0 || state.tasks.length > 0 || state.messages.length > 0) {
@@ -505,6 +562,9 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       return { ...state, mode: event.data.mode }
     }
     case 'team/composition':
+      if (event.data.transition.kind === 'begin' && leadCoordinationActive(state.leadCoordination)) {
+        throw new Error('Profile application conflicts with Lead coordination')
+      }
       return { ...state, composition: applyCompositionTransition(state.composition, event.data.transition, state.members) }
     case 'team/member':
     case 'team/member/configured': {
@@ -605,9 +665,15 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       }
       const composition = event.data.affectsComposition === true
         ? noteCompositionPermissionChange(state.composition) : state.composition
-      return { ...state, extensionRecords: [...state.extensionRecords, { writerId: id, recordId, dataJson }],
-        ...composition === undefined ? {} : { composition },
-        messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
+      const leadCoordination = event.data.leadTransition === undefined ? state.leadCoordination
+        : applyLeadTransition(state, id, event.data.leadTransition)
+      return { ...state, extensionRecords: [...state.extensionRecords, { writerId: id, recordId, dataJson,
+        ...event.data.leadTransition === undefined ? {} : { leadTransition: event.data.leadTransition },
+        ...event.data.coordinatorOperation === undefined ? {} : { coordinatorOperation: event.data.coordinatorOperation },
+        ...event.data.coordinatorOperation === undefined || notices.length === 0 ? {} : { noticeIds: notices.map(notice => notice.id) } }],
+      ...leadCoordination === undefined ? {} : { leadCoordination },
+      ...composition === undefined ? {} : { composition },
+      messages: notices.length === 0 ? state.messages : [...state.messages, ...notices] }
     }
     case 'team/message/queued':
     case 'team/message/input-queued': {
@@ -782,7 +848,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 18,
+  stateVersion: 19,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

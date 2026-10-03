@@ -63,6 +63,12 @@ interface TeamControlledMode {
 }
 ```
 
+## Lead coordination
+
+An independent `TeamLeadCoordinatorHandle` owns native transition records without acquiring a model Lead role. Its synchronous record builder runs under the same Team lock as Profile application and captures product facts immediately before the event. The optional `leadTransition` metadata controls frozen writes and readiness; product data stays in the coordinator's separate extension namespace. Members can still commit their work while the incumbent Lead is frozen.
+
+`runAtSafePoint` checks the product's blockers before waiting for idle and again after it occupies the actual incumbent execution through maintenance. Its `TeamLeadSafePointHandle` expires when that maintenance callback ends; a persisted safe record does not establish a new live occupation after recovery. The bound Task writer generates its own release audit, and the atomic Lead transaction changes the seat, every prepared Lead Task revision, queued material and independent coordinator record together. Retries compare the recorded effects and require a successful durable flush; source custody and readiness still use the mailbox receipts below.
+
 ## Durable mailbox
 
 The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable. The Lead can cancel undelivered messages with a reason before retiring an unavailable member. The recovery mailbox is queued-minus-delivered-minus-cancelled.
@@ -270,6 +276,12 @@ membership(agent: Agent): TeamMembership
  */
 installLeadExecutions(provider: LeadExecutionProvider): LeadExecutionHandle
 
+/** Install the independent Host-only owner of native Lead coordination.
+ * @param coordinator - registered opaque namespace, distinct from the Task writer.
+ * @returns owned durable records, safe-point occupation and atomic seat commit.
+ */
+installLeadCoordinator(coordinator: TeamLeadCoordinator): TeamLeadCoordinatorHandle
+
 /** Read the stable Team host and committed execution independently of operation authority.
  * @param agent - exact live Team member, dormant host or marked execution.
  * @returns the current seat, optional live execution, and execution readiness.
@@ -441,6 +453,28 @@ tryMembership(agent: Agent): TeamMembership | undefined
 ```
 
 Types: [Agent](core.md) · [SessionId](core.md)
+
+Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
+
+<a id="agent-team-events"></a>
+
+### `agent-team/*` events
+
+<a id="agent-teamconfirmed--parallel"></a>
+
+#### `agent-team/confirmed` — parallel
+
+A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.
+
+```ts cordis-catalog
+/** A coordinated native Team checkpoint was durably confirmed; observers refresh runtime admission.
+ * @mode parallel
+ * @param anchor - exact stable Team journal owner after successful confirmation.
+ */
+'agent-team/confirmed'(anchor: Agent): void
+```
+
+Types: [Agent](core.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 <!-- END GENERATED cordis-surface -->

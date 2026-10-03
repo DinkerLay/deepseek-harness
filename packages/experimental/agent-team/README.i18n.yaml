@@ -45,11 +45,14 @@
   en: c08e8eb5bbac71ae
   zh: d6fb32f1243a28d6
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/source-map:
-  en: bd75edcc8e0b4ca0
-  zh: dc290fb72e81273e
+  en: d242484900e46af0
+  zh: 661870579b14591d
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/team-identity-and-roster:
   en: 121ae006bd0f9aa4
   zh: 6ab2c14c9287b42c
+/deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/host-owned-lead-coordination:
+  en: 7aa24fd1ec713bd0
+  zh: eb1fdd433b4830f2
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/durable-mailbox:
   en: b9629134c78cc33d
   zh: f564b760e7f94f05
@@ -60,8 +63,8 @@
   en: 3becd36b407aac95
   zh: c9e4895ee59696bb
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/durability-model:
-  en: 8719eaa03882d7f0
-  zh: f85f681cce90303e
+  en: 82cfd2b080b13adb
+  zh: 816fac6fa7c3e7d3
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/disposal:
   en: 3ae69e3b7905cffe
   zh: 0fb159101f6d646b
@@ -87,8 +90,8 @@
   en: ff845d434b857afe
   zh: 04479bddf7650ede
 /deepseek-ai-dsh-experimental-agent-team/known-limitations-and-deferred-work:
-  en: 777abba6e3b496eb
-  zh: 2b8cd95e73f5e369
+  en: 420cacc6025e2132
+  zh: d125ae27889d597b
 /deepseek-ai-dsh-experimental-agent-team/known-limitations-and-deferred-work/dev-note:
   en: 498e4cf9fe5741a7
   zh: 9d2bab630e655c99

@@ -9,10 +9,10 @@ import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent/types'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 
 /**
- * Pairs one `approval/asked` audit event with its `approval/decided`.
+ * Pairs one `approval/asked` with its normal decision or interrupted rejection.
  * Service-issued (one fresh id per {@link ApprovalService.request} call).
  */
 export type ApprovalRequestId = Branded<'ApprovalRequestId'>
@@ -43,12 +43,30 @@ export function ApprovalRequestId(id: string): ApprovalRequestId {
  */
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
+/** Detached Host view of one unanswered request; no Agent, callback or live signal is exposed. */
+export interface PendingApprovalRequest {
+  readonly id: ApprovalRequestId
+  readonly originSessionId: SessionId
+  readonly answererSessionId: SessionId
+  readonly askedSeq: SessionSeq
+  readonly toolName: string
+  readonly callId?: ToolCallId
+  readonly routeId?: ApprovalAnswererRouteId
+}
+
+/** Optional exact-id filters for the Host's live pending-request view. */
+export interface PendingApprovalQuery {
+  readonly originSessionId?: SessionId
+  readonly answererSessionId?: SessionId
+  readonly routeId?: ApprovalAnswererRouteId
+}
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /**
      * An approval question was put to the answerer chain — log-only audit
      * (like `hook/*`; NOT a surface event, carries no `surfaceOp`). `id` pairs
-     * it with the `approval/decided` that always follows; `toolName` is the
+     * it with its sole terminal decision or interrupted rejection; `toolName` is the
      * tool the question is about, `callId` the exact tool call when the asker
      * had one, `reason` the asker's human-readable explanation (e.g. a hook's
      * permission-decision reason).
@@ -68,6 +86,10 @@ declare module '@deepseek-ai/dsh-session/types' {
       id: ApprovalRequestId
       outcome: ApprovalOutcome
     }
+    /** Explicit Host rejection of a routed question whose original turn ended without a decision.
+     * Log-only; exactly one terminal event may settle the original request id.
+     */
+    'approval/interrupted-rejected': { readonly version: 1; readonly id: ApprovalRequestId }
   }
 }
 
@@ -83,7 +105,7 @@ export interface ApprovalRequestEvent {
   readonly reason?: string
   /** Localized presentation only; never persisted in approval audit events. */
   readonly displayReason?: { readonly en: string; readonly [locale: string]: string }
-  /** Cancellation lifetime of the pending request. */
+  /** Withdrawal lifetime of the presentation; the service owns its audited outcome. */
   readonly signal?: AbortSignal
   /** Origin of a routed request; the waterfall Agent remains its answerer. */
   readonly originSessionId?: SessionId
