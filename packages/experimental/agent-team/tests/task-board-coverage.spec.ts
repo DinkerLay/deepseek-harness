@@ -39,6 +39,62 @@ async function locked(test: Awaited<ReturnType<typeof nativeFacadeHarness>>) {
 }
 
 describe('native Task Board transaction boundaries', () => {
+  it.each(['false', 'throw'] as const)('withholds strict Task acknowledgement and self notice when checkpoint is %s', async (failure) => {
+    const test = await nativeFacadeHarness({ config: { controlledMode: facadeControlledMode } })
+    const writer = test.ctx.agentTeams.installTaskExtension(extension('facade-writer', { requireDurableAcknowledgement: true }))
+    const original = test.ctx.sessions.flush.bind(test.ctx.sessions)
+    let reject = true
+    vi.spyOn(test.ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (reject && session === test.lead.session && session.snapshotEvents().at(-1)?.type === 'team/task/transaction') {
+        if (failure === 'throw') throw new Error('checkpoint unavailable')
+        return false
+      }
+      return await original(session)
+    })
+    const notice: TeamExtensionNotice = { id: TeamMessageId('strict-self-notice'), senderId: test.lead.id,
+      senderName: 'lead', targetId: test.lead.id, contentParts: ['fact'], content: [{ type: 'text', text: 'Board changed.' }] }
+    await expect(writer.commit(test.lead, () => ({ updates: [{ previousRevision: null, task: task() }],
+      dataJson: '{}', allowLeadSelfNotices: true, notices: [notice] }))).rejects.toThrow()
+    expect(state(test).delivered).not.toContain(notice.id)
+    expect(test.lead.inbox.nextTurn.some(message => String(message.id) === String(notice.id))).toBe(false)
+    reject = false
+    await writer.commit(test.lead, () => ({ existingTaskIds: [TeamTaskId('task-1')] }))
+    expect(writes(test)).toHaveLength(1)
+    await vi.waitFor(() => { expect(state(test).delivered).toContain(notice.id) })
+    writer.dispose()
+  })
+
+  it('requires a confirmed controlled-mode checkpoint before publishing the new Lead', async () => {
+    await expect(nativeFacadeHarness({ config: { controlledMode: facadeControlledMode }, beforeLead: (ctx) => {
+      vi.spyOn(ctx.sessions, 'flush').mockResolvedValue(false)
+    } })).rejects.toMatchObject({ code: 'TEAM_INPUT_DURABILITY' })
+  })
+  it('opts into factual Lead self notices in the same Task transaction without relaxing default admission', async () => {
+    const test = await nativeFacadeHarness({ config: { controlledMode: facadeControlledMode } })
+    const writer = test.ctx.agentTeams.installTaskExtension(extension('facade-writer'))
+    const notice: TeamExtensionNotice = { id: TeamMessageId('host-action-notice'), senderId: test.lead.id,
+      senderName: 'lead', targetId: test.lead.id, contentParts: ['fact'],
+      content: [{ type: 'text', text: 'A Host operation updated the Board.' }] }
+    const plan = { updates: [{ previousRevision: null, task: task() }], dataJson: '{}', notices: [notice] }
+    await expect(writer.commit(test.lead, () => plan)).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    expect(writes(test)).toHaveLength(0)
+    await expect(writer.commit(test.lead, () => ({ ...plan, allowLeadSelfNotices: true,
+      notices: [{ ...notice, contentParts: ['sender'] }] }))).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    await expect(writer.commit(test.lead, () => ({ ...plan, allowLeadSelfNotices: true,
+      notices: [{ ...notice, contentAuthors: [{ executionId: test.lead.id, term: 1 }] }] })))
+      .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    expect(writes(test)).toHaveLength(0)
+    await writer.commit(test.lead, () => ({ ...plan, allowLeadSelfNotices: true }))
+    const event = writes(test)[0]
+    expect(event?.type).toBe('team/task/transaction')
+    expect(JSON.stringify(event)).toContain('host-action-notice')
+    expect(JSON.stringify(event)).not.toContain('allowLeadSelfNotices')
+    expect(state(test).messages[0]?.contentAuthors).toEqual([null])
+    await writer.commit(test.lead, () => ({ updates: [{ previousRevision: null, task: task('task-2') }],
+      dataJson: '{}', allowLeadSelfNotices: true }))
+    expect(state(test).messages).toHaveLength(1)
+    writer.dispose()
+  })
   it('keeps a replacement writer installed when the old disposer repeats and reads only current release hints', async () => {
     const test = await nativeFacadeHarness()
     expect(test.ctx.agentTeams.releaseHints(test.lead)).toEqual([])

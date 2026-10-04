@@ -5,7 +5,7 @@ export const inject = ['agents', 'agentTeams', 'agentPresets', 'sessionProjectio
 export async function apply(ctx) {
   const modules = await Promise.all(['@deepseek-ai/dsh-session', '@deepseek-ai/dsh-experimental-agent-team',
     '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-tools'].map(name => ctx.loader.import(name)))
-  const [{ SessionId }, { TeamLeadOperationId }, { createUserMessage }, { defineTool }] = modules
+  const [{ SessionId }, { TeamLeadOperationId, TeamMessageId, TeamTaskId }, { createUserMessage }, { defineTool }] = modules
   const presets = await Promise.all([
     ctx.agentPresets.register({ id: 'snapshot-control-lead', plugins: [] }),
     ctx.agentPresets.register({ id: 'snapshot-control-worker', plugins: [] }),
@@ -19,6 +19,8 @@ export async function apply(ctx) {
   const lifetime = new AbortController()
   const markerEntered = Promise.withResolvers()
   const noticeDelivered = Promise.withResolvers()
+  const selfNoticeDelivered = Promise.withResolvers()
+  const selfNoticeId = TeamMessageId('snapshot-control-self-notice')
   const owner = ctx.agentTeams.installLeadExecutions({
     resolveAnchor: async id => {
       const live = ctx.agents.get(id)
@@ -30,6 +32,7 @@ export async function apply(ctx) {
   const coordinator = ctx.agentTeams.installLeadCoordinator({ id: 'snapshot-control-coordinator' })
   const unused = async () => { throw new Error('Lead-control snapshot does not mutate Tasks') }
   const writer = ctx.agentTeams.installTaskExtension({ id: 'snapshot-task-writer',
+    requireDurableAcknowledgement: true,
     validateMemberGroup: (_caller, group) => { if (group !== 'qa-control') throw new Error('snapshot member requires its QA group') },
     planLeadRelease: () => '{}', create: unused, update: unused,
   })
@@ -69,7 +72,12 @@ export async function apply(ctx) {
       } }))
   }, { global: true })
   ctx.on('session/event', (session, event) => {
-    if (session !== anchor?.session || event.type !== 'team/message/lead-delivered' || !worker) return
+    if (session !== anchor?.session || event.type !== 'team/message/lead-delivered') return
+    if (event.data.messageId === selfNoticeId) {
+      selfNoticeDelivered.resolve()
+      return
+    }
+    if (!worker) return
     const state = ctx.sessionProjections.stateOf(session, 'agentTeam')
     const message = state.messages.find(item => item.id === event.data.messageId)
     const source = message?.transfer?.input.message.source
@@ -108,6 +116,48 @@ export async function apply(ctx) {
       content: [{ type: 'text', text }] }), target: 'next-turn', wakeup: true })
     await actor.whenIdle()
   }
+  async function turnWithSelfNotice(actor, text, signal) {
+    const release = Promise.withResolvers()
+    const maintenance = actor.runMaintenance(() => release.promise)
+    const abort = () => { release.resolve() }
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await writer.commit(actor, snapshot => ({ updates: [{ previousRevision: null,
+        task: { id: TeamTaskId(`task-${snapshot.nextTaskNumber}`), revision: 1,
+          subject: 'Inert QA Board fact', description: 'Native notification fixture; no external work.',
+          status: 'pending', blockedBy: [], writeScopes: [] } }],
+        dataJson: JSON.stringify({ kind: 'snapshot-self-notice', term: ctx.agentTeams.membership(actor).term }), allowLeadSelfNotices: true,
+        notices: [{ id: selfNoticeId, senderId: actor.id, senderName: 'lead', targetId: anchor.id,
+          contentParts: ['fact'], content: [{ type: 'text', text: 'An inert QA Task was recorded on the Board.' }] }] }))
+      const delivered = Promise.withResolvers()
+      const stopped = () => { delivered.reject(signal.reason) }
+      signal.addEventListener('abort', stopped, { once: true })
+      try {
+        signal.throwIfAborted()
+        selfNoticeDelivered.promise.then(delivered.resolve, delivered.reject)
+        await delivered.promise
+      } finally { signal.removeEventListener('abort', stopped) }
+      await ctx.agents.receiveInput(actor, { message: createUserMessage({ source: { kind: 'user' },
+        content: [{ type: 'text', text }] }), target: 'next-turn', wakeup: true })
+    } finally {
+      signal.removeEventListener('abort', abort)
+      release.resolve()
+      await maintenance
+    }
+    await actor.whenIdle()
+    const inputs = actor.session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'team-message' && event.data.source.messageId === selfNoticeId)
+    if (inputs.length !== 1 || inputs[0].data.source.contentParts.some(part => part !== 'fact')
+      || inputs[0].data.source.contentAuthors.some(author => author !== null)) {
+      throw new Error('self notice was duplicated or presented as Lead-authored instructions')
+    }
+    const receipts = anchor.session.snapshotEvents().filter(event => event.type === 'team/message/lead-delivered'
+      && event.data.messageId === selfNoticeId)
+    if (receipts.length !== 1) throw new Error('self notice has no unique native delivery receipt')
+    const before = anchor.session.snapshotEvents().length
+    const found = await writer.read(anchor, snapshot => snapshot.tasks.find(task => task.id === 'task-1'))
+    if (!found || anchor.session.snapshotEvents().length !== before) throw new Error('strict read changed its confirmed Task journal')
+  }
   function waitResult(actor) {
     const event = actor.session.snapshotEvents().find(item => item.type === 'tool/result'
       && item.data.message.source.callId === `control-wait-${ctx.agentTeams.membership(actor).term}`)
@@ -141,7 +191,7 @@ export async function apply(ctx) {
       await ctx.sessions.flush(anchor.session)
       await second.whenIdle()
       const third = await switchLead(3, signal)
-      await turn(third, 'QA: wait while every teammate is inactive')
+      await turnWithSelfNotice(third, 'QA: wait while every teammate is inactive', signal)
       waitResult(third)
       await coordinator.record(anchor, { operationId: TeamLeadOperationId('snapshot-control-3'), previousTerm: 2,
         recordId: 'control-complete', dataJson: JSON.stringify({ inactiveTerms: [2, 3], pendingRetained,

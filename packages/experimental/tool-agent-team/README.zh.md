@@ -137,7 +137,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与协作工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务。登记不请求模型，首次 mailbox 输入携带成员名字、分组、仅联系 Lead 的规则，以及只在获指派的进行中 Task 上工作的要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与协作工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务。登记不请求模型，首次 mailbox 输入携带成员名字、分组、仅联系 Lead 的规则，以及只在获指派的进行中 Task 上工作的要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。 受控自主招募指引将执行人选择与 Task 追踪分开：简单工作由 Lead 自己做，不代表可以豁免产品的 Task 规则。哪些请求需要交付记录由产品决定；本包不分类用户意图，也不拦截普通工具。
 
 #### Token 影响
 

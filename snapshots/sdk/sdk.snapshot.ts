@@ -1111,6 +1111,33 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
           permissionRevision: 'snapshot-revision', maxOrdinaryMessageBytes: 4096,
         } })
         expect(anchorRecords.filter(event => event.type === 'team/lead/transaction')).toHaveLength(2)
+        const taskEffects = anchorRecords.filter(event => event.type === 'team/task/transaction')
+        expect(taskEffects).toHaveLength(1)
+        const effect = taskEffects[0]!.data as JsonObject
+        expect(effect.updates).toEqual([{ previousRevision: null, task: { id: 'task-1', revision: 1,
+          subject: 'Inert QA Board fact', description: 'Native notification fixture; no external work.',
+          status: 'pending', blockedBy: [], writeScopes: [] } }])
+        expect(effect.extension).toEqual({ id: 'snapshot-task-writer',
+          dataJson: JSON.stringify({ kind: 'snapshot-self-notice', term: 3 }) })
+        expect(effect).not.toHaveProperty('allowLeadSelfNotices')
+        expect(effect).not.toHaveProperty('requireDurableAcknowledgement')
+        const notices = effect.notices as JsonObject[]
+        expect(notices).toHaveLength(1)
+        const selfNotice = notices[0]!
+        expect(selfNotice).toMatchObject({ senderId: third!.header.id, senderName: 'lead',
+          targetId: anchor!.header.id, senderTerm: 3, contentParts: ['fact'], contentAuthors: [null] })
+        const selfDeliveries = anchorRecords.filter(event => event.type === 'team/message/lead-delivered'
+          && (event.data as JsonObject).messageId === selfNotice.id)
+        expect(selfDeliveries).toHaveLength(1)
+        expect(selfDeliveries[0]!.data).toMatchObject({ targetId: anchor!.header.id, executionId: third!.header.id, term: 3 })
+        const selfInputs = records(third!.content).filter(event => event.type === 'user/message'
+          && ((event.data as JsonObject).source as JsonObject).kind === 'team-message'
+          && ((event.data as JsonObject).source as JsonObject).messageId === selfNotice.id)
+        expect(selfInputs).toHaveLength(1)
+        const selfInput = selfInputs[0]!.data as JsonObject
+        const selfSource = selfInput.source as JsonObject
+        expect(selfSource.contentParts).toEqual((selfInput.content as JsonObject[]).map(() => 'fact'))
+        expect(selfSource.contentAuthors).toEqual((selfInput.content as JsonObject[]).map(() => null))
         for (const [term, actor] of [[2, second], [3, third]] as const) {
           const actorRecords = records(actor!.content)
           expect(actor!.header.origin).toBeUndefined()

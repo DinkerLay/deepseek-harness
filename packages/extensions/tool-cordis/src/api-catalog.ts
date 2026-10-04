@@ -8037,7 +8037,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly requireDurableAcknowledgement?: boolean;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
@@ -8077,7 +8077,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionWritePlan',
-    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamExtensionNotice[];\n}',
+    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly allowLeadSelfNotices?: boolean;\n}',
   },
   {
     name: 'TeamTaskView',

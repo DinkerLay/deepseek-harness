@@ -545,7 +545,7 @@ export class TeamService extends Service {
       if (state.members.length > 0 || state.tasks.length > 0 || state.messages.length > 0) return
       await this.journal.appendAndFlush(root, 'team/mode', {
         version: 1, teamId: TeamId(root.id), mode: configured,
-      })
+      }, true)
     })
   }
 

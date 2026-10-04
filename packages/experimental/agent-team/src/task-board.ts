@@ -59,6 +59,11 @@ export class TeamTaskBoard {
     private readonly anchorForRead: (agent: Agent) => Agent,
   ) {}
 
+  /** Check the currently installed writer after an asynchronous checkpoint. */
+  private isCurrentWriter(writer: TeamTaskExtension): boolean {
+    return this.extension?.writer === writer
+  }
+
   /**
    * Install one optional Task writer without replacing the native Team service.
    * @param writer - product create/update implementation and stable event identifier.
@@ -69,13 +74,19 @@ export class TeamTaskBoard {
     if (this.extension !== undefined) throw new TeamError('Team Task extension is already installed', 'TEAM_TASK_EXTENSION_CONFLICT')
     const id = requiredText(writer.id, 'extension id', 200)
     const handle: TeamTaskExtensionHandle = {
-      read: async (anchor, read) => await this.journal.transact(anchor.id, () => {
+      read: async (anchor, read) => await this.journal.transact(anchor.id, async () => {
         if (this.isDisposed() || this.extension?.writer !== writer || this.anchorForRead(anchor) !== anchor) {
           throw new TeamError('Task reader no longer owns the live Team anchor', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
         const state = this.journal.state(anchor)
         if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== id) {
           throw new TeamError('Task reader does not match the bound writer', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+        if (writer.requireDurableAcknowledgement) {
+          await this.journal.confirmPending(anchor)
+          if (this.isDisposed() || !this.isCurrentWriter(writer) || this.anchorForRead(anchor) !== anchor) {
+            throw new TeamError('Task reader changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+          }
         }
         return Promise.resolve(read(this.snapshot(state)))
       }),
@@ -399,6 +410,12 @@ export class TeamTaskBoard {
       if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
         throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
+      if (writer.requireDurableAcknowledgement) {
+        await this.journal.confirmPending(root)
+        if (this.isDisposed() || !this.isCurrentWriter(writer)) {
+          throw new TeamError('Task writer changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+      }
       const plan = build({
         tasks: structuredClone(state.tasks),
         members: structuredClone(state.members),
@@ -462,12 +479,17 @@ export class TeamTaskBoard {
           throw new TeamError(`Task "${update.task.id}" owner is not active`, 'TEAM_MEMBER_NOT_FOUND')
         }
       }
-      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [])
+      if (plan.allowLeadSelfNotices && (plan.notices ?? []).some(notice => notice.targetId === root.id
+        && (notice.contentParts?.length !== notice.content.length || notice.contentParts.some(part => part !== 'fact')
+          || notice.contentAuthors?.some(author => author !== null)))) {
+        throw new TeamError('Lead self notices must contain only attributed facts', 'TEAM_INVALID_ARGUMENT')
+      }
+      const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [], plan.allowLeadSelfNotices)
       await this.journal.appendAndFlush(root, 'team/task/transaction', {
         version: 1, teamId: TeamId(root.id), updates,
         extension: { id: extensionId, dataJson: plan.dataJson },
         ...notices.length === 0 ? {} : { notices },
-      })
+      }, writer.requireDurableAcknowledgement)
       const committed = this.journal.state(root)
       return { views: updates.map(update => projectTaskView(committed, update.task)), hasNotices: notices.length > 0 }
     })
@@ -493,6 +515,12 @@ export class TeamTaskBoard {
       const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
         throw new TeamError('controlled Task writer does not match the persisted mode', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      }
+      if (writer.requireDurableAcknowledgement) {
+        await this.journal.confirmPending(root)
+        if (this.isDisposed() || !this.isCurrentWriter(writer)) {
+          throw new TeamError('Task writer changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
       }
       const records = state.extensionRecords.filter(record => record.writerId === extensionId)
         .map(({ recordId, dataJson }) => ({ recordId, dataJson }))
@@ -523,7 +551,7 @@ export class TeamTaskBoard {
         version: 1, teamId: TeamId(root.id), extension: { id: extensionId, recordId, dataJson: plan.dataJson },
         ...notices.length === 0 ? {} : { notices },
         ...plan.affectsComposition === true ? { affectsComposition: true as const } : {},
-      })
+      }, writer.requireDurableAcknowledgement)
       return { recordId, committed: true, hasNotices: notices.length > 0 }
     })
     if (result.hasNotices) this.dispatchNotices(root)

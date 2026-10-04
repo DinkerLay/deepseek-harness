@@ -196,6 +196,8 @@ export interface TeamTaskTransactionWritePlan {
   readonly dataJson: string
   /** Durable Team messages enqueued atomically with the Task updates. */
   readonly notices?: readonly TeamExtensionNotice[]
+  /** Host-only opt-in for factual notices to the Lead itself; omitted preserves normal self-message rejection. */
+  readonly allowLeadSelfNotices?: boolean
 }
 
 /** Return an earlier committed Task result without appending an event. */

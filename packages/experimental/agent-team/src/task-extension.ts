@@ -46,6 +46,10 @@ export interface TeamTaskExtensionHandle {
 export interface TeamTaskExtension {
   /** Stable identifier stored with each extension-owned Task event. */
   readonly id: string
+  /** Require an explicitly successful checkpoint before returning effects or delivering notices.
+   * Pending same-process retries and reads confirm that checkpoint first; omission preserves official behavior.
+   */
+  readonly requireDurableAcknowledgement?: boolean
   /** Validate prepared Lead releases and generate this writer's atomic product audit.
    * @param anchor - stable Team journal owner, not a model author.
    * @param snapshot - detached native state while the Team transaction is locked.

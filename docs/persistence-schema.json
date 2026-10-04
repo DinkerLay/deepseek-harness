@@ -31181,7 +31181,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMessageSource"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:390"
+        "packages/experimental/agent-team/src/types.ts:392"
       ]
     },
     {
@@ -31289,7 +31289,7 @@
       "digest": "0ab879d862527f6da3fcf9c48c0152ba410628b0460300a159676b27352cf70d",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:307"
+        "packages/experimental/agent-team/src/types.ts:309"
       ]
     },
     {
@@ -31319,7 +31319,7 @@
       "digest": "0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:575"
+        "packages/experimental/agent-team/src/types.ts:577"
       ]
     },
     {
@@ -31734,7 +31734,7 @@
       "digest": "205bcab5974e82beef9a7333952b23cc1f16432c60e6cbc1fe3e3df435ace94e",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:312"
+        "packages/experimental/agent-team/src/types.ts:314"
       ]
     },
     {
@@ -31749,7 +31749,7 @@
       "names": [],
       "sources": [
         "packages/experimental/agent-team/src/lead-seat.ts:31",
-        "packages/experimental/agent-team/src/types.ts:552"
+        "packages/experimental/agent-team/src/types.ts:554"
       ]
     },
     {
@@ -32057,7 +32057,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamInputTransfer"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:339"
+        "packages/experimental/agent-team/src/types.ts:341"
       ]
     },
     {
@@ -32079,7 +32079,7 @@
       "digest": "3731e2ceb804ee350886763f4573df29cfd3509e154de57b56821fdc54aea7d2",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:569"
+        "packages/experimental/agent-team/src/types.ts:571"
       ]
     },
     {
@@ -32193,7 +32193,7 @@
       ],
       "sources": [
         "packages/core/tools/src/index.ts:705",
-        "packages/experimental/agent-team/src/types.ts:403"
+        "packages/experimental/agent-team/src/types.ts:405"
       ]
     },
     {
@@ -32308,7 +32308,7 @@
       "digest": "46c5de4cd527104160dcedf8650e91010c1cdbf978e57365ab9e5556a03826e7",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:544"
+        "packages/experimental/agent-team/src/types.ts:546"
       ]
     },
     {
@@ -32629,7 +32629,7 @@
       "digest": "562df237597939f185c89b26212c4eab4024832edf34fa6983ce24c2294a8eb5",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:300"
+        "packages/experimental/agent-team/src/types.ts:302"
       ]
     },
     {
@@ -32887,7 +32887,7 @@
       "digest": "6667a10ec9f922fbba12770c9f7fc9b6bcd7b1ecfdfec3dfbc7da660c0cb96bb",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:571"
+        "packages/experimental/agent-team/src/types.ts:573"
       ]
     },
     {
@@ -33001,7 +33001,7 @@
       "digest": "6bdbe0bbe6732d44821b1a1ba6cf0f86ec0c95ee2f57cbfbb9b572fbb11ab163",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:559"
+        "packages/experimental/agent-team/src/types.ts:561"
       ]
     },
     {
@@ -33037,7 +33037,7 @@
       "digest": "6dfc841b1dd68be012d0c4c9b296cc69305eb7d9baab66884646f1be01b06472",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:311"
+        "packages/experimental/agent-team/src/types.ts:313"
       ]
     },
     {
@@ -33185,7 +33185,7 @@
       "digest": "76cffff3c77c204a82188bdbb3c21fbf116c4f7e65951b7048d8d7750429dec3",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:308"
+        "packages/experimental/agent-team/src/types.ts:310"
       ]
     },
     {
@@ -33272,7 +33272,7 @@
       "digest": "7e78ed670ff281b5b68829e83852302a6f31fc81433e985da3746f25dfab1107",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:582"
+        "packages/experimental/agent-team/src/types.ts:584"
       ]
     },
     {
@@ -33317,7 +33317,7 @@
       "digest": "8059c0f39fe32bc67540e9e8e78d57f63b77aa21a68edd0c374f2f0247d43a74",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:309"
+        "packages/experimental/agent-team/src/types.ts:311"
       ]
     },
     {
@@ -33515,7 +33515,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamControlledMode"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:411"
+        "packages/experimental/agent-team/src/types.ts:413"
       ]
     },
     {
@@ -33620,7 +33620,7 @@
       "digest": "903d53fef145fc8097c1c79a50e6ee52bffaf38c38fa895f8830fd4c3a526105",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:566"
+        "packages/experimental/agent-team/src/types.ts:568"
       ]
     },
     {
@@ -33634,7 +33634,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamContentAuthor"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:333"
+        "packages/experimental/agent-team/src/types.ts:335"
       ]
     },
     {
@@ -33786,7 +33786,7 @@
       "digest": "9a12cff08bd51e627f69c220087a23941e43300c241b5a50c4ef644293758ebc",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:540"
+        "packages/experimental/agent-team/src/types.ts:542"
       ]
     },
     {
@@ -33818,7 +33818,7 @@
       "digest": "9aaf258369b3cfc4272b333930de42a621ffba217f4dcdb4f7cc7606c3cef1b4",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:310"
+        "packages/experimental/agent-team/src/types.ts:312"
       ]
     },
     {
@@ -33847,7 +33847,7 @@
       "digest": "9bec64e7e5cf80f0c304f570c8e9dcb10d0e0d58ca28f07e8790e42761bbba66",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:556"
+        "packages/experimental/agent-team/src/types.ts:558"
       ]
     },
     {
@@ -34213,7 +34213,7 @@
       "digest": "b1ebd5cda47d90d980bb05bffc3f970c51537b9aff15b3bc3d639811727741b1",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:542"
+        "packages/experimental/agent-team/src/types.ts:544"
       ]
     },
     {
@@ -34427,7 +34427,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamCompositionTransition"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:299"
+        "packages/experimental/agent-team/src/types.ts:301"
       ]
     },
     {
@@ -34532,7 +34532,7 @@
       "digest": "c1fea381c846226e8a18469900422cbaff849f80fda62e2be828369f5c3f957b",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:538"
+        "packages/experimental/agent-team/src/types.ts:540"
       ]
     },
     {
@@ -34658,7 +34658,7 @@
       "digest": "cbdb068a2440b927a6111309bb9cb8b93805b402c093e88519013d6071c0402d",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:548"
+        "packages/experimental/agent-team/src/types.ts:550"
       ]
     },
     {
@@ -34782,7 +34782,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamPeerMessageSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:374"
+        "packages/experimental/agent-team/src/types.ts:376"
       ]
     },
     {
@@ -34851,7 +34851,7 @@
       "digest": "de793be4f7d671ed79c4b8c7ef9747a20480bfb8a3d1e968b5782ce0d5ac609b",
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:546"
+        "packages/experimental/agent-team/src/types.ts:548"
       ]
     },
     {

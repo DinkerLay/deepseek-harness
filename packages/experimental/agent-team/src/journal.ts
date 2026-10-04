@@ -87,6 +87,13 @@ export class TeamJournal {
     })
   }
 
+  /** Confirm a previously unacknowledged event without emitting activity for an unchanged journal.
+   * @param root - exact stable journal owner, already admitted by the calling capability.
+   */
+  async confirmPending(root: Agent): Promise<void> {
+    if (this.unconfirmed.has(root.id)) await this.confirm(root)
+  }
+
   /** Read the same-process durability barrier without treating a raw append as acknowledgement.
    * @param root - stable Team journal owner.
    * @returns whether coordinated events have a confirmed checkpoint or came from durable recovery.

@@ -232,6 +232,8 @@ describe('dsh-tool-team', () => {
       { controlledMode: mode })
     const prompt = renderPrompt(await assembly(product.ctx, product.lead))
     expect(prompt).toContain('recruit teammates without waiting for the user to mention Agent Team')
+    expect(prompt).toContain('This decides who executes, not whether a deliverable needs a Task')
+    expect(prompt).not.toContain('Answer simple requests yourself.')
     expect(prompt).toContain('shared Task Board is the authoritative collaboration channel')
     const controlledExplicit = await setup([], false, { controlledTasks: true }, [], { controlledMode: mode })
     expect(renderPrompt(await assembly(controlledExplicit.ctx, controlledExplicit.lead)))
