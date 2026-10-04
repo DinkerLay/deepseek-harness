@@ -529,7 +529,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ComposedProps',
-    declaration: 'export type ComposedProps<K extends keyof SlotMap & string, EntryKey extends EntryKeyOf<K>, S extends keyof SlotMap & string, H, I extends object, M = never, N = undefined> = PropsRuntime<K, EntryKey> & PropsRenderSlots<S> & PropsRenderFactories & PropsStore<H> & InjectFace<I> & MatchedShare<SlotMap[K], M> & PropsLocale<N>;',
+    declaration: 'export type ComposedProps<K extends keyof SlotMap & string, EntryKey extends EntryKeyOf<K>, S extends keyof SlotMap & string, H, I extends object, M = never, N = undefined> = PropsRuntime<K, EntryKey> & PropsRenderSlots<S> & PropsRenderFactories<ScopeOf<K> extends \'root\' ? false : true> & PropsStore<H> & InjectFace<I> & MatchedShare<SlotMap[K], M> & PropsLocale<N>;',
   },
   {
     name: 'ConnectionGeneration',
@@ -769,7 +769,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PropsRenderFactories',
-    declaration: 'export interface PropsRenderFactories {\n    renderFactorySlot: RenderFactorySlot;\n}',
+    declaration: 'export type PropsRenderFactories<WithSessionProvider extends boolean = false> = {\n    renderFactorySlot: RenderFactorySlot;\n} & (WithSessionProvider extends true ? {\n    SessionProvider: SessionProviderComponent;\n} : object);',
   },
   {
     name: 'PropsRenderSlots',
@@ -833,7 +833,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionAreaProps',
-    declaration: 'export interface SessionAreaProps {\n    readonly session?: SlotScopeTargetMap[keyof SlotScopeTargetMap & \'session\'] | undefined;\n    empty?: (() => ReactNode) | undefined;\n    children: ReactNode;\n}',
+    declaration: 'export interface SessionAreaProps {\n    readonly session?: SlotScopeTargetMap[keyof SlotScopeTargetMap & \'session\'] | undefined;\n    readonly presentationOptions?: SessionPresentationOptions | undefined;\n    empty?: (() => ReactNode) | undefined;\n    children: ReactNode;\n}',
   },
   {
     name: 'SessionAssistantSettlementEntry',
@@ -872,6 +872,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionMaybeStandardProps {\n}',
   },
   {
+    name: 'SessionPresentationOptions',
+    declaration: 'export interface SessionPresentationOptions {\n    readonly addressSessionId?: SessionIdOf | undefined;\n    readonly readOnly?: boolean | undefined;\n}',
+  },
+  {
     name: 'SessionProviderComponent',
     declaration: 'export type SessionProviderComponent = (props: SessionAreaProps) => ReactNode;',
   },
@@ -905,7 +909,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionSnapshot',
-    declaration: 'export interface SessionSnapshot {\n    readonly sessionId: SessionId;\n    readonly pendingSubmissions: readonly PendingSubmission[];\n    readonly running: boolean;\n    readonly subagent: {\n        readonly address: SubagentAddress;\n        readonly parentAvailable?: boolean;\n    } | null;\n    readonly removed: boolean;\n    readonly openState: OpenState;\n    readonly openError: RemoteFailure | null;\n    readonly hasMore: boolean;\n    readonly loadingOlder: boolean;\n    readonly promptError: PromptError | null;\n    readonly blank: boolean;\n    readonly lastAgentError: string | null;\n    readonly promptAttempted: boolean;\n    readonly awaitingFirstTurn: boolean;\n}',
+    declaration: 'export interface SessionSnapshot {\n    readonly sessionId: SessionId;\n    readonly readOnly?: true;\n    readonly pendingSubmissions: readonly PendingSubmission[];\n    readonly running: boolean;\n    readonly subagent: {\n        readonly address: SubagentAddress;\n        readonly parentAvailable?: boolean;\n    } | null;\n    readonly removed: boolean;\n    readonly openState: OpenState;\n    readonly openError: RemoteFailure | null;\n    readonly hasMore: boolean;\n    readonly loadingOlder: boolean;\n    readonly promptError: PromptError | null;\n    readonly blank: boolean;\n    readonly lastAgentError: string | null;\n    readonly promptAttempted: boolean;\n    readonly awaitingFirstTurn: boolean;\n}',
   },
   {
     name: 'SessionStandardProps',
@@ -913,7 +917,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTarget',
-    declaration: 'export type SessionTarget = SessionId | SubagentAddress;',
+    declaration: 'export type SessionTarget = SessionId | SubagentAddress | {\n    readonly sessionId: SessionId;\n    readonly mode: \'read-only\';\n};',
   },
   {
     name: 'SlotComponent',

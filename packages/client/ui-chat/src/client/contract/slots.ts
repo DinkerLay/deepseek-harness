@@ -267,7 +267,7 @@ export interface ChatViewInjected {
 /** Full Chat view props. */
 export type ChatViewSlotProps =
   PropsRuntime<'conversation.view'>
-  & PropsRenderSlots<'conversation.chat.node' | 'conversation.message.images'>
+  & PropsRenderSlots<'conversation.chat.node' | 'conversation.chat.node.presentation' | 'conversation.message.images'>
   & PropsStore<ChatStore>
   & InjectFace<ChatViewInjected>
   & PropsLocale<'chat'>
@@ -299,6 +299,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       keyProps: { [Kind in ChatNodeKind]: { node: ChatNode<Kind> } }
       hookContext: ChatNodeHookContext
       inject: ChatNodeInjected
+    }
+    /** Exact-node presentation replacements; all-decline retains the keyed renderer. */
+    'conversation.chat.node.presentation': {
+      kind: 'chain'
+      scope: 'session'
+      owner: { readonly node: ChatNode }
     }
     /**
      * Renderer for one consecutive group of durable message images. The owner

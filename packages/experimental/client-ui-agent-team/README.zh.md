@@ -29,6 +29,10 @@ kind: "package-reference"
 
 ### 检查并导航 roster
 
+显式 `sessionAddressId` 可把 Team 地址与当前查看的普通执行分开。面板读取该地址的 Team 投影，打开名册成员时保留它。未指定独立地址时，普通 Lead 和直接父子 subagent 的原行为不变；不会给普通执行伪造子 Agent 身份。
+
+原生投影带有已提交的 Lead 席位时，Lead 行使用该席位的 Preset，并从其实际执行读取模型、运行状态及“当前会话”判断。名册身份与导航仍使用稳定的 Team 地址。冷执行缺少模型元数据时，不借用休眠宿主的模型；没有已提交席位的 Team 保留原查询方式。
+
 面板从共享 Session store 展示 Lead Session 的 roster 与任务板。面板保持打开时，任务和成员更新会直接出现。打开面板不发起投影请求。会话或 Session 列表正在加载时，面板显示加载提示；加载结束后仍无 Team 值时，显示不可用提示。
 
 Roster 行展示持久名称与阶段；Lead 保持原生名称 `lead`，可选的成员元数据 slot 可另行展示实际 Agent Preset。只要有成员带持久组名，原生 roster 就按组名放置成员卡并保持 Lead 在最前；没有组名的官方 Team 仍显示原来的平铺列表。provisioning 和 running 成员使用共享 ongoing loading，inactive 成员使用人物图标，failed 成员使用 error 红点。实时 Session 状态提供运行活动；共享 `modelSelection` 投影在可用时提供模型。当前会话带有“当前会话”标签且不可选择。在 teammate 会话中选择 Lead 会直接打开 Lead Session。选择 active teammate 会打开其普通 continuable 子会话地址。Host 在打开历史时校验 parent、child 与 mode；后续人类提示词使用同一 addressed-subagent 会话。
@@ -51,7 +55,7 @@ Roster 行展示持久名称与阶段；Lead 保持原生名称 `lead`，可选�
 
 Client export 通过 Cordis effect 注册 locale dictionary 和一个带六个可选子 slot（成员元数据、任务卡片操作、任务标题操作、图视图、任务区内容、面板页头操作）的 conversation-header slot；它不挂载任何 Remote namespace。Dispose plugin fiber 会移除这些 registration。
 
-面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。唯一的注入回调通过当前与目标 Session 的 id 打开 roster Session。切换会话会关闭面板并清除导航失败。
+面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一行：Team 地址来自显式地址或当前 Session 的 subagent parent，Team 视图来自该地址的 `agentTeam` 投影，已提交的原生 Lead 席位选择运行状态与模型的执行查询，其余成员继续按自己的身份查询。成员活动以列表摘要为后备；每个 roster 行只选择自己的运行状态。唯一的注入回调使用当前和目标 Session id 及可选的稳定地址打开 roster Session。切换会话会关闭面板并清除导航失败。
 
 | 文件 | 职责 |
 |---|---|

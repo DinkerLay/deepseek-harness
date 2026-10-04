@@ -27,6 +27,7 @@ import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/c
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import { MessageId } from '@deepseek-ai/dsh-llm'
 import { EMPTY_CONVERSATION_SNAPSHOT } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
@@ -323,7 +324,7 @@ function makeHarness(
   }> = []
   const renderCommandSlot = ((_key: string, _owner: object, opts?: { fallback?: React.ReactNode }) =>
     opts?.fallback ?? null) as React.ComponentProps<typeof CommandNodeView>['renderSlot']
-  const renderTurnTailSlot = (() => null) as
+  let renderTurnTailSlot = (() => null) as
     React.ComponentProps<typeof TurnTailNodeView>['renderSlot']
   let nodeSlotOverride: React.ComponentProps<typeof ChatNodeSeat>['renderSlot'] | undefined
   const renderNodeSlot = ((key: string, owner: object, opts?: {
@@ -447,6 +448,7 @@ function makeHarness(
     useTurnJump: bindSnapshotSelector(turnJump),
     consumeTurnJump,
     renderSlot,
+    renderSlotChain: (_key, _owner, options) => options?.fallback ?? null,
     SessionProvider: SessionProviderStub,
     inspectCall: (callId: string) => { openView('trajectory', callId) },
     viewRequest: null,
@@ -495,6 +497,9 @@ function makeHarness(
     setTranscriptView: (mode: TranscriptViewMode) => { transcriptView.set(mode) },
     setNodeRenderer: (renderer: React.ComponentProps<typeof ChatNodeSeat>['renderSlot']) => {
       nodeSlotOverride = renderer
+    },
+    setTailRenderer: (renderer: React.ComponentProps<typeof TurnTailNodeView>['renderSlot']) => {
+      renderTurnTailSlot = renderer
     },
   }
 }
@@ -3108,6 +3113,30 @@ describe('ChatView', () => {
     }, { running: true })
     const view = render(<h.ChatView {...h.props} />)
     expect(view.queryByText(/首 token|tok\/s/)).toBeNull()
+  })
+
+  it('keeps copy in readonly history and restores branch and mutation entries only for a writable view', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'prompt'), { ...assistant(2, 'Readonly answer'), messageId: MessageId('settled-answer') }],
+      turnEnds: new Map([[1, 3]]),
+    })
+    h.setTailRenderer(key => key === 'conversation.chat.assistant-actions'
+      ? <button>Mutate assistant</button> : null)
+    h.props.sessionReadOnly = true
+    const view = render(<h.ChatView {...h.props} />)
+    const tail = within(view.container.querySelector<HTMLElement>('[data-turn-tail="1"]')!)
+    expect(tail.getByRole('button', { name: '复制' })).toBeTruthy()
+    expect(tail.queryByRole('button', { name: '在新对话中分支' })).toBeNull()
+    expect(tail.queryByRole('button', { name: 'Mutate assistant' })).toBeNull()
+    expect(h.forkAt).not.toHaveBeenCalled()
+    view.unmount()
+    h.props.sessionReadOnly = false
+    const writable = render(<h.ChatView {...h.props} />)
+    const writableTail = within(writable.container.querySelector<HTMLElement>('[data-turn-tail="1"]')!)
+    expect(writableTail.getByRole('button', { name: '复制' })).toBeTruthy()
+    expect(writableTail.getByRole('button', { name: 'Mutate assistant' })).toBeTruthy()
+    fireEvent.click(writableTail.getByRole('button', { name: '在新对话中分支' }))
+    expect(h.forkAt).toHaveBeenCalledWith(3)
   })
 
   it('keeps only the latest turn tail actions permanently visible', () => {

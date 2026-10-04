@@ -65,7 +65,7 @@ interface TeamControlledMode {
 
 ## Lead 协调
 
-独立的 `TeamLeadCoordinatorHandle` 拥有原生过渡记录，但不获得模型 Lead 身份。同步记录规划器与 Profile 应用共用 Team 锁，并在写入事件前捕获产品事实。可选的 `leadTransition` 元数据控制冻结写入和就绪；产品数据仍保存在协调器自己的扩展命名空间中。现任 Lead 冻结时，成员仍可提交工作。
+独立的 `TeamLeadCoordinatorHandle` 拥有原生过渡记录，但不获得模型 Lead 身份。同步记录规划器与 Profile 应用共用 Team 锁，并在写入事件前捕获产品事实。只读 `measureMaterial(anchor, notice)` 返回 `TeamLeadMaterialSize`，其中 `bytes` 是包含发送者封装的收件箱 JSON 完整字节数，`maxBytes` 是部署上限；它校验事实资料的发送者及目标所有权，但即使内容超长也不写入或预留容量。原生记录与提交通道独立重核限额。可选的 `leadTransition` 元数据控制冻结写入和就绪；产品数据仍保存在协调器自己的扩展命名空间中。现任 Lead 冻结时，成员仍可提交工作。
 
 `runAtSafePoint` 在等待空闲之前检查产品阻塞项，通过维护任务占住实际现任执行后再次检查。维护回调结束时，其 `TeamLeadSafePointHandle` 即失效；恢复后仅有持久安全点记录，不代表已重新获得实时占用。绑定的 Task 写入方生成自己的释放审计，原子 Lead 事务同时变更席位、全部已准备的 Lead Task 修订、排队材料和独立协调器记录。重试比较已记录的完整效果，并要求持久刷新成功；来源保留与就绪仍使用下方的邮箱回执。
 

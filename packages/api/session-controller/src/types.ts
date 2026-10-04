@@ -486,6 +486,8 @@ export interface SessionPageRequest {
 /** One live event request for a durable Session address. */
 export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {
   readonly address: SessionAddress
+  /** Read stored history and later records without promoting a cold ordinary Session to an Agent. */
+  readonly readOnly?: true
   /** Include process-local assistant presentation frames for the Web client. */
   readonly assistantStream?: true
 }

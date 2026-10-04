@@ -14,6 +14,13 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
 
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionMap {
+    /** Host-owned navigation presentation; absence leaves ordinary rows unchanged. */
+    navigationPresentation: { readonly hidden: boolean } | null
+  }
+}
+
 /** Group key for Sessions outside every Workspace. */
 export const UNGROUPED_KEY = ''
 
@@ -242,6 +249,7 @@ function sessionVisible(
   archivedFilter: ArchivedFilter,
 ): boolean {
   if (session.origin === 'subagent') return false
+  if (session.projectionValues?.navigationPresentation?.hidden === true) return false
   if (session.blank && session.id !== current) return false
   switch (archivedFilter) {
     case 'default':

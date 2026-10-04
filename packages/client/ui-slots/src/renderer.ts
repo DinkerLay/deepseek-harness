@@ -96,6 +96,12 @@ export interface SlotScopeAdapter {
    * @returns the target's current standard-source binding.
    */
   bindingSource(target: SessionAreaProps['session']): HostObservable<StandardSourceBinding>
+  /** Apply optional presentation data without changing the execution's scope or observable sources.
+   * @param binding - actual execution binding, including explicit absence.
+   * @param options - parent-owned stable address and mutation presentation.
+   * @returns an identity-stable presentation of the same binding.
+   */
+  present?(binding: StandardSourceBinding, options: NonNullable<SessionAreaProps['presentationOptions']>): StandardSourceBinding
   /**
    * Render the scope owner's area seat over the current binding. The renderer
    * binds this function to the standard `SessionProvider` prop without owning

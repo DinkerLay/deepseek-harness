@@ -397,7 +397,11 @@ export class TestSessions implements ISessions {
     const record = this.require(id)
     await this.stabilize(() => {
       record.snapshot.update(mutate)
-      this.generations.get(id as SessionId)?.snapshot.set(record.snapshot.getSnapshot())
+      const generation = this.generations.get(id as SessionId)
+      if (generation === undefined) return
+      const snapshot = record.snapshot.getSnapshot()
+      generation.snapshot.set(generation.snapshot.getSnapshot().readOnly === true
+        ? { ...snapshot, readOnly: true } : snapshot)
     })
   }
 
@@ -525,6 +529,9 @@ export class TestSessions implements ISessions {
     if (this.closed) throw new Error('test Session Controller is disposed')
     const id = this.resolveTarget(target)
     const generation = this.generations.get(id) ?? this.materialize(id, this.require(id))
+    if (typeof target !== 'string' && 'sessionId' in target) {
+      generation.snapshot.update((draft) => { draft.readOnly = true })
+    }
     const reference = this.retainGeneration(id, generation, source)
     try {
       reference.attachOpening(generation.opening, signal)
@@ -700,8 +707,8 @@ export class TestSessions implements ISessions {
   }
 
   private resolveTarget(target: SessionTarget): SessionId {
-    const id = typeof target === 'string' ? target : target.childSessionId
-    if (typeof target !== 'string') {
+    const id = typeof target === 'string' ? target : 'sessionId' in target ? target.sessionId : target.childSessionId
+    if (typeof target !== 'string' && !('sessionId' in target)) {
       this.addresses.set(id, target)
     }
     this.require(id)

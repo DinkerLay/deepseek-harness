@@ -286,7 +286,10 @@ export class ClientSessions implements ISessions {
     const id = this.manager.resolveTarget(target)
     const reference = this.retainScope(id, source)
     try {
-      reference.attachOpening(this.manager.get(id).open(), signal)
+      const session = this.manager.get(id)
+      const opening = typeof target !== 'string' && 'sessionId' in target
+        ? session.openReadOnlyHistory() : session.open()
+      reference.attachOpening(opening, signal)
       return reference
     } catch (error) {
       reference.release()

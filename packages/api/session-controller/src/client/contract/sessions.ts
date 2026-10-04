@@ -19,7 +19,12 @@ import type { SessionReferenceSource } from '../index.ts'
 export type { AgentContext } from '../scope.ts'
 
 /** Known Session identity or durable direct-parent subagent address; an address owns no lifetime. */
-export type SessionTarget = SessionId | SubagentAddress
+export type SessionTarget = SessionId | SubagentAddress | {
+  /** Ordinary recorded identity; never a fabricated delegated address. */
+  readonly sessionId: SessionId
+  /** Downgrade this shared Client generation to non-promoting, mutation-free history until its final release. */
+  readonly mode: 'read-only'
+}
 
 /** One independent use of an exact Client generation, without Host Agent ownership. */
 export interface SessionReference extends Disposable {

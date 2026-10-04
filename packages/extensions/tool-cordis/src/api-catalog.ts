@@ -7021,7 +7021,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionFollowRequest',
-    declaration: 'export interface SessionFollowRequest extends Pick<SessionPageRequest, \'maxMessages\' | \'turnWindow\'> {\n    readonly address: SessionAddress;\n    readonly assistantStream?: true;\n}',
+    declaration: 'export interface SessionFollowRequest extends Pick<SessionPageRequest, \'maxMessages\' | \'turnWindow\'> {\n    readonly address: SessionAddress;\n    readonly readOnly?: true;\n    readonly assistantStream?: true;\n}',
   },
   {
     name: 'SessionForkRequest',
@@ -7945,7 +7945,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamLeadCoordinatorHandle',
-    declaration: 'export interface TeamLeadCoordinatorHandle {\n    record(anchor: Agent, record: TeamLeadCoordinatorRecord): Promise<void>;\n    record(anchor: Agent, operation: TeamLeadCoordinatorOperation, build: TeamLeadCoordinatorRecordBuilder): Promise<void>;\n    runAtSafePoint<T>(anchor: Agent, request: {\n        readonly operationId: TeamLeadOperationId;\n        readonly previousTerm: number;\n        readonly record: TeamExtensionRecord;\n        readonly readBlockers: (execution: Agent) => readonly TeamLeadBlocker[] | Promise<readonly TeamLeadBlocker[]>;\n        readonly signal?: AbortSignal;\n    }, task: (handle: TeamLeadSafePointHandle) => Promise<T>): Promise<T>;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface TeamLeadCoordinatorHandle {\n    measureMaterial(anchor: Agent, notice: TeamExtensionNotice): TeamLeadMaterialSize;\n    record(anchor: Agent, record: TeamLeadCoordinatorRecord): Promise<void>;\n    record(anchor: Agent, operation: TeamLeadCoordinatorOperation, build: TeamLeadCoordinatorRecordBuilder): Promise<void>;\n    runAtSafePoint<T>(anchor: Agent, request: {\n        readonly operationId: TeamLeadOperationId;\n        readonly previousTerm: number;\n        readonly record: TeamExtensionRecord;\n        readonly readBlockers: (execution: Agent) => readonly TeamLeadBlocker[] | Promise<readonly TeamLeadBlocker[]>;\n        readonly signal?: AbortSignal;\n    }, task: (handle: TeamLeadSafePointHandle) => Promise<T>): Promise<T>;\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'TeamLeadCoordinatorMaterial',
@@ -7970,6 +7970,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamLeadDeliveryReceipt',
     declaration: 'export interface TeamLeadDeliveryReceipt {\n    readonly messageId: TeamMessageId;\n    readonly targetId: SessionId;\n    readonly executionId: SessionId;\n    readonly term: number;\n}',
+  },
+  {
+    name: 'TeamLeadMaterialSize',
+    declaration: 'export interface TeamLeadMaterialSize {\n    readonly bytes: number;\n    readonly maxBytes: number;\n}',
   },
   {
     name: 'TeamLeadOperationId',

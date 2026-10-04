@@ -46,6 +46,8 @@ Chat 在所有工作步骤展示模式下都不显示系统提示词行、普通
 
 Assistant 尝试结束且没有可见消息时，Chat 隐藏已发布的 Node，不移除其 key。同一 Step 的重试再次产生可见内容时，复用该 key。已加载窗口缺少 Step 起点时也遵循此规则。
 
+`conversation.chat.node.presentation` 根据原始 `ChatNode` 选择精确节点的呈现。全部拒绝时，保留既有 keyed renderer 及其受限钩子。替换仅改变该正文的呈现，不改变 Definition、事件数据、节点 key 或流中的包装层。只读 Session 呈现保留复制和查看，但隐藏分支及逐消息修改操作 slot。
+
 <a id="command-and-failure-rows"></a>
 ## 指令与失败行
 

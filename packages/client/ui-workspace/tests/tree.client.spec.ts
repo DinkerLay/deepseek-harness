@@ -544,6 +544,23 @@ describe('deriveFlat', () => {
     expect(visibleSessionIds(partial, noArchive, 'default')).toEqual([sid('present')])
   })
 
+  it('honors explicit Host navigation visibility in grouped, flat and search views without hiding ordinary rows', () => {
+    const anchor = summary('visible-anchor', 1)
+    const hidden = { ...summary('hidden-execution', 2),
+      projectionValues: { navigationPresentation: { hidden: true } } }
+    const ordinary = { ...summary('ordinary-fork', 3), parentId: anchor.id,
+      projectionValues: { navigationPresentation: { hidden: false } } }
+    const sessions = list(anchor, hidden, ordinary)
+    expect(visibleSessionIds(sessions, noArchive, 'show')).toEqual([anchor.id, ordinary.id])
+    expect(deriveFlat(sessions, sessions.ids, noRows, noAttention).map(row => row.id))
+      .toEqual([anchor.id, ordinary.id])
+    const groups = deriveGroups(sessions, [workspace('group', sessions.ids)], noRows, noAttention, view(['group']))
+    expect(groups.flatMap(group => group.sessions).map(row => row.id)).not.toContain(hidden.id)
+    const search = deriveSearchResults(sessions, [], 'execution', noArchive, 'default', noAttention,
+      { items: [{ sessionId: hidden.id, snippet: 'execution' }], hasMore: false }, 20)
+    expect(search.items.map(row => row.id)).not.toContain(hidden.id)
+  })
+
   it('shows only the current blank session and excludes blanks from search', () => {
     const currentBlank = { ...summary('current-blank', 9), blank: true, retainedBy: { mainView: 1 } }
     const staleBlank = { ...summary('stale-blank', 8), blank: true }

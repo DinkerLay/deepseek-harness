@@ -33,6 +33,8 @@ kind: "package-library"
 
 Factory `children` 仍是普通全局 Slots 且必须与 `SlotMap` 匹配，而局部 `slots` 为每个 occurrence 选择一个 Component。occurrence 继承其渲染位置的 scope；`renderFactorySlot()` 不接受 Session identity。共享 Store handle 使用普通 scope 解析。Store factory 保持 lazy，直到 occurrence 首次物化时才为该渲染位置创建一个 handle；若持久化 Store spec 会让 persistence key 在 occurrences 之间冲突，renderer 会拒绝它。
 
+Session 作用域 entry 需要在 Factory occurrence 外显式使用 `SessionProvider` 时，采用 `PropsRenderFactories<true>`。默认 share 仍只提供 Factory 渲染。Provider 的可选呈现设置改变显示地址与只读状态，不会选择另一执行或授予其权限；实际绑定由消费方持有的引用提供。
+
 ### 五个框架 props share
 
 每个已注册组件都会收到由五个框架 share 组合而成的 props：运行时 share（父级 render 调用点的 `owner`，加上会话标准工具包与全局席位）、child render share（静态缩窄到已声明 children 的 `renderSlot`）、Factory render share（`renderFactorySlot`）、store share（已声明 handle 的 selector 钩子与移除 draft 的 actions），以及业务 share（从 `inject` 推导）。组件引用推导出的 props 别名；它们绝不在本地重新定义任何 share 的类型。

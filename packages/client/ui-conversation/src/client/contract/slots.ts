@@ -130,6 +130,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Conversation shell beneath its root-scoped main-panel entry. */
     'main.conversation': { kind: 'single'; scope: 'session-maybe' }
+    /** Optional execution-binding replacement over the stable navigation address. */
+    'conversation.binding': {
+      kind: 'chain'
+      scope: 'session-maybe'
+      owner: { readonly sessionId: SessionId | undefined }
+    }
+    /** Ordered full-width content above the selected execution's Conversation frame. */
+    'conversation.top': { kind: 'list'; scope: 'session' }
     /** Strict per-Session Conversation body. */
     'conversation.session': {
       kind: 'single'
@@ -225,6 +233,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 
   interface SlotFactoryMap {
+    /** Standard Conversation frame rendered under the caller's actual execution Provider. */
+    'conversation.frame': {
+      scope: 'session-maybe'
+      props: object
+      children: {
+        'conversation.header': { kind: 'single'; scope: 'session-maybe' }
+        'conversation.top': { kind: 'list'; scope: 'session' }
+      }
+    }
     /** Reusable Conversation content instantiated by presentation hosts. */
     'conversation.content': {
       scope: 'session-maybe'
@@ -458,8 +475,11 @@ export interface HeroBrandMarkOwnerProps {
 /** Full props of the resident optional-Session Conversation shell. */
 export type ConversationSlotProps =
   PropsRuntime<'main.conversation'>
-  & PropsRenderSlots<'conversation.header'>
+  & PropsRenderSlots<'conversation.binding'>
   & PropsRenderFactories
+
+/** Full props of the standard frame occurrence under its caller's execution binding. */
+export type ConversationFrameProps = FactoryComponentPropsOf<'conversation.frame'>
 
 /** Inputs shared by main and embedded Conversation content occurrences. */
 export interface ConversationContentInputProps {

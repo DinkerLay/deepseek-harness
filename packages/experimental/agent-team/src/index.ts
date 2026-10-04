@@ -47,7 +47,7 @@ export type { TeamLeadBinding, TeamLeadSeat, TeamLeadCommitPlan } from './lead-s
 export type { TeamLeadCoordination, TeamLeadTransition, TeamLeadCoordinationPhase } from './lead-coordination.ts'
 export type { TeamLeadCoordinator, TeamLeadCoordinatorHandle, TeamLeadCoordinatorRecord, TeamLeadCoordinatorCommit,
   TeamLeadBlocker, TeamLeadSafePointHandle, TeamLeadCoordinatorOperation, TeamLeadCoordinatorSnapshot,
-  TeamLeadCoordinatorRecordBuilder, TeamLeadCoordinatorMaterial } from './lead-coordinator.ts'
+  TeamLeadCoordinatorRecordBuilder, TeamLeadCoordinatorMaterial, TeamLeadMaterialSize } from './lead-coordinator.ts'
 export type { CreateLeadExecutionRequest, LeadExecutionProvider, LeadExecutionHandle, LeadActivationPreparation } from './lead-runtime.ts'
 export type { TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
 export { TeamId, TeamMessageId, TeamTaskId, TeamLeadOperationId } from './types.ts'

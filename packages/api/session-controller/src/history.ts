@@ -201,7 +201,7 @@ export class SessionHistoryController {
           : projectionBlock(source.projections),
         ...assistantStream === undefined ? {} : { assistantStream },
       }
-      if (address.kind === 'session' && source.source === 'prepared') {
+      if (request.readOnly !== true && address.kind === 'session' && source.source === 'prepared') {
         const promotion = source.retain()
         try {
           this.promote(promotion)

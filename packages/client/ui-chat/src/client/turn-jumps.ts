@@ -14,6 +14,12 @@ export interface ChatTurnJumpRequest {
   readonly seq: SessionSeq
 }
 
+/** Identities for a view-only request, allowing the navigation owner to unwind a failed reveal. */
+export interface ChatTurnJumpReceipt {
+  readonly requestId: number
+  readonly viewRequestId: number
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Open a Session and land its Chat at a durable Turn. */
@@ -29,6 +35,18 @@ export class ChatTurnJumps extends Service {
 
   constructor(ctx: Context) { super(ctx, 'chatTurnJumps') }
 
+  /** Request a Chat Turn without changing the main navigation address.
+   * @param sessionId - actual execution rendered by the owning view.
+   * @param turn - host-assigned Turn number.
+   * @param seq - durable `turn/start` sequence.
+   * @returns exact request identities, not an Agent activation or navigation receipt.
+   */
+  request(sessionId: SessionId, turn: number, seq: SessionSeq): ChatTurnJumpReceipt {
+    const request: ChatTurnJumpRequest = { requestId: ++this.nextRequestId, sessionId, turn, seq }
+    this.pending.set(request)
+    return { requestId: request.requestId, viewRequestId: this.ctx.uiConversation.requestView(sessionId, 'chat') }
+  }
+
   /**
    * Open a Session and request its Chat Turn.
    * @param target - Session id or direct-child address.
@@ -36,13 +54,11 @@ export class ChatTurnJumps extends Service {
    * @param seq - durable `turn/start` sequence number.
    */
   open(target: SessionTarget, turn: number, seq: SessionSeq): void {
-    const sessionId = typeof target === 'string' ? target : target.childSessionId
-    const request: ChatTurnJumpRequest = { requestId: ++this.nextRequestId, sessionId, turn, seq }
-    this.pending.set(request)
-    const viewRequestId = this.ctx.uiConversation.requestView(sessionId, 'chat')
+    const sessionId = typeof target === 'string' ? target : 'sessionId' in target ? target.sessionId : target.childSessionId
+    const { requestId, viewRequestId } = this.request(sessionId, turn, seq)
     try { this.ctx.uiWorkspace.openSession(target) }
     catch (error) {
-      this.consume(request.requestId)
+      this.consume(requestId)
       this.ctx.uiConversation.consumeViewRequest(viewRequestId)
       throw error
     }

@@ -47,6 +47,8 @@ Hierarchy uses registered canonical paths only. It does not scan for projects or
 
 ### Search
 
+An optional Host `navigationPresentation` projection with `hidden: true` suppresses a Session in grouped, flat and search views without changing account membership or stored ordering. Absent, null and false values retain ordinary visibility. The browser does not interpret the domain identity that supplied this presentation fact.
+
 Collapsed search is one header action beside the view and add actions: activating it expands the field across the header. A non-blank query replaces either browsing mode with one flat result list — case-insensitive title and Workspace substring matches appear immediately, while a 250 ms debounced Host request adds ranked current-conversation content matches and snippets. Each new query aborts the preceding request; a failed content search leaves metadata matches visible without an additional warning. The list is capped at 20. Choosing an unarchived result clears and collapses search, opens the Session, and scrolls its row into view in the configured browsing mode; grouped browsing also expands its Workspace and the full Session list when required. Archived results offer Unarchive; attempting to open one explains that restriction without clearing the query or navigating.
 
 ### Managing sessions

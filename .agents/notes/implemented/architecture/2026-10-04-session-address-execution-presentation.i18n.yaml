@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-04-session-address-execution-presentation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-04-session-address-execution-presentation.md
+/agent-note-separate-session-addresses-from-execution-presentation:
+  en: 3f60afd9148b859d
+  zh: 39620a0206298d43
+/agent-note-separate-session-addresses-from-execution-presentation/problem:
+  en: e9f15074dba00967
+  zh: baba4c891fb64ae6
+/agent-note-separate-session-addresses-from-execution-presentation/decision:
+  en: 475ce403dc871230
+  zh: 544ac0bf708c80fc
+/agent-note-separate-session-addresses-from-execution-presentation/decision/conversation-assembly:
+  en: 64ea0b3ea027d621
+  zh: 2dc2d6d3e5a603ee
+/agent-note-separate-session-addresses-from-execution-presentation/decision/exact-node-presentation:
+  en: da2f77d6abad30eb
+  zh: b04754f10af4aac7
+/agent-note-separate-session-addresses-from-execution-presentation/alternatives-considered:
+  en: b843ca193c10b7e1
+  zh: 20e4a2dcfd85fa8b
+/agent-note-separate-session-addresses-from-execution-presentation/consequences:
+  en: 820c9e73433a7b92
+  zh: bdb24f21210647e4
+/agent-note-separate-session-addresses-from-execution-presentation/verification:
+  en: 46b7f536d01f7a52
+  zh: 3d81e962d4581617

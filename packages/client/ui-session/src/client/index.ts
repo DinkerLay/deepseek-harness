@@ -24,6 +24,7 @@ import type {
   SlotScopeAdapter,
   SnapshotSelectorHook,
   StandardSourceBinding,
+  SessionPresentationOptions,
 } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only service merge for ctx.slots.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -165,6 +166,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     useSession: SessionSnapshotSelector
     /** Current Session identity. */
     sessionId: SessionId
+    /** Navigation address. */
+    sessionAddressId?: SessionId | undefined
+    /** Read-only view. */
+    sessionReadOnly?: boolean | undefined
     /** Host-computed projection values addressed by projection key. */
     useProjection: UseProjection
   }
@@ -174,6 +179,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     useSession: MaybeSnapshotSelectorHook<SessionSnapshot>
     /** Current Session identity, absent while no Session is selected. */
     sessionId: SessionId | undefined
+    sessionAddressId?: SessionId | undefined
+    sessionReadOnly?: boolean | undefined
     /** Host-computed projection values; every key is absent without a Session. */
     useProjection: UseProjection
   }
@@ -259,16 +266,20 @@ interface BindingSource extends HostObservable<StandardSourceBinding> {
 const BUILTIN_SOURCE = {
   hooks: ['session'],
   keyedHooks: ['projection'],
-  props: ['sessionId'],
+  props: ['sessionId', 'sessionAddressId', 'sessionReadOnly'],
   resolve: binding => ({
     hooks: { session: binding.session },
     keyedHooks: { projection: key => binding.session.projections.faceOf(key) },
-    props: { sessionId: binding.sessionId },
+    props: {
+      sessionId: binding.sessionId,
+      sessionAddressId: binding.sessionId,
+      sessionReadOnly: binding.session.getSnapshot().readOnly === true,
+    },
   }),
 } satisfies SessionSourceDescriptor<
   readonly ['session'],
   readonly ['projection'],
-  readonly ['sessionId']
+  readonly ['sessionId', 'sessionAddressId', 'sessionReadOnly']
 >
 
 /** Session-scoped source roster and renderer adapter. */
@@ -279,6 +290,7 @@ export class UiSession extends Service {
   private readonly bindings = new WeakMapWithValues<SessionBinding, MaterializedBinding>()
   private readonly absent: BindingSource
   private readonly current: BindingSource
+  private readonly presentations = new WeakMap<StandardSourceBinding, Map<string, StandardSourceBinding>>()
   private readonly pendingDomains: RuntimePendingDomain[] = []
   private pendingSnapshot: ReadonlyMap<SessionId, SessionPendingInteractionBase> = new Map()
   private readonly running = new Map<SessionId, boolean>()
@@ -313,6 +325,7 @@ export class UiSession extends Service {
     this.adapter = {
       current: this.current,
       bindingSource: target => this.bindingSource(target),
+      present: (binding, options) => this.present(binding, options),
       renderArea: renderSessionArea,
     }
 
@@ -351,6 +364,22 @@ export class UiSession extends Service {
       throw new Error('ui-session: Session reference is not active in this Controller')
     }
     return this.sourceFor(owner)
+  }
+
+  private present(binding: StandardSourceBinding, options: SessionPresentationOptions): StandardSourceBinding {
+    if (binding.key === undefined) return binding
+    const address = options.addressSessionId ?? binding.props['sessionAddressId']
+    const readOnly = options.readOnly === true || binding.props['sessionReadOnly'] === true
+    if (address === binding.props['sessionAddressId'] && readOnly === binding.props['sessionReadOnly']) return binding
+    const key = JSON.stringify([address, readOnly])
+    const values = this.presentations.get(binding) ?? new Map<string, StandardSourceBinding>()
+    this.presentations.set(binding, values)
+    let presented = values.get(key)
+    if (presented === undefined) {
+      presented = { ...binding, props: { ...binding.props, sessionAddressId: address, sessionReadOnly: readOnly } }
+      values.set(key, presented)
+    }
+    return presented
   }
 
   /**
@@ -541,11 +570,23 @@ export class UiSession extends Service {
     const value = this.materialize(owner)
     this.ctx.slots.bindStoreScope(value)
     const source = createBindingSource(value)
-    const releaseEffect = owner.ctx.effect(() => () => {
-      if (this.bindings.get(owner) === record) this.bindings.delete(owner)
-      source.value = this.absent.value
-      notifySubscribers(source.listeners, '[ui-session] Session binding')
-      this.publishMain()
+    const releaseEffect = owner.ctx.effect(() => {
+      let readOnly = owner.session.getSnapshot().readOnly
+      const unsubscribe = owner.session.subscribe(() => {
+        const next = owner.session.getSnapshot().readOnly
+        if (next === readOnly) return
+        readOnly = next
+        source.value = this.materialize(owner)
+        notifySubscribers(source.listeners, '[ui-session] Session binding')
+        this.publishMain()
+      })
+      return () => {
+        unsubscribe()
+        if (this.bindings.get(owner) === record) this.bindings.delete(owner)
+        source.value = this.absent.value
+        notifySubscribers(source.listeners, '[ui-session] Session binding')
+        this.publishMain()
+      }
     }, `ui-session: binding ${owner.sessionId}`)
     const record: MaterializedBinding = {
       owner,
@@ -580,13 +621,16 @@ export class UiSession extends Service {
   private materializeAbsent(): StandardSourceBinding {
     const hooks: Record<string, undefined> = {}
     const keyedHooks: Record<string, undefined> = {}
-    const props: Record<string, undefined> = {}
+    const props: Record<string, unknown> = {}
     const finalProps = new Set<string>()
     for (const descriptor of this.descriptors) {
       declareAbsent('hook', hooks, descriptor.hooks, finalProps)
       declareAbsent('keyed hook', keyedHooks, descriptor.keyedHooks, finalProps)
       declareAbsent('prop', props, descriptor.props, finalProps)
     }
+    // Presentation remains writable while no execution exists, preserving the
+    // resident blank-workspace composer rather than hiding its inert picker.
+    props['sessionReadOnly'] = false
     return { key: undefined, hooks, keyedHooks, props }
   }
 }
@@ -642,7 +686,7 @@ function copyDeclared<T>(
 
 function declareAbsent(
   kind: StandardMemberKind,
-  target: Record<string, undefined>,
+  target: Record<string, unknown>,
   declared: readonly string[] | undefined,
   finalProps: Set<string>,
 ): void {

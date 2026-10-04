@@ -26,7 +26,7 @@ function lastContent(snapshot: ChatSnapshot, turn: number, skipWarning: boolean)
 
 /** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
 export const TurnTailNodeView = memo(function TurnTailNodeView({
-  node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage,
+  node, sessionReadOnly, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage,
 }: TurnTailNodeViewProps) {
   const detailed = usePerformanceUsage(mode => mode) === 'detailed'
   const data = node.data
@@ -50,7 +50,7 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
   // Interruption-frozen partials carry no messageId, so they address no
   // durable message and contribute no per-message actions.
   const messageId = closing.finalNode.messageId
-  const assistantActions = messageId === undefined
+  const assistantActions = messageId === undefined || sessionReadOnly === true
     ? null
     : renderSlot('conversation.chat.assistant-actions', { messageId })
   return (
@@ -66,7 +66,7 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
         clock="end"
         // The branch action owns boundary resolution: it sends the real
         // turn/end seq it already has, and the Host cuts exactly there.
-        onBranch={() => { forkAt(data.seq) }}
+        onBranch={sessionReadOnly === true ? undefined : () => { forkAt(data.seq) }}
         branchUnavailable={data.branchUnavailable || hasLaterChatNode}
         className={css.actions}
         extraActions={assistantActions}

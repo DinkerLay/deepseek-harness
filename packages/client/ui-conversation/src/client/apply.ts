@@ -34,6 +34,7 @@ import { queueDockEntry } from './queue/QueueDock.tsx'
 import { EnterBehaviorRow } from './settings/EnterBehaviorRow.tsx'
 import type { EnterBehaviorRowInjected } from './settings/EnterBehaviorRow.tsx'
 import { ConversationRoot } from './skeleton/ConversationRoot.tsx'
+import { ConversationMainPanel } from './skeleton/ConversationMainPanel.tsx'
 import { ConversationContent } from './skeleton/ConversationContent.tsx'
 import { ConversationPanel } from './skeleton/ConversationPanel.tsx'
 import { ConversationHeader } from './skeleton/ConversationHeader.tsx'
@@ -302,9 +303,17 @@ export function apply(ctx: Context, config: Config = Config({})): void {
   const registerConversationRoot = () => slots.register({
     name: 'main.conversation',
     children: {
-      'conversation.header': { kind: 'single', scope: 'session-maybe' },
+      'conversation.binding': { kind: 'chain', scope: 'session-maybe' },
     },
   }, ConversationRoot)
+
+  const registerConversationFrame = () => slots.registerFactory({
+    name: 'conversation.frame', scope: 'session-maybe',
+    children: {
+      'conversation.header': { kind: 'single', scope: 'session-maybe' },
+      'conversation.top': { kind: 'list', scope: 'session' },
+    },
+  }, ConversationMainPanel)
 
   const registerConversationContent = () => slots.registerFactory({
     name: 'conversation.content',
@@ -537,6 +546,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       children: { 'main.conversation': { kind: 'single', scope: 'session-maybe' } },
     }, ConversationPanel)
     yield registerConversationRoot()
+    yield registerConversationFrame()
     yield registerConversationContent()
     yield registerConversationSession()
     yield registerHeader()

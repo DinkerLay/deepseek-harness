@@ -130,6 +130,20 @@ async function bench(initialSettings?: ChatSettings, withBrowserRegistry = true,
 }
 
 describe('Chat inject API', () => {
+  it('requests a Turn in an independently bound history view without changing the navigation address', async () => {
+    const b = await bench()
+    try {
+      const receipt = b.runtime.ctx.chatTurnJumps.request(ROOT, 2, SessionSeq(31))
+      expect(b.openSession).not.toHaveBeenCalled()
+      expect(b.runtime.ctx.chatTurnJumps.pending.getSnapshot()).toEqual({
+        requestId: receipt.requestId, sessionId: ROOT, turn: 2, seq: 31,
+      })
+      expect(receipt.viewRequestId).toBeGreaterThan(0)
+      b.runtime.ctx.chatTurnJumps.consume(receipt.requestId)
+      expect(b.runtime.ctx.chatTurnJumps.pending.getSnapshot()).toBeNull()
+    } finally { await b.runtime.dispose() }
+  })
+
   it('retains an exact Turn jump until the destination Chat consumes it', async () => {
     const b = await bench()
     try {

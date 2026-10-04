@@ -121,6 +121,12 @@ function Counter({ sessionId }: { sessionId: string }) {
 }
 
 describe('SessionProvider', () => {
+  it('does not require an area renderer until the entry actually uses its Provider seat', () => {
+    const h = makeHost(() => <b>unused Provider seat</b>, { installRenderArea: false, optional: true })
+    const view = render(<>{createSlotRenderer().renderRoot(h.host, {})}</>)
+    expect(view.container.textContent).toBe('unused Provider seat')
+  })
+
   it('renders explicit absence and switches only when the owner supplies a reference', () => {
     const h = makeHost((renderSlot, Provider, reference) =>
       <Provider session={reference} empty={() => <span>empty</span>}>{renderSlot('k.session', {})}</Provider>)
@@ -266,7 +272,8 @@ describe('SessionProvider', () => {
   })
 
   it('fails loud when the Session adapter omits its area renderer', () => {
-    const h = makeHost(() => null, { installRenderArea: false })
+    const h = makeHost((renderSlot, Provider, reference) =>
+      <Provider session={reference}>{renderSlot('k.session', {})}</Provider>, { installRenderArea: false })
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(() => render(<>{createSlotRenderer().renderRoot(h.host, {})}</>))
       .toThrow(/does not provide its area renderer/)

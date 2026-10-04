@@ -1,4 +1,4 @@
-import type { ConversationSlotProps } from '../contract/slots.ts'
+import type { ConversationFrameProps } from '../contract/slots.ts'
 import { conversationPhase } from '../contract/snapshot.ts'
 import { ConversationWidthControls } from './ConversationWidthControls.tsx'
 import css from './ConversationRoot.module.css'
@@ -10,7 +10,7 @@ const CONTENT_SLOTS = { widthControls: ConversationWidthControls }
  * @param props - the original `main.conversation` Slot props.
  * @returns the unchanged root, Header, content, and width-control subtree.
  */
-export function ConversationMainPanel(props: ConversationSlotProps) {
+export function ConversationMainPanel(props: ConversationFrameProps) {
   const { sessionId, useSession, useSessions, useConversation, renderSlot, renderFactorySlot } = props
   const session = useSession(s => s)
   const conversation = useConversation(s => s)
@@ -45,6 +45,7 @@ export function ConversationMainPanel(props: ConversationSlotProps) {
   return (
     <div className={css.root} data-phase={phase}>
       {renderSlot('conversation.header', {})}
+      {sessionId !== undefined && renderSlot('conversation.top', {})}
       {renderFactorySlot('conversation.content', {
         variant: 'main',
         phase,

@@ -31,8 +31,8 @@ import './control-row-dom.ts'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
-  ComposerBarOwnerProps, ConversationContentInputProps, ConversationContentProps,
-  ConversationHeaderLineageOwnerProps, ConversationSessionHeaderSlotProps, ConversationSessionSlotProps, ConversationSlotProps,
+  ComposerBarOwnerProps, ConversationContentInputProps, ConversationContentProps, ConversationFrameProps,
+  ConversationHeaderLineageOwnerProps, ConversationSessionHeaderSlotProps, ConversationSessionSlotProps,
   ConversationViewsProps,
 } from '../src/client/contract/slots.ts'
 import type { ViewTab } from '../src/client/contract/views.ts'
@@ -126,6 +126,8 @@ function mount(
   options: {
     /** Explicit undefined exercises the shell before a Session is selected. */
     sessionId?: SessionId | undefined
+    /** Stable title address, independent of this fixture's actual execution. */
+    sessionAddressId?: SessionId | undefined
     /** When true, mimic overlay:true chain siblings (hidden fallback + takeover). */
     overlayTakeover?: boolean
     /** The session list summary's `blank` flag — independent of the snapshot's. */
@@ -211,6 +213,7 @@ function mount(
         <ConversationSessionHeader
           hideChrome={(owner as Pick<ConversationSessionHeaderSlotProps, 'hideChrome'>).hideChrome}
           sessionId={SID}
+          sessionAddressId={options.sessionAddressId}
           SessionProvider={({ children }) => children}
           useSession={useSession}
           useConversation={useConversation}
@@ -357,8 +360,8 @@ function mount(
         <ConversationContent {...({ ...common, ...runtimeProps, ...input, useFactorySlot })} />
       </FactoryViewsTestContext.Provider>
     )
-  }) as ConversationSlotProps['renderFactorySlot']
-  const runtimeProps: PropsRuntime<'main.conversation'> & Pick<ConversationSlotProps, 'SessionProvider'> = {
+  }) as ConversationFrameProps['renderFactorySlot']
+  const runtimeProps: PropsRuntime<'main.conversation'> & Pick<ConversationFrameProps, 'SessionProvider'> = {
     usePanelInfo: selector => selector({ activePanelId: null }),
     sessionId,
     SessionProvider,
@@ -373,7 +376,12 @@ function mount(
     useInput,
     inputActions,
   }
-  const props: ConversationSlotProps = { ...runtimeProps, renderSlot, renderFactorySlot }
+  const props: ConversationFrameProps = {
+    ...runtimeProps,
+    renderSlot: renderSlot as ConversationFrameProps['renderSlot'],
+    renderFactorySlot,
+    useFactorySlot: () => { throw new Error('frame declares no local Component positions') },
+  }
   const view = render(<ConversationMainPanel {...props} />)
   return {
     view, store, viewSelection, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
@@ -666,6 +674,20 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.getByRole('tab', { name: 'Trajectory' }).getAttribute('aria-selected')).toBe('true')
     act(() => { b.viewSelection.set({ id: 1, sessionId: SID, view: 'chat' }) })
     expect(b.view.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true')
+    expect(b.viewSelection.getSnapshot()).toBeNull()
+  })
+
+  it('uses the stable address as the Header fallback while its title summary is absent', () => {
+    const address = sid('stable-address-without-summary')
+    const b = mount(sessionSnapshotOf(), undefined, undefined, { sessionAddressId: address })
+    const title = b.view.container.querySelector('header nav')!
+    expect(title.textContent).toBe(address)
+    expect(title.textContent).not.toContain('Child')
+    act(() => { b.viewSelection.set({ id: 1, sessionId: address, view: 'trajectory' }) })
+    expect(b.view.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true')
+    expect(b.viewSelection.getSnapshot()?.id).toBe(1)
+    act(() => { b.viewSelection.set({ id: 2, sessionId: SID, view: 'trajectory' }) })
+    expect(b.view.getByRole('tab', { name: 'Trajectory' }).getAttribute('aria-selected')).toBe('true')
     expect(b.viewSelection.getSnapshot()).toBeNull()
   })
 

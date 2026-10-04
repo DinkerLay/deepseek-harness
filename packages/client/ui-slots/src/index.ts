@@ -341,6 +341,14 @@ type RenderSlotFn<S extends keyof SlotMap & string> =
 export type MatchedShare<E extends SlotEntryDef, M> =
   E['kind'] extends 'chain' ? { matched: M } : object
 
+/** View-only options for an execution-bound subtree. */
+export interface SessionPresentationOptions {
+  /** Stable navigation address when the rendered execution has a different identity. */
+  readonly addressSessionId?: SessionIdOf | undefined
+  /** Presentation-only mutation suppression; Host authorization remains independent. */
+  readonly readOnly?: boolean | undefined
+}
+
 /** Props of the standard-kit SessionProvider seat. */
 export interface SessionAreaProps {
   /**
@@ -348,6 +356,8 @@ export interface SessionAreaProps {
    * binding; pass `undefined` to establish an explicitly absent binding.
    */
   readonly session?: SlotScopeTargetMap[keyof SlotScopeTargetMap & 'session'] | undefined
+  /** Optional domain-owned address and read-only presentation over the selected execution binding. */
+  readonly presentationOptions?: SessionPresentationOptions | undefined
   /** No-session body (also covers a current id whose session cannot be resolved). */
   empty?: (() => ReactNode) | undefined
   /** Session body; scoped entries apply their declared remount semantics. */
@@ -490,10 +500,10 @@ export type RenderFactorySlot = <F extends keyof SlotFactoryMap & string>(
   },
 ) => ReactNode
 
-/** Factory rendering capability supplied to every renderer-created Component. */
-export interface PropsRenderFactories {
+/** Factory rendering; Session-scoped entries opt into the Provider seat with `true`. */
+export type PropsRenderFactories<WithSessionProvider extends boolean = false> = {
   renderFactorySlot: RenderFactorySlot
-}
+} & (WithSessionProvider extends true ? { SessionProvider: SessionProviderComponent } : object)
 
 /**
  * Registrant hooks compartment: bare observable sources (getSnapshot +
@@ -606,7 +616,7 @@ export type ComposedProps<
   I extends object,
   M = never,
   N = undefined,
-> = PropsRuntime<K, EntryKey> & PropsRenderSlots<S> & PropsRenderFactories
+> = PropsRuntime<K, EntryKey> & PropsRenderSlots<S> & PropsRenderFactories<ScopeOf<K> extends 'root' ? false : true>
   & PropsStore<H> & InjectFace<I> & MatchedShare<SlotMap[K], M> & PropsLocale<N>
 
 /**

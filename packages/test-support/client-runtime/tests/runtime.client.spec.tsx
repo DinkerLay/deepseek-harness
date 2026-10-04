@@ -733,6 +733,29 @@ describe('single-slot mounting (declare + renderSlot)', () => {
 })
 
 describe('fixture session face', () => {
+  it('shares readonly targets without treating them as subagents or resetting the live generation posture', async () => {
+    const runtime = await SlotTestRuntime.create()
+    const id = await runtime.sessions.add({ id: 'readonly-fixture' })
+    await runtime.sessions.updateSessionSnapshot(id, (draft) => { draft.running = false })
+    expect(runtime.sessions.binding(id)).toBeUndefined()
+    const historical = runtime.sessions.retain({ sessionId: id, mode: 'read-only' })
+    await historical.ready
+    const current = runtime.sessions.retain(id)
+    await current.ready
+    expect(current.binding).toBe(historical.binding)
+    expect(current.binding.session.getSnapshot().readOnly).toBe(true)
+    expect(runtime.sessions.subagentAddress(id)).toBeUndefined()
+    await runtime.sessions.updateSessionSnapshot(id, (draft) => { draft.running = true })
+    expect(current.binding.session.getSnapshot().running).toBe(true)
+    expect(current.binding.session.getSnapshot().readOnly).toBe(true)
+    historical.release()
+    current.release()
+    using reopened = runtime.sessions.retain(id)
+    await reopened.ready
+    expect(reopened.binding.session.getSnapshot().readOnly).toBeUndefined()
+    await runtime.dispose()
+  })
+
   it('fail-loud stubs name the missing verb; supplied overrides run instead', async () => {
     const runtime = await SlotTestRuntime.create()
     await runtime.sessions.add({ id: 's1' })

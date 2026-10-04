@@ -35,6 +35,7 @@ afterEach(async () => {
 function persistSelection(selection: {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
+  readonly readOnly?: true
 }): Map<string, string> {
   const backing = new Map([['dsh.sessions.current', JSON.stringify(selection)]])
   vi.stubGlobal('localStorage', {
@@ -140,7 +141,7 @@ class FakeSessions implements ISessions {
   readonly refreshProjections = vi.fn<ISessions['refreshProjections']>(() => Promise.resolve())
   readonly retain = vi.fn<ISessions['retain']>((target) => {
     const release = vi.fn<() => void>()
-    const sessionId = typeof target === 'string' ? target : target.childSessionId
+    const sessionId = typeof target === 'string' ? target : 'sessionId' in target ? target.sessionId : target.childSessionId
     const binding = { sessionId } as SessionReference['binding']
     const reference: SessionReference = {
       sessionId,
@@ -410,6 +411,22 @@ describe('UiWorkspaceService', () => {
     expect(b.selectPanel).toHaveBeenCalledWith(null)
     expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
     expect(b.sessions.refreshProjections).not.toHaveBeenCalled()
+  })
+
+  it('retains an explicit ordinary read-only target without storing a fake subagent address', () => {
+    const backing = persistSelection({})
+    const b = bench()
+    const target = { sessionId: sid('stored-history'), mode: 'read-only' } as const
+    b.uiWorkspace.openSession(target)
+    expect(b.sessions.retain).toHaveBeenCalledWith(target, { source: 'mainView' })
+    expect(JSON.parse(backing.get('dsh.sessions.current')!)).toEqual({ sessionId: target.sessionId, readOnly: true })
+    expect(b.selectPanel).toHaveBeenCalledWith(null)
+  })
+
+  it('preserves an explicit ordinary history selection across browser reload', () => {
+    persistSelection({ sessionId: sid('stored-history'), readOnly: true })
+    const b = bench({ sessions: sessionState([summary('stored-history')]), workspaces: workspaceState([]) })
+    expect(b.sessions.retain).toHaveBeenCalledWith({ sessionId: sid('stored-history'), mode: 'read-only' }, { source: 'mainView' })
   })
 
   it('keeps the current panel when retaining the target fails', () => {

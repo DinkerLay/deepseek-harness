@@ -34,6 +34,12 @@ interface LeadOccupation { readonly abort: AbortController; readonly execution: 
 /** Registered Host owner; it is never a model Lead identity. */
 export interface TeamLeadCoordinator { readonly id: string }
 
+/** Exact native inbox serialization size and the current deployment limit. */
+export interface TeamLeadMaterialSize {
+  readonly bytes: number
+  readonly maxBytes: number
+}
+
 /** Opaque product record and non-authorizing logical Lead material. */
 export interface TeamLeadCoordinatorMaterial extends TeamExtensionRecord {
   /** Non-authorizing logical Lead notices committed with this opaque record. */
@@ -95,6 +101,13 @@ export interface TeamLeadSafePointHandle {
 
 /** Owned coordination capability, absent from model tools and ordinary Lead authority. */
 export interface TeamLeadCoordinatorHandle {
+  /** Measure non-authorizing material with the same framing used by native admission.
+   * This read does not reserve mailbox capacity or admit a future write.
+   * @param anchor - exact live stable controlled Team journal owner.
+   * @param notice - coordinator-created factual notice, including its final message identity.
+   * @returns complete serialized inbox bytes, even when they exceed the deployment limit.
+   */
+  measureMaterial(anchor: Agent, notice: TeamExtensionNotice): TeamLeadMaterialSize
   /** Persist an independent record or transition after locked owner and term checks.
    * @param anchor - exact live stable Team journal owner.
    * @param record - operation-scoped material and optional native phase.
@@ -289,6 +302,10 @@ export class TeamLeadCoordinators {
       return { ...plan.binding }
     })
     const handle: TeamLeadCoordinatorHandle = {
+      measureMaterial: (anchor, notice) => {
+        const state = assertOwner(anchor)
+        return { bytes: teamMessageDeliveryBytes(this.materialNotice(anchor, notice), state), maxBytes: this.limits.maxMessageBytes }
+      },
       record: (anchor, ...args: [TeamLeadCoordinatorRecord] | [TeamLeadCoordinatorOperation, TeamLeadCoordinatorRecordBuilder]) => {
         if (args.length === 1) {
           const plan = args[0]
@@ -360,18 +377,22 @@ export class TeamLeadCoordinators {
   }
 
   private materialNotices(anchor: Agent, state: TeamState, proposed: readonly TeamExtensionNotice[]) {
-    return proposed.map(({ ordinaryMessageLimit: _limit, ...notice }) => {
-      if (notice.senderId !== anchor.id || notice.senderName !== 'lead' || notice.targetId !== anchor.id
-        || notice.senderTerm !== undefined || notice.contentAuthors?.some(author => author !== null)) {
-        throw new TeamError('Coordinator material cannot claim model authorship or another target', 'TEAM_INVALID_ARGUMENT')
-      }
-      const framed = { ...structuredClone(notice), contentParts: notice.content.map(() => 'fact' as const),
-        contentAuthors: notice.content.map(() => null) }
+    return proposed.map((notice) => {
+      const framed = this.materialNotice(anchor, notice)
       if (teamMessageDeliveryBytes(framed, state) > this.limits.maxMessageBytes) {
         throw new TeamError('Coordinator material exceeds the Team message byte limit', 'TEAM_MESSAGE_TOO_LARGE')
       }
       return framed
     })
+  }
+
+  private materialNotice(anchor: Agent, { ordinaryMessageLimit: _limit, ...notice }: TeamExtensionNotice) {
+    if (notice.senderId !== anchor.id || notice.senderName !== 'lead' || notice.targetId !== anchor.id
+      || notice.senderTerm !== undefined || notice.contentAuthors?.some(author => author !== null)) {
+      throw new TeamError('Coordinator material cannot claim model authorship or another target', 'TEAM_INVALID_ARGUMENT')
+    }
+    return { ...structuredClone(notice), contentParts: notice.content.map(() => 'fact' as const),
+      contentAuthors: notice.content.map(() => null) }
   }
 
   private assertMaterialCapacity(anchor: Agent, state: TeamState, additions: number): void {

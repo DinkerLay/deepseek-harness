@@ -98,6 +98,8 @@ export interface SessionControlStreamOptions {
 
 /** Domain sinks used by one addressed Session event journal. */
 export interface SessionEventStreamOptions {
+  /** Suppress cold Agent promotion while reading an ordinary Session's history. */
+  readonly readOnly?: true
   /** Apply one complete event-window change. */
   readonly publish: (change: SessionJournalChange) => void
   /** Observe a retryable carrier loss before reconnection. */
@@ -151,6 +153,7 @@ export class SessionEventStream extends RemoteJournalStream<
     private readonly address: SessionAddress,
     options: SessionEventStreamOptions,
   ) {
+    const historyReadOnly = options.readOnly === true
     super(remote, {
       name: 'session event stream',
       emptyCursor: -1,
@@ -166,7 +169,9 @@ export class SessionEventStream extends RemoteJournalStream<
         : { carrierFailed: options.carrierFailed }),
       failed: options.failed,
     })
+    this.historyReadOnly = historyReadOnly
   }
+  private readonly historyReadOnly: boolean
 
   /** @inheritdoc */
   protected override async * follow(
@@ -178,6 +183,7 @@ export class SessionEventStream extends RemoteJournalStream<
     let assistantRevision: number | undefined
     for await (const frame of this.remote.session.follow({
       address: this.address,
+      ...this.historyReadOnly ? { readOnly: true as const } : {},
       assistantStream: true,
       ...this.repairRequest(request),
     }, signal)) {

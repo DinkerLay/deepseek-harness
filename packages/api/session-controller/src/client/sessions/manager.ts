@@ -83,6 +83,7 @@ type SessionListMutation =
 /** Instance cluster + frame entry + the session list. */
 export class SessionManager {
   private readonly sessions = new Map<SessionId, Session>()
+  private readonly readOnlyHistory = new Set<SessionId>()
   /** In-flight Session disposals remain here after instances leave `sessions`, so manager disposal can await quiescence. */
   private readonly sessionDisposals = new Set<Promise<void>>()
   /**
@@ -133,8 +134,10 @@ export class SessionManager {
    * @returns the resolved identity with its explicit or catalog-derived history route installed.
    */
   resolveTarget(target: SessionTarget): SessionId {
-    const id = typeof target === 'string' ? target : target.childSessionId
-    const address = typeof target === 'string' ? this.subagentAddress(id) : target
+    const history = typeof target !== 'string' && 'sessionId' in target
+    const id = typeof target === 'string' ? target : history ? target.sessionId : target.childSessionId
+    const address = typeof target === 'string' || history ? this.subagentAddress(id) : target
+    if (history) this.readOnlyHistory.add(id)
     if (typeof target === 'string'
       && !this.sessions.has(id)
       && !this.summaries.some(summary => summary.sessionId === id)
@@ -185,6 +188,7 @@ export class SessionManager {
     const session = this.sessions.get(sessionId)
     if (session !== expected) return Promise.resolve()
     this.sessions.delete(sessionId)
+    this.readOnlyHistory.delete(sessionId)
     this.addresses.delete(sessionId)
     this.pruneEngagement(sessionId, this.retainedIds(this.summaries))
     return this.startSessionDisposal(session)
@@ -205,6 +209,7 @@ export class SessionManager {
     await Promise.all(reads.map(read => read.promise))
     const sessions = [...this.sessions.values()]
     this.sessions.clear()
+    this.readOnlyHistory.clear()
     this.addresses.clear()
     for (const session of sessions) void this.startSessionDisposal(session)
     await this.drainSessionDisposals()
@@ -268,6 +273,7 @@ export class SessionManager {
       ? undefined
       : this.agentAvailable(address.parentSessionId)
     return new Session(sessionId, this.remote, {
+      ...this.readOnlyHistory.has(sessionId) ? { historyReadOnly: true } : {},
       ...(address === undefined ? {} : {
         address,
         ...parentAvailable === undefined ? {} : { parentAvailable },

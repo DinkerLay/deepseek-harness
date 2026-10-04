@@ -1082,6 +1082,21 @@ describe('inject: execution point, parameter derivation, cache granularity', () 
 describe('session-maybe adoption identity', () => {
   const SINGLE_MAYBE: DeclaredSpec = { kind: 'single', scope: 'session-maybe' }
 
+  it('rejects a scope adapter lost after parent assembly and before its scoped entry renders', () => {
+    const h = makeHost()
+    h.declare('k.maybe', SINGLE_MAYBE)
+    h.add('k.maybe', { component: () => null })
+    const originalScope = h.host.scope.bind(h.host)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => mountRoot(h, { 'k.maybe': SINGLE_MAYBE }, (renderSlot) => {
+      h.host.scope = () => {
+        h.host.scope = originalScope
+        return undefined
+      }
+      return renderSlot('k.maybe', {})
+    })).toThrow('session entry requires an installed \'session\' scope adapter')
+  })
+
   /** Mount a maybe entry that records its mount count and local state. */
   function mountMaybeCounter(h: Fake) {
     let mounts = 0

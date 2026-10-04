@@ -68,6 +68,8 @@ export interface PromptError {
 /** Immutable Session lifecycle and control snapshot. */
 export interface SessionSnapshot {
   readonly sessionId: SessionId
+  /** Present when this Client generation was explicitly retained as read-only history. Not Host permission authority. */
+  readonly readOnly?: true
   /** Local prompt-submission echoes not yet observed as durable events or queue occurrences. */
   readonly pendingSubmissions: readonly PendingSubmission[]
   readonly running: boolean

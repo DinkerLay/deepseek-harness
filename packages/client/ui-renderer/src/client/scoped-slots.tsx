@@ -503,11 +503,10 @@ const scopeAreaCache = new WeakMap<SlotScopeAdapter, SessionProviderComponent>()
 function scopeAreaProvider(adapter: SlotScopeAdapter): SessionProviderComponent {
   let Provider = scopeAreaCache.get(adapter)
   if (Provider !== undefined) return Provider
-  if (adapter.renderArea === undefined) {
-    throw new SlotAssemblyError("scope 'session' adapter does not provide its area renderer")
-  }
-  const renderArea = adapter.renderArea.bind(adapter)
   Provider = function ScopeAreaProvider(props: SessionAreaProps): ReactNode {
+    if (adapter.renderArea === undefined) {
+      throw new SlotAssemblyError("scope 'session' adapter does not provide its area renderer")
+    }
     const inherited = useScopeBinding()
     const explicit = Object.hasOwn(props, 'session')
     const source = adapter.bindingSource(props.session)
@@ -516,10 +515,12 @@ function scopeAreaProvider(adapter: SlotScopeAdapter): SessionProviderComponent 
       () => source.getSnapshot(),
       () => source.getSnapshot(),
     )
-    const binding = explicit ? resolved : inherited
+    const execution = explicit ? resolved : inherited
+    const binding = props.presentationOptions === undefined || adapter.present === undefined
+      ? execution : adapter.present(execution, props.presentationOptions)
     return (
       <ScopeBindingProvider binding={binding}>
-        {renderArea(binding, props)}
+        {adapter.renderArea(binding, props)}
       </ScopeBindingProvider>
     )
   }
@@ -588,6 +589,11 @@ function standardKit(
       }
       kit['SessionProvider'] = scopeAreaProvider(adapter)
     }
+  }
+  if ((scope === 'session' || scope === 'session-maybe') && kit['SessionProvider'] === undefined) {
+    const adapter = host.scope('session')
+    if (adapter === undefined) throw new SlotAssemblyError("session entry requires an installed 'session' scope adapter")
+    kit['SessionProvider'] = scopeAreaProvider(adapter)
   }
   return { kit, standard, actions: store?.actions }
 }

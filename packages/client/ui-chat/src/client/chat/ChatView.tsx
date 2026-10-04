@@ -99,7 +99,8 @@ const ChatNodeList = memo(function ChatNodeList({ entries, useChatGroup, pending
  * ordered business Node crosses the keyed renderer seat.
  */
 export function ChatView({
-  useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
+  useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions,
+  renderSlot, renderSlotChain,
   sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions,
   usePresentation, useTurnJump, consumeTurnJump, useProjection, t,
 }: ChatViewSlotProps) {
@@ -288,6 +289,7 @@ export function ChatView({
                 renderMessageImages={renderMessageImages}
                 fileMentions={fileMentions}
                 renderSlot={renderSlot}
+                renderSlotChain={renderSlotChain}
                 t={t}
               />
             </MarkdownDelegateProvider>

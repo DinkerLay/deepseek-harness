@@ -14,9 +14,19 @@ kind: "package-reference"
 
 ## 目录
 
+- [执行视图](#execution-presentation)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
+
+-----
+
+<a id="execution-presentation"></a>
+## 执行视图
+
+`SessionProvider` 接受消费方持有的 `SessionReference` 及可选的 `presentationOptions`。`addressSessionId` 提供稳定的导航地址，不会改变执行的作用域、可观察源或命令。没有覆盖值时，`sessionAddressId` 就是实际的 `sessionId`。渲染 Factory occurrence 的 Session 作用域 entry 通过 `PropsRenderFactories<true>` 获取这一标准位置，无需声明普通子 Slot。
+
+`readOnly: true` 抑制修改类呈现。标准 `sessionReadOnly` 也跟随实际 Session 快照的只读状态，包括共享 generation 后续切换为只读的情况；将选项设置为 false 不会清除继承的只读呈现。适配器保持绑定源身份，通过同一源发布变更后的 prop。它不会获取或释放调用方的引用。这些呈现选项不授予 Host 权限；历史消费方需另行获取控制器的[只读目标](../../api/session-controller/README.zh.md)。
 
 -----
 

@@ -284,7 +284,7 @@ describe('UiSession bindings', () => {
       key: undefined,
       hooks: { session: undefined },
       keyedHooks: { projection: undefined },
-      props: { sessionId: undefined },
+      props: { sessionId: undefined, sessionAddressId: undefined, sessionReadOnly: false },
     })
     expect(changed).not.toHaveBeenCalled()
     expect(bench.resolveBinding).not.toHaveBeenCalled()

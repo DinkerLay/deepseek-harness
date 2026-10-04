@@ -54,17 +54,18 @@ function equalBreadcrumbs(left: readonly Breadcrumb[], right: readonly Breadcrum
 /**
  * Renders Session header chrome above the resident conversation scrollport.
  * @param props - Strict Session store, view ledger, navigation, render, and locale shares.
- * @returns Session navigation controls, with title and tabs after conversation starts.
+ * @returns Stable-address ancestry and title, with actual-execution controls and View tabs.
  */
 export function ConversationSessionHeader({
-  sessionId, hideChrome, useSessions, useConversationViews, useViewSelection, useStore,
+  sessionId, sessionAddressId, sessionReadOnly, hideChrome, useSessions, useConversationViews, useViewSelection, useStore,
   renderSlot, open, selectView, consumeViewSelection, t,
 }: ConversationSessionHeaderProps) {
   const tabs = useConversationViews(value => value)
   const requestedView = useViewSelection(value => value?.sessionId === sessionId ? value : null)
   const selectedId = useStore(s => s.view)
   const active = resolveActiveView(tabs, selectedId)
-  const ancestry = useSessions(s => deriveAncestry(s, sessionId), equalBreadcrumbs)
+  const addressId = sessionAddressId ?? sessionId
+  const ancestry = useSessions(s => deriveAncestry(s, addressId), equalBreadcrumbs)
   const showTabs = !hideChrome && tabs.length > 1
   useEffect(() => {
     if (requestedView === null) return
@@ -129,20 +130,20 @@ export function ConversationSessionHeader({
                     </span>
                   )
                 })}
-                {ancestry.length === 0 && <span className={css.crumbCurrent}>{sessionId}</span>}
+                {ancestry.length === 0 && <span className={css.crumbCurrent}>{addressId}</span>}
               </nav>
-              <div className={css.headerActions}>
+              {!sessionReadOnly && <div className={css.headerActions}>
                 {renderSlot('conversation.session.header.actions', {})}
-              </div>
+              </div>}
             </div>
-            <div className={css.headerUtilities}>
+            {!sessionReadOnly && <div className={css.headerUtilities}>
               {renderSlot('conversation.session.header.utilities', {})}
-            </div>
+            </div>}
           </>
         )}
-        <div className={css.headerCorner} data-conversation-header-corner="">
+        {!sessionReadOnly && <div className={css.headerCorner} data-conversation-header-corner="">
           {renderSlot('conversation.session.header.corner', {})}
-        </div>
+        </div>}
       </div>
       {showTabs && (
         // data-conversation-tabs: marks the tab strip, which the window-chrome

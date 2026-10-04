@@ -20,6 +20,7 @@ interface ChatNodeSeatProps extends ChatNodeOwnerProps {
   readonly useStore: ChatViewSlotProps['useStore']
   readonly actions: ChatViewSlotProps['actions']
   readonly renderSlot: ChatViewSlotProps['renderSlot']
+  readonly renderSlotChain: ChatViewSlotProps['renderSlotChain']
   readonly t: ChatViewSlotProps['t']
 }
 
@@ -45,7 +46,7 @@ function turnOf(node: ChatNode | undefined): number | undefined {
 export const ChatNodeSeat = memo(function ChatNodeSeat({
   nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
   cwd, openFile, openSkill, inspectCall, forkAt,
-  loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t,
+  loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, renderSlotChain, t,
 }: ChatNodeSeatProps) {
   const node = useChatNode(nodeKey)
   const routedNode = node as ChatNode | undefined
@@ -158,16 +159,18 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-turn-process-hidden={processHidden || undefined}
       data-turn-process-answer={compactAnswer || undefined}
     >
-      {renderSlot('conversation.chat.node', routedOwner, {
-        entryKey: routedNode.kind,
-        hookContext,
-        fallback: (
-          <JsonBlock
-            label={t('message.unknownSurface', { type: routedNode.kind })}
-            payload={routedNode.data}
-            truncatedLabel={total => t('json.truncated', { total })}
-          />
-        ),
+      {renderSlotChain('conversation.chat.node.presentation', { node: routedNode }, {
+        fallback: renderSlot('conversation.chat.node', routedOwner, {
+          entryKey: routedNode.kind,
+          hookContext,
+          fallback: (
+            <JsonBlock
+              label={t('message.unknownSurface', { type: routedNode.kind })}
+              payload={routedNode.data}
+              truncatedLabel={total => t('json.truncated', { total })}
+            />
+          ),
+        }),
       })}
     </div>
   )

@@ -23,6 +23,8 @@ import type { WorkspaceViewStoreActions } from './stores.ts'
 interface MainSelection {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
+  /** Preserve an explicit ordinary history presentation on browser reload. */
+  readonly readOnly?: true
 }
 
 /** Workspace archive and directory operations consumed by Client UI domains. */
@@ -325,7 +327,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const workspace = summary === undefined ? undefined
       : workspaces.items.find(item => item.sessionIds.includes(summary.id))
     if (summary !== undefined && (!summary.blank || workspace === undefined)) {
-      this.replaceMain(summary.id, this.lifetime.signal, 'preserve')
+      this.replaceMain(saved.readOnly === true ? { sessionId: summary.id, mode: 'read-only' } : summary.id,
+        this.lifetime.signal, 'preserve')
       return
     }
     const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
@@ -387,12 +390,13 @@ class UiWorkspaceService extends Service implements UiWorkspace {
         reference.release()
         return
       }
-      const subagentAddress = typeof target === 'string'
+      const subagentAddress = typeof target === 'string' || 'sessionId' in target
         ? this.sessions.subagentAddress(reference.sessionId)
         : target
       this.selection.set({
         sessionId: reference.sessionId,
         ...(subagentAddress === undefined ? {} : { subagentAddress }),
+        ...(typeof target !== 'string' && 'sessionId' in target ? { readOnly: true } : {}),
       })
     } catch (error: unknown) {
       reference.release()

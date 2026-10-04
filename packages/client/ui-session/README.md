@@ -14,9 +14,19 @@ Running status comes from Host list baselines or status events. Subagent catalog
 
 ## Table of Contents
 
+- [Execution presentation](#execution-presentation)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
+
+-----
+
+<a id="execution-presentation"></a>
+## Execution presentation
+
+`SessionProvider` accepts an owned `SessionReference` and optional `presentationOptions`. `addressSessionId` supplies the stable navigation address; it never changes the execution's scope, observable sources, or commands. Without an override, `sessionAddressId` is the actual `sessionId`. Session-scoped entries that render Factory occurrences obtain this seat through `PropsRenderFactories<true>` without declaring an ordinary child Slot.
+
+`readOnly: true` suppresses mutation presentation. The standard `sessionReadOnly` also follows the actual Session snapshot's read-only state, including a later downgrade of a shared generation; inherited read-only presentation cannot be cleared by setting the option to false. The adapter keeps binding-source identity and publishes changed props through that source. It neither acquires nor releases the caller's reference. These presentation options grant no Host authority; historical consumers acquire the Controller's [read-only target](../../api/session-controller/README.md) separately.
 
 -----
 

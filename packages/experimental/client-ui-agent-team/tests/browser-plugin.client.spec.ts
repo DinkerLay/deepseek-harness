@@ -10,11 +10,19 @@ import { apply as nodeApply } from '../src/index.ts'
 const SESSION = 'team-session' as SessionId
 const CHILD = 'team-child' as SessionId
 
-async function bench(options: { addressed?: boolean } = {}) {
+async function bench(options: { addressed?: boolean; leadExecution?: SessionId } = {}) {
   const ctx = new Context()
   const navigation: unknown[] = []
   let mainSessionId = options.addressed === true ? CHILD : SESSION
   ctx.provide('sessions', {
+    list: {
+      getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {
+        [SESSION]: { state: 'ready', error: null, values: { agentTeam: {
+          members: [{ id: options.leadExecution ?? SESSION, name: 'lead', role: 'lead', phase: 'active' }], tasks: [],
+        } } },
+      } }),
+      subscribe: () => () => {},
+    },
     binding: (id: SessionId) => options.addressed === true && id === CHILD
       ? { session: { getSnapshot: () => ({
         subagent: {
@@ -111,6 +119,22 @@ describe('ui-team browser plugin', () => {
     const b = await bench({ addressed: true })
     b.actions().openTeammate(CHILD, SESSION)
     expect(b.navigation).toEqual([['open', SESSION]])
+  })
+
+  it('returns from a teammate to the stable address when the Lead is an ordinary execution', async () => {
+    const execution = 'ordinary-lead-execution' as SessionId
+    const b = await bench({ addressed: true, leadExecution: execution })
+    b.actions().openTeammate(CHILD, execution)
+    expect(b.navigation).toEqual([['open', SESSION]])
+  })
+
+  it('uses a retained stable address when an ordinary execution opens a real teammate', async () => {
+    const execution = 'ordinary-lead-execution' as SessionId
+    const b = await bench({ leadExecution: execution })
+    b.actions().openTeammate(execution, CHILD, SESSION)
+    expect(b.navigation).toEqual([
+      ['open', { parentSessionId: SESSION, childSessionId: CHILD, mode: 'continuable' }],
+    ])
   })
 
   it('does not open a teammate from a conversation outside the main view', async () => {

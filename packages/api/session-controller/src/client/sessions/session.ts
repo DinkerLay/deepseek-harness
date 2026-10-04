@@ -69,6 +69,8 @@ interface PendingHistory {
 
 /** Manager-owned observers of a Session object's local state edges. */
 export interface SessionOptions {
+  /** Open ordinary history without cold promotion; this generation's mutation methods reject. */
+  readonly historyReadOnly?: true
   /** Catalog-discovered address selecting non-activating subagent transport. */
   address?: SubagentAddress
   /** Whether the exact direct parent Agent is available in Host summaries; absent until known. */
@@ -94,6 +96,7 @@ export interface SessionOptions {
  * remaining public members are Session Controller internals.
  */
 export class Session implements SessionFace {
+  private historyReadOnly = false
   // ---- Window and derived state (all private; the snapshot is the only read API) ----
   private baseSeq = SessionLogOffset(0)
   private hasMore = false
@@ -187,6 +190,7 @@ export class Session implements SessionFace {
     private readonly options: SessionOptions = {},
   ) {
     this.projections = options.projections ?? new ProjectionValueStore()
+    this.historyReadOnly = options.historyReadOnly === true
     this.address = options.address
     this.parentAvailable = options.parentAvailable
     this.notifier = new Notifier(() => {
@@ -226,6 +230,7 @@ export class Session implements SessionFace {
    * @returns the minted identity for {@link prompt} plus the pre-prompt abandon path.
    */
   beginSubmission(input: BeginSubmissionInput): SubmissionHandle {
+    if (this.historyReadOnly) throw new RemoteError('gateway/bad-request', 'read-only Session history cannot create a submission', {})
     const requestId = randomUUID() as SessionRequestId
     const placement = this.running ? input.mode === 'steer' ? 'steering' : 'queued' : 'transcript'
     this.pendingSubmissions = [...this.pendingSubmissions, {
@@ -257,6 +262,7 @@ export class Session implements SessionFace {
     signal?: AbortSignal,
     requestId?: SessionRequestId,
   ): Promise<RemoteResult<{ accepted: true }>> {
+    if (this.historyReadOnly) return this.historyReadOnlyFailure()
     this.promptError = null
     this.lastAgentError = null
     // Synchronous, before the first await: the blank → engaging edge must be
@@ -334,6 +340,7 @@ export class Session implements SessionFace {
 
   /** Apply one operation to a still-pending queue occurrence. */
   async updateQueue(itemId: MessageId, action: QueueAction): Promise<RemoteResult<{ accepted: true }>> {
+    if (this.historyReadOnly) return this.historyReadOnlyFailure()
     return this.remote.session.updateQueue({ sessionId: this.sessionId, itemId, action })
   }
 
@@ -345,6 +352,7 @@ export class Session implements SessionFace {
    * @returns the cancel result.
    */
   async cancel(): Promise<RemoteResult<{ accepted: true }>> {
+    if (this.historyReadOnly) return this.historyReadOnlyFailure()
     const address = this.address
     const result = address !== undefined
       ? await this.remote.subagents.interruptByParent(
@@ -370,6 +378,7 @@ export class Session implements SessionFace {
    * @returns the rename result (normalized accepted title + title event seq).
    */
   async rename(title: string): Promise<RemoteResult<{ title: string; seq: SessionSeq }>> {
+    if (this.historyReadOnly) return this.historyReadOnlyFailure()
     const result = await this.remote.session.rename({ sessionId: this.sessionId, title })
     if (!result.ok) return result
     const seq = SessionSeq(result.value.seq)
@@ -385,6 +394,7 @@ export class Session implements SessionFace {
    * @returns the admission result.
    */
   async command(line: string): Promise<RemoteResult<{ matched: boolean }>> {
+    if (this.historyReadOnly) return this.historyReadOnlyFailure()
     const result = await this.remote.commands.execute(this.sessionId, line, [])
     if (!result.ok) return result
     return { ok: true, value: { matched: result.value !== undefined } }
@@ -400,6 +410,22 @@ export class Session implements SessionFace {
     })
     this.openPromise = promise
     return promise
+  }
+
+  /** Open non-promoting history and reject mutation methods for this shared Client generation.
+   * Existing pending promotion is not rolled back; default acquisition remains unchanged.
+   * @returns completion after the read-only stream opens or reports its ordinary opening error.
+   */
+  async openReadOnlyHistory(): Promise<void> {
+    if (this.historyReadOnly) return this.open()
+    this.historyReadOnly = true
+    this.notifier.markDirty()
+    if (this.openState !== 'cold') return this.resync()
+    return this.open()
+  }
+
+  private historyReadOnlyFailure<Value>(): RemoteResult<Value> {
+    return { ok: false, error: new RemoteError('gateway/bad-request', 'read-only Session history cannot perform this operation', {}) }
   }
 
   /** Prepend one Turn-aligned page: at least 50 messages and two Turn starts, capped at 500 messages. */
@@ -618,6 +644,7 @@ export class Session implements SessionFace {
     this.openError = null
     this.notifier.markDirty()
     const events = new SessionEventStream(this.remote, this.sessionAddress(), {
+      ...this.historyReadOnly ? { readOnly: true as const } : {},
       publish: (change) => {
         if (generation !== this.openGeneration || this.events !== events) return
         this.acceptEventChange(change)
@@ -889,6 +916,7 @@ export class Session implements SessionFace {
     const identity = this.projections.values().subagent
     return {
       sessionId: this.sessionId,
+      ...this.historyReadOnly ? { readOnly: true as const } : {},
       pendingSubmissions: this.pendingSubmissions,
       running: this.running,
       subagent: this.address === undefined

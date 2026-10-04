@@ -21,7 +21,7 @@ function NoConversationWidthControls() {
  */
 export function ConversationContent(props: ConversationContentProps) {
   const {
-    sessionId, phase, hero, useSession, useSessions, useSessionStatus,
+    sessionId, sessionReadOnly, phase, hero, useSession, useSessions, useSessionStatus,
     useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,
     selectWorkspace, t, useFactorySlot,
   } = props
@@ -196,7 +196,7 @@ export function ConversationContent(props: ConversationContentProps) {
     >
       <div className={css.scrollBody} data-conversation-scroll="">
         {sessionId === undefined ? null : <Views />}
-        {composerSeat}
+        {!sessionReadOnly && composerSeat}
       </div>
       <WidthControls container={body} phase={phase} />
     </div>

@@ -132,6 +132,10 @@ function hasGraphAction(value: object): value is { openGraph: () => void } {
   return 'openGraph' in value && typeof value.openGraph === 'function'
 }
 
+function hasClosePanel(value: object): value is { closePanel: () => void } {
+  return 'closePanel' in value && typeof value.closePanel === 'function'
+}
+
 function setProjectionSnapshot(
   sessions: ReturnType<typeof bench>['sessions'],
   sessionId: SessionId,
@@ -148,6 +152,119 @@ function setProjection(sessions: ReturnType<typeof bench>['sessions'], sessionId
 }
 
 describe('TeamAction', () => {
+  it.each(['agent-team.panel.header.actions', 'agent-team.panel.tasks.content', 'agent-team.panel.tasks.graph'] as const)(
+    'keeps the native close callback owned by %s', (target) => {
+      const slot: TeamActionProps['renderSlot'] = (key, owner) => {
+        if (target === 'agent-team.panel.tasks.graph' && key === 'agent-team.panel.tasks.action' && hasGraphAction(owner)) {
+          return <button onClick={owner.openGraph}>Open graph</button>
+        }
+        return key === target && hasClosePanel(owner) ? <button onClick={owner.closePanel}>Close from slot</button> : null
+      }
+      const b = bench({ renderSlot: slot })
+      b.props.sessionAddressId = SESSION
+      render(<TeamAction {...b.props} />)
+      openPanel()
+      if (target === 'agent-team.panel.tasks.graph') fireEvent.click(screen.getByRole('button', { name: 'Open graph' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Close from slot' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+    },
+  )
+
+  it('preserves retiring and retired member lifecycle while rendering mixed grouped and ungrouped rows', () => {
+    const b = bench()
+    setProjection(b.sessions, SESSION, { tasks: [], members: [lead,
+      { ...worker, name: 'leaving', phase: 'retiring' },
+      { ...worker, id: 'retired-worker' as SessionId, name: 'left', phase: 'retired', group: 'finished' },
+    ] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByRole('button', { name: /^leaving/u }).textContent).toContain(zh['memberStatus.retiring'])
+    expect(screen.getByRole('button', { name: /^left/u }).textContent).toContain(zh['memberStatus.retired'])
+    expect(screen.getByRole('button', { name: /^leaving/u })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: /^left/u }).querySelector('[data-state="idle"]')).not.toBeNull()
+    expect(screen.getByText(zh['group.ungrouped'])).toBeTruthy()
+    expect(screen.getByText('finished')).toBeTruthy()
+  })
+
+  it('displays the native current Lead execution without using the stable host preset or runtime status', () => {
+    const execution = 'actual-lead-execution' as SessionId
+    const b = bench({ sessionId: execution, running: { [SESSION]: false, [execution]: true },
+      statuses: new Map([[execution, { running: true, pendingInteraction: undefined, completionUnread: false }]]),
+      projections: {
+        [SESSION]: { state: 'ready', error: null, values: { agentTeam: { ...team,
+          lead: { executionId: execution, term: 4, presetId: 'analyst', revision: 'analyst-revision' },
+          members: [{ ...lead, preset: { id: 'analyst', revision: 'analyst-revision' } }, worker] },
+        modelSelection: { lastUsed: null, next: { provider: 'p', model: 'dormant-host-model' } } } },
+        [execution]: { state: 'ready', error: null,
+          values: { modelSelection: { lastUsed: null, next: { provider: 'p', model: 'actual-lead-model' } } } },
+      } })
+    b.props.sessionAddressId = SESSION
+    const initial = b.sessions.getSnapshot()
+    b.sessions.set({ ...initial, byId: { ...initial.byId,
+      [SESSION]: { ...initial.byId[SESSION]!, projectionValues: { agentPreset: 'standard' } },
+      [execution]: { ...initial.byId[execution]!, projectionValues: { agentPreset: 'analyst' } },
+    } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const row = screen.getByRole<HTMLButtonElement>('button', { name: /^lead/u })
+    expect(row.textContent).toContain('analyst')
+    expect(row.textContent).toContain('actual-lead-model')
+    expect(row.textContent).toContain(zh['memberStatus.running'])
+    expect(row.textContent).toContain(zh.current)
+    expect(row.textContent).not.toContain('standard')
+    expect(row.textContent).not.toContain('dormant-host-model')
+    expect(row.disabled).toBe(true)
+    expect(b.injected.openTeammate).not.toHaveBeenCalled()
+  })
+
+  it('updates Lead seat display while keeping its roster identity and navigation on the stable Team address', () => {
+    const first = 'first-native-lead' as SessionId
+    const next = 'next-native-lead' as SessionId
+    const slot: TeamActionProps['renderSlot'] = (key, owner) => key === 'agent-team.panel.member.meta' && memberMeta(owner)
+      ? <small>{owner.member.name}:{owner.presetId ?? 'none'}</small> : null
+    const b = bench({ sessionId: WORKER, parentSessionId: SESSION, renderSlot: slot,
+      running: { [SESSION]: true, [first]: false, [next]: true },
+      projections: {
+        [SESSION]: { state: 'ready', error: null, values: { agentTeam: { ...team,
+          lead: { executionId: first, term: 2, presetId: 'analyst', revision: 'a' } },
+        modelSelection: { lastUsed: null, next: { provider: 'p', model: 'host-model' } } } },
+        [first]: { state: 'ready', error: null, values: { modelSelection: { lastUsed: null, next: { provider: 'p', model: 'first-model' } } } },
+        [next]: { state: 'ready', error: null, values: { modelSelection: { lastUsed: null, next: { provider: 'p', model: 'next-model' } } } },
+      } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByText('lead:analyst')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^lead/u }).textContent).toContain(zh['memberStatus.inactive'])
+    expect(screen.getByRole('button', { name: /^lead/u }).textContent).toContain('first-model')
+    fireEvent.click(screen.getByRole('button', { name: /^lead/u }))
+    expect(b.injected.openTeammate).toHaveBeenCalledWith(WORKER, SESSION)
+    setProjection(b.sessions, SESSION, { ...team,
+      lead: { executionId: next, term: 3, presetId: 'reviewer', revision: 'b' } })
+    const row = screen.getByRole('button', { name: /^lead/u })
+    expect(row.textContent).toContain('lead:reviewer')
+    expect(row.textContent).toContain('next-model')
+    expect(row.textContent).toContain(zh['memberStatus.running'])
+    expect(row.textContent).not.toContain('first-model')
+    expect(row.textContent).not.toContain('host-model')
+    fireEvent.click(row)
+    expect(b.injected.openTeammate).toHaveBeenLastCalledWith(WORKER, SESSION)
+  })
+
+  it('uses the committed Lead preset without guessing a model from the host when its execution row is cold', () => {
+    const execution = 'cold-native-lead' as SessionId
+    const b = bench({ projections: {
+      [SESSION]: { state: 'ready', error: null, values: { agentTeam: { ...team,
+        lead: { executionId: execution, term: 2, presetId: 'analyst', revision: 'a' } },
+      modelSelection: { lastUsed: null, next: { provider: 'p', model: 'host-model' } } } },
+    } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const row = screen.getByRole('button', { name: /^lead/u })
+    expect(row.textContent).toContain('analyst')
+    expect(row.textContent).not.toContain('host-model')
+    expect(row.textContent).not.toContain(zh['model'])
+  })
+
   it('shows the current Lead preset and closes the Team panel explicitly', () => {
     const b = bench({ running: { [SESSION]: false } })
     const snapshot = b.sessions.getSnapshot()
@@ -324,6 +441,17 @@ describe('TeamAction', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: /^worker/u }).disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: /^lead/u }))
     expect(b.injected.openTeammate).toHaveBeenCalledWith(WORKER, SESSION)
+  })
+
+  it('reads a stable Team address from an ordinary execution view without inventing subagent identity', () => {
+    const execution = 'lead-execution-2' as SessionId
+    const b = bench({ sessionId: execution })
+    render(<TeamAction {...b.props} sessionAddressId={SESSION} />)
+    openPanel()
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^worker/u }))
+    expect(b.injected.openTeammate).toHaveBeenCalledWith(execution, WORKER, SESSION)
+    expect(b.session.getSnapshot().subagent).toBeNull()
   })
 
   it.each([false, true])('accepts shared baselines and late capability updates (teammate page: %s)', (addressed) => {

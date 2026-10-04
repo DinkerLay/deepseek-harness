@@ -623,6 +623,27 @@ describe('Session Client stream adapters', () => {
     await stream.dispose()
   })
 
+  it('retains explicit ordinary read-only follow across physical reconnect', async () => {
+    const finish = Promise.withResolvers<undefined>()
+    const remote = new ScriptedSessionRemote([
+      { frames: [snapshot(0, [entry(0)])], waitAfterFrames: finish.promise,
+        terminal: new RemoteStreamCarrierError('read-only carrier lost') },
+      { frames: [snapshot(1, [entry(0), entry(1)])], hold: true },
+    ], [])
+    const stream = new SessionEventStream(sessionClient(remote), ADDRESS, {
+      readOnly: true, publish: vi.fn(), failed: vi.fn(),
+    })
+    try {
+      await stream.open({})
+      finish.resolve(undefined)
+      await vi.waitFor(() => { expect(remote.followRequests).toHaveLength(2) })
+      expect(remote.followRequests).toEqual([
+        { address: ADDRESS, assistantStream: true, readOnly: true },
+        { address: ADDRESS, assistantStream: true, readOnly: true },
+      ])
+    } finally { finish.resolve(undefined); await stream.dispose() }
+  })
+
   it.each([{}, { maxMessages: 50 }, { maxMessages: 500, turnWindow: { minMessages: 50, minTurns: 2 } }])('repairs a live gap preserving history limits %j', async (request) => {
     const remote = new ScriptedSessionRemote(
       [{ frames: [snapshot(0, [entry(0)]), entry(2)], hold: true }],

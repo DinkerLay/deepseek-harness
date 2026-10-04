@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   TeamMemberProjection,
+  TeamProjection,
   TeamTaskView as TeamTask,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
@@ -21,7 +22,7 @@ import css from './TeamAction.module.css'
 /** Business actions injected by the browser plugin. */
 export interface TeamActionInjected {
   /** Open a roster Session from the current conversation. */
-  openTeammate: (sessionId: SessionId, childSessionId: SessionId) => void
+  openTeammate: (sessionId: SessionId, childSessionId: SessionId, addressSessionId?: SessionId) => void
 }
 
 /** Durable lifecycle overlaid with the member Session's live turn activity. */
@@ -81,27 +82,31 @@ type TeamMemberRowProps = Pick<TeamActionProps,
   member: TeamMemberProjection
   memberCount: number
   leadSessionId: SessionId
+  leadBinding: TeamProjection['lead']
   onError: (message: string) => void
 }
 
 function TeamMemberRow({
-  member, memberCount, leadSessionId, sessionId, useSessions, useSessionStatus, openTeammate, renderSlot, onError, t,
+  member, memberCount, leadSessionId, leadBinding, sessionId, useSessions, useSessionStatus, openTeammate, renderSlot, onError, t,
 }: TeamMemberRowProps) {
-  const model = useSessions(state => state.projectionsBySession[member.id]?.values.modelSelection?.next?.model)
-  const preset = useSessions(state => state.byId[member.id]?.projectionValues?.agentPreset)
-  const leadPreset = useSessions(state => state.byId[leadSessionId]?.projectionValues?.agentPreset)
-  const running = useSessionStatus(state => state.get(member.id)?.running)
-  const summaryRunning = useSessions(state => state.byId[member.id]?.running)
+  const seat = member.role === 'lead' ? leadBinding : undefined
+  // Roster identity and navigation stay anchored; Lead runtime reads follow the native seat.
+  const executionId = seat?.executionId ?? member.id
+  const model = useSessions(state => state.projectionsBySession[executionId]?.values.modelSelection?.next?.model)
+  const preset = useSessions(state => state.byId[executionId]?.projectionValues?.agentPreset)
+  const leadPreset = useSessions(state => state.byId[leadBinding?.executionId ?? leadSessionId]?.projectionValues?.agentPreset)
+  const running = useSessionStatus(state => state.get(executionId)?.running)
+  const summaryRunning = useSessions(state => state.byId[executionId]?.running)
   const status: MemberStatus = member.phase === 'active'
     ? (running ?? summaryRunning) === true ? 'running' : 'inactive'
     : member.phase
-  const isCurrent = member.id === sessionId
+  const isCurrent = executionId === sessionId
   const unstarted = member.phase === 'active' && member.executionStarted === false
   const highlightCurrent = isCurrent && memberCount > 1
   const inert = isCurrent || unstarted || status === 'failed' || status === 'provisioning'
     || status === 'retiring' || status === 'retired'
-  const presetId = typeof preset === 'string' ? preset
-    : member.preset?.id ?? (typeof leadPreset === 'string' ? leadPreset : undefined)
+  const presetId = seat?.presetId ?? (typeof preset === 'string' ? preset
+    : member.preset?.id ?? leadBinding?.presetId ?? (typeof leadPreset === 'string' ? leadPreset : undefined))
   const presetMeta = renderSlot('agent-team.panel.member.meta', { member,
     ...presetId === undefined ? {} : { presetId } })
 
@@ -203,7 +208,7 @@ function TaskCard({ task, leadSessionId, closePanel, renderSlot, t }: {
 
 /** Render the Team roster and read-only task board. */
 export function TeamAction({
-  sessionId, useSession, useSessions, useSessionStatus, openTeammate, renderSlot, t,
+  sessionId, sessionAddressId, useSession, useSessions, useSessionStatus, openTeammate, renderSlot, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [graphOpen, setGraphOpen] = useState(false)
@@ -216,7 +221,13 @@ export function TeamAction({
     open, anchorRef: triggerRef, panelRef, gap: 5, margin: 16,
   })
   const positioned = position !== null
-  const leadSessionId = useSession(snapshot => snapshot.subagent?.address.parentSessionId) ?? sessionId
+  const parentSessionId = useSession(snapshot => snapshot.subagent?.address.parentSessionId)
+  const explicitAddress = sessionAddressId !== sessionId ? sessionAddressId : undefined
+  const leadSessionId = explicitAddress ?? parentSessionId ?? sessionId
+  const openMember: TeamActionInjected['openTeammate'] = (source, member) => {
+    if (explicitAddress === undefined) openTeammate(source, member)
+    else openTeammate(source, member, explicitAddress)
+  }
   const team = useSessions(state => state.projectionsBySession[leadSessionId]?.values.agentTeam)
   const opening = useSession(snapshot => snapshot.openState === 'loading')
   const listing = useSessions(state => state.phase === 'pending')
@@ -400,10 +411,11 @@ export function TeamAction({
                           member={member}
                           memberCount={team.members.length}
                           leadSessionId={leadSessionId}
+                          leadBinding={team.lead}
                           sessionId={sessionId}
                           useSessions={useSessions}
                           useSessionStatus={useSessionStatus}
-                          openTeammate={openTeammate}
+                          openTeammate={openMember}
                           renderSlot={renderSlot}
                           onError={setError}
                           t={t}
