@@ -304,7 +304,7 @@ export class TeamRoster {
 
   /**
    * Interrupt one live teammate turn without clearing its pending inbox.
-   * @param caller - exact live Lead Agent.
+   * @param caller - exact live current Lead execution, checked before addressing its member through the stable parent.
    * @param targetName - durable teammate name.
    * @returns the target status sampled before cancellation.
    */
@@ -318,7 +318,7 @@ export class TeamRoster {
     const live = this.ctx.agents.get(target.id)
     if (live === undefined) return { previousStatus: 'inactive' }
     const previousStatus = availability(live)
-    this.ctx.subagents.interrupt(target.id, { kind: 'ancestor', agent: caller })
+    this.ctx.subagents.interrupt(target.id, { kind: 'ancestor', agent: membership.root })
     return { previousStatus }
   }
 

@@ -1,0 +1,10 @@
+version: 1
+scenario: native-team-lead-control
+profile: sdk
+composition: sdk-native-team-lead-control
+recording: authored
+header:
+  class: native-team-lead-control
+  pin: true
+  childSystemPrompts: [2]
+  childToolSchemas: [2]

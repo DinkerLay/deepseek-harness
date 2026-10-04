@@ -102,6 +102,13 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
   }
   for (const log of parsed) {
     for (const record of log.records) {
+      if (isRecord(record.data)) {
+        if (record.type === 'team/message/input-queued' && isRecord(record.data.message)) {
+          claim(record.data.message.id, 'id', true)
+        } else if (record.type === 'team/message/lead-delivered') {
+          claim(record.data.messageId, 'id', true)
+        }
+      }
       if (record.type === 'feedback/message-put' && isRecord(record.data) && isRecord(record.data.item)) {
         claim(record.data.item.version, 'id')
       }

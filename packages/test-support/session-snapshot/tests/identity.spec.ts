@@ -120,4 +120,30 @@ describe('session snapshot identity redaction', () => {
     expect(redacted).toContain('"id":"{{message:8}}"')
     expect(redacted).not.toContain('{{id:')
   })
+
+  it.each([true, false])('preserves the native held-input queue and receipt relationship when equal=%s', (equal) => {
+    const queueId = `lead-transfer-${'a'.repeat(64)}`
+    const otherQueueId = `lead-transfer-${'b'.repeat(64)}`
+    const proseHash = `lead-transfer-${'c'.repeat(64)}`
+    const source = [
+      { type: 'session', id: parentId },
+      { type: 'team/message/input-queued', data: { message: {
+        id: queueId,
+        transfer: { heldSeq: 7, input: { message: {
+          id: messageId, role: 'user', content: [{ type: 'text', text: proseHash }], source: { kind: 'user' },
+        }, wakeup: true } },
+      } } },
+      { type: 'team/message/lead-delivered', data: { messageId: equal ? queueId : otherQueueId } },
+      { type: 'example', data: { messageId: proseHash, text: proseHash } },
+    ].map(record => JSON.stringify(record)).join('\n') + '\n'
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    const records = redacted!.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect(records[1]?.data).toEqual({ message: { id: '{{id:1}}', transfer: { heldSeq: 7, input: { message: {
+      id: '{{message:1}}', role: 'user', content: [{ type: 'text', text: proseHash }], source: { kind: 'user' },
+    }, wakeup: true } } } })
+    expect(records[2]?.data).toEqual({ messageId: equal ? '{{id:1}}' : '{{id:2}}' })
+    expect(records[3]?.data).toEqual({ messageId: proseHash, text: proseHash })
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
 })

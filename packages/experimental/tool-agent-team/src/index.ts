@@ -332,8 +332,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           }
           // The active-peer read and waiter registration must remain one synchronous
           // span; awaiting between them can lose the only peer-status edge.
+          // The Lead roster row keeps its anchor id when its execution changes.
           const hasActivePeer = ctx.agentTeams.listMembers(caller).some(member =>
-            member.id !== caller.id && ACTIVE_WAIT_STATUSES.has(member.status))
+            member.name !== membership.name && ACTIVE_WAIT_STATUSES.has(member.status))
           if (!hasActivePeer) {
             return {
               timedOut: false,

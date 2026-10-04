@@ -75,7 +75,7 @@ Releasing a Task cancels its Attempt but does not interrupt an executing member 
 
 Roster tools return only their declared model-facing fields. The native runtime's startup/navigation flag remains available to the Client and does not enter creation or listing tool results.
 
-Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. Task edits based on an outdated revision are rejected rather than overwriting newer work.
+Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. A Lead that takes over the Team does not count its own running turn as another member. Task edits based on an outdated revision are rejected rather than overwriting newer work.
 
 -----
 

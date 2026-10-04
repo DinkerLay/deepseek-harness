@@ -135,6 +135,9 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'SDK snapshot OK',
     ordinaryChildren: true,
   },
+  'native-team-lead-control': {
+    expectedFinalResponse: 'ROOT_QA_READY',
+  },
   'dynamic-tool-updates': {
     expectedFinalResponse: 'DONE',
   },
@@ -671,8 +674,13 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           observe,
         )
       }
-      for (const type of postTurnEventTypes(primaryFixture)) {
-        await waitForRootEvent(subscription, sessionId, event => event.type === type, observe)
+      if (scenario.name === 'native-team-lead-control') {
+        await waitForRootEvent(subscription, sessionId, event => event.type === 'team/extension'
+          && ((event.data as JsonObject | undefined)?.extension as JsonObject | undefined)?.recordId === 'control-complete', observe)
+      } else {
+        for (const type of postTurnEventTypes(primaryFixture)) {
+          await waitForRootEvent(subscription, sessionId, event => event.type === type, observe)
+        }
       }
     } finally {
       subscription.close()
@@ -1091,6 +1099,54 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
             expect(records(child.content).filter(event => event.type === 'team/lead/execution')).toHaveLength(1)
           }
         } else expect(observedMethods.has('subagent.finished')).toBe(true)
+      }
+      if (scenario.name === 'native-team-lead-control') {
+        expect(ordered).toHaveLength(4)
+        const [anchor, second, member, third] = ordered
+        const anchorRecords = records(anchor!.content)
+        const modeRecords = anchorRecords.filter(event => event.type === 'team/mode')
+        expect(modeRecords).toHaveLength(1)
+        expect(modeRecords[0]?.data).toEqual({ version: 1, teamId: anchor!.header.id, mode: {
+          kind: 'controlled', requiredTaskExtensionId: 'snapshot-task-writer', permissionTableId: 'snapshot-permissions',
+          permissionRevision: 'snapshot-revision', maxOrdinaryMessageBytes: 4096,
+        } })
+        expect(anchorRecords.filter(event => event.type === 'team/lead/transaction')).toHaveLength(2)
+        for (const [term, actor] of [[2, second], [3, third]] as const) {
+          const actorRecords = records(actor!.content)
+          expect(actor!.header.origin).toBeUndefined()
+          expect(actor!.header.parentSession).toBe(anchor!.header.id)
+          expect(actor!.header.isSeeded).toBe(false)
+          expect(actorRecords.some(event => event.type === 'team/mode')).toBe(false)
+          expect(actorRecords.filter(event => event.type === 'team/lead/execution')).toHaveLength(1)
+          expect(actorRecords.find(event => event.type === 'team/lead/execution')?.data)
+            .toMatchObject({ teamId: anchor!.header.id, term, presetId: 'snapshot-control-lead' })
+          const result = actorRecords.find(event => event.type === 'tool/result'
+            && (event.data as JsonObject | undefined)?.message !== undefined
+            && ((event.data as JsonObject).message as JsonObject).toolCallId === `control-wait-${term}`)
+          const message = (result?.data as JsonObject | undefined)?.message as JsonObject | undefined
+          const content = message?.content as JsonObject[] | undefined
+          expect(JSON.parse(String(content?.[0]?.text))).toMatchObject({ timedOut: false, noProgress: { reason: 'no-active-peer' } })
+        }
+        const memberRecords = records(member!.content)
+        expect(member!.header.origin).toBe('subagent')
+        expect(member!.header.parentSession).toBe(anchor!.header.id)
+        expect(memberRecords.some(event => event.type === 'team/mode')).toBe(false)
+        const interrupt = records(second!.content).find(event => event.type === 'tool/result'
+          && ((event.data as JsonObject).message as JsonObject).toolCallId === 'control-interrupt-2')
+        const interruptMessage = (interrupt?.data as JsonObject).message as JsonObject
+        expect(interruptMessage.isError).toBe(false)
+        expect(JSON.parse(String((interruptMessage.content as JsonObject[])[0]?.text))).toEqual({ previousStatus: 'running' })
+        expect(memberRecords.find(event => event.type === 'tool/call' && (event.data as JsonObject).callId === 'control-marker')?.data)
+          .toMatchObject({ name: 'qa_control_marker', arguments: '{}' })
+        const marker = memberRecords.find(event => event.type === 'tool/result'
+          && ((event.data as JsonObject).message as JsonObject).toolCallId === 'control-marker')
+        expect(marker?.data).toMatchObject({ message: { isError: true }, error: { code: 'ABORTED' } })
+        expect(memberRecords.find(event => event.type === 'turn/end')?.data)
+          .toMatchObject({ turn: 1, reason: { kind: 'aborted', reason: { kind: 'parent' } } })
+        const completed = anchorRecords.findLast(event => event.type === 'team/extension'
+          && ((event.data as JsonObject).extension as JsonObject).recordId === 'control-complete')
+        expect(JSON.parse(String(((completed?.data as JsonObject).extension as JsonObject).dataJson)))
+          .toEqual({ inactiveTerms: [2, 3], pendingRetained: true, memberParentUnchanged: true })
       }
     })
   }

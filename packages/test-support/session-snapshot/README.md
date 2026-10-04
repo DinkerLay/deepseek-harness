@@ -80,6 +80,8 @@ Headless/ACP and SDK adapters compare raw catalog child-creation times with harv
 
 ### Record, replay, and refresh
 
+Lead-input recordings keep each native mailbox identity distinct from its original input message. Refresh preserves each complete held or transferred message together with its release references; queue and delivery receipt retain the same mailbox identity. Source kinds, wake intent, sequence references and unrelated payload text remain unchanged.
+
 `pnpm run test:snapshot:record` calls the live LLM and writes the harvested current generation under its canonical versioned filename. Record and refresh never rename or delete a completed generation, including generations of a child role absent from a later run; reviewed source-tree curation removes a predecessor only after the same role has a verified current replacement. Scenarios with an explicit `sessionFormat` remain read-only in record mode. `pnpm run test:snapshot:refresh` stays keyless, runs the selected highest replay input, and writes stdout, owned prompt and tool-schema sidecars, and a fresh current-generation comparable Session output; retained historical scenarios write the separate writer-output oracles instead of a canonical current-format replay generation. Each composition owner keeps its replay patch beside its live patch; top-level `snapshots/` owns Session-driven scenarios, while other expected outputs stay beside their owning package. [`dsh-llm-replay`](../llm-replay/README.md) serves the recorded streams selected through `DSH_SNAPSHOT_*` environment values.
 
 ### Pinning request headers and system prompts

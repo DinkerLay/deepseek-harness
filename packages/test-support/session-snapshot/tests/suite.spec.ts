@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
+import { redactSessionSnapshotIds } from '../src/identity.ts'
 import {
   assertPersistedSessionVersion,
   assertSessionFixtureVersion,
@@ -934,6 +935,41 @@ describe('unknownToolCallIds', () => {
 })
 
 describe('stabilizeFixtureMessageIds', () => {
+  it('keeps the held, transferred, received, and released original message identity together', () => {
+    const freshId = '11111111-1111-4111-8111-111111111111'
+    const existingId = '22222222-2222-4222-8222-222222222222'
+    const queueId = `lead-transfer-${'a'.repeat(64)}`
+    const message = (id: string) => ({ id, role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: `Literal QA text keeps ${freshId}` }] })
+    const logs = (id: string) => [
+      [
+        { type: 'session', id: 'parent', cwd: '{{cwd}}' },
+        { type: 'agent/input/held', data: { controllerId: 'native-team-lead', input: { message: message(id), wakeup: true } } },
+        { type: 'team/message/input-queued', data: { message: { id: queueId,
+          transfer: { heldSeq: 7, input: { message: message(id), wakeup: true } } } } },
+        { type: 'agent/input/released', data: { controllerId: 'native-team-lead', messageId: id } },
+        { type: 'example', data: { messageId: freshId } },
+      ],
+      [
+        { type: 'session', id: 'child', cwd: '{{cwd}}' },
+        { type: 'agent/inbox/spliced', data: { inserted: [message(id)] } },
+        { type: 'user/message', data: message(id) },
+      ],
+    ].map(records => records.map(record => JSON.stringify(record)).join('\n') + '\n')
+
+    const stable = stabilizeFixtureMessageIds(logs(freshId), logs(existingId))
+    const root = stable[0]!.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    const child = stable[1]!.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect(root[1]?.data).toEqual({ controllerId: 'native-team-lead', input: { message: message(existingId), wakeup: true } })
+    expect(root[2]?.data).toEqual({ message: { id: queueId,
+      transfer: { heldSeq: 7, input: { message: message(existingId), wakeup: true } } } })
+    expect(root[3]?.data).toEqual({ controllerId: 'native-team-lead', messageId: existingId })
+    expect(root[4]?.data).toEqual({ messageId: freshId })
+    expect(child[1]?.data).toEqual({ inserted: [message(existingId)] })
+    expect(child[2]?.data).toEqual(message(existingId))
+    expect(stabilizeFixtureMessageIds(stable, logs(existingId))).toEqual(stable)
+  })
+
   it('reuses one committed message UUID across fixture-ready parent and child logs', () => {
     const freshId = '11111111-1111-4111-8111-111111111111'
     const existingId = '22222222-2222-4222-8222-222222222222'
@@ -1142,6 +1178,30 @@ describe('refreshFixtureReplacements', () => {
 })
 
 describe('stabilizeRefreshLog', () => {
+  it.each([true, false])('keeps native queue identities fresh across receipts and two refreshes when equal=%s', (equal) => {
+    const log = (queueId: string, receiptId: string) => [
+      { type: 'session', id: 'same', cwd: '{{cwd}}', createdAt: 1 },
+      { type: 'team/message/input-queued', data: { message: { id: queueId,
+        transfer: { heldSeq: 7, input: { message: { id: '33333333-3333-4333-8333-333333333333',
+          role: 'user', content: [{ type: 'text', text: 'Normal notice remains' }], source: { kind: 'user' } }, wakeup: true } } } } },
+      { type: 'team/message/lead-delivered', data: { messageId: receiptId } },
+    ].map(record => JSON.stringify(record)).join('\n') + '\n'
+    const queueId = (letter: string) => `lead-transfer-${letter.repeat(64)}`
+    const existing = log(queueId('a'), equal ? queueId('a') : queueId('b'))
+    const fresh = log(queueId('c'), equal ? queueId('c') : queueId('d'))
+    const refreshed = stabilize(fresh, existing)
+    const records = refreshed.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect((records[1]?.data as { message: { id: string } }).message.id).toBe(queueId('c'))
+    expect(records[2]?.data).toEqual({ messageId: equal ? queueId('c') : queueId('d') })
+    const first = redactSessionSnapshotIds(stabilizeFixtureMessageIds([refreshed], [existing]))
+    const next = log(queueId('e'), equal ? queueId('e') : queueId('f'))
+    const second = redactSessionSnapshotIds(stabilizeFixtureMessageIds([stabilize(next, first[0]!)], first))
+    expect(second).toEqual(first)
+    const canonical = first[0]!.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect((canonical[1]?.data as { message: { id: string } }).message.id).toBe('{{id:1}}')
+    expect(canonical[2]?.data).toEqual({ messageId: equal ? '{{id:1}}' : '{{id:2}}' })
+  })
+
   it('preserves unpacked member times when refresh first packs a chunk run', () => {
     const fresh = [
       '{"type":"session","id":"same","createdAt":200}',

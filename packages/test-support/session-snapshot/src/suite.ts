@@ -668,10 +668,19 @@ function surfaceEventMessage(record: Record<string, unknown>): Record<string, un
 function recordMessages(record: Record<string, unknown>): Record<string, unknown>[] {
   const surfaceMessage = surfaceEventMessage(record)
   if (surfaceMessage !== undefined) return [surfaceMessage]
-  if (record.type !== 'agent/inbox/spliced' || !isRecord(record.data) || !Array.isArray(record.data.inserted)) {
-    return []
+  const data = record.data
+  if (!isRecord(data)) return []
+  let input: unknown
+  if (record.type === 'agent/input/held') input = data.input
+  else if (record.type === 'team/message/input-queued' && isRecord(data.message) && isRecord(data.message.transfer)) {
+    input = data.message.transfer.input
   }
-  return record.data.inserted.flatMap((value) => {
+  if (isRecord(input)) {
+    const message = completeMessage(input.message)
+    return message === undefined ? [] : [message]
+  }
+  if (record.type !== 'agent/inbox/spliced' || !Array.isArray(data.inserted)) return []
+  return data.inserted.flatMap((value) => {
     const message = completeMessage(value)
     return message === undefined ? [] : [message]
   })
@@ -739,7 +748,7 @@ function applyFixtureReplacements(content: string, replacements: readonly Fixtur
   return stable
 }
 
-/** Rewrite only validated durable-message ID fields, leaving every other occurrence untouched. */
+/** Rewrite complete durable-message IDs and their source-release references, leaving other values untouched. */
 function applyFixtureMessageIds(content: string, replacements: ReadonlyMap<string, string>): string {
   return content.split('\n').map((line) => {
     if (line.trim().length === 0) return line
@@ -751,6 +760,13 @@ function applyFixtureMessageIds(content: string, replacements: ReadonlyMap<strin
       message.id = replacement
       changed = true
     }
+    if (record.type === 'agent/input/released' && isRecord(record.data) && typeof record.data.messageId === 'string') {
+      const replacement = replacements.get(record.data.messageId)
+      if (replacement !== undefined) {
+        record.data.messageId = replacement
+        changed = true
+      }
+    }
     return changed ? JSON.stringify(record) : line
   }).join('\n')
 }
@@ -760,7 +776,7 @@ function applyFixtureMessageIds(content: string, replacements: ReadonlyMap<strin
  *
  * @param logs Fresh fixture-ready session JSONL contents for one scenario.
  * @param fixtures Existing fixture contents in matching order; missing fixtures may be empty strings.
- * @returns The fresh contents with only reusable message UUIDs replaced.
+ * @returns The fresh contents with reusable message IDs and their source-release references replaced.
  */
 export function stabilizeFixtureMessageIds(logs: readonly string[], fixtures: readonly string[]): string[] {
   const replacements = fixtureMessageIdReplacements(logs, fixtures)
@@ -1078,6 +1094,11 @@ function normalizedStringMappings(
   const excludedStrings = new Set<string>()
   for (const record of [...freshRecords, ...existingRecords]) {
     for (const message of recordMessages(record)) excludedStrings.add(message.id as string)
+    if (!isRecord(record.data)) continue
+    const queueId = record.type === 'team/message/input-queued' && isRecord(record.data.message)
+      ? record.data.message.id
+      : record.type === 'team/message/lead-delivered' ? record.data.messageId : undefined
+    if (typeof queueId === 'string') excludedStrings.add(queueId)
   }
   const forward = new Map<string, string>()
   const reverse = new Map<string, string>()

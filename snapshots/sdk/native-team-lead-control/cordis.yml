@@ -1,0 +1,37 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- insert:
+    - id: candidate-presets
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: snapshot-control-lead
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        controlledMode:
+          kind: controlled
+          requiredTaskExtensionId: snapshot-task-writer
+          permissionTableId: snapshot-permissions
+          permissionRevision: snapshot-revision
+          maxOrdinaryMessageBytes: 4096
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+      config:
+        controlledTasks: true
+    - id: native-team-lead-control-fixture
+      name: './fixture.mjs'

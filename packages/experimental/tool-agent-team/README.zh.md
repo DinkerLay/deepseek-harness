@@ -75,7 +75,7 @@ kind: "package-reference"
 
 成员表工具只返回已声明的模型字段。原生运行时的启动／导航标记继续供 Client 使用，不进入创建或列表工具的结果。
 
-发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning 时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
+发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning 时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。接任团队的 Lead 不会把自己正在运行的轮次算作其他成员。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
 
 -----
 
