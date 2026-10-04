@@ -457,6 +457,8 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Absolute browser-session lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
+  /** Plain-text unauthorized index body; defaults to the official startup guidance. HEAD responses remain bodyless. */
+  authenticationRequiredMessage?: string
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
 }

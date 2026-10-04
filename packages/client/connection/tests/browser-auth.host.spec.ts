@@ -190,6 +190,31 @@ describe('BrowserAuth', () => {
     }
   })
 
+  it('changes only the unauthorized index body when deployment guidance is supplied', async () => {
+    const message = 'Example app authentication required; reopen the application startup URL.\n'
+    const auth = await BrowserAuth.create({}, credentials(new RecordCredentials()), 30, message)
+    const { cookie } = exchange(auth)
+    const authorized = response()
+    expect(auth.authorizeIndex(request('/index.html', '127.0.0.1:3080', { cookie }), authorized.value)).toBe(true)
+    expect(authorized.state).toEqual({})
+    for (const candidate of [
+      request('/'),
+      request('/?token=wrong'),
+      request('/?token=wrong&token=again'),
+      request('/index.html'),
+      request('/', '127.0.0.1:3081', { cookie }),
+      request('/', '127.0.0.1:3080', { method: 'HEAD' }),
+    ]) {
+      const denied = response()
+      expect(auth.authorizeIndex(candidate, denied.value)).toBe(false)
+      expect(denied.state).toEqual({
+        status: 401,
+        headers: { 'cache-control': 'no-store', 'content-type': 'text/plain; charset=utf-8' },
+        ...candidate.method === 'HEAD' ? {} : { body: message },
+      })
+    }
+  })
+
   it('rejects tampering, expiry, future issuance, and a longer lifetime than configured', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-24T00:00:00.000Z'))

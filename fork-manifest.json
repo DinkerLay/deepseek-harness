@@ -111,8 +111,10 @@
     {
       "name": "@deepseek-ai/dsh-client-connection",
       "path": "packages/client/connection",
-      "purpose": "Optional per-channel loopback authority in addition to browser authentication",
+      "purpose": "Per-channel loopback authority and deployment-owned unauthorized browser guidance",
       "source": [
+        "package.json",
+        "src/browser-auth.ts",
         "src/index.ts",
         "src/rpc-host.ts",
         "src/rpc.ts"
