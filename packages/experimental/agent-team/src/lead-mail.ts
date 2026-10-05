@@ -25,6 +25,8 @@ export interface LeadMailOperations {
   serial<T>(targetId: SessionId, operation: () => Promise<T>): Promise<T>
   dispatch(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean>
   frame(message: TeamMessageSnapshot, state: TeamState): { content: TeamMessageSnapshot['content']; source: TeamMessageSource }
+  cancelObsolete(anchor: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean>
+  admitted(anchor: Agent, input: AgentInput): boolean
 }
 
 /** Native Lead receiver and transfer owner; all persisted items remain in TeamState.messages. */
@@ -132,6 +134,7 @@ export class TeamLeadMail {
     expectedSeat?: Pick<TeamLeadSeat, 'executionId' | 'term'>, signal = this.lifecycle.signal): Promise<TeamLeadDeliveryReceipt | undefined> {
     let wake: Agent | undefined
     signal.throwIfAborted()
+    if (await this.operations.cancelObsolete(anchor, message, signal)) return
     if (!this.journal.messageConfirmed(anchor, message.id)) return
     if (input === undefined && !this.operations.canDeliver(anchor)) return
     const resolved = this.receipt(this.journal.state(anchor), message.id) === undefined
@@ -158,6 +161,7 @@ export class TeamLeadMail {
       const target = context.execution
       if (target === undefined || input === undefined && !context.ready) return
       const material = this.material(message, state)
+      if (!this.operations.admitted(anchor, material)) return
       if (input !== undefined) {
         input.bind(target.session)
         await input.preload(target, material)

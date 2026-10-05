@@ -35,7 +35,9 @@ kind: "package-reference"
 
 `withContinuableExecution(parent, childId, signal, callback)` 为可信 Host 提供对已存在或从 descriptor 恢复的执行的静止维护访问。它要求已绑定的输入控制器同时禁止开工与领取，占用真实 Agent 维护阶段，不提交业务输入，也不改变准入策略。冷恢复的临时执行仅在可执行 inbox 为空时释放。回调遗留未保管的待处理输入会收到 `EXECUTION_PENDING_INPUT`；受限执行保持驻留以便保管输入或显式接管，不会在释放时丢弃输入。活跃执行交还原生命周期。回调持有既有输入控制能力，并必须响应取消信号。
 
-仅清理存储时，`withDormantContinuable()` 为没有在线、创建中或已附着执行的 child 预留身份，使用其注册输入控制器的独占原 writer。它在修复前校验父子关系与 descriptor，从不恢复 Preset，不暴露 Agent 或裸 append。只有真正未创建的身份才返回空 scope；已经记录在 catalog 的 child 丢失时拒绝清理。预留期间阻止并发创建。成功结果须等 writer 关闭并归还预留；父级或注册表释放会取消并等待操作退出。
+仅清理存储时，`withDormantContinuable()` 为没有在线、创建中或已附着执行的 child 预留身份，使用其注册输入控制器的独占原 writer。它在修复前校验父子关系与 descriptor，从不恢复 Preset，不暴露 Agent 或裸 append。scope 可捕获选定原输入、结算 held 身份，并把其他 held 输入交还原队列而不唤醒。只有真正未创建的身份才返回空 scope；已经记录在 catalog 的 child 丢失时拒绝清理。预留期间阻止并发创建。成功结果须等 writer 关闭并归还预留；父级或注册表释放会取消并等待操作退出。
+
+`withContinuableInputCustody()` 保留既有在线输入驱动，或打开同一冷态 writer，以恢复选定的 held 输入。Activation 已在关闭时，它在 child 锁外等待；不停止模型、不恢复 Preset、不创建 Agent。其 scope 读取报告 live、stored 或已核实的 absent；恢复保留输入身份、来源、目标队列和唤醒意图，但不唤醒执行。调用方复核自己的投递准入，之后再走按身份投递。自然结束等待借用的输入工作；显式释放先取消并等待它退出，再释放驱动。回调返回后 scope 失效，已准入的写入在资源释放前等待完成，取消时也一样。回调不得重入同一 child 的投递或生命周期操作。
 
 回调接收 `(scope, signal)`，即使来源确实不存在也有 signal。外部等待应使用此 signal。已进入的回调退出前，取消不会释放 writer 或预留；忽略取消会延迟拆卸，但不会让另一操作与该回调重叠。
 

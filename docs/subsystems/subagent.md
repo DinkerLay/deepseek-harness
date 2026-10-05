@@ -139,6 +139,8 @@ persisted Session
 
 `DormantContinuableScope` instead exposes Core's sealed stored-input read, capture and release operations plus cancellation. Its wrapper reserves an absent child identity, excludes activation or creation, and validates direct-parent and continuable-descriptor facts before the exclusive writer can repair anything. It never mounts a Preset. A missing stored source is distinguishable from a genuinely uncreated child; parent catalog evidence prevents treating a lost log as a new identity. Normal continuation still performs its original Preset checks.
 
+`ContinuableInputCustodyScope` exposes a detached source observation and non-waking restoration of selected held inputs. `withContinuableInputCustody()` keeps a live input driver resident, waits outside the child lock for one already closing, or uses the original cold writer without creating an Agent. It does not stop a model or assert execution quiescence. The scope expires after its callback; admitted writes drain before resource release. The existing input owner still controls which material may run, and ordinary delivery must explicitly follow restoration when wakeup is required.
+
 The callback's second argument is the combined cancellation signal even when its scope is absent. An admitted callback must finish before custody or identity reservation is released; cancellation does not race a still-running callback's effects against a new owner.
 
 `SubagentRuntime.sendMessage()` is the sole model-authored message operation. It accepts the exact live sender plus a target id, permits only a direct parent or direct continuable child, derives sender attribution itself, and routes a direct-child target by Activation residency:
@@ -553,6 +555,17 @@ async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: Abo
  * @returns callback result after writer cleanup; close and confirmation failures reject.
  */
 async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>
+
+/** Retain an existing live driver or cold original writer for non-waking input restoration.
+ * No model is stopped or created; callbacks must not call delivery or lifecycle operations for this child.
+ * @param parent - exact live direct parent authorizing source access.
+ * @param childId - continuable identity, unchanged across execution residencies.
+ * @param input - its registered input controller.
+ * @param signal - caller cancellation; admitted source writes drain before release.
+ * @param callback - scoped reads and original held-input restoration; the scope expires when it returns.
+ * @returns callback result after source confirmation and resource release.
+ */
+async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>
 
 /**
  * Deliver a stable host input once, creating or resuming its reserved child.

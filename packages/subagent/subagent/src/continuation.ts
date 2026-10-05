@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, InputControllerHandle, StoredInputCustody, StoredInputCustodySource } from '@deepseek-ai/dsh-agent'
+import type { Agent, InputControllerHandle, StoredInputCustody, StoredInputCustodySource, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { ReasoningEffortId, contentHasImage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
@@ -51,6 +51,7 @@ import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } f
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
+  ContinuableInputCustodyScope,
   ContinuablePrepared,
   ContinuablePrepareSpec,
   ContinuableStart,
@@ -214,67 +215,166 @@ export class SubagentContinuationManager {
     signal.throwIfAborted()
     this.activations.authorizeLineage(parent, childId, parent.id)
     this.activations.assertDormant(childId)
-    return this.withChildOperation(childId, parent, signal, async () => {
-      const reservation = await this.activations.locks.run(childId, () => {
-        signal.throwIfAborted()
-        return Promise.resolve(this.activations.reserveDormant(parent, childId))
-      })
-      const combined = AbortSignal.any([signal, reservation.controller.signal])
-      let releaseHold: (() => void) | undefined
-      let custody: StoredInputCustody | undefined
-      const validate = (source: StoredInputCustodySource): undefined => {
-        this.activations.authorizeLineage(parent, childId, source.header.parentSession)
-        if (source.header.id !== childId || foldSubagentDescriptor(source.events.slice(source.inheritedEventCount))?.mode !== 'continuable') {
-          throw new SubagentError(`subagent "${childId}" has no supported dormant continuation`, 'NOT_RESUMABLE')
-        }
-        return undefined
+    return this.withChildOperation(childId, parent, signal, () =>
+      this.withDormantSource(parent, childId, input, signal, callback))
+  }
+
+  /** Acquire the original writer after the caller has serialized this child's operations. */
+  private async withDormantSource<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal,
+    callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T> {
+    const reservation = await this.activations.locks.run(childId, () => {
+      signal.throwIfAborted()
+      return Promise.resolve(this.activations.reserveDormant(parent, childId))
+    })
+    const combined = AbortSignal.any([signal, reservation.controller.signal])
+    let releaseHold: (() => void) | undefined
+    let custody: StoredInputCustody | undefined
+    const validate = (source: StoredInputCustodySource): undefined => {
+      this.activations.authorizeLineage(parent, childId, source.header.parentSession)
+      if (source.header.id !== childId || foldSubagentDescriptor(source.events.slice(source.inheritedEventCount))?.mode !== 'continuable') {
+        throw new SubagentError(`subagent "${childId}" has no supported dormant continuation`, 'NOT_RESUMABLE')
       }
-      const recheck = async (): Promise<void> => this.activations.locks.run(childId, () => {
-        combined.throwIfAborted()
-        this.activations.assertAdmitting(parent)
-        this.activations.authorizeLineage(parent, childId, parent.id)
-        this.activations.assertDormant(childId, reservation)
-        if (custody !== undefined) validate(custody.read())
-        return Promise.resolve()
-      })
+      return undefined
+    }
+    const recheck = async (): Promise<void> => this.activations.locks.run(childId, () => {
+      combined.throwIfAborted()
+      this.activations.assertAdmitting(parent)
+      this.activations.authorizeLineage(parent, childId, parent.id)
+      this.activations.assertDormant(childId, reservation)
+      if (custody !== undefined) validate(custody.read())
+      return Promise.resolve()
+    })
+    try {
+      releaseHold = this.activations.holdOwnership(parent, childId)
       try {
-        releaseHold = this.activations.holdOwnership(parent, childId)
-        try {
-          const read = await this.requirePersistence().open(childId, 'read', { signal: combined })
-          try { validate({ header: read.header, events: (await read.read(0, undefined, { signal: combined })).events,
-            inheritedEventCount: read.inheritedEventCount }) }
-          finally { await read.close() }
-        } catch (error: unknown) {
-          combined.throwIfAborted()
-          if (!(error instanceof SessionPersistenceNotFoundError)) throw error
-        }
-        try { custody = await input.acquireStoredCustody(childId, combined, validate) }
-        catch (error: unknown) {
-          combined.throwIfAborted()
-          if (!(error instanceof SessionPersistenceNotFoundError)) throw error
-          this.assertUncreatedChild(parent, childId, combined)
-        }
-        await recheck()
-        const acquired = custody
-        const scope: DormantContinuableScope | undefined = acquired === undefined ? undefined : {
-          signal: combined, read: () => acquired.read(), holdPending: () => acquired.holdPending(),
-          releaseHeld: id => acquired.releaseHeld(id),
-        }
-        const result = await callback(scope, combined)
+        const read = await this.requirePersistence().open(childId, 'read', { signal: combined })
+        try { validate({ header: read.header, events: (await read.read(0, undefined, { signal: combined })).events,
+          inheritedEventCount: read.inheritedEventCount }) }
+        finally { await read.close() }
+      } catch (error: unknown) {
         combined.throwIfAborted()
-        await recheck()
-        if (custody === undefined) {
-          this.assertUncreatedChild(parent, childId, combined)
-          if (await this.requirePersistence().stat(childId, { signal: combined }) !== undefined) {
-            throw new SubagentError(`subagent "${childId}" appeared during dormant maintenance`, 'EXECUTION_NOT_DORMANT')
-          }
+        if (!(error instanceof SessionPersistenceNotFoundError)) throw error
+      }
+      try { custody = await input.acquireStoredCustody(childId, combined, validate) }
+      catch (error: unknown) {
+        combined.throwIfAborted()
+        if (!(error instanceof SessionPersistenceNotFoundError)) throw error
+        this.assertUncreatedChild(parent, childId, combined)
+      }
+      await recheck()
+      const acquired = custody
+      const scope: DormantContinuableScope | undefined = acquired === undefined ? undefined : {
+        signal: combined, read: () => acquired.read(), holdPending: ids => acquired.holdPending(ids),
+        restoreHeld: ids => acquired.restoreHeld(ids),
+        releaseHeld: id => acquired.releaseHeld(id),
+      }
+      const result = await callback(scope, combined)
+      combined.throwIfAborted()
+      await recheck()
+      if (custody === undefined) {
+        this.assertUncreatedChild(parent, childId, combined)
+        if (await this.requirePersistence().stat(childId, { signal: combined }) !== undefined) {
+          throw new SubagentError(`subagent "${childId}" appeared during dormant maintenance`, 'EXECUTION_NOT_DORMANT')
         }
-        return result
-      } finally {
-        try { if (custody !== undefined) await custody.dispose() }
-        finally { releaseHold?.(); reservation.release() }
+      }
+      return result
+    } finally {
+      try { if (custody !== undefined) await custody.dispose() }
+      finally { releaseHold?.(); reservation.release() }
+    }
+  }
+
+  /** Keep an input driver or its original stored writer owned across non-waking restoration.
+   * @param parent - exact live direct parent.
+   * @param childId - descriptor-backed source or an exclusively verified uncreated identity.
+   * @param input - registered input owner.
+   * @param signal - cancellation while waiting for closing or source writes.
+   * @param callback - scoped observation and restoration; no reentrant delivery or lifecycle work.
+   * @returns only after the callback and all admitted writes settle.
+   */
+  async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal,
+    callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T> {
+    return this.withChildOperation(childId, parent, signal, async () => {
+      while (true) {
+        signal.throwIfAborted()
+        const selected = await this.activations.locks.run<
+          { kind: 'stored' } | { kind: 'closing'; done: Promise<void> } | { kind: 'live'; work: Promise<T> }
+        >(childId, () => {
+          this.activations.assertAdmitting(parent)
+          this.activations.authorizeLineage(parent, childId, parent.id)
+          const activation = this.activations.get(childId)
+          if (activation === undefined) return Promise.resolve({ kind: 'stored' as const })
+          if (activation.inbox.closing !== undefined) {
+            return Promise.resolve({ kind: 'closing' as const, done: activation.inbox.closing })
+          }
+          const work = this.activations.withInputCustody(activation, signal, async (ownedSignal) => {
+            const agent = activation.handle.agent
+            this.activations.authorizeLineage(parent, childId, agent.session.header.parentSession)
+            if (this.ctx.agents.inputControlState(agent.session).controllerId !== input.id) {
+              throw new SubagentError('continuable input belongs to another controller', 'UNAUTHORIZED')
+            }
+            await this.confirmPreparation(agent.session, ownedSignal)
+            const read = (): StoredInputCustodySnapshot => structuredClone({ header: agent.session.header,
+              // oxlint-disable-next-line typescript/no-deprecated -- The retained original driver owns this synchronous observation.
+              events: agent.session.snapshotEvents(), inheritedEventCount: agent.session.inheritedEventCount,
+              inputControl: this.ctx.agents.inputControlState(agent.session),
+              pending: [...agent.inbox.nextStep.map(message => ({ target: 'next-step' as const, message })),
+                ...agent.inbox.nextTurn.map(message => ({ target: 'next-turn' as const, message }))] })
+            return await this.useInputCustody('live', ownedSignal, read, async (ids) => {
+              for (const id of ids) {
+                ownedSignal.throwIfAborted()
+                const state = read()
+                const record = state.inputControl.records.find(record => record.input.message.id === id)
+                if (record === undefined || record.location === 'released'
+                  || record.location === 'inbox' && !state.pending.some(item => item.message.id === id)) {
+                  throw new SubagentError('input restoration requires held custody or its still-pending retry', 'INVALID_ARGUMENT')
+                }
+                await input.preload(agent, record.input)
+              }
+            }, callback)
+          })
+          return Promise.resolve({ kind: 'live' as const, work })
+        })
+        if (selected.kind === 'closing') { await this.waitInputProgress(signal, selected.done); continue }
+        if (selected.kind === 'live') return await selected.work
+        return await this.withDormantSource(parent, childId, input, signal, async (stored, ownedSignal) =>
+          this.useInputCustody(stored === undefined ? 'absent' : 'stored', ownedSignal,
+            () => stored?.read(), async (ids) => {
+              if (stored !== undefined) await stored.restoreHeld(ids)
+              else if (ids.length > 0) throw new SubagentError('continuable input does not exist', 'NOT_RESUMABLE')
+            }, callback))
       }
     })
+  }
+
+  /** Expire a borrowed reader on return and drain admitted writes before releasing its owner. */
+  private async useInputCustody<T>(source: ContinuableInputCustodyScope['source'], signal: AbortSignal,
+    read: () => StoredInputCustodySnapshot | undefined, restore: (ids: readonly MessageId[]) => Promise<void>,
+    callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T> {
+    const closed = new AbortController()
+    const scopedSignal = AbortSignal.any([signal, closed.signal])
+    const jobs: Promise<void>[] = []
+    const scope: ContinuableInputCustodyScope = { source, signal: scopedSignal,
+      read: () => { scopedSignal.throwIfAborted(); return read() },
+      restoreHeld: (ids) => {
+        scopedSignal.throwIfAborted()
+        const work = Promise.resolve().then(async () => { signal.throwIfAborted(); await restore(ids); signal.throwIfAborted() })
+        jobs.push(work)
+        void work.catch(() => undefined)
+        return work
+      } }
+    try { return await callback(scope) }
+    finally {
+      closed.abort(new SubagentError('continuable input custody has expired', 'ACTIVATION_CLOSING'))
+      const outcomes = await Promise.allSettled(jobs)
+      signal.throwIfAborted()
+      const failures = outcomes.flatMap((item) => {
+        if (item.status !== 'rejected') return []
+        const reason: unknown = item.reason
+        return [reason]
+      })
+      if (failures.length > 0) throw new AggregateError(failures, 'continuable input restoration was not confirmed')
+    }
   }
 
   /** A lost existing child is unavailable; only ids with no durable parent catalog entry are uncreated. */
@@ -528,12 +628,12 @@ export class SubagentContinuationManager {
         if (stored === undefined && running === undefined) {
           const accepted = await this.startContinuable({ ...spec, initialSource: input.source,
             initialMessageId: input.id, request: { ...spec.request, prompt: [...input.content] } })
-          if (accepted.inputLocation === 'held' || accepted.inputLocation === 'released') return accepted
+          if (accepted.inputLocation !== undefined) return accepted
         } else {
           const accepted = await this.deliverToChild(spec.request.parent, childId, [...input.content], {
             source: input.source, messageId: input.id, signal, delivery: 'steer',
           })
-          if (accepted.inputLocation === 'held' || accepted.inputLocation === 'released') return { childId, ...accepted }
+          if (accepted.inputLocation !== undefined) return { childId, ...accepted }
         }
       }
     })

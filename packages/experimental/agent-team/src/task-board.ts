@@ -1,6 +1,7 @@
 /** Shared Team task DAG commands and runtime-enriched views. */
 
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentInput } from '@deepseek-ai/dsh-agent'
+import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type { TeamMembership } from './roster.ts'
@@ -59,11 +60,13 @@ export class TeamTaskBoard {
     private readonly dispatchNotices: (root: Agent) => void,
     private readonly anchorForRead: (agent: Agent) => Agent,
     private readonly memberAdmitted: (anchor: Agent, memberId: SessionId) => boolean,
+    private readonly maintainExecution: <T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal,
+      callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>) => Promise<T>,
   ) {}
 
-  /** Check the currently installed writer after an asynchronous checkpoint. */
-  private isCurrentWriter(writer: TeamTaskExtension): boolean {
-    return this.extension?.writer === writer
+  /** A disposed capability never revives when the same writer object registers again. */
+  private isCurrentHandle(handle: TeamTaskExtensionHandle): boolean {
+    return this.extension?.handle === handle
   }
 
   /**
@@ -75,9 +78,33 @@ export class TeamTaskBoard {
     if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
     if (this.extension !== undefined) throw new TeamError('Team Task extension is already installed', 'TEAM_TASK_EXTENSION_CONFLICT')
     const id = requiredText(writer.id, 'extension id', 200)
+    const maintenanceAbort = new AbortController()
     const handle: TeamTaskExtensionHandle = {
+      validateDataJson: (dataJson) => {
+        if (this.isDisposed() || !this.isCurrentHandle(handle)) {
+          throw new TeamError('Team Task extension is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+        this.validateData(dataJson, 'task')
+      },
+      recordsConfirmed: (anchor) => {
+        if (this.isDisposed() || !this.isCurrentHandle(handle) || this.anchorForRead(anchor) !== anchor
+          || this.journal.state(anchor).mode?.requiredTaskExtensionId !== id) {
+          throw new TeamError('Task reader no longer owns the live controlled anchor', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        }
+        return this.journal.recordsConfirmed(anchor)
+      },
+      withExecutionMaintenance: async (caller, request, signal, callback) => {
+        if (this.isDisposed() || !this.isCurrentHandle(handle)) throw new TeamError('Task maintenance owner is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+        return await this.maintainExecution(caller, { ...request,
+          assertCurrent: () => {
+            const root = this.membershipOf(caller).root
+            const state = this.journal.assertCallerWrite(root, caller)
+            if (state.mode?.requiredTaskExtensionId !== id) throw new TeamError('Task maintenance requires its controlled writer', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+            request.assertCurrent?.()
+          } }, AbortSignal.any([signal, maintenanceAbort.signal]), callback)
+      },
       read: async (anchor, read) => await this.journal.transact(anchor.id, async () => {
-        if (this.isDisposed() || this.extension?.writer !== writer || this.anchorForRead(anchor) !== anchor) {
+        if (this.isDisposed() || !this.isCurrentHandle(handle) || this.anchorForRead(anchor) !== anchor) {
           throw new TeamError('Task reader no longer owns the live Team anchor', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
         const state = this.journal.state(anchor)
@@ -86,15 +113,18 @@ export class TeamTaskBoard {
         }
         if (writer.requireDurableAcknowledgement) {
           await this.journal.confirmPending(anchor)
-          if (this.isDisposed() || !this.isCurrentWriter(writer) || this.anchorForRead(anchor) !== anchor) {
+          if (this.isDisposed() || !this.isCurrentHandle(handle) || this.anchorForRead(anchor) !== anchor) {
             throw new TeamError('Task reader changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
           }
         }
         return Promise.resolve(read(this.snapshot(state)))
       }),
-      commit: async (caller, build) => await this.commitExtension(writer, id, caller, build),
-      commitRecord: async (caller, build) => await this.commitExtensionRecord(writer, id, caller, build),
-      dispose: () => { if (this.extension?.handle === handle) this.extension = undefined },
+      commit: async (caller, build) => await this.commitExtension(writer, id, caller, build, handle),
+      commitRecord: async (caller, build) => await this.commitExtensionRecord(writer, id, caller, build, handle),
+      dispose: () => {
+        maintenanceAbort.abort(new TeamError('Task maintenance owner has closed', 'TEAM_TASK_EXTENSION_UNAVAILABLE'))
+        if (this.extension?.handle === handle) this.extension = undefined
+      },
     }
     this.extension = { writer, handle }
     return handle
@@ -147,6 +177,54 @@ export class TeamTaskBoard {
     return { tasks: structuredClone(state.tasks), members: structuredClone(state.members),
       ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
       nextTaskNumber: state.nextTaskNumber }
+  }
+
+  /** Apply the owning writer's association and native scheduling facts to one actual input.
+   * @param anchor - stable Team journal owner.
+   * @param targetId - logical member or Lead address.
+   * @param input - original queue identity and attribution.
+   * @returns whether ordinary coordination or current schedulable work may enter/claim its execution.
+   */
+  inputAdmitted(anchor: Agent, targetId: SessionId, input: AgentInput): boolean {
+    // An uncertain root intent is not evidence that an original input became obsolete.
+    if (!this.journal.recordsConfirmed(anchor)) return true
+    const extension = this.extension
+    const work = extension?.writer.classifyInput?.(anchor, input)
+    if (work === undefined) return true
+    const state = this.journal.state(anchor)
+    const task = state.tasks.find(task => task.id === work.taskId)
+    return extension?.writer.id === state.mode?.requiredTaskExtensionId && work.current
+      && task?.dispatchBlocked !== true && task?.status === 'in_progress' && task.ownerId === targetId
+  }
+
+  /** Whether the bound writer supplies work-input associations for claim preparation.
+   * @returns true only with a registered association callback.
+   */
+  hasWorkPolicy(): boolean { return this.extension?.writer.classifyInput !== undefined }
+
+  /** Preserve the existing Task and record diagnostics while sharing pure resource checks. */
+  private validateData(dataJson: string, kind: 'task' | 'record'): void {
+    if (Buffer.byteLength(dataJson, 'utf8') > this.maxTaskExtensionBytes) {
+      throw new TeamError(kind === 'task' ? `Task extension data exceeds ${this.maxTaskExtensionBytes} bytes`
+        : `Team extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
+    }
+    try { JSON.parse(dataJson) } catch {
+      throw new TeamError(kind === 'task' ? 'Task extension data must be valid JSON' : 'Team extension data must be valid JSON',
+        'TEAM_TASK_EXTENSION_INVALID')
+    }
+  }
+
+  /** Keep an unclassifiable paused queue closed until its required writer returns.
+   * No input is discarded on this conservative, recoverable missing-owner gate.
+   * @param anchor - stable native Team journal owner.
+   * @returns whether claim/dispatch can interpret the native pause fact.
+   */
+  workPolicyAvailable(anchor: Agent): boolean {
+    if (this.isDisposed()) return false
+    const state = this.journal.state(anchor)
+    return state.mode === undefined || this.journal.recordsConfirmed(anchor)
+      && (!state.tasks.some(task => task.dispatchBlocked === true)
+        || this.extension?.writer.id === state.mode.requiredTaskExtensionId && this.hasWorkPolicy())
   }
 
   /**
@@ -400,14 +478,15 @@ export class TeamTaskBoard {
     extensionId: string,
     caller: Agent,
     build: TeamTaskTransactionBuilder,
+    handle: TeamTaskExtensionHandle,
   ): Promise<TeamTaskView[]> {
     if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
-    if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+    if (!this.isCurrentHandle(handle)) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
     const initial = this.membershipOf(caller)
     const root = initial.root
     const result = await this.journal.transact(root.id, async () => {
       if (this.isDisposed()) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
-      if (this.extension?.writer !== writer) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
+      if (!this.isCurrentHandle(handle)) throw new TeamError('Team Task extension is no longer installed', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       if (this.membershipOf(caller).root !== root) throw new TeamError('Team member changed during Task transaction', 'TEAM_NOT_MEMBER')
       const state = this.journal.assertCallerWrite(root, caller)
       if (state.mode !== undefined && state.mode.requiredTaskExtensionId !== extensionId) {
@@ -415,7 +494,7 @@ export class TeamTaskBoard {
       }
       if (writer.requireDurableAcknowledgement) {
         await this.journal.confirmPending(root)
-        if (this.isDisposed() || !this.isCurrentWriter(writer)) {
+        if (this.isDisposed() || !this.isCurrentHandle(handle)) {
           throw new TeamError('Task writer changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
       }
@@ -438,14 +517,7 @@ export class TeamTaskBoard {
         })
         return { views, hasNotices: false }
       }
-      if (Buffer.byteLength(plan.dataJson, 'utf8') > this.maxTaskExtensionBytes) {
-        throw new TeamError(`Task extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
-      }
-      try {
-        JSON.parse(plan.dataJson)
-      } catch {
-        throw new TeamError('Task extension data must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
-      }
+      this.validateData(plan.dataJson, 'task')
       const updates: TeamTaskTransactionUpdate[] = plan.updates.map(update => ({
         previousRevision: update.previousRevision,
         task: structuredClone(update.task),
@@ -474,6 +546,10 @@ export class TeamTaskBoard {
           throw new TeamError(`Task "${update.task.id}" belongs to another extension writer`, 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
         const ownerId = update.task.ownerId
+        if (update.task.dispatchBlocked === true && update.task.status === 'in_progress'
+          && (prior?.status !== 'in_progress' || prior.ownerId !== ownerId)) {
+          throw new TeamError(`Task "${update.task.id}" is dispatch blocked`, 'TEAM_TASK_BLOCKED')
+        }
         if (update.task.status === 'in_progress' && ownerId === undefined) {
           throw new TeamError(`in-progress Task "${update.task.id}" needs an owner`, 'TEAM_INVALID_ARGUMENT')
         }
@@ -498,7 +574,8 @@ export class TeamTaskBoard {
         ...notices.length === 0 ? {} : { notices },
       }, writer.requireDurableAcknowledgement)
       const committed = this.journal.state(root)
-      return { views: updates.map(update => projectTaskView(committed, update.task)), hasNotices: notices.length > 0 }
+      return { views: updates.map(update => projectTaskView(committed, update.task)),
+        hasNotices: notices.length > 0 || updates.some(update => update.task.dispatchBlocked === true) }
     })
     if (result.hasNotices) this.dispatchNotices(root)
     return result.views
@@ -510,13 +587,14 @@ export class TeamTaskBoard {
     extensionId: string,
     caller: Agent,
     build: TeamExtensionRecordBuilder,
+    handle: TeamTaskExtensionHandle,
   ): Promise<{ recordId: string; committed: boolean }> {
-    if (this.isDisposed() || this.extension?.writer !== writer) {
+    if (this.isDisposed() || !this.isCurrentHandle(handle)) {
       throw new TeamError('Team Task extension is unavailable', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
     }
     const root = this.membershipOf(caller).root
     const result = await this.journal.transact(root.id, async () => {
-      if (this.isDisposed() || this.extension?.writer !== writer || this.membershipOf(caller).root !== root) {
+      if (this.isDisposed() || !this.isCurrentHandle(handle) || this.membershipOf(caller).root !== root) {
         throw new TeamError('Team Task extension changed during record transaction', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
       }
       const state = this.journal.assertCallerWrite(root, caller)
@@ -525,7 +603,7 @@ export class TeamTaskBoard {
       }
       if (writer.requireDurableAcknowledgement) {
         await this.journal.confirmPending(root)
-        if (this.isDisposed() || !this.isCurrentWriter(writer)) {
+        if (this.isDisposed() || !this.isCurrentHandle(handle)) {
           throw new TeamError('Task writer changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
       }
@@ -547,12 +625,7 @@ export class TeamTaskBoard {
       if (records.some(record => record.recordId === recordId)) {
         throw new TeamError(`extension record "${recordId}" already exists`, 'TEAM_INVALID_ARGUMENT')
       }
-      if (Buffer.byteLength(plan.dataJson, 'utf8') > this.maxTaskExtensionBytes) {
-        throw new TeamError(`Team extension data exceeds ${this.maxTaskExtensionBytes} bytes`, 'TEAM_TASK_EXTENSION_TOO_LARGE')
-      }
-      try { JSON.parse(plan.dataJson) } catch {
-        throw new TeamError('Team extension data must be valid JSON', 'TEAM_TASK_EXTENSION_INVALID')
-      }
+      this.validateData(plan.dataJson, 'record')
       const notices = this.validateExtensionNotices(state, caller, root, plan.notices ?? [], caller.id === root.id)
       await this.journal.appendAndFlush(root, 'team/extension', {
         version: 1, teamId: TeamId(root.id), extension: { id: extensionId, recordId, dataJson: plan.dataJson },

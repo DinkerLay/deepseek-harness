@@ -153,6 +153,8 @@ export interface TeamTaskSnapshot {
   readonly writeScopes: string[]
   /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
   readonly resultUnavailable?: true
+  /** Product-owned persistent scheduling closure, independent of execution status. */
+  readonly dispatchBlocked?: true
 }
 
 /** One new or next-revision Task written by an optional Team extension. */
@@ -229,6 +231,7 @@ export interface TeamTaskView {
   readonly ownerName?: string
   readonly ready: boolean
   readonly resultUnavailable?: true
+  readonly dispatchBlocked?: true
   readonly writeScopeWarnings: string[]
 }
 

@@ -306,6 +306,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'whether pending input may be claimed.',
       },
       {
+        signature: 'prepareInputClaim(agent: Agent, signal: AbortSignal): Promise<void> | undefined',
+        description: 'Prepare a controlled provider\'s pending queue before claim without affecting unbound drivers.',
+        parameters: [{ name: 'agent', description: 'exact receiving execution.' }, { name: 'signal', description: 'current turn cancellation.' }],
+        returns: 'preparation when the bound provider contributes it, otherwise undefined.',
+      },
+      {
         signature: 'currentInitiator(): Agent | undefined',
         description: 'Read the Agent that initiated the inherited asynchronous driver chain. Use this optional form for logging, tracing, metrics, or host attribution that also supports agentless calls. When a parent creates a child, setup reports the causal parent while the setup callback\'s Agent parameter identifies the child.',
         parameters: [],
@@ -3203,6 +3209,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'callback result after writer cleanup; close and confirmation failures reject.',
       },
       {
+        signature: 'async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>',
+        description: 'Retain an existing live driver or cold original writer for non-waking input restoration. No model is stopped or created; callbacks must not call delivery or lifecycle operations for this child.',
+        parameters: [{ name: 'parent', description: 'exact live direct parent authorizing source access.' }, { name: 'childId', description: 'continuable identity, unchanged across execution residencies.' }, { name: 'input', description: 'its registered input controller.' }, { name: 'signal', description: 'caller cancellation; admitted source writes drain before release.' }, { name: 'callback', description: 'scoped reads and original held-input restoration; the scope expires when it returns.' }],
+        returns: 'callback result after source confirmation and resource release.',
+      },
+      {
         signature: 'async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: SessionId }, input: UserMessage): Promise<ContinuableStart>',
         description: 'Deliver a stable host input once, creating or resuming its reserved child. Completion confirms durable input receipt, not completion of model work; controlled held/released custody reports inputLocation without claiming delivery.',
         parameters: [{ name: 'spec', description: 'creation inputs with a caller-reserved child id.' }, { name: 'input', description: 'immutable host message with a retry-stable identity.' }],
@@ -4851,7 +4863,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentInputController',
-    declaration: 'export interface AgentInputController {\n    admit(agent: Agent, input: AgentInput): InputAdmission;\n    canStart(agent: Agent): boolean;\n    canClaim(agent: Agent): boolean;\n    prepare?(session: Session): Promise<void>;\n    initialize?(session: Session, source: SessionStartSource): Promise<void> | void;\n}',
+    declaration: 'export interface AgentInputController {\n    admit(agent: Agent, input: AgentInput): InputAdmission;\n    canStart(agent: Agent): boolean;\n    canClaim(agent: Agent): boolean;\n    prepare?(session: Session): Promise<void>;\n    prepareClaim?(agent: Agent, signal: AbortSignal): Promise<void>;\n    initialize?(session: Session, source: SessionStartSource): Promise<void> | void;\n}',
   },
   {
     name: 'AgentInputMutation',
@@ -5270,6 +5282,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ContinuableCreateSpec {\n    readonly seed?: readonly SessionEvent[];\n}',
   },
   {
+    name: 'ContinuableInputCustodyScope',
+    declaration: 'export interface ContinuableInputCustodyScope {\n    readonly source: \'live\' | \'stored\' | \'absent\';\n    readonly signal: AbortSignal;\n    read(): StoredInputCustodySnapshot | undefined;\n    restoreHeld(messageIds: readonly MessageId[]): Promise<void>;\n}',
+  },
+  {
     name: 'ContinuablePrepared',
     declaration: 'export interface ContinuablePrepared {\n    readonly childId: SessionId;\n}',
   },
@@ -5539,7 +5555,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DormantContinuableScope',
-    declaration: 'export type DormantContinuableScope = Pick<StoredInputCustody, \'read\' | \'holdPending\' | \'releaseHeld\'> & {\n    readonly signal: AbortSignal;\n};',
+    declaration: 'export type DormantContinuableScope = Pick<StoredInputCustody, \'read\' | \'holdPending\' | \'restoreHeld\' | \'releaseHeld\'> & {\n    readonly signal: AbortSignal;\n};',
   },
   {
     name: 'DshEnvironment',
@@ -5803,7 +5819,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'InputControllerHandle',
-    declaration: 'export interface InputControllerHandle {\n    readonly id: ControllerId;\n    bind(session: Session): void;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    holdPending(agent: Agent): Promise<readonly AgentInput[]>;\n    acquireStoredCustody(sessionId: SessionId, signal: AbortSignal, validate?: (source: StoredInputCustodySource) => undefined): Promise<StoredInputCustody>;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface InputControllerHandle {\n    readonly id: ControllerId;\n    bind(session: Session): void;\n    preload(agent: Agent, input: AgentInput, prepend?: boolean): Promise<InputReceipt>;\n    release(agent: Agent, messageId: MessageId): Promise<void>;\n    holdPending(agent: Agent, messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]>;\n    acquireStoredCustody(sessionId: SessionId, signal: AbortSignal, validate?: (source: StoredInputCustodySource) => undefined): Promise<StoredInputCustody>;\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'InputControlState',
@@ -7707,7 +7723,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'StoredInputCustody',
-    declaration: 'export interface StoredInputCustody {\n    read(): StoredInputCustodySnapshot;\n    holdPending(): Promise<readonly AgentInput[]>;\n    releaseHeld(messageId: MessageId): Promise<void>;\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface StoredInputCustody {\n    read(): StoredInputCustodySnapshot;\n    holdPending(messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]>;\n    restoreHeld(messageIds: readonly MessageId[]): Promise<void>;\n    releaseHeld(messageId: MessageId): Promise<void>;\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'StoredInputCustodySnapshot',
@@ -7719,7 +7735,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'StoredInputDriver',
-    declaration: 'export interface StoredInputDriver {\n    pending(): readonly StoredPendingInput[];\n    hold(messageId: MessageId): boolean;\n}',
+    declaration: 'export interface StoredInputDriver {\n    pending(): readonly StoredPendingInput[];\n    hold(messageId: MessageId): boolean;\n    preload(input: AgentInput): void;\n}',
   },
   {
     name: 'StoredPendingInput',
@@ -7799,7 +7815,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared>;\n    async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal, callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(pa /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared>;\n    async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal, callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
@@ -7956,6 +7972,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamControlledMode',
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n    readonly memberToolLimit?: TeamMemberToolLimit | undefined;\n}',
+  },
+  {
+    name: 'TeamExecutionMaintenanceRequest',
+    declaration: 'export interface TeamExecutionMaintenanceRequest {\n    readonly target: TeamExecutionMaintenanceTarget;\n    readonly assertCurrent?: () => void;\n}',
+  },
+  {
+    name: 'TeamExecutionMaintenanceScope',
+    declaration: 'export interface TeamExecutionMaintenanceScope {\n    readonly target: TeamExecutionMaintenanceTarget;\n    readonly signal: AbortSignal;\n    readonly source: \'live\' | \'stored\' | \'absent\';\n    read(): StoredInputCustodySnapshot | undefined;\n    capture(messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]>;\n    restore(messageIds: readonly MessageId[]): Promise<void>;\n    release(messageIds: readonly MessageId[]): Promise<void>;\n}',
+  },
+  {
+    name: 'TeamExecutionMaintenanceTarget',
+    declaration: 'export type TeamExecutionMaintenanceTarget = {\n    readonly kind: \'lead\';\n    readonly executionId: SessionId;\n    readonly term: number;\n    readonly turn?: number;\n} | {\n    readonly kind: \'member\';\n    readonly memberId: SessionId;\n    readonly executionId: SessionId;\n    readonly generation: number;\n    readonly turn?: number;\n};',
   },
   {
     name: 'TeamExtensionNotice',
@@ -8147,11 +8175,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly requireDurableAcknowledgement?: boolean;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly requireDurableAcknowledgement?: boolean;\n    classifyInput?(anchor: Agent, input: AgentInput): {\n        readonly taskId: TeamTaskId;\n        readonly current: boolean;\n    } | undefined;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
-    declaration: 'export interface TeamTaskExtensionHandle {\n    read<T>(anchor: Agent, read: (snapshot: TeamTaskTransactionSnapshot) => T): Promise<T>;\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    commitRecord(caller: Agent, build: TeamExtensionRecordBuilder): Promise<{\n        recordId: string;\n        committed: boolean;\n    }>;\n    dispose(): void;\n}',
+    declaration: 'export interface TeamTaskExtensionHandle {\n    validateDataJson(dataJson: string): void;\n    recordsConfirmed(anchor: Agent): boolean;\n    withExecutionMaintenance<T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal, callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>): Promise<T>;\n    read<T>(anchor: Agent, read: (snapshot: TeamTaskTransactionSnapshot) => T): Promise<T>;\n    commit(caller: Agent, build: TeamTaskTransactionBuilder): Promise<TeamTaskView[]>;\n    commitRecord(caller: Agent, build: TeamExtensionRecordBuilder): Promise<{\n        recordId: string;\n        committed: boolean;\n    }>;\n    dispose(): void;\n}',
   },
   {
     name: 'TeamTaskId',
@@ -8159,7 +8187,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskSnapshot',
-    declaration: 'export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly resultUnavailable?: true;\n}',
+    declaration: 'export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly resultUnavailable?: true;\n    readonly dispatchBlocked?: true;\n}',
   },
   {
     name: 'TeamTaskStatus',
@@ -8191,7 +8219,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskView',
-    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly resultUnavailable?: true;\n    readonly writeScopeWarnings: string[];\n}',
+    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly resultUnavailable?: true;\n    readonly dispatchBlocked?: true;\n    readonly writeScopeWarnings: string[];\n}',
   },
   {
     name: 'TeamWaitResult',

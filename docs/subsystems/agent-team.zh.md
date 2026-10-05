@@ -145,10 +145,12 @@ interface TeamTaskSnapshot {
   readonly writeScopes: string[]
   /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
   readonly resultUnavailable?: true
+  /** Product-owned persistent scheduling closure, independent of execution status. */
+  readonly dispatchBlocked?: true
 }
 ```
 
-`pending` 表示尚未开始或已经释放，`in_progress` 携带 owner，`completed` 满足 blocker，`deleted` 是保留的 tombstone。view 会添加 owner name、readiness 和 write-scope 重叠警告，但不会改变持久快照。
+`pending` 表示尚未开始或已经释放，`in_progress` 携带 owner，`completed` 满足 blocker，`deleted` 是保留的 tombstone。view 会添加 owner name、readiness 和 write-scope 重叠警告，但不会改变持久快照。可选的 `dispatchBlocked` 标记使 readiness 为 false，但不取代执行状态。注册的 Task 写入方拥有具体控制规则并分类排队工作输入；原生运行时在投递和领取输入前使用相同准入判断，普通协调输入仍独立处理。
 
 可选的 Host 写入方能在一条 `team/task/transaction` 事件中提交多个原生 Task 快照和 mailbox 通知。注册的写入方在 Team 事务锁内取得脱离原状态的 Board 快照；每个现有 Task 必须匹配其上一修订，新分配的数字 id 必须连续。它也能在同一锁内返回已有 Task，而不追加事件。原生投影校验最终 DAG，并折叠 Task 值与通知。扩展拥有同一事件中的 JSON 字符串，可为验收详情单独注册投影，但不能取代原生 Board。
 
@@ -235,6 +237,7 @@ interface TeamTaskView {
   readonly ownerName?: string
   readonly ready: boolean
   readonly resultUnavailable?: true
+  readonly dispatchBlocked?: true
   readonly writeScopeWarnings: string[]
 }
 ```

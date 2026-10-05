@@ -91,6 +91,7 @@ AgentLoop 在启动已排队工作前等待串行 `agent/created` 初始化。�
 
 ```text
 turn/start
+  optional bound-controller claim preparation; recheck cancellation and admission
   claim next-step input plus one queued message
   assemble prompt sections + tool schemas; project runtime context
   -> agent/pre-step                   reject | enter(messages, startsRequestSeries?)
@@ -114,7 +115,7 @@ turn/end
 
 驱动器唯一的持久 `inbox` 在没有活跃 Agent 时也能暴露待处理输入。注入的上下文等待一条唤醒消息；可选 `wakePending()` 唤醒已排队的输入，不重新入队。
 
-可选的[输入控制](../packages/core/agent/README.zh.md#control-input-before-it-becomes-executable) 在组合、轮次开始与收件箱领取前运行。已绑定的接收方只有取得持久接管确认后才唤醒；提供方可以把输入暂存在可执行队列之外。没有绑定时保留普通同步路径。
+可选的[输入控制](../packages/core/agent/README.zh.md#control-input-before-it-becomes-executable) 在组合、轮次开始与收件箱领取前运行。已绑定的接收方只有取得持久接管确认后才唤醒；提供方可以把输入暂存在可执行队列之外。选定输入的清理使用同一拥有者与 inbox，保留其他输入的身份和唤醒意图，但不恢复执行。驱动器在消费输入之前等待可选领取准备，并响应轮次与注册取消。没有绑定或没有领取回调时保留普通同步路径；输入控制不增加普通工具守卫。
 
 `agent/pre-step` 决定被接纳的输入。监听器可以改写或拒绝已领取的消息；拒绝或首个空决策会关闭轮次，不进入步骤。组装与路由准备成功后，接纳的输入才提交。重试复用已接纳的组装；请求头标识路由、工具变化或新消息系列。系统提示变化保留在持久历史中，由提供方能力决定追加更新还是整合前缀。[Agent Loop 实现](../packages/core/agent-loop/README.zh.md#understand-the-implementation) 定义确切的请求头、提示更新与取消规则。
 

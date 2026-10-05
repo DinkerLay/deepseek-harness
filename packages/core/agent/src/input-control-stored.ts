@@ -33,6 +33,23 @@ export function capturePendingInput(session: Session, controllerId: InputControl
   }
 }
 
+/** Select concrete pending input or reconfirm previously held selected identities.
+ * @param state - source custody facts.
+ * @param pending - concrete current queue.
+ * @param messageIds - exact selection, or undefined for all pending input.
+ * @returns selected queue items in original order.
+ */
+export function selectedPendingInput<T extends { readonly message: UserMessage }>(state: InputControlState,
+  pending: readonly T[], messageIds?: readonly MessageId[]): readonly T[] {
+  if (messageIds === undefined) return pending
+  for (const id of messageIds) {
+    if (!pending.some(item => item.message.id === id) && !state.records.some(record => record.input.message.id === id && record.location === 'held')) {
+      throw new Error('selected input is not pending or held')
+    }
+  }
+  return pending.filter(item => messageIds.includes(item.message.id))
+}
+
 /** Settle only an exact held identity; a retry reconfirms its existing release.
  * @param session - original source.
  * @param controllerId - registered source owner.
@@ -141,10 +158,23 @@ export async function acquireStoredInputCustody(ctx: Context, id: SessionId, sig
         return deepFreeze(structuredClone({ header: session.header, events: events(), inheritedEventCount: session.inheritedEventCount,
           inputControl: owner.state(session), pending: driver.pending() }))
       },
-      holdPending: () => run(async () => {
-        capturePendingInput(session, owner.controllerId, owner.state(session), driver.pending(), id => driver.hold(id))
+      holdPending: messageIds => run(async () => {
+        const state = owner.state(session)
+        capturePendingInput(session, owner.controllerId, state,
+          selectedPendingInput(state, driver.pending(), messageIds), id => driver.hold(id))
         await flush()
-        return structuredClone(owner.state(session).records.filter(record => record.location === 'held').map(record => record.input))
+        return structuredClone(owner.state(session).records.filter(record => record.location === 'held'
+          && (messageIds === undefined || messageIds.includes(record.input.message.id))).map(record => record.input))
+      }),
+      restoreHeld: messageIds => run(async () => {
+        for (const id of messageIds) {
+          const record = owner.state(session).records.find(item => item.input.message.id === id)
+          if (record?.location === 'held') driver.preload(record.input)
+          else if (record?.location !== 'inbox' || !driver.pending().some(item => item.message.id === id)) {
+            throw new Error('input restoration requires held custody or its still-pending retry')
+          }
+        }
+        await flush()
       }),
       releaseHeld: messageId => run(async () => {
         releaseHeldInput(session, owner.controllerId, owner.state(session), messageId)

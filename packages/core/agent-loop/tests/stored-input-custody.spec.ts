@@ -57,6 +57,53 @@ function queued(session: Session, value: AgentInput): void {
 }
 
 describe('stored input custody', () => {
+  it('selectively captures and returns exact original queues without waking or reviving released identities', async () => {
+    const work = input('selected stale work'), other = input('other shared work', 'next-turn')
+    const test = await boot((session) => { queued(session, work); queued(session, other) })
+    const scope = await test.acquire()
+    expect(await scope.holdPending([work.message.id])).toEqual([work])
+    expect(scope.read().pending).toEqual([{ target: other.target, message: other.message }])
+    expect(await scope.holdPending([])).toEqual([])
+    await scope.restoreHeld([work.message.id])
+    await scope.restoreHeld([work.message.id])
+    expect(scope.read().pending).toEqual([{ target: work.target, message: work.message }, { target: other.target, message: other.message }])
+    expect((await test.read()).filter(event => event.type === 'agent/inbox/spliced'
+      && event.data.inserted.some(message => message.id === work.message.id))).toHaveLength(2)
+    await scope.holdPending([work.message.id])
+    await scope.releaseHeld(work.message.id)
+    await expect(scope.restoreHeld([work.message.id])).rejects.toThrow(/restoration requires/)
+    await expect(scope.restoreHeld([MessageId('missing')])).rejects.toThrow(/restoration requires/)
+    await expect(scope.holdPending([work.message.id])).rejects.toThrow(/not pending or held/)
+    expect(test.adapter.requests).toHaveLength(0)
+    expect(test.ctx.agents.get(SOURCE)).toBeUndefined()
+  })
+
+  it.each(['append', 'flush'] as const)('reconfirms the same original restoration after uncertain %s without duplicate insertion', async (failure) => {
+    const work = input('restoration retry')
+    const test = await boot((session) => { session.append('agent/input/held', { version: 1, controllerId: CONTROLLER, input: work }) })
+    const original = test.ctx.sessionPersistence.open.bind(test.ctx.sessionPersistence)
+    let writer: SessionHandle | undefined
+    vi.spyOn(test.ctx.sessionPersistence, 'open').mockImplementation(async (...args) => {
+      const handle = await original(...args)
+      if (args[1] === 'write') writer = handle
+      return handle
+    })
+    const scope = await test.acquire()
+    if (writer === undefined) throw new Error('source writer did not open')
+    const append = writer.append.bind(writer)
+    const faulty = failure === 'append'
+      ? vi.spyOn(writer, 'append').mockImplementationOnce(async (...args) => { await append(...args); throw new Error('uncertain restoration') })
+      : vi.spyOn(writer, 'flush').mockRejectedValueOnce(new Error('restoration checkpoint unavailable'))
+    await expect(scope.restoreHeld([work.message.id])).rejects.toThrow()
+    faulty.mockRestore()
+    await scope.restoreHeld([work.message.id])
+    await scope.dispose()
+    expect((await test.read()).filter(event => event.type === 'agent/inbox/spliced'
+      && event.data.inserted.some(message => message.id === work.message.id))).toHaveLength(1)
+    const again = await test.acquire()
+    expect(again.read().pending).toEqual([{ target: work.target, message: work.message }])
+    expect(test.adapter.requests).toHaveLength(0)
+  })
   it('runs exclusive source validation before repair or driver preparation and leaves a rejected source unchanged', async () => {
     const test = await boot((session) => { session.append('turn/start', { turn: 1 }) })
     const before = await test.read()
@@ -241,7 +288,7 @@ describe('stored input custody', () => {
     const prepare = test.ctx.agentLoop.prepareStoredInput.bind(test.ctx.agentLoop)
     const fake = vi.spyOn(test.ctx.agentLoop, 'prepareStoredInput').mockImplementation((session) => {
       const driver = prepare(session)
-      return { pending: () => driver.pending(), hold: () => false }
+      return { pending: () => driver.pending(), hold: () => false, preload: (input) => { driver.preload(input) } }
     })
     const scope = await test.acquire()
     await expect(scope.holdPending()).rejects.toThrow(/changed before custody removal/)

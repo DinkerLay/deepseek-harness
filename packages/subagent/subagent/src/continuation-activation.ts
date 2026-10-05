@@ -651,6 +651,20 @@ export class ContinuableActivationRegistry {
     this.watchSettlement(activation)
   }
 
+  /** Borrow the actual input driver while natural settlement waits and explicit disposal drains it.
+   * Called under the existing child lock; no lock is retained while the callback runs.
+   * @param activation - current residency inspected under the child lock.
+   * @param signal - caller cancellation.
+   * @param callback - non-waking input work over this residency.
+   * @returns callback result after its input custody is released.
+   */
+  withInputCustody<T>(activation: Activation, signal: AbortSignal,
+    callback: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const job = activation.inbox.withInputCustody(signal, callback)
+    this.wake(activation)
+    return job.finally(() => { this.wake(activation) })
+  }
+
   /** Dispose independent roots and report every branch failure after all settle. */
   private async disposeRoots(
     roots: readonly Activation[],

@@ -19,6 +19,8 @@ export async function apply(ctx) {
   const lifetime = new AbortController()
   const markerEntered = Promise.withResolvers()
   const noticeDelivered = Promise.withResolvers()
+  const settlementProcessed = Promise.withResolvers()
+  let settlementConsumed = false
   const selfNoticeDelivered = Promise.withResolvers()
   const selfNoticeId = TeamMessageId('snapshot-control-self-notice')
   const owner = ctx.agentTeams.installLeadExecutions({
@@ -72,6 +74,11 @@ export async function apply(ctx) {
       } }))
   }, { global: true })
   ctx.on('session/event', (session, event) => {
+    if (session === actors[0]?.session) {
+      if (event.type === 'user/message' && event.data.source.kind === 'subagent-settled'
+        && event.data.source.senderSessionId === worker?.id) settlementConsumed = true
+      if (settlementConsumed && event.type === 'turn/end') settlementProcessed.resolve()
+    }
     if (session !== anchor?.session || event.type !== 'team/message/lead-delivered') return
     if (event.data.messageId === selfNoticeId) {
       selfNoticeDelivered.resolve()
@@ -189,6 +196,16 @@ export async function apply(ctx) {
         content: [{ type: 'text', text: 'QA: consume the retained inert material and finish' }], signal })
       await noticeDelivered.promise
       await ctx.sessions.flush(anchor.session)
+      // A durable inbox receipt is not evidence that its deferred wakeup has run.
+      // Preserve this scenario's original settlement turn before freezing the next Lead.
+      const processed = Promise.withResolvers()
+      const stopped = () => { processed.reject(signal.reason) }
+      signal.addEventListener('abort', stopped, { once: true })
+      try {
+        signal.throwIfAborted()
+        settlementProcessed.promise.then(processed.resolve, processed.reject)
+        await processed.promise
+      } finally { signal.removeEventListener('abort', stopped) }
       await second.whenIdle()
       const third = await switchLead(3, signal)
       await turnWithSelfNotice(third, 'QA: wait while every teammate is inactive', signal)

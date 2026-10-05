@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { Agent, InputControllerHandle } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentInput, InputControllerHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -78,6 +78,7 @@ export class TeamMailbox {
   private readonly leadMail: TeamLeadMail
   private readonly dispatchTails = new Map<SessionId, Promise<void>>()
   private readonly inFlightMessages = new Set<TeamMessageId>()
+  private readonly retryAfterFlight = new Set<TeamMessageId>()
   private readonly inFlightDispatches = new Set<Promise<unknown>>()
   private readonly retries = new Map<TeamMessageId, { attempts: number; timer?: ReturnType<typeof setTimeout> }>()
 
@@ -104,6 +105,10 @@ export class TeamMailbox {
     canDeliverLead: (anchor: Agent) => boolean,
     private readonly ownsLeadInput: (anchor: Agent) => boolean,
     private readonly memberAdmitted: (anchor: Agent, memberId: SessionId) => boolean,
+    private readonly workAdmitted: (anchor: Agent, targetId: SessionId, input: AgentInput) => boolean,
+    private readonly workPolicyAvailable: (anchor: Agent) => boolean,
+    private readonly restoreMemberHeld: (anchor: Agent, memberId: SessionId, messageId: TeamMessageId,
+      signal: AbortSignal) => Promise<void>,
   ) {
     this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
       context: leadContext,
@@ -114,6 +119,8 @@ export class TeamMailbox {
       dispatch: (root, message, signal) => this.tryDispatch(root, message, signal),
       frame: (message, state) => ({ content: teamMessageDeliveryContent(message, state),
         source: teamMessageSource(TeamId(state.id), message, state) }),
+      cancelObsolete: (anchor, message, signal) => this.cancelObsoleteWork(anchor, message, signal),
+      admitted: (anchor, input) => this.workAdmitted(anchor, anchor.id, input),
     }, maxPendingMessagesPerMember, maxMessageBytes)
     lifecycle.signal.addEventListener('abort', () => {
       for (const retry of this.retries.values()) clearTimeout(retry.timer)
@@ -335,7 +342,7 @@ export class TeamMailbox {
   /** Attempt one queued message exactly once in this process at a time. */
   private tryDispatch(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     if (this.lifecycle.disposed) return Promise.resolve(false)
-    if (this.inFlightMessages.has(message.id)) return Promise.resolve(false)
+    if (this.inFlightMessages.has(message.id)) { this.retryAfterFlight.add(message.id); return Promise.resolve(false) }
     this.inFlightMessages.add(message.id)
     const operation = this.trackDispatch(
       this.tryDispatchAdmitted(
@@ -346,6 +353,14 @@ export class TeamMailbox {
     )
     const forget = (): void => {
       this.inFlightMessages.delete(message.id)
+      if (this.retryAfterFlight.delete(message.id)) queueMicrotask(() => {
+        if (this.lifecycle.disposed || this.ctx.agents.get(root.id) !== root) return
+        const state = this.journal.state(root)
+        if (!state.delivered.includes(message.id)
+          && !state.cancelled.some(item => item.messageId === message.id)) {
+          void this.tryDispatch(root, message, this.lifecycle.signal)
+        }
+      })
     }
     void operation.then(forget, forget)
     return operation
@@ -398,21 +413,50 @@ export class TeamMailbox {
       && !state.cancelled.some(item => item.messageId === candidate.id))
     const requested = pending.findIndex(candidate => candidate.id === message.id)
     if (requested < 0) return state.delivered.includes(message.id)
+    let requestedAccepted = false
     for (const candidate of pending.slice(0, requested + 1)) {
       const ownsInFlight = !this.inFlightMessages.has(candidate.id)
       if (ownsInFlight) this.inFlightMessages.add(candidate.id)
       try {
-        if (!await this.dispatchOnce(root, candidate, signal)) return false
+        const accepted = await this.dispatchOnce(root, candidate, signal)
+        if (candidate.id === message.id) requestedAccepted = accepted
+        if (!accepted
+          && !this.journal.state(root).cancelled.some(item => item.messageId === candidate.id)) return false
       } finally {
         if (ownsInFlight) this.inFlightMessages.delete(candidate.id)
       }
     }
-    return true
+    return requestedAccepted
+  }
+
+  /** Dispose only writer-associated obsolete work; ordinary or unclassifiable mail remains intact. */
+  private async cancelObsoleteWork(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
+    if (!this.workPolicyAvailable(root)) return false
+    const material = (state: TeamState): AgentInput => message.transfer?.input ?? {
+      message: Object.freeze({ ...createUserMessage({ content: teamMessageDeliveryContent(message, state),
+        source: teamMessageSource(TeamId(root.id), message, state) }), id: brandString<MessageId>(message.id) }),
+      target: 'next-step', wakeup: true,
+    }
+    if (this.workAdmitted(root, message.targetId, material(this.journal.state(root)))) return false
+    return await this.journal.transact(root.id, async () => {
+      signal.throwIfAborted()
+      if (this.ctx.agents.get(root.id) !== root || !this.workPolicyAvailable(root)) return false
+      const state = this.journal.state(root)
+      // Target serialization and the message's in-flight reservation own its only settlement writer.
+      if (this.workAdmitted(root, message.targetId, material(state))) return false
+      await this.journal.appendAndFlush(root, 'team/message/cancelled', {
+        version: 3, teamId: TeamId(root.id), targetId: message.targetId, messageIds: [message.id],
+        reason: 'Task work input is no longer schedulable',
+      }, true)
+      return true
+    })
   }
 
   /** Attempt one queued delivery after target-local ordering admits it. */
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
+      if (!this.workPolicyAvailable(root)) return false
+      if (await this.cancelObsoleteWork(root, message, signal)) return false
       const state = this.journal.state(root)
       if (message.targetId === root.id && state.mode !== undefined
         && (state.lead !== undefined || this.ownsLeadInput(root))) {
@@ -439,11 +483,13 @@ export class TeamMailbox {
         }
         const input = createUserMessage({ content: teamMessageDeliveryContent(message, state),
           source: teamMessageSource(TeamId(root.id), message, state) })
+        await this.restoreMemberHeld(root, member.id, message.id, signal)
         const receipt = await this.ctx.subagents.deliverContinuableInput({ childId: binding.executionId, provider: member.provider,
           label: member.description, preset: member.preset,
           request: { parent: root, prompt: [...input.content] }, signal,
         }, Object.freeze({ ...input, id: brandString<MessageId>(message.id) }))
-        if (receipt.inputLocation === 'held' || receipt.inputLocation === 'released') return false
+        if (receipt.inputLocation === 'held') { this.scheduleRetry(root, message); return false }
+        if (receipt.inputLocation === 'released') return false
         await this.markDelivered(root, message.id, message.targetId, binding.executionId)
         return true
       }

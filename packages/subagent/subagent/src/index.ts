@@ -69,6 +69,7 @@ import type {
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
+  ContinuableInputCustodyScope,
   ContinuablePrepared,
   ContinuablePrepareSpec,
   ContinuableStart,
@@ -111,6 +112,7 @@ export { SubagentRunId } from './types.ts'
 export type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
+  ContinuableInputCustodyScope,
   ContinuablePrepared,
   ContinuablePrepareSpec,
   ContinuableStart,
@@ -348,6 +350,20 @@ export class SubagentRuntime extends TypertRemoteService {
   async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal,
     callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T> {
     return this.requireContinuations().withDormantContinuable(parent, childId, input, signal, callback)
+  }
+
+  /** Retain an existing live driver or cold original writer for non-waking input restoration.
+   * No model is stopped or created; callbacks must not call delivery or lifecycle operations for this child.
+   * @param parent - exact live direct parent authorizing source access.
+   * @param childId - continuable identity, unchanged across execution residencies.
+   * @param input - its registered input controller.
+   * @param signal - caller cancellation; admitted source writes drain before release.
+   * @param callback - scoped reads and original held-input restoration; the scope expires when it returns.
+   * @returns callback result after source confirmation and resource release.
+   */
+  async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal,
+    callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T> {
+    return this.requireContinuations().withContinuableInputCustody(parent, childId, input, signal, callback)
   }
 
   /**

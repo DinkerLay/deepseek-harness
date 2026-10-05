@@ -1,6 +1,8 @@
 /** Host-only interface for one optional product Task writer over the native Board. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { AgentInput } from '@deepseek-ai/dsh-agent'
+import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type {
   CreateTeamTaskRequest,
@@ -22,6 +24,25 @@ export type TeamExtensionRecordBuilder = (snapshot: TeamExtensionRecordSnapshot)
 
 /** Native commit capability held only by the registered extension. */
 export interface TeamTaskExtensionHandle {
+  /** Check generic JSON and the actual configured extension byte limit without IO or publication.
+   * @param dataJson - exact opaque JSON a planner intends to persist.
+   * @throws when this capability is stale, JSON is invalid, or its UTF-8 representation exceeds the limit.
+   */
+  validateDataJson(dataJson: string): void
+  /** Inspect durability without IO or granting Task write authority.
+   * @param anchor - exact live controlled Team journal owner.
+   * @returns whether its extension records have a confirmed native checkpoint.
+   */
+  recordsConfirmed(anchor: Agent): boolean
+  /** Stop only an exact execution/turn and own original input while its existing controller closes run/claim.
+   * @param caller - exact current Lead; products authenticate user or model initiation separately.
+   * @param request - exact execution and synchronous product ownership check; a Lead target must be this live caller.
+   * @param signal - caller cancellation, forwarded through owned cleanup.
+   * @param callback - quiet live or exclusively stored source; do not retain or reuse its capability.
+   * @returns callback result after original custody and scope handback settle; changed or unloaded Lead authority rejects.
+   */
+  withExecutionMaintenance<T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal,
+    callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>): Promise<T>
   /** Read a detached native cut without granting its dormant anchor Lead authority.
    * @param anchor - exact live stable Team journal owner.
    * @param read - synchronous registered-writer observer; it must not enter another transaction.
@@ -50,6 +71,12 @@ export interface TeamTaskExtension {
    * Pending same-process retries and reads confirm that checkpoint first; omission preserves official behavior.
    */
   readonly requireDurableAcknowledgement?: boolean
+  /** Identify current work from this writer's authoritative review/notice facts, including older queued assignments.
+   * @param anchor - exact stable Team host, not a model author.
+   * @param input - original identified input and attribution; undefined classification is ordinary coordination.
+   * @returns associated Task and current-work identity, or undefined for non-work input.
+   */
+  classifyInput?(anchor: Agent, input: AgentInput): { readonly taskId: TeamTaskId; readonly current: boolean } | undefined
   /** Validate prepared Lead releases and generate this writer's atomic product audit.
    * @param anchor - stable Team journal owner, not a model author.
    * @param snapshot - detached native state while the Team transaction is locked.

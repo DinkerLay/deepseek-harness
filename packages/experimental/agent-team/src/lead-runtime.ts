@@ -14,6 +14,8 @@ import type { Config, TeamLeadContext, TeamLeadDeliveryReceipt, TeamMessageId } 
 import { TeamId } from './types.ts'
 import type { TeamLeadBinding, TeamLeadSeat } from './lead-seat.ts'
 import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordination.ts'
+import { maintainExecution, prepareControlledClaim } from './execution-maintenance.ts'
+import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 
 /** A caller-owned candidate creation request, not a seat change. */
 export interface CreateLeadExecutionRequest {
@@ -136,8 +138,80 @@ export class TeamLeadExecutions {
   private input: InputControllerHandle | undefined
   private provider: LeadExecutionProvider | undefined
   private executionResolver: ((id: SessionId, signal: AbortSignal) => Promise<Agent>) | undefined
+  private lifetime: AbortSignal | undefined
+  private readonly occupations = new Set<SessionId>()
+  private readonly maintenanceJobs = new Set<Promise<unknown>>()
   constructor(private readonly ctx: Context, private readonly journal: TeamJournal,
-    private readonly mode: Config['controlledMode']) {}
+    private readonly mode: Config['controlledMode'],
+    private readonly workAdmitted: (anchor: Agent, input: AgentInput) => boolean,
+    private readonly hasWorkPolicy: () => boolean,
+    private readonly workPolicyAvailable: (anchor: Agent) => boolean) {}
+
+  /** Occupy the existing Lead controller for exact, short execution maintenance.
+   * @param caller - actual current Lead authorizing the operation.
+   * @param request - exact seat/turn identity and synchronous caller-owned recheck.
+   * @param signal - caller lifetime; admitted callback work is drained on cancellation.
+   * @param callback - live maintenance or exclusive original stored input custody.
+   * @returns only after obsolete-work disposition and original-input handback settle.
+   */
+  async maintain<T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal,
+    callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>): Promise<T> {
+    const input = this.input, lifetime = this.lifetime, target = request.target
+    if (input === undefined || lifetime === undefined || target.kind !== 'lead') throw new TeamError('Lead input owner is unavailable', 'TEAM_LEAD_PROVIDER_CLOSED')
+    const anchor = this.liveAnchor(caller)
+    const identity = () => {
+      const state = this.journal.state(anchor), seat = this.seat(anchor)
+      return seat.executionId === target.executionId && seat.term === target.term
+        && !leadCoordinationActive(state.leadCoordination) && state.composition?.phase !== 'applying' && this.isReady(anchor) && this.workPolicyAvailable(anchor)
+    }
+    const unavailable = (): never => { throw new TeamError('Lead seat changed before maintenance', 'TEAM_LEAD_STALE_TERM') }
+    const assertCurrent = () => {
+      lifetime.throwIfAborted()
+      this.journal.assertCallerWrite(anchor, caller)
+      if (!this.isCurrent(caller, anchor) || !identity()) unavailable()
+    }
+    const job = (async () => {
+      await this.journal.transact(anchor.id, () => {
+        assertCurrent(); signal.throwIfAborted(); request.assertCurrent?.()
+        if (this.occupations.has(target.executionId)) throw new TeamError('Lead maintenance is already occupied', 'TEAM_LEAD_NOT_READY')
+        this.occupations.add(target.executionId)
+        return Promise.resolve()
+      })
+      let completed = false
+      try {
+        const result = await maintainExecution(this.ctx, request, AbortSignal.any([signal, lifetime]), { input, lifetime, assertCurrent,
+          transact: action => this.journal.transact(anchor.id, action),
+          canHandback: identity, admitted: material => this.workAdmitted(anchor, material),
+          // Lead authority requires this exact live caller; a bare stored reader cannot replace it.
+          withStored: unavailable,
+        }, callback)
+        completed = true
+        return result
+      } finally {
+        this.occupations.delete(target.executionId)
+        const execution = this.ctx.agents.get(target.executionId)
+        if (completed && !lifetime.aborted && identity() && execution !== undefined) {
+          const pending = [...execution.inbox.nextStep, ...execution.inbox.nextTurn]
+          if (this.ctx.agents.inputControlState(execution.session).records.some(record => record.location === 'inbox'
+            && record.input.wakeup && this.workAdmitted(anchor, record.input)
+            && pending.some(message => message.id === record.input.message.id))) execution.wakePending?.()
+        }
+      }
+    })()
+    this.maintenanceJobs.add(job)
+    try { return await job } finally { this.maintenanceJobs.delete(job) }
+  }
+
+  /** Native dispatch cannot bypass the same short input-controller occupation.
+   * @param anchor - exact stable native Team journal owner.
+   * @returns whether the current Lead may receive work under its existing controller.
+   */
+  canReceive(anchor: Agent): boolean {
+    return this.isReady(anchor) && !this.occupations.has(this.seat(anchor).executionId) && this.workPolicyAvailable(anchor)
+  }
+
+  /** Drain scoped maintenance after native Team admission closes. */
+  async settleMaintenance(): Promise<void> { await Promise.allSettled([...this.maintenanceJobs]) }
 
   /** Install one Host coordinator and its input policy under the caller's lifetime.
    * @param owner - coordinator registration scope.
@@ -199,17 +273,26 @@ export class TeamLeadExecutions {
       admit: (agent, material) => {
         const anchor = this.liveAnchor(agent)
         const current = this.isCurrent(agent, anchor)
+        if (!this.workAdmitted(anchor, material)) return { kind: 'reject', reason: 'Task work input is no longer schedulable' }
         const kind: string = material.message.source.kind
         if (!current && kind === 'user-question-reply') return { kind: 'reject', reason: 'question reply belongs to a superseded execution' }
-        if (current && this.isReady(anchor)) return { kind: 'accept' }
+        if (current && this.canReceive(anchor)) return { kind: 'accept' }
         const identity = this.identity(agent.session)
         if (identity === null || identity.term <= this.seat(anchor).term) {
           return { kind: 'hold' }
         }
         return { kind: 'reject', reason: 'Lead execution is not bound and ready' }
       },
-      canStart: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.isReady(anchor) },
-      canClaim: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.isReady(anchor) },
+      canStart: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.canReceive(anchor) },
+      canClaim: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.canReceive(anchor) },
+      prepareClaim: async (agent, signal) => {
+        const anchor = this.liveAnchor(agent)
+        if (this.isCurrent(agent, anchor) && this.canReceive(anchor) && this.hasWorkPolicy()) {
+          await prepareControlledClaim(this.ctx, input, agent, material => this.workAdmitted(anchor, material), signal, () => {
+            if (!this.isCurrent(agent, anchor) || !this.canReceive(anchor)) throw new TeamError('Lead changed before input claim', 'TEAM_LEAD_STALE_TERM')
+          }, action => this.journal.transact(anchor.id, action))
+        }
+      },
       initialize: (session, source) => {
         const identity = this.identity(session)
         if (identity !== null) { input.bind(session); return }
@@ -225,6 +308,7 @@ export class TeamLeadExecutions {
       prepare: session => prepareSession(session),
     })
     this.input = input
+    this.lifetime = registrationAbort.signal
     this.provider = provider
     const resolveExecution = provider.resolveExecution?.bind(provider)
     this.executionResolver = resolveExecution === undefined ? undefined : (id, incoming) => {
@@ -248,6 +332,7 @@ export class TeamLeadExecutions {
       try {
         await input.dispose()
         await Promise.allSettled([...jobs])
+        await Promise.allSettled([...this.maintenanceJobs])
         mail.bind(undefined)
         const released = await Promise.allSettled([...preparations.keys()].map(releasePreparation))
         const failures = released.filter(result => result.status === 'rejected').map((result) => {
@@ -257,6 +342,7 @@ export class TeamLeadExecutions {
         if (failures.length > 0) throw new AggregateError(failures, 'Lead activation lease cleanup failed')
       } finally {
         this.input = undefined
+        this.lifetime = undefined
         this.provider = undefined
         this.executionResolver = undefined
       }
@@ -362,7 +448,7 @@ export class TeamLeadExecutions {
       const state = owner.agents.inputControlState(agent.session)
       if (state.controllerId !== controllerId || !state.records.some(record => record.location === 'held')) return
       const anchor = this.liveAnchor(agent)
-      if (this.isCurrent(agent, anchor) && !this.isReady(anchor)) return
+      if (this.occupations.has(agent.id) || this.isCurrent(agent, anchor) && !this.canReceive(anchor)) return
       void handle.queueHeld(agent).catch((error: unknown) => {
         if (active) owner.logger.warn(`Lead held input remains with its source: ${String(error)}`)
       })

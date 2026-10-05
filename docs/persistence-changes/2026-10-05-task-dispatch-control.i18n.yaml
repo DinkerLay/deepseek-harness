@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-05-task-dispatch-control.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-05-task-dispatch-control.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-05-task-dispatch-control:
+  en: a7c09e7f156295fe
+  zh: 6e5e833493792348
+/2026-10-05-task-dispatch-control/summary:
+  en: 3a416116d9f19d8c
+  zh: bf733a98fd2a19b2
+/2026-10-05-task-dispatch-control/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-05-task-dispatch-control/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-05-task-dispatch-control/compatibility:
+  en: 07d40d7c02557e17
+  zh: 24708cda3fdeaa69
+/2026-10-05-task-dispatch-control/verification:
+  en: 79d40e302d6ec25a
+  zh: a6c7b9e8d047776f
+/2026-10-05-task-dispatch-control/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

@@ -87,6 +87,7 @@ A **step** is one model request plus the tools it calls. A **turn** is zero or m
 
 ```text
 turn/start
+  optional bound-controller claim preparation; recheck cancellation and admission
   claim next-step input plus one queued message
   assemble prompt sections + tool schemas; project runtime context
   -> agent/pre-step                   reject | enter(messages, startsRequestSeries?)
@@ -110,7 +111,7 @@ turn/end
 
 The driver’s single durable `inbox` exposes pending input without live Agents. Injected context waits for a waking message; optional `wakePending()` wakes queued input without reinsertion.
 
-Optional [input control](../packages/core/agent/README.md#control-input-before-it-becomes-executable) runs before composition, turn start and inbox claim. Bound receivers require durable custody before wake; a provider can hold input outside the executable queue. No binding preserves the ordinary synchronous path.
+Optional [input control](../packages/core/agent/README.md#control-input-before-it-becomes-executable) runs before composition, turn start and inbox claim. Bound receivers require durable custody before wake; a provider can hold input outside the executable queue. A selected-input cleanup uses that same owner and inbox, preserving other input identities and wake intent without restoring execution. The driver awaits optional claim preparation under turn and registration cancellation before consuming input. No binding or claim callback preserves the ordinary synchronous path; input control does not add ordinary tool guards.
 
 `agent/pre-step` decides the accepted input. Listeners may rewrite or reject claimed messages; rejection or an empty first decision closes the turn without a step. Accepted input remains uncommitted until assembly and route preparation succeed. Retries reuse the accepted assembly; request headers identify route and tool changes or a new message series. System prompt changes remain logged history, with provider capabilities deciding whether to append updates or consolidate the prefix. The [Agent Loop implementation](../packages/core/agent-loop/README.md#understand-the-implementation) owns the exact header, prompt-update and cancellation rules.
 

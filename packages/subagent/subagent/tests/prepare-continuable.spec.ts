@@ -11,19 +11,19 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { InputControllerId, type Agent } from '@deepseek-ai/dsh-agent'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as Fork from '@deepseek-ai/dsh-subagent-fork-in-process'
-import Subagents, { type ContinuablePrepareSpec, type SubagentSettlementNoticeFacts } from '../src/index.ts'
+import Subagents, { type ContinuableInputCustodyScope, type ContinuablePrepareSpec, type SubagentSettlementNoticeFacts } from '../src/index.ts'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 import { loadStoredSession, seedStoredSession } from './persistence-helpers.ts'
 import { continuationActivations } from './continuation-internals.ts'
 
 /** Boot owning production rows from a temporary cordis.yml; only model output is scripted. */
-async function setup() {
+async function setup(script: ConstructorParameters<typeof MockAdapter>[0] = [textResponse('first delivery complete')]) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-prepare-continuable-'))
   const ctx = new Context()
   onTestFinished(async () => {
@@ -66,7 +66,7 @@ async function setup() {
   await ctx.loader.await()
   await ctx.agentPresets.register({ id: 'standard', plugins: [] })
   const unregisterReviewer = await ctx.agentPresets.register({ id: 'reviewer', plugins: [] })
-  const adapter = new MockAdapter([textResponse('first delivery complete')])
+  const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
   const parent = await ctx.agents.create({ sessionId: SessionId('prepare-parent'),
     meta: { cwd: root }, agentOptions: { provider: 'mock', model: 'mock' },
@@ -101,7 +101,158 @@ function controlled(test: Harness, initiallyHeld = true) {
 /** Read the child's actual JSONL rather than trusting an API receipt. */
 async function stored(test: Harness) { return loadStoredSession(test.ctx.sessionPersistence, test.spec.childId) }
 
+describe('continuable input custody', () => {
+  it.each(['next-step', 'next-turn'] as const)('restores a held %s input through the actual live driver without stopping or waking another run', async (target) => {
+    const test = await setup(['hang'])
+    const owner = controlled(test, false)
+    await test.ctx.subagents.startContinuable({ ...test.spec, request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Keep running' }] } })
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    const agent = test.ctx.agents.get(test.spec.childId)!
+    const cancel = vi.spyOn(agent, 'cancel')
+    owner.setHoldInput(true)
+    const message = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Retained original input' }] })
+    expect(await test.ctx.agents.receiveInput(agent, { message, target, wakeup: false })).toMatchObject({ location: 'held' })
+    let retained: ContinuableInputCustodyScope | undefined
+    expect(await test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller,
+      test.spec.signal, async (scope) => {
+        retained = scope
+        expect(scope.source).toBe('live')
+        expect(scope.read()?.inputControl.records.find(item => item.input.message.id === message.id)).toMatchObject({ location: 'held' })
+        await scope.restoreHeld([message.id])
+        await scope.restoreHeld([message.id])
+        expect(scope.read()?.pending.filter(item => item.message.id === message.id)).toHaveLength(1)
+        return 23
+      })).toBe(23)
+    expect(cancel).not.toHaveBeenCalled()
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(retained?.signal.aborted).toBe(true)
+    expect(() => retained?.read()).toThrow(/expired/)
+    expect(() => retained?.restoreHeld([])).toThrow(/expired/)
+    agent.cancel({ kind: 'user' }); await agent.whenIdle()
+  })
+
+  it('keeps natural settlement out while its input reader is borrowed, then releases normally', async () => {
+    const test = await setup(['hang']), owner = controlled(test, false)
+    await test.ctx.subagents.startContinuable({ ...test.spec, request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Run until stopped' }] } })
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    const agent = test.ctx.agents.get(test.spec.childId)!
+    const entered = Promise.withResolvers<undefined>(), release = Promise.withResolvers<undefined>()
+    const borrowed = test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller,
+      test.spec.signal, async (scope) => { expect(scope.source).toBe('live'); entered.resolve(undefined); await release.promise; return 31 })
+    await entered.promise
+    try {
+      agent.cancel({ kind: 'user' }); await agent.whenIdle()
+      const registry = continuationActivations(test.ctx)
+      await registry.locks.run(test.spec.childId, () => Promise.resolve())
+      expect(test.ctx.agents.get(test.spec.childId)).toBe(agent)
+    } finally { release.resolve(undefined); await borrowed }
+    expect(await borrowed).toBe(31)
+    await vi.waitFor(() => { expect(test.ctx.agents.get(test.spec.childId)).toBeUndefined() })
+  })
+
+  it('aborts and drains input custody before an explicit activation disposal releases its driver', async () => {
+    const test = await setup(['hang']), owner = controlled(test, false)
+    await test.ctx.subagents.startContinuable({ ...test.spec, request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Wait for disposal' }] } })
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    const entered = Promise.withResolvers<ContinuableInputCustodyScope>(), release = Promise.withResolvers<undefined>()
+    const borrowed = test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller,
+      test.spec.signal, async (scope) => { entered.resolve(scope); await release.promise })
+    const outcome = borrowed.catch((error: unknown) => error)
+    const scope = await entered.promise
+    let closing: Promise<void> | undefined
+    try {
+      const registry = continuationActivations(test.ctx), activation = registry.get(test.spec.childId)!
+      let disposed = false
+      closing = registry.dispose(activation).then(() => { disposed = true })
+      expect(scope.signal.aborted).toBe(true)
+      expect(() => scope.read()).toThrow(/closing/)
+      const stale = await registry.locks.run(test.spec.childId, () => Promise.resolve({
+        result: registry.withInputCustody(activation, test.spec.signal,
+          async () => { throw new Error('closed input callback must not run') }),
+      }))
+      await expect(stale.result).rejects.toMatchObject({ code: 'ACTIVATION_CLOSING' })
+      expect(disposed).toBe(false)
+      expect(test.ctx.agents.get(test.spec.childId)).toBe(activation.handle.agent)
+      release.resolve(undefined)
+      expect(await outcome).toMatchObject({ code: 'ACTIVATION_CLOSING' })
+      await closing
+    } finally { release.resolve(undefined); await outcome; await closing }
+    expect(test.ctx.agents.get(test.spec.childId)).toBeUndefined()
+  })
+
+  it('opens a stored candidate and a never-created source without mounting an execution', async () => {
+    const test = await setup(), owner = controlled(test)
+    await test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller, test.spec.signal,
+      async (scope) => { expect(scope.source).toBe('absent'); expect(scope.read()).toBeUndefined(); await scope.restoreHeld([]) })
+    await expect(test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller, test.spec.signal,
+      scope => scope.restoreHeld([MessageId('missing')]))).rejects.toThrow(/not confirmed/)
+    await test.ctx.subagents.prepareContinuable(test.spec)
+    await test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller, test.spec.signal,
+      async (scope) => { expect(scope.source).toBe('stored'); expect(scope.read()?.header.id).toBe(test.spec.childId); await scope.restoreHeld([]) })
+    expect(test.ctx.agents.get(test.spec.childId)).toBeUndefined()
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it('waits outside the child lock for a closing driver, then uses its stored writer without another model call', async () => {
+    const test = await setup(['hang']), owner = controlled(test, false)
+    await test.ctx.subagents.startContinuable({ ...test.spec, request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Create the original residency' }] } })
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    const registry = continuationActivations(test.ctx), activation = registry.get(test.spec.childId)!
+    const entered = Promise.withResolvers<undefined>(), release = Promise.withResolvers<undefined>()
+    const dispose = activation.handle.dispose.bind(activation.handle)
+    const boundary = vi.spyOn(activation.handle, 'dispose').mockImplementation(async () => {
+      entered.resolve(undefined); await release.promise; await dispose()
+    })
+    const closing = registry.dispose(activation)
+    await entered.promise
+    const borrowed = test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller,
+      test.spec.signal, async (scope) => { expect(scope.source).toBe('stored'); expect(scope.read()?.header.id).toBe(test.spec.childId); return 47 })
+    try {
+      await registry.locks.run(test.spec.childId, () => Promise.resolve())
+      expect(test.ctx.agents.get(test.spec.childId)).toBe(activation.handle.agent)
+    } finally { release.resolve(undefined); await closing; boundary.mockRestore() }
+    expect(await borrowed).toBe(47)
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(test.ctx.agents.get(test.spec.childId)).toBeUndefined()
+  })
+
+  it('refuses a foreign input owner and drains an unawaited invalid restoration without losing the live run', async () => {
+    const test = await setup(['hang']), owner = controlled(test, false)
+    await test.ctx.subagents.startContinuable({ ...test.spec, request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Keep the original run' }] } })
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    const other = test.ctx.agents.registerInputController(InputControllerId('other-input-owner'),
+      { admit: () => ({ kind: 'hold' }), canStart: () => false, canClaim: () => false })
+    try {
+      await expect(test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, other, test.spec.signal,
+        async () => { throw new Error('foreign callback must not run') })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+      await expect(test.ctx.subagents.withContinuableInputCustody(test.parent, test.spec.childId, owner.controller, test.spec.signal,
+        async (scope) => { void scope.restoreHeld([MessageId('no-such-held-input')]); return 59 })).rejects.toThrow(/not confirmed/)
+      expect(test.adapter.requests).toHaveLength(1)
+      expect(test.ctx.agents.get(test.spec.childId)?.status).toBe('running')
+    } finally { await other.dispose() }
+  })
+})
+
 describe('input-free continuable preparation', () => {
+  it.each([false, true])('returns confirmed controlled inbox custody before processing (prepared=%s)', async (prepared) => {
+    const test = await setup()
+    const owner = controlled(test)
+    owner.setHoldInput(false)
+    if (prepared) await test.ctx.subagents.prepareContinuable(test.spec)
+    const input = createUserMessage({ content: [{ type: 'text', text: 'Unprocessed durable input.' }], source: { kind: 'user' } })
+    const spec = { ...test.spec, request: { ...test.spec.request, prompt: [...input.content] } }
+    expect(await test.ctx.subagents.deliverContinuableInput(spec, input)).toEqual({ childId: test.spec.childId,
+      messageId: input.id, inputLocation: 'inbox' })
+    expect(await test.ctx.subagents.deliverContinuableInput(spec, input)).toEqual({ childId: test.spec.childId,
+      messageId: input.id, inputLocation: 'inbox' })
+    const execution = test.ctx.agents.get(test.spec.childId)
+    expect(execution === undefined ? undefined : [...execution.inbox.nextStep, ...execution.inbox.nextTurn]).toEqual([input])
+    expect(test.adapter.requests).toHaveLength(0)
+    const saved = await stored(test)
+    expect(saved.events.filter(event => event.type === 'agent/inbox/spliced'
+      && event.data.inserted.some(message => message.id === input.id))).toHaveLength(1)
+    expect(saved.events.some(event => event.type === 'user/message' || event.type === 'turn/start')).toBe(false)
+  })
   it('confirms descriptor, Preset, lineage and catalog without any run or input', async () => {
     const test = await setup()
     const starts = vi.fn()

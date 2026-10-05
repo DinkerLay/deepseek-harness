@@ -57,6 +57,8 @@ export interface StoredInputDriver {
   pending(): readonly StoredPendingInput[]
   /** @param messageId - pending identity already placed into held custody. @returns whether it was removed. */
   hold(messageId: MessageId): boolean
+  /** @param input - original held input; queue it without waking. */
+  preload(input: AgentInput): void
 }
 
 /** Detached original-source facts; reading these never makes the source executable. */
@@ -77,7 +79,9 @@ export interface StoredInputCustody {
   /** @returns a detached current cut of the exclusively owned source. */
   read(): StoredInputCustodySnapshot
   /** @returns all held input after pending capture and original-writer confirmation. */
-  holdPending(): Promise<readonly AgentInput[]>
+  holdPending(messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]>
+  /** @param messageIds - exact held identities to return to their original queues without waking. */
+  restoreHeld(messageIds: readonly MessageId[]): Promise<void>
   /** @param messageId - exact held identity to settle. @returns after original-writer confirmation. */
   releaseHeld(messageId: MessageId): Promise<void>
   /** @returns after admitted mutations and the original writer close; no source is awakened. */

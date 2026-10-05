@@ -420,6 +420,7 @@ export class AgentLoop extends Service implements AgentFactory {
           ...inbox.nextTurn.map(message => ({ target: 'next-turn' as const, message }))]
       },
       hold: (messageId) => { active(); return inbox.holdControlled(messageId) },
+      preload: (input) => { active(); inbox.spliceControlled(input, false) },
     }
   }
 

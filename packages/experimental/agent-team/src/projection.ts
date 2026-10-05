@@ -154,6 +154,7 @@ const teamTaskSnapshotSchema = z.object({
   blockedBy: z.array(teamTaskIdSchema),
   writeScopes: z.array(z.string()),
   resultUnavailable: z.literal(true).optional(),
+  dispatchBlocked: z.literal(true).optional(),
 }).strict() as z.ZodType<TeamTaskSnapshot>
 
 const teamMessageSnapshotSchema = z.object({
@@ -903,6 +904,7 @@ const teamTaskViewSchema = z.object({
   ownerName: z.string().optional(),
   ready: z.boolean(),
   resultUnavailable: z.literal(true).optional(),
+  dispatchBlocked: z.literal(true).optional(),
   writeScopeWarnings: z.array(z.string()),
 }).strict() as z.ZodType<TeamTaskView>
 
@@ -994,7 +996,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 20,
+  stateVersion: 21,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

@@ -119,6 +119,7 @@ const TASK_VIEW_SCHEMA = {
     writeScopes: { type: 'array', required: true, items: { type: 'string' } },
     ready: { type: 'boolean', required: true },
     resultUnavailable: { type: 'boolean' },
+    dispatchBlocked: { type: 'boolean', enum: [true] },
     writeScopeWarnings: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const

@@ -16,6 +16,7 @@ export type SubagentDelivery = SubagentPromptRequest['delivery']
 export class SubagentInbox {
   private closingPromise: Promise<void> | undefined
   private readonly receipts = new Set<Promise<InputReceipt>>()
+  private readonly inputCustodies = new Set<{ readonly abort: AbortController; readonly done: Promise<void> }>()
 
   /**
    * Wrap one live continuable Agent.
@@ -37,7 +38,27 @@ export class SubagentInbox {
    * @returns whether either Agent inbox destination is non-empty.
    */
   get hasPending(): boolean {
-    return this.receipts.size > 0 || this.agent.inbox.nextTurn.length > 0 || this.agent.inbox.nextStep.length > 0
+    return this.receipts.size > 0 || this.inputCustodies.size > 0
+      || this.agent.inbox.nextTurn.length > 0 || this.agent.inbox.nextStep.length > 0
+  }
+
+  /** Retain this input driver through one admitted source operation without pausing its model.
+   * @param signal - caller cancellation.
+   * @param callback - work which honors cancellation and settles before custody is released.
+   * @returns the callback result; concurrent close aborts and drains the callback before disposal.
+   */
+  async withInputCustody<T>(signal: AbortSignal, callback: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    signal.throwIfAborted()
+    if (this.closingPromise !== undefined) throw new SubagentError('continuable input is closing', 'ACTIVATION_CLOSING')
+    const done = Promise.withResolvers<void>()
+    const job = { abort: new AbortController(), done: done.promise }
+    const combined = AbortSignal.any([signal, job.abort.signal])
+    this.inputCustodies.add(job)
+    try {
+      const value = await callback(combined)
+      combined.throwIfAborted()
+      return value
+    } finally { this.inputCustodies.delete(job); done.resolve() }
   }
 
   /**
@@ -74,7 +95,12 @@ export class SubagentInbox {
     if (existing !== undefined) return existing
     const completion = Promise.withResolvers<void>()
     this.closingPromise = completion.promise
-    void release().then(completion.resolve, completion.reject)
+    if (this.inputCustodies.size === 0) void release().then(completion.resolve, completion.reject)
+    else {
+      const jobs = [...this.inputCustodies]
+      for (const job of jobs) job.abort.abort(new SubagentError('continuable input custody is closing', 'ACTIVATION_CLOSING'))
+      void Promise.all(jobs.map(job => job.done)).then(release).then(completion.resolve, completion.reject)
+    }
     return completion.promise
   }
 }

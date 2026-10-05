@@ -96,6 +96,7 @@ async function residentHeld(test: Awaited<ReturnType<typeof setup>>, operationId
     if (current?.status !== 'running') throw new Error('resident execution did not start')
     return current
   })
+  await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
   await test.ctx.agents.receiveInput(execution, { message: createUserMessage({ content: text('Parked non-waking input'), source: { kind: 'user' } }),
     target: 'next-turn', wakeup: false })
   await test.owner.hold(test.lead, { memberId: test.member.id, operationId, expectedGeneration: 1,
@@ -323,22 +324,25 @@ it.each([false, true])('linearizes concurrent release retries without duplicate 
   const test = await setup({ script: ['hang'] })
   await residentHeld(test, 'parallel-release')
   const pair = serialBlockers()
-  const { firstGate, secondGate, firstEntered, secondEntered } = pair
+  const { firstGate, secondGate, firstEntered } = pair
+  const maintenance = vi.spyOn(test.ctx.subagents, 'withContinuableExecution')
   const first = test.owner.release(test.lead, test.member.id, 'parallel-release', record('parallel-release:ready'), pair.first)
-  const second = test.owner.release(test.lead, test.member.id, 'parallel-release', record('parallel-release:ready', conflicting ? '{"changed":true}' : '{}'),
-    pair.second)
-  const outcome = second.then(() => ({ kind: 'accepted' }), (error: unknown) => ({ kind: 'rejected', error }))
+  let second: Promise<void> | undefined
   try {
     await firstEntered.promise
     expect(pair.reads()).toBe(1)
-    firstGate.resolve(); await first
-    await secondEntered.promise
-    secondGate.resolve()
+    second = test.owner.release(test.lead, test.member.id, 'parallel-release',
+      record('parallel-release:ready', conflicting ? '{"changed":true}' : '{}'), pair.second)
+    const outcome = second.then(() => ({ kind: 'accepted' }), (error: unknown) => ({ kind: 'rejected', error }))
+    // Both real maintenance requests must be queued before the first release changes the retry path.
+    await vi.waitFor(() => { expect(maintenance).toHaveBeenCalledTimes(2) })
+    expect(pair.reads()).toBe(1)
+    firstGate.resolve(); secondGate.resolve(); await first
     expect(await outcome).toMatchObject(conflicting ? { kind: 'rejected', error: { code: 'TEAM_MEMBER_OPERATION_STALE' } }
       : { kind: 'accepted' })
     expect(test.owner.read(test.lead, test.member.id).control?.held).toBe(false)
     expect(test.lead.session.snapshotEvents().filter(event => event.type === 'team/member/control')).toHaveLength(2)
-  } finally { firstGate.resolve(); secondGate.resolve(); await Promise.allSettled([first, second]) }
+  } finally { firstGate.resolve(); secondGate.resolve(); await Promise.allSettled([first, second]); maintenance.mockRestore() }
 })
 
 it('keeps admission held when another owner step retargets the candidate during release safety checks', async () => {
@@ -360,23 +364,27 @@ it.each([false, true])('linearizes concurrent binding requests against one prepa
   await residentHeld(test, 'parallel-binding', candidate)
   await prepareCandidate(test, 'parallel-binding', candidate)
   const pair = serialBlockers()
-  const { firstGate, secondGate, firstEntered, secondEntered } = pair
+  const { firstGate, secondGate, firstEntered } = pair
+  const maintenance = vi.spyOn(test.ctx.subagents, 'withContinuableExecution')
   const first = test.owner.commit(test.lead, test.member.id, 'parallel-binding', record('parallel-binding:commit'), pair.first)
-  const second = test.owner.commit(test.lead, test.member.id, 'parallel-binding', record('parallel-binding:commit', conflicting ? '{"changed":true}' : '{}'),
-    pair.second)
-  const outcome = second.then(() => ({ kind: 'accepted' }), (error: unknown) => ({ kind: 'rejected', error }))
+  let second: ReturnType<typeof test.owner.commit> | undefined
   try {
     await firstEntered.promise
     expect(pair.reads()).toBe(1)
-    firstGate.resolve(); expect((await first).executionId).toBe(candidate)
-    await secondEntered.promise
+    second = test.owner.commit(test.lead, test.member.id, 'parallel-binding',
+      record('parallel-binding:commit', conflicting ? '{"changed":true}' : '{}'), pair.second)
+    const outcome = second.then(() => ({ kind: 'accepted' }), (error: unknown) => ({ kind: 'rejected', error }))
+    // Both candidate reads must reach real maintenance before binding changes their live retry path.
+    await vi.waitFor(() => { expect(maintenance).toHaveBeenCalledTimes(2) })
+    expect(pair.reads()).toBe(1)
     secondGate.resolve()
+    firstGate.resolve(); expect((await first).executionId).toBe(candidate)
     expect(await outcome).toMatchObject(conflicting ? { kind: 'rejected', error: { code: 'TEAM_MEMBER_OPERATION_STALE' } }
       : { kind: 'accepted' })
     if (!conflicting) expect((await second).generation).toBe(2)
     expect(test.lead.session.snapshotEvents().filter(event => event.type === 'team/member/execution')).toHaveLength(1)
     expect(test.adapter.requests).toHaveLength(1)
-  } finally { firstGate.resolve(); secondGate.resolve(); await Promise.allSettled([first, second]) }
+  } finally { firstGate.resolve(); secondGate.resolve(); await Promise.allSettled([first, second]); maintenance.mockRestore() }
 })
 
 it('confirms an uncertain binding once and refuses a retry with different recorded facts', async () => {

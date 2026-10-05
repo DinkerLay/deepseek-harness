@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import type { AgentInput, AgentInputController, InputControllerHandle } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentInput, AgentInputController, InputControllerHandle } from '@deepseek-ai/dsh-agent'
 import { InputControllerId } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
@@ -28,6 +28,7 @@ async function boot(options: {
   storage?: boolean
   script?: ConstructorParameters<typeof MockAdapter>[0]
   prepare?: AgentInputController['prepare']
+  prepareClaim?: AgentInputController['prepareClaim']
 } = {}) {
   const resources = options.resources ?? { root: mkdtempSync(join(tmpdir(), 'dsh-input-control-')), contexts: [] }
   if (options.resources === undefined) onTestFinished(async () => {
@@ -50,6 +51,7 @@ async function boot(options: {
       canStart: () => policy.start,
       canClaim: () => policy.claim,
       ...options.prepare === undefined ? {} : { prepare: options.prepare },
+      ...options.prepareClaim === undefined ? {} : { prepareClaim: options.prepareClaim },
     })
   }, { inject: ['agents'] }))
   if (capability === undefined) throw new Error('input policy fixture did not initialize')
@@ -68,6 +70,60 @@ function splices(events: readonly SessionEvent[], request: AgentInput): number {
 }
 
 describe('optional input control', () => {
+  it('selects only exact pending identities and preserves the other queue and original wake intent', async () => {
+    const test = await boot()
+    test.cap.bind(test.agent.session)
+    const first = input('selected work'), other = { ...input('shared execution'), target: 'next-turn' as const }
+    await test.ctx.agents.receiveInput(test.agent, first)
+    await test.ctx.agents.receiveInput(test.agent, other)
+    expect(await test.cap.holdPending(test.agent, [first.message.id])).toEqual([first])
+    expect(test.agent.inbox.nextStep).toEqual([])
+    expect(test.agent.inbox.nextTurn).toEqual([other.message])
+    expect(await test.cap.holdPending(test.agent, [])).toEqual([])
+    expect(await test.cap.holdPending(test.agent, [first.message.id])).toEqual([first])
+    await test.cap.release(test.agent, first.message.id)
+    await expect(test.cap.holdPending(test.agent, [first.message.id])).rejects.toThrow(/not pending or held/)
+    await expect(test.cap.preload(test.agent, first)).rejects.toThrow(/released input cannot be preloaded/)
+    expect(test.agent.inbox.nextStep).toEqual([])
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it('awaits only the bound optional claim preparation before the actual model batch', async () => {
+    const entered = Promise.withResolvers<undefined>(), release = Promise.withResolvers<undefined>()
+    const prepare = vi.fn(async (_agent: Agent, signal: AbortSignal) => {
+      entered.resolve(undefined); await release.promise; signal.throwIfAborted()
+    })
+    const test = await boot({ prepareClaim: prepare })
+    expect(test.ctx.agents.prepareInputClaim(test.agent, new AbortController().signal)).toBeUndefined()
+    test.cap.bind(test.agent.session)
+    await test.ctx.agents.receiveInput(test.agent, input('held before claim', true))
+    await entered.promise
+    expect(test.adapter.requests).toHaveLength(0)
+    release.resolve(undefined)
+    await test.agent.whenIdle()
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(test.adapter.requests).toHaveLength(1)
+  })
+
+  it('aborts claim preparation on controller disposal and drains a callback which finishes late', async () => {
+    const entered = Promise.withResolvers<undefined>(), release = Promise.withResolvers<undefined>()
+    let ownedSignal: AbortSignal | undefined
+    const test = await boot({ prepareClaim: async (_agent, signal) => {
+      ownedSignal = signal; entered.resolve(undefined); await release.promise
+    } })
+    test.cap.bind(test.agent.session)
+    await test.ctx.agents.receiveInput(test.agent, input('must not reach model', true))
+    await entered.promise
+    let disposed = false
+    const closing = test.cap.dispose().then(() => { disposed = true })
+    await vi.waitFor(() => { expect(ownedSignal?.aborted).toBe(true) })
+    expect(disposed).toBe(false)
+    release.resolve(undefined)
+    await closing
+    await test.agent.whenIdle()
+    expect(test.adapter.requests).toHaveLength(0)
+    expect(test.agent.inbox.nextStep).toHaveLength(1)
+  })
   it.each(['false', 'throw'] as const)('reconfirms a removed input after flush %s without clearing another uncertain receipt', async (failure) => {
     const test = await boot()
     test.cap.bind(test.agent.session)

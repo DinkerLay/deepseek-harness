@@ -103,6 +103,8 @@ Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退�
 
 受控 Team 只接受模式事件中指定的扩展 id 写入 Task；卸载该写入方后不会退回原生 Task 修改。扩展可给已完成结果设置不可撤销的不可用标记，使下游 Task 不再显示 ready，同时保留历史已完成 Task 可查。
 
+可选的原生快照事实 `dispatchBlocked: true` 关闭 Task 就绪状态，不增加状态或命令。绑定写入方用其权威 Task 与当前尝试关联工作输入。原生 mailbox 投递、新输入准入及实际 inbox 领取前的准备使用同一关联；失效工作被持久结算，普通协调仍是普通协调。已有暂停事实而分类能力缺席，或受控根日志写入尚未确认时，可恢复地关闭领取，不丢弃输入。这两种情况都不改变官方 Team。
+
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
 写入方可启用 `requireDurableAcknowledgement`。它的读取与提交先确认 journal 中尚未确认的写入；flush 返回 false 或抛错时，不确认成功，也不放行待投递通知。等待结束后，句柄再次核对注册身份和 live anchor，才调用规划器。重试已有事务只确认原写入，不再追加。没有待确认写入时，读取不 flush，也不发出活动通知。受控模式创建同样要求显式成功的 flush，之后才发布 Team 工具；未配置此模式的官方路径不变。
@@ -189,6 +191,8 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 `sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。
 
+受控成员重试只归还该 mailbox 条目尚未确认投递的 admission-held 输入。在 Team 锁内重新核对现任绑定、已确认的根日志事实和精确排队身份。短期 Subagent 输入 custody 保留真实 live driver 或独占原 cold writer，不加载其 Preset；它不停止模型，也不提供模型安全点。已捕获或已释放的输入绝不通过此路径归还。来源恢复须确认 flush 成功，普通同 ID 投递才能确认或唤醒同一原始消息。
+
 由 Lead 授权的取消操作会排在 target 本地投递之后，并用一条 `team/message/cancelled` 事件记录剩余消息 id。恢复排除已取消的 id；已送达的 id 之后不能取消，已取消的 id 也不能再确认送达。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
@@ -207,6 +211,8 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 `installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新、扩展 JSON 与可选 Team 通知；原生投影在发布前检查连续修订、顺序数字 id、mailbox 身份和最终无环图。flush 后待投递通知沿用原生 mailbox 投递与冷恢复路径。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。 Host 规划器可以显式设置 `allowLeadSelfNotices`，在同一事务中给 Lead 自己排入事实通知；这类通知必须把全部内容标为资料，不能声明内容作者。该选项不持久保存；省略时仍拒绝发给自己的通知。
 
+句柄可按实际配置的 UTF-8 字节预算校验不透明 JSON，不做 IO 或发布。同一写入方对象重新注册也不会使已释放句柄复活。作用域执行维护复用唯一的原生 Lead 或成员输入控制器，只停止准确的预览轮次，并在 Team 锁外等待静止。Lead 目标要求真实在线现任调用方；冷成员清理保留 Subagent 预留与独占原 writer，不挂载其 Preset。回调取得脱离原状态的来源观察和选定输入的保管能力，不取得 Agent 替身或裸 append。回调返回时 scope 方法及其信号关闭；已接纳写入在释放资源前等待结算。清理在短 Team 事务内结算已确认的失效工作，并按原 id、来源、队列及唤醒意图交还其他输入。只有成功确认且现任身份再次通过核对时才显式唤醒；失败或取消只做非唤醒清理。这不隔离物理执行，也不安装普通工具守卫。
+
 同一句柄上的 `commitRecord()` 写入 `team/extension` 事件：包含不透明的写入方作用域记录 ID 和 JSON，以及可选 Team 通知，但不修改任务板。它的同步构造器在同一把锁内看到脱离原状态的 Team 快照和该写入方的持久记录，也可以返回已有记录 ID 而不重复写事件。原生投影拒绝重复身份，并将通知折叠到已有邮箱。扩展自行校验和解释自己的 JSON；官方 Team 组合不写这类扩展记录。 扩展通知可以用临时准入标记要求遵守受控普通消息字节上限；Team 在写入前校验每名收件人的完整投递内容，持久通知中不保留该标记。扩展还可以在受控成员放弃工作后提供不透明的下一步建议文本。
 
 ### 等待与中断
@@ -219,7 +225,7 @@ Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤�
 
 原生 V4 的 Team 事件及检查点准入会拒绝退役的 `tool-result` 内容，防止它进入邮箱状态。历史转换由 Session 格式迁移负责，Team 投影不转换旧包装。
 
-Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 19 从 Session 日志重建较早 checkpoint，包括 Lead 投递与协调事实；Session 格式版本保持不变。
+Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内容中全部已解码 JSON 字段，包括自有 `__proto__` 键。本地字段检查覆盖 `text`、`reasoning`、`image` 和 `tool-call`；获准的未知标签保持不透明。Team 投影缓存版本 21 从 Session 日志重建较早 checkpoint，包括执行、协调与 Task 可投递性事实；Session 格式版本保持不变。
 
 ### Dispose
 

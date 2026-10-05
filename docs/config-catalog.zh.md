@@ -833,7 +833,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:456`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:459`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -3135,7 +3135,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 ## `@deepseek-ai/dsh-subagent`
 
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:229`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:231`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */

@@ -145,10 +145,12 @@ interface TeamTaskSnapshot {
   readonly writeScopes: string[]
   /** Monotonic marker: a completed result can no longer satisfy downstream prerequisites. */
   readonly resultUnavailable?: true
+  /** Product-owned persistent scheduling closure, independent of execution status. */
+  readonly dispatchBlocked?: true
 }
 ```
 
-`pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
+`pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot. The optional `dispatchBlocked` marker makes readiness false without replacing that execution state. Its registered Task writer owns detailed control rules and classifies queued work input; the native runtime uses the same admission decision before delivery and input claim, leaving ordinary coordination independent.
 
 An optional Host writer can submit several native Task snapshots and mailbox notices in one `team/task/transaction` event. The registered writer receives a detached Board snapshot under the Team transaction lock; each existing Task must match its previous revision, and newly allocated numeric ids are sequential. It can also return existing Tasks under that lock without appending an event. The native projection validates the final DAG and folds Task values plus notices. The extension owns the JSON string in the same event and may register a separate projection for its review details; it cannot replace the native Board.
 
@@ -235,6 +237,7 @@ interface TeamTaskView {
   readonly ownerName?: string
   readonly ready: boolean
   readonly resultUnavailable?: true
+  readonly dispatchBlocked?: true
   readonly writeScopeWarnings: string[]
 }
 ```

@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type { Agent, SessionStartSource } from './runtime-types.ts'
 import type { AgentInput, AgentInputMutation, InputControllerId as ControllerId, InputControlState, InputReceipt } from './input-control-types.ts'
 import type { StoredInputCustody, StoredInputCustodySource, StoredInputDriver } from './input-control-types.ts'
-import { acquireStoredInputCustody, capturePendingInput, releaseHeldInput } from './input-control-stored.ts'
+import { acquireStoredInputCustody, capturePendingInput, releaseHeldInput, selectedPendingInput } from './input-control-stored.ts'
 /** Stable identity of one optional input policy provider. */
 export type InputControllerId = ControllerId
 
@@ -29,6 +29,12 @@ export interface AgentInputController {
   canStart(agent: Agent): boolean
   canClaim(agent: Agent): boolean
   prepare?(session: Session): Promise<void>
+  /** Finish owner-controlled pending-input disposition before the concrete inbox claims a batch.
+   * @param agent - exact receiving execution.
+   * @param signal - current driver cancellation; preparation owns its admitted writes through settlement.
+   * @returns after queue/custody confirmation without submitting model work.
+   */
+  prepareClaim?(agent: Agent, signal: AbortSignal): Promise<void>
   /** Bind or validate an unpublished Session before its scoped composition mounts.
    * @param session - Session under the factory's exclusive preparation ownership.
    * @param source - fresh creation or persisted resumption.
@@ -57,7 +63,7 @@ export interface InputControllerHandle {
    * @param agent - provider-bound receiving execution.
    * @returns the captured input in its current queue order, after durable confirmation.
    */
-  holdPending(agent: Agent): Promise<readonly AgentInput[]>
+  holdPending(agent: Agent, messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]>
   /** Own an inactive original Session's input without restoring its Agent or composition.
    * @param sessionId - existing persisted source owned by this controller.
    * @param signal - caller cancellation; a late acquired writer is still closed.
@@ -167,7 +173,7 @@ export class AgentInputControls {
       },
       preload: (agent, input, prepend = false) => this.deliver(agent, input, { entry, prepend }),
       release: (agent, messageId) => this.release(entry, agent, messageId),
-      holdPending: agent => this.holdPending(entry, agent),
+      holdPending: (agent, messageIds) => this.holdPending(entry, agent, messageIds),
       acquireStoredCustody: (sessionId, signal, validate) => {
         const combined = AbortSignal.any([signal, entry.lifetime.signal, this.lifetime.signal])
         const job = acquireStoredInputCustody(this.ctx, sessionId, combined, {
@@ -236,6 +242,33 @@ export class AgentInputControls {
    * @returns whether the next inbox batch can be consumed.
    */
   canClaim(agent: Agent): boolean { return this.allowed(agent, 'canClaim') }
+
+  /** Prepare only a bound provider's claim; unbound and callback-free drivers keep the synchronous path.
+   * @param agent - exact receiving driver.
+   * @param signal - its current turn cancellation.
+   * @returns owner preparation when registered, otherwise undefined.
+   */
+  prepareClaim(agent: Agent, signal: AbortSignal): Promise<void> | undefined {
+    const id = this.state(agent.session).controllerId
+    if (id === null) return undefined
+    const entry = this.require(id)
+    const prepare = entry.policy.prepareClaim?.bind(entry.policy)
+    if (prepare === undefined) return undefined
+    const driver = this.drivers.get(agent)
+    const combined = AbortSignal.any([signal, entry.lifetime.signal, this.lifetime.signal])
+    const job = Promise.resolve().then(async () => {
+      this.assertActive(entry)
+      combined.throwIfAborted()
+      await prepare(agent, combined)
+      this.assertActive(entry)
+      combined.throwIfAborted()
+    })
+    entry.jobs.add(job)
+    driver?.jobs.add(job)
+    const settled = () => { entry.jobs.delete(job); driver?.jobs.delete(job) }
+    void job.then(settled, settled)
+    return job
+  }
 
   /** Receive one ordinary input; an unbound Session must use its original synchronous driver.
    * @param agent - controlled receiver.
@@ -378,15 +411,18 @@ export class AgentInputControls {
     })
   }
 
-  private async holdPending(entry: Registration, agent: Agent): Promise<readonly AgentInput[]> {
+  private async holdPending(entry: Registration, agent: Agent, messageIds?: readonly MessageId[]): Promise<readonly AgentInput[]> {
     if (this.state(agent.session).controllerId !== entry.id) throw new Error('capture capability belongs to another controller')
     return this.enqueue(entry, agent, async (driver) => {
-      const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
-      capturePendingInput(agent.session, entry.id, this.state(agent.session), pending.map(message => ({ message })), (messageId) => {
+      const state = this.state(agent.session)
+      const pending = selectedPendingInput(state,
+        [...agent.inbox.nextStep, ...agent.inbox.nextTurn].map(message => ({ message })), messageIds)
+      capturePendingInput(agent.session, entry.id, state, pending, (messageId) => {
         driver.uncertain.add(messageId)
         return driver.driver.hold(messageId)
       })
-      const heldInputs = this.state(agent.session).records.filter(record => record.location === 'held').map(record => record.input)
+      const heldInputs = this.state(agent.session).records.filter(record => record.location === 'held'
+        && (messageIds === undefined || messageIds.includes(record.input.message.id))).map(record => record.input)
       const sessions = this.ctx.get('sessions')
       if (sessions === undefined || !await sessions.flush(agent.session)) throw new Error('input capture durability was not confirmed')
       this.assertActive(entry)

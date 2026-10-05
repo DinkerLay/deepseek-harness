@@ -139,6 +139,8 @@ persisted Session
 
 `DormantContinuableScope` 则提供 Core 封闭的存储输入读取、捕获、释放及取消能力。包装层预留不驻留的 child 身份，排除正在激活或创建的对象，并在独占 writer 修复任何内容之前核对直接父级与 continuable descriptor。它从不挂载 Preset。丢失的存储来源与真正未创建的 child 分开处理，父 catalog 证据阻止把丢失日志当新身份。普通接续仍执行原来的 Preset 检查。
 
+`ContinuableInputCustodyScope` 提供脱离原对象的来源观察，以及选定 held 输入的不唤醒恢复。`withContinuableInputCustody()` 保持在线输入驱动驻留，在 child 锁外等待已开始的关闭，或直接使用原冷态 writer 而不创建 Agent。它不停止模型，也不表示执行已静止。回调结束后 scope 失效；资源释放前须等待已准入写入结算。是否允许材料执行仍归现有输入拥有者控制，需要唤醒时须在恢复后明确进行普通投递。
+
 回调的第二个参数是合并的取消 signal，即使 scope 缺席也会提供。已进入的回调结束后才释放输入保管与身份预留；取消不会让尚未退出回调的效果与新拥有者竞争。
 
 `SubagentRuntime.sendMessage()` 是唯一由模型编写消息的操作。它接收确切在线 sender 与目标 id，只允许直接 parent 或直接可继续 child，自行推导 sender 来源信息，并根据目标 child 的 Activation 驻留状态路由：
@@ -557,6 +559,17 @@ async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: Abo
  * @returns callback result after writer cleanup; close and confirmation failures reject.
  */
 async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>
+
+/** Retain an existing live driver or cold original writer for non-waking input restoration.
+ * No model is stopped or created; callbacks must not call delivery or lifecycle operations for this child.
+ * @param parent - exact live direct parent authorizing source access.
+ * @param childId - continuable identity, unchanged across execution residencies.
+ * @param input - its registered input controller.
+ * @param signal - caller cancellation; admitted source writes drain before release.
+ * @param callback - scoped reads and original held-input restoration; the scope expires when it returns.
+ * @returns callback result after source confirmation and resource release.
+ */
+async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>
 
 /**
  * Deliver a stable host input once, creating or resuming its reserved child.

@@ -4,12 +4,14 @@ import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { InputControllerId } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentInput, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentInput, InputControllerHandle, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { maintainExecution, prepareControlledClaim } from './execution-maintenance.ts'
+import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 import type { TeamJournal } from './journal.ts'
 import { TeamError } from './error.ts'
 import { applyMemberControl, applyMemberExecution, currentMemberExecution, memberExecutionControl,
@@ -17,7 +19,7 @@ import { applyMemberControl, applyMemberExecution, currentMemberExecution, membe
 import type { TeamMemberExecution, TeamMemberExecutionControl } from './member-execution.ts'
 import { readPersistedSession } from './persisted.ts'
 import { TeamId } from './types.ts'
-import type { TeamCompositionSnapshot, TeamExtensionRecord, TeamMemberSnapshot } from './types.ts'
+import type { TeamCompositionSnapshot, TeamExtensionRecord, TeamMemberSnapshot, TeamMessageId } from './types.ts'
 import type { TeamMembership } from './roster.ts'
 import { requiredText } from './validation.ts'
 import { applyMemberSlotTransfer } from './member-slots.ts'
@@ -152,6 +154,9 @@ export class TeamMemberExecutions {
   private registration: TeamMemberExecutionHandle | undefined
   private readonly unconfirmed = new Set<SessionId>()
   private readonly occupations = new Map<SessionId, { count: number }>()
+  private input: InputControllerHandle | undefined
+  private maintenanceLifetime: AbortSignal | undefined
+  private readonly maintenanceJobs = new Set<Promise<unknown>>()
 
   /** @param ctx - runtime services owned by native Team.
    * @param journal - sole Team journal and transaction order.
@@ -161,7 +166,10 @@ export class TeamMemberExecutions {
   constructor(private readonly ctx: Context, private readonly journal: TeamJournal,
     private readonly membership: (caller: Agent) => TeamMembership, private readonly maxRecordBytes: number,
     private readonly readAnchor: (reader: Agent) => Agent,
-    private readonly compositionSnapshot: (anchor: Agent) => TeamCompositionSnapshot) {
+    private readonly compositionSnapshot: (anchor: Agent) => TeamCompositionSnapshot,
+    private readonly workAdmitted: (anchor: Agent, memberId: SessionId, input: AgentInput) => boolean,
+    private readonly hasWorkPolicy: () => boolean,
+    private readonly workPolicyAvailable: (anchor: Agent) => boolean) {
     ctx.on('agent-team/confirmed', (anchor) => {
       for (const member of journal.state(anchor).members) this.unconfirmed.delete(member.id)
     })
@@ -177,6 +185,117 @@ export class TeamMemberExecutions {
       && memberExecutionControl(this.journal.state(anchor), memberId) === undefined
   }
 
+  /** Drain scoped maintenance after native Team admission closes. */
+  async settleMaintenance(): Promise<void> { await Promise.allSettled([...this.maintenanceJobs]) }
+
+  /** Retry only the mailbox's exact unacknowledged admission hold; captured custody never moves here.
+   * @param anchor - stable native Team journal owner.
+   * @param memberId - current logical recipient.
+   * @param messageId - exact still-queued mailbox identity under its dispatch reservation.
+   * @param signal - mailbox dispatch cancellation, checked around source confirmation.
+   */
+  async restoreMailboxHeld(anchor: Agent, memberId: SessionId, messageId: TeamMessageId, signal: AbortSignal): Promise<void> {
+    const input = this.input, lifetime = this.maintenanceLifetime
+    if (input === undefined || lifetime === undefined) return
+    const combined = AbortSignal.any([signal, lifetime])
+    const binding = () => {
+      combined.throwIfAborted()
+      const state = this.journal.state(anchor)
+      const queued = state.messages.find(message => message.id === messageId && message.targetId === memberId)
+      if (queued === undefined || state.delivered.includes(messageId) || state.cancelled.some(item => item.messageId === messageId)
+        || !this.admitted(anchor, memberId) || !this.workPolicyAvailable(anchor)) return
+      const member = state.members.find(member => member.id === memberId && member.phase === 'active')
+      if (member === undefined) return
+      return currentMemberExecution(state, member)
+    }
+    const job = (async () => {
+      const expected = await this.journal.transact(anchor.id, () => Promise.resolve(binding()))
+      if (expected === undefined) return
+      await this.ctx.subagents.withContinuableInputCustody(anchor, expected.executionId, input, combined, async (scope) => {
+        await this.journal.transact(anchor.id, async () => {
+          scope.signal.throwIfAborted()
+          const current = binding()
+          if (current?.executionId !== expected.executionId || current.generation !== expected.generation) return
+          const source = scope.read()
+          if (source === undefined) return
+          const record = source.inputControl.records.find(record => record.input.message.id === MessageId(messageId))
+          if (record?.location !== 'held' || record.captured === true || record.input.message.source.kind !== 'team-message'
+            || record.input.message.source.messageId !== messageId || record.input.message.source.teamId !== TeamId(anchor.id)
+            || !this.workAdmitted(anchor, memberId, record.input)) return
+          await scope.restoreHeld([record.input.message.id])
+          scope.signal.throwIfAborted(); combined.throwIfAborted()
+        })
+      })
+    })()
+    this.maintenanceJobs.add(job)
+    try { await job } finally { this.maintenanceJobs.delete(job) }
+  }
+
+  /** Use the installed member controller for short Host maintenance, without a durable member-change hold.
+   * @param caller - current Lead authorizing native cleanup.
+   * @param request - exact current member execution.
+   * @param signal - caller cancellation.
+   * @param callback - actual quiet source and selected original-input custody.
+   * @returns after controller occupation and handback settle.
+   */
+  async maintain<T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal,
+    callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>): Promise<T> {
+    const input = this.input, lifetime = this.maintenanceLifetime
+    const target = request.target
+    if (input === undefined || lifetime === undefined || target.kind !== 'member') throw new TeamError('member input owner is unavailable', 'TEAM_MEMBER_OWNER_CLOSED')
+    const membership = this.membership(caller)
+    const anchor = membership.root
+    const identity = () => {
+      const state = this.journal.state(anchor)
+      const member = state.members.find(member => member.id === target.memberId)
+      const binding = member === undefined ? undefined : currentMemberExecution(state, member)
+      return member !== undefined && binding?.executionId === target.executionId && binding.generation === target.generation
+        && memberExecutionControl(state, target.memberId) === undefined
+        && !leadCoordinationActive(state.leadCoordination) && state.composition?.phase !== 'applying' && this.workPolicyAvailable(anchor)
+        && (state.lead?.executionId ?? anchor.id) === caller.id && (state.lead?.term ?? 1) === (membership.term ?? 1)
+    }
+    const assertCurrent = () => {
+      lifetime.throwIfAborted()
+      if (this.membership(caller).role !== 'lead') throw new TeamError('maintenance requires the current Lead', 'TEAM_LEAD_REQUIRED')
+      const state = this.journal.assertCallerWrite(anchor, caller)
+      if (!identity() || leadCoordinationActive(state.leadCoordination) || state.composition?.phase === 'applying') {
+        throw new TeamError('execution changed or another operation owns it', 'TEAM_MEMBER_OPERATION_STALE')
+      }
+    }
+    const job = (async () => {
+      const occupation = { count: 1 }
+      await this.journal.transact(anchor.id, () => {
+        assertCurrent(); signal.throwIfAborted(); request.assertCurrent?.()
+        if (this.occupations.has(target.memberId)) throw new TeamError('execution maintenance is already occupied', 'TEAM_MEMBER_HELD')
+        this.occupations.set(target.memberId, occupation)
+        return Promise.resolve()
+      })
+      let completed = false
+      try {
+        const result = await maintainExecution(this.ctx, request, AbortSignal.any([signal, lifetime]), { input, lifetime, assertCurrent,
+          transact: action => this.journal.transact(anchor.id, action),
+          canHandback: identity, admitted: material => this.workAdmitted(anchor, target.memberId, material),
+          withStored: (ownedSignal, action) =>
+            this.ctx.subagents.withDormantContinuable(anchor, target.executionId, input, ownedSignal, action),
+        }, callback)
+        completed = true
+        return result
+      } finally {
+        occupation.count -= 1
+        if (occupation.count === 0) this.occupations.delete(target.memberId)
+        const execution = this.ctx.agents.get(target.executionId)
+        if (completed && !lifetime.aborted && identity() && execution !== undefined && this.admitted(anchor, target.memberId)) {
+          const pending = [...execution.inbox.nextStep, ...execution.inbox.nextTurn]
+          if (this.ctx.agents.inputControlState(execution.session).records.some(record => record.location === 'inbox'
+            && record.input.wakeup && this.workAdmitted(anchor, target.memberId, record.input)
+            && pending.some(message => message.id === record.input.message.id))) execution.wakePending?.()
+        }
+      }
+    })()
+    this.maintenanceJobs.add(job)
+    try { return await job } finally { this.maintenanceJobs.delete(job) }
+  }
+
   /** Register the sole product consumer and its durable child-input policy.
    * @param provider - owner namespace and non-waking anchor restoration.
    * @returns owned control operations; disposal does not undo durable effects.
@@ -185,6 +304,7 @@ export class TeamMemberExecutions {
     if (this.registration !== undefined) throw new TeamError('member execution owner is already installed', 'TEAM_MEMBER_OWNER_CONFLICT')
     const ownerId = requiredText(provider.id, 'member execution owner', 200)
     const lifetime = new AbortController()
+    let closing: Promise<void> | undefined
     const jobs = new Set<Promise<unknown>>()
     const owned = <T>(action: () => Promise<T>): Promise<T> => {
       const run = Promise.resolve().then(() => { lifetime.signal.throwIfAborted(); return action() })
@@ -207,7 +327,7 @@ export class TeamMemberExecutions {
     const canRun = (agent: Agent): boolean => {
       if (lifetime.signal.aborted) return false
       const owner = sessionOwner(agent.session)
-      if (owner === undefined || !this.admitted(owner.anchor, owner.memberId)) return false
+      if (owner === undefined || !this.admitted(owner.anchor, owner.memberId) || !this.workPolicyAvailable(owner.anchor)) return false
       const member = owner.member
       return member.phase === 'active' && currentMemberExecution(owner.state, member).executionId === agent.id
     }
@@ -225,8 +345,11 @@ export class TeamMemberExecutions {
       },
       admit: (agent, material) => {
         const kind: string = material.message.source.kind
-        if (canRun(agent)) return { kind: 'accept' }
         const owner = sessionOwner(agent.session)
+        if (owner !== undefined && !this.workAdmitted(owner.anchor, owner.memberId, material)) {
+          return { kind: 'reject', reason: 'Task work input is no longer schedulable' }
+        }
+        if (canRun(agent)) return { kind: 'accept' }
         const current = owner !== undefined && currentMemberExecution(owner.state, owner.member).executionId === agent.id
         if (kind === 'user-question-reply' || !current && (material.wakeup || kind === 'user'
           || kind === 'team-message' || kind === 'agent-message')) {
@@ -236,7 +359,18 @@ export class TeamMemberExecutions {
       },
       canStart: canRun,
       canClaim: canRun,
+      prepareClaim: async (agent, signal) => {
+        const owner = sessionOwner(agent.session)
+        if (owner !== undefined && canRun(agent) && this.hasWorkPolicy()) {
+          await prepareControlledClaim(this.ctx, input, agent,
+            material => this.workAdmitted(owner.anchor, owner.memberId, material), signal, () => {
+              if (!canRun(agent)) throw new TeamError('member changed before input claim', 'TEAM_MEMBER_OPERATION_STALE')
+            }, action => this.journal.transact(owner.anchor.id, action))
+        }
+      },
     })
+    this.input = input
+    this.maintenanceLifetime = lifetime.signal
     const lead = (caller: Agent): Agent => {
       lifetime.signal.throwIfAborted()
       const member = this.membership(caller)
@@ -668,13 +802,16 @@ export class TeamMemberExecutions {
           this.unconfirmed.delete(memberId)
         }))
       }),
-      dispose: async () => {
+      dispose: () => closing ??= (async () => {
         lifetime.abort(new TeamError('member execution owner closed', 'TEAM_MEMBER_OWNER_CLOSED'))
         stopInitialization()
         await Promise.allSettled([...jobs])
+        await Promise.allSettled([...this.maintenanceJobs])
         await input.dispose()
-        if (this.registration === handle) this.registration = undefined
-      },
+        // Registration remains exclusive until this memoized close finishes.
+        this.input = undefined; this.maintenanceLifetime = undefined
+        this.registration = undefined
+      })(),
     }
     const stopInitialization = this.ctx.on('agent/created', ({ agent }) => owned(async (): Promise<undefined> => {
       if (provider.initialMaterial === undefined) return

@@ -624,6 +624,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   ContinuablePrepareSpec: 'subagent.md',
   ContinuablePrepared: 'subagent.md',
   DormantContinuableScope: 'subagent.md',
+  ContinuableInputCustodyScope: 'subagent.md',
   StoredInputDriver: 'core.md',
   AgentMessageSource: 'subagent.md',
   SubagentCatalogEntry: 'subagent.md',

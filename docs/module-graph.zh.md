@@ -576,6 +576,7 @@ flowchart TD
   pkg_agent --> pkg_llm
   pkg_agent --> pkg_scope
   pkg_agent --> pkg_session
+  pkg_agent --> pkg_session_persistence
   pkg_agent --> pkg_session_projection
   pkg_agent --> pkg_system_prompt
   pkg_agent --> pkg_typert_protocol
@@ -1563,7 +1564,7 @@ flowchart TD
 | [`workspace`](../packages/workspace/workspace) | `workspace` | [`invariants`](../packages/runtime-diagnostics/invariants), [`session`](../packages/core/session), [`session-persistence`](../packages/session/session-persistence), [`storage`](../packages/storage/storage), [`storage-domain`](../packages/storage/storage-domain), [`typert-protocol`](../packages/typert/protocol) |
 | [`llm-deepseek`](../packages/llm/llm-deepseek) | `llm` | [`anonymous-user-id`](../packages/identity/anonymous-user-id), [`atomic-write`](../packages/util/atomic-write), [`attachment`](../packages/attachment/attachment), [`deepseek-llm-api-extensions`](../packages/llm/deepseek-llm-api-extensions), [`fs`](../packages/fs/fs), [`home-paths`](../packages/util/home-paths), [`launch-environment`](../packages/util/launch-environment), [`llm`](../packages/llm/llm), [`timeout`](../packages/util/timeout) |
 | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | `llm` | [`attachment`](../packages/attachment/attachment), [`authorization`](../packages/credentials/authorization), [`credentials`](../packages/credentials/credentials), [`fs`](../packages/fs/fs), [`launch-environment`](../packages/util/launch-environment), [`llm`](../packages/llm/llm), [`timeout`](../packages/util/timeout) |
-| [`agent`](../packages/core/agent) | `core` | [`brand`](../packages/util/brand), [`invariants`](../packages/runtime-diagnostics/invariants), [`llm`](../packages/llm/llm), [`scope`](../packages/core/scope), [`session`](../packages/core/session), [`session-projection`](../packages/session/session-projection), [`system-prompt`](../packages/core/system-prompt), [`typert-protocol`](../packages/typert/protocol), [`util-values`](../packages/util/values), [`workspace`](../packages/workspace/workspace) |
+| [`agent`](../packages/core/agent) | `core` | [`brand`](../packages/util/brand), [`invariants`](../packages/runtime-diagnostics/invariants), [`llm`](../packages/llm/llm), [`scope`](../packages/core/scope), [`session`](../packages/core/session), [`session-persistence`](../packages/session/session-persistence), [`session-projection`](../packages/session/session-projection), [`system-prompt`](../packages/core/system-prompt), [`typert-protocol`](../packages/typert/protocol), [`util-values`](../packages/util/values), [`workspace`](../packages/workspace/workspace) |
 | [`fs-local`](../packages/fs/fs-local) | `fs` | [`fs`](../packages/fs/fs) |
 | [`fs-observation-policy`](../packages/fs/fs-observation-policy) | `fs` | [`fs`](../packages/fs/fs) |
 | [`skill-filesystem`](../packages/skill/skill-filesystem) | `skill` | [`fs`](../packages/fs/fs), [`home-paths`](../packages/util/home-paths), [`skill`](../packages/skill/skill) |

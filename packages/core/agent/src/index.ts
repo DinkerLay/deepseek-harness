@@ -403,6 +403,13 @@ export class AgentRegistry extends Service {
    */
   canClaimInput(agent: Agent): boolean { return this.inputControl.canClaim(agent) }
 
+  /** Prepare a controlled provider's pending queue before claim without affecting unbound drivers.
+   * @param agent - exact receiving execution.
+   * @param signal - current turn cancellation.
+   * @returns preparation when the bound provider contributes it, otherwise undefined.
+   */
+  prepareInputClaim(agent: Agent, signal: AbortSignal): Promise<void> | undefined { return this.inputControl.prepareClaim(agent, signal) }
+
   /**
    * Read the Agent that initiated the inherited asynchronous driver chain.
    * Use this optional form for logging, tracing, metrics, or host attribution

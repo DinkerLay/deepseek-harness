@@ -58,6 +58,8 @@ export type { TeamLeadCoordinator, TeamLeadCoordinatorHandle, TeamLeadCoordinato
   TeamLeadCoordinatorRecordBuilder, TeamLeadCoordinatorMaterial, TeamLeadMaterialSize } from './lead-coordinator.ts'
 export type { CreateLeadExecutionRequest, LeadExecutionProvider, LeadExecutionHandle, LeadActivationPreparation } from './lead-runtime.ts'
 export type { TeamExtensionRecordBuilder, TeamTaskExtension, TeamTaskExtensionHandle, TeamTaskTransactionBuilder } from './task-extension.ts'
+export type { TeamExecutionMaintenanceTarget, TeamExecutionMaintenanceRequest,
+  TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 export { TeamId, TeamMessageId, TeamTaskId, TeamLeadOperationId } from './types.ts'
 export { TeamError } from './error.ts'
 
@@ -162,7 +164,9 @@ export class TeamService extends Service {
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
     this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) },
       this.config.controlledMode !== undefined, (root, memberId) => this.memberExecutions.admitted(root, memberId))
-    this.leadExecutions = new TeamLeadExecutions(ctx, this.journal, this.config.controlledMode)
+    this.leadExecutions = new TeamLeadExecutions(ctx, this.journal, this.config.controlledMode,
+      (anchor, input) => this.tasks.inputAdmitted(anchor, anchor.id, input), () => this.tasks.hasWorkPolicy(),
+      anchor => this.tasks.workPolicyAvailable(anchor))
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
       (caller, group) => { this.tasks.validateMemberGroup(caller, group) },
@@ -181,9 +185,12 @@ export class TeamService extends Service {
       agent => this.leadContext(agent),
       (anchor, signal) => this.leadExecutions.resolveCurrent(anchor, signal),
       (anchor, id, signal) => this.leadExecutions.resolveSource(anchor, id, signal),
-      anchor => this.leadExecutions.isReady(anchor),
+      anchor => this.leadExecutions.canReceive(anchor),
       anchor => this.leadExecutions.isInputBound(anchor),
       (anchor, memberId) => this.memberExecutions.admitted(anchor, memberId),
+      (anchor, targetId, input) => this.tasks.inputAdmitted(anchor, targetId, input),
+      anchor => this.tasks.workPolicyAvailable(anchor),
+      (anchor, memberId, messageId, signal) => this.memberExecutions.restoreMailboxHeld(anchor, memberId, messageId, signal),
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
@@ -197,11 +204,16 @@ export class TeamService extends Service {
       },
       agent => this.leadContext(agent).anchor,
       (anchor, memberId) => this.memberExecutions.admitted(anchor, memberId),
+      (caller, request, signal, callback) => request.target.kind === 'member'
+        ? this.memberExecutions.maintain(caller, request, AbortSignal.any([signal, this.lifecycle.signal]), callback)
+        : this.leadExecutions.maintain(caller, request, AbortSignal.any([signal, this.lifecycle.signal]), callback),
     )
     this.leadCoordinators = new TeamLeadCoordinators(ctx, this.journal, this.leadExecutions, this.tasks, this.config)
     this.memberExecutions = new TeamMemberExecutions(ctx, this.journal,
       agent => this.roster.membership(agent), this.config.maxTaskExtensionBytes, agent => this.leadContext(agent).anchor,
-      anchor => this.compositionSnapshot(anchor))
+      anchor => this.compositionSnapshot(anchor),
+      (anchor, memberId, input) => this.tasks.inputAdmitted(anchor, memberId, input), () => this.tasks.hasWorkPolicy(),
+      anchor => this.tasks.workPolicyAvailable(anchor))
 
     ctx.effect(() => ctx.subagents.registerSettlementNoticePolicy(async (facts) => {
       const root = ctx.agents.get(facts.parentSessionId)
@@ -619,6 +631,7 @@ export class TeamService extends Service {
   private async disposeRuntime(): Promise<void> {
     this.lifecycle.close()
     this.activity.close()
+    await Promise.all([this.memberExecutions.settleMaintenance(), this.leadExecutions.settleMaintenance()])
 
     const failures: unknown[] = []
     await this.lifecycle.settle(this.roster.pendingCreations(), failures)

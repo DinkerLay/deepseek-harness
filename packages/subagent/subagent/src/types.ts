@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-subagent/types
  */
 
-import type { Agent, AgentOptions, StoredInputCustody } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions, StoredInputCustody, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
@@ -95,9 +95,22 @@ export type ContinuablePrepareSpec = Omit<ContinuableStartSpec,
   }
 
 /** Stored input maintenance without composing or waking an Agent. The wrapper owns writer disposal. */
-export type DormantContinuableScope = Pick<StoredInputCustody, 'read' | 'holdPending' | 'releaseHeld'> & {
+export type DormantContinuableScope = Pick<StoredInputCustody, 'read' | 'holdPending' | 'restoreHeld' | 'releaseHeld'> & {
   /** Caller, parent-tree and continuation-runtime cancellation combined for this reservation. */
   readonly signal: AbortSignal
+}
+
+/** Scoped original-input access, not execution quiescence or permission to start work. */
+export interface ContinuableInputCustodyScope {
+  readonly source: 'live' | 'stored' | 'absent'
+  readonly signal: AbortSignal
+  /** Read a detached source observation; absent means exclusively verified never-created identity. */
+  read(): StoredInputCustodySnapshot | undefined
+  /** Restore selected original held inputs without waking their execution.
+   * @param messageIds - exact held identities, or still-pending retries.
+   * @returns after source durability is confirmed; released or consumed input is rejected.
+   */
+  restoreHeld(messageIds: readonly MessageId[]): Promise<void>
 }
 
 /** A durably prepared child with no newly admitted business input. */

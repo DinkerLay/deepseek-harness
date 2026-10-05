@@ -700,6 +700,13 @@ canStartInput(agent: Agent): boolean
  */
 canClaimInput(agent: Agent): boolean
 
+/** Prepare a controlled provider's pending queue before claim without affecting unbound drivers.
+ * @param agent - exact receiving execution.
+ * @param signal - current turn cancellation.
+ * @returns preparation when the bound provider contributes it, otherwise undefined.
+ */
+prepareInputClaim(agent: Agent, signal: AbortSignal): Promise<void> | undefined
+
 /**
  * Read the Agent that initiated the inherited asynchronous driver chain.
  * Use this optional form for logging, tracing, metrics, or host attribution
