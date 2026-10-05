@@ -26,6 +26,8 @@ Lead 必须等待所需工作后才能给出最终答案。进程 teardown 仍�
 
 ## Team identity
 
+受控部署可以通过可选原生拥有者保留成员身份，同时更换当前执行。[成员执行决策](../architecture/2026-10-05-native-member-executions.zh.md)负责该扩展与保管要求；下文普通组合的立即创建行为保持不变。
+
 工具 `spawn_teammate` 在初始任务前加上 user-role `<system-reminder>`，声明 `You are teammate "<name>".`。身份和任务进入同一条持久化收件箱消息。共享 system 策略和全部工具 schema 在成员间保持一致；执行时检查角色权限。Team 工具根据调用者确定 Team，并接受成员名字，因此模型不需要 Team id。身份随普通历史经历冷恢复和压缩；插件不检查提醒是否保留，也不添加替代消息。fork 继承已记录文本，不补发 Lead 身份修正。把身份放进 system prompt 会在继承历史之前改变前缀；把它留在初始任务中既保留此前缀，也无需每步维护身份提醒。已有的 system 内嵌身份可能需要一次提示词协调；保留的事件格式代际保持不变。
 
 ## Provisioning and recovery

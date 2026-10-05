@@ -76,7 +76,7 @@ export class ReactLoopInbox implements InboxContract {
   constructor(
     private readonly projections: SessionProjectionRegistry,
     private readonly session: Session,
-    private readonly dispatch: AgentEventDispatch,
+    private readonly dispatch?: AgentEventDispatch,
     private readonly canClaim?: () => boolean,
   ) {}
 
@@ -112,7 +112,7 @@ export class ReactLoopInbox implements InboxContract {
     if (this.canClaim !== undefined && !this.canClaim()) throw new Error('input claim is blocked before consumption')
     const claimed = this.mutate('next-step', 0, this.nextStep.length, [], false)
     if (target === 'next-turn') claimed.push(...this.mutate('next-turn', 0, 1, [], false))
-    for (const message of claimed) this.dispatch.emit('agent/inbox/claimed', { message, turn })
+    for (const message of claimed) this.dispatch?.emit('agent/inbox/claimed', { message, turn })
     return claimed
   }
 
@@ -268,10 +268,10 @@ export class ReactLoopInbox implements InboxContract {
     const removed = inbox.slice(actualStart, actualStart + actualDeleteCount)
     const event = this.session.append('agent/inbox/spliced', splice)
     if (discardRemoved) {
-      for (const message of removed) this.dispatch.emit('agent/inbox/discarded', { message })
+      for (const message of removed) this.dispatch?.emit('agent/inbox/discarded', { message })
     }
     for (const message of event.data.inserted) {
-      this.dispatch.emit('agent/inbox/inserted', { message })
+      this.dispatch?.emit('agent/inbox/inserted', { message })
     }
     return removed
   }

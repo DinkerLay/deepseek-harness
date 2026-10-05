@@ -20,7 +20,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import { foldConsumedWork } from '@deepseek-ai/dsh-agent'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, SessionSeq, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import { finalAssistantOutput } from './assistant-output.ts'
 import { SubagentRunId } from './types.ts'
 import type {
@@ -51,8 +51,9 @@ export interface ActivationObserver {
   /**
    * Publish the start edge once the epoch is resident.
    * @param child - the resident child agent, whose log suffix bounds this epoch.
+   * @param startSeq - actual first inbox-splice sequence for delayed controlled admission.
    */
-  start(child: Agent): void
+  start(child: Agent, startSeq?: SessionSeq): void
   /** Mark the accepted creation prompt; a later cold Activation has no such process-local claim. */
   initialInput(messageId: MessageId): void
   /**
@@ -203,8 +204,8 @@ export function createActivationObserver(
     ? captured
     : { stopReason: 'error', ...captured.notice === undefined ? {} : { notice: captured.notice } }
   return {
-    start: (child: Agent): void => {
-      boundary = child.session.seq
+    start: (child: Agent, startSeq): void => {
+      boundary = startSeq === undefined ? child.session.seq : SessionLogOffset(startSeq)
       parentBoundary = parent.session.seq
       emit('subagent/start', identity, parent)
     },

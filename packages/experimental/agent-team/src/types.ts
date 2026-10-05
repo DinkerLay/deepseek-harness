@@ -6,6 +6,13 @@ import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { Agent, AgentInput } from '@deepseek-ai/dsh-agent/types'
 import type { TeamLeadSeat } from './lead-seat.ts'
 
+/** One execution generation, with the immutable roster address kept separate. */
+export interface TeamMemberExecution {
+  readonly memberId: SessionId
+  readonly executionId: SessionId
+  readonly generation: number
+}
+
 /** Identifies the implicit team rooted at one top-level Session. */
 export type TeamId = Branded<'TeamId'>
 
@@ -127,6 +134,8 @@ export interface TeamMemberView {
   readonly diagnostics: string[]
   /** Controlled-only receipt-derived execution state; not a durable member field. */
   readonly executionStarted?: boolean
+  /** Present after execution renewal; id remains the stable original member address. */
+  readonly execution?: TeamMemberExecution
 }
 
 /** Durable task lifecycle. */
@@ -236,6 +245,10 @@ export interface TeamMemberProjection {
   readonly error?: string
   /** Controlled-only state derived from durable input delivery receipts. */
   readonly executionStarted?: boolean
+  /** Current execution after renewal; historical member id and authors are unchanged. */
+  readonly execution?: TeamMemberExecution
+  /** The current member execution is held by an unfinished Host operation. */
+  readonly executionHeld?: boolean
 }
 
 /**
@@ -279,6 +292,14 @@ export interface TeamCompositionState {
   readonly application?: TeamCompositionApplication
   /** Last successfully applied target; only the owning product interprets this JSON. */
   readonly appliedTargetJson?: string
+  /** Current Profile-slot associations after explicit member changes; the original applied target remains unchanged. */
+  readonly slotBindings?: readonly TeamProfileSlotBinding[]
+}
+
+/** One Profile slot's current member, including a retained historical member until explicitly replaced. */
+export interface TeamProfileSlotBinding {
+  readonly slotId: string
+  readonly memberId: SessionId
 }
 
 /** Detached native state offered to an authenticated Host composition operation under the Team lock. */
@@ -464,6 +485,8 @@ export interface Config {
 /** Input for creating one durable teammate. */
 export interface SpawnTeammateRequest {
   readonly name: string
+  /** Host-reserved creation identity for retryable controlled provisioning; model tools do not expose it. */
+  readonly reservedMemberId?: SessionId
   /** Required in the official Team; controlled Teams derive a label from the selected Preset. */
   readonly description?: string
   readonly group?: string

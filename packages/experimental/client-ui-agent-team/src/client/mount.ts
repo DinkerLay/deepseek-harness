@@ -64,6 +64,7 @@ export function registerAgentTeamUi(ctx: ClientContext): void {
       inject: () => actions,
       children: {
         'agent-team.panel.member.meta': { kind: 'single', scope: 'session' },
+        'agent-team.panel.member.action': { kind: 'single', scope: 'session' },
         'agent-team.panel.task.action': { kind: 'single', scope: 'session' },
         'agent-team.panel.tasks.action': { kind: 'list', scope: 'session' },
         'agent-team.panel.tasks.graph': { kind: 'single', scope: 'session' },

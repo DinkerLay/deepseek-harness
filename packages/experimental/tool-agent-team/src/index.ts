@@ -100,7 +100,7 @@ const MEMBER_VIEW_SCHEMA = {
 
 /** Expose the addressable member row without runtime-only Client navigation flags. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
-  const { id: _id, name, executionStarted: _executionStarted, ...details } = member
+  const { id: _id, name, executionStarted: _executionStarted, execution: _execution, ...details } = member
   return { target: name, ...details }
 }
 

@@ -56,6 +56,8 @@ Optional input control uses `AgentInput` to retain a user message, its inbox tar
 
 An `InputControllerId` identifies one registered `AgentInputController`. Its admission, start, claim and preparation callbacks do not confer tool authority. The owner receives an `InputControllerHandle` for binding, non-waking preloading, capture and release; disposal closes and drains its admitted operations. A `ControlledInputDriver` supplies the concrete queue mutation and wake callbacks. The [Agent package](../../packages/core/agent/README.md#control-input-before-it-becomes-executable) owns persistence failures, retry identity and ordinary-path behavior.
 
+`StoredInputCustodySource` is a frozen header, event sequence and inherited-prefix cut for synchronous validation under an exclusive writer. `StoredInputCustodySnapshot` adds input audit and concrete pending-queue facts. `StoredInputCustody` exposes reads, pending capture, exact release and disposal without an Agent, Session mutator or wake function. `AgentFactory.prepareStoredInput` optionally supplies a `StoredInputDriver` over an unpublished original Session; it prepares only the durable inbox, not scoped composition. Missing support refuses the operation rather than restoring a Preset or guessing queue intent.
+
 `Agent` is the surface every plugin (UI, hooks, orchestrators) programs against; `ctx.agents.get(id)` returns it, and the [initiator scope](#initiating-agent) carries it. The concrete implementation is package-internal to dsh-agent-loop; nothing outside the loop depends on it. The unified `send` method exposes target and wakeup routing directly; `followup`, `steer`, and `inject` are fixed-preset aliases.
 
 Source: [`packages/core/agent/src/types.ts`](../../packages/core/agent/src/types.ts)
@@ -458,6 +460,12 @@ Source: [`packages/core/agent-default-model/src/index.ts`](../../packages/core/a
 Concrete agent factory and driver service.
 
 ```ts cordis-catalog
+/** Provide the existing inbox algorithm without creating or composing an Agent.
+ * @param session - exclusively owned detached source.
+ * @returns only pending reads and non-waking custody removal.
+ */
+prepareStoredInput(session: Session): StoredInputDriver
+
 /**
  * Create an agent and session under one caller-supplied identity, owned by
  * the accessing fiber. Constructor-driven config calls mint a fresh combined
@@ -487,7 +495,7 @@ async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<Agent
 async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
 ```
 
-Types: [SessionHeader](persistence.md)
+Types: [Session](session.md) · [SessionHeader](persistence.md)
 
 Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop/src/index.ts)
 

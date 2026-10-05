@@ -26,6 +26,8 @@ import type {
 } from './types.ts'
 import { requiredText } from './validation.ts'
 import type {} from './lead-execution.ts'
+import { currentMemberExecution, memberExecutionControl, memberExecutionOwner, memberExecutionStarted } from './member-execution.ts'
+import { currentMemberSlot } from './member-slots.ts'
 
 const MEMBER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 /** Caller identity inside one implicit Team. */
@@ -35,6 +37,10 @@ export interface TeamMembership {
   readonly role: 'lead' | 'teammate' | 'host'
   readonly name: string
   readonly term?: number
+  /** Stable teammate address; absent for Lead and dormant Host roles. */
+  readonly memberId?: SessionId
+  /** Current teammate execution generation; not the Lead term. */
+  readonly generation?: number
 }
 
 /**
@@ -134,9 +140,14 @@ export class TeamRoster {
       if (parentId !== undefined) {
         const root = this.ctx.agents.get(parentId)
         if (root !== undefined) {
-          const member = this.journal.state(root).members.find(candidate => candidate.id === agent.id)
+          const state = this.journal.state(root)
+          const owner = memberExecutionOwner(state, agent.id)
+          const member = owner?.member
           if (member?.phase === 'active' || member?.phase === 'provisioning') {
-            return { root, id: TeamId(root.id), role: 'teammate', name: member.name }
+            const binding = currentMemberExecution(state, member)
+            if (binding.executionId !== agent.id) return undefined
+            return { root, id: TeamId(root.id), role: 'teammate', name: member.name,
+              memberId: member.id, generation: binding.generation }
           }
           // A direct child outside the durable roster is not a teammate. Ordinary
           // host forks are independent roots; subagent descriptors distinguish
@@ -187,11 +198,12 @@ export class TeamRoster {
       diagnostics: [],
     }]
     for (const member of state.members) {
-      const live = this.ctx.agents.get(member.id)
-      const executionStarted = state.messages.some(message =>
-        message.targetId === member.id && state.delivered.includes(message.id))
+      const slotId = currentMemberSlot(state.composition, member)
+      const binding = currentMemberExecution(state, member)
+      const live = this.ctx.agents.get(binding.executionId)
+      const executionStarted = memberExecutionStarted(state, member)
       const model = state.mode === undefined ? live?.options.model ?? root.options.model
-        : (live?.session ?? this.ctx.sessions.get(member.id))?.requestHeader()?.config.model
+        : (live?.session ?? this.ctx.sessions.get(binding.executionId))?.requestHeader()?.config.model
           ?? live?.options.model ?? (executionStarted ? undefined : leadModel)
       result.push({
         id: member.id,
@@ -200,12 +212,13 @@ export class TeamRoster {
         status: member.phase === 'retiring' || member.phase === 'retired' || member.phase === 'failed'
           || member.phase === 'provisioning' ? member.phase : availability(live),
         ...state.mode === undefined ? {} : { executionStarted },
+        ...binding.generation === 1 ? {} : { execution: binding },
         description: member.description,
         ...member.group === undefined ? {} : { group: member.group },
         provider: member.provider,
         context: member.context,
         ...member.preset === undefined ? {} : { preset: member.preset },
-        ...member.slotId === undefined ? {} : { slotId: member.slotId },
+        ...slotId === undefined ? {} : { slotId },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -264,9 +277,10 @@ export class TeamRoster {
    * @param caller - exact live Lead Agent authorizing removal.
    * @param targetName - immutable teammate name.
    * @param applicationId - matching in-progress application for an applying Team.
+   * @param memberOperationId - matching Host member hold, when one owns this retirement.
    * @returns the retired roster row after its live activation is stopped.
    */
-  async retire(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView> {
+  async retire(caller: Agent, targetName: string, applicationId?: string, memberOperationId?: string): Promise<TeamMemberView> {
     const membership = this.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can retire teammates', 'TEAM_LEAD_REQUIRED')
     const root = membership.root
@@ -277,6 +291,10 @@ export class TeamRoster {
       const state = this.journal.assertCallerWrite(root, caller)
       const current = state.members.find(candidate => candidate.name === name)
       if (current === undefined) throw new TeamError(`teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+      const control = memberExecutionControl(state, current.id)
+      if (control !== undefined && control.operationId !== memberOperationId) {
+        throw new TeamError('member retirement belongs to its current change operation', 'TEAM_MEMBER_HELD')
+      }
       assertRosterChange(state, applicationId, current.id)
       if (current.phase === 'retired' || current.phase === 'retiring') return current
       if (current.phase !== 'active' && current.phase !== 'failed') {
@@ -313,12 +331,15 @@ export class TeamRoster {
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can interrupt teammates', 'TEAM_LEAD_REQUIRED')
     const state = this.journal.state(membership.root)
     this.journal.assertCallerWrite(membership.root, caller)
-    const target = resolveActiveMember(membership.root, state, targetName)
-    if (target.id === membership.root.id) throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
-    const live = this.ctx.agents.get(target.id)
+    const name = targetName.trim()
+    if (name === 'lead') throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
+    const member = state.members.find(candidate => candidate.name === name)
+    if (member?.phase !== 'active') throw new TeamError(`active teammate "${name}" not found`, 'TEAM_MEMBER_NOT_FOUND')
+    const executionId = currentMemberExecution(state, member).executionId
+    const live = this.ctx.agents.get(executionId)
     if (live === undefined) return { previousStatus: 'inactive' }
     const previousStatus = availability(live)
-    this.ctx.subagents.interrupt(target.id, { kind: 'ancestor', agent: membership.root })
+    this.ctx.subagents.interrupt(executionId, { kind: 'ancestor', agent: membership.root })
     return { previousStatus }
   }
 
@@ -333,7 +354,7 @@ export class TeamRoster {
       if (rootId === undefined) continue
       const root = this.ctx.agents.get(rootId)
       if (root === undefined
-        || !this.journal.state(root).members.some(member => member.id === agent.id)) continue
+        || memberExecutionOwner(this.journal.state(root), agent.id) === undefined) continue
       const children = teams.get(root) ?? []
       children.push(agent.id)
       teams.set(root, children)
@@ -393,7 +414,10 @@ export class TeamRoster {
     const description = selection.kind === 'official'
       ? requiredText(request.description ?? '', 'description', 200)
       : requiredText(selection.label, 'Preset label', 200)
-    const childId = brandString<SessionId>(randomUUID())
+    if (request.reservedMemberId !== undefined && mode === undefined) {
+      throw new TeamError('reserved Team provisioning requires controlled mode', 'TEAM_MODE_REQUIRED')
+    }
+    const childId = request.reservedMemberId ?? brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,
       name,
@@ -406,13 +430,31 @@ export class TeamRoster {
       phase: 'provisioning',
     }
 
-    await this.journal.transact(root.id, async () => {
+    const recorded = await this.journal.transact(root.id, async () => {
       const state = this.journal.assertCallerWrite(root, caller)
       assertRosterChange(state, request.applicationId)
       if ((request.slotId === undefined) !== (request.applicationId === undefined)) {
         throw new TeamError('Profile members need both an application and a slot id', 'TEAM_INVALID_ARGUMENT')
       }
       this.validateMemberGroup(caller, group)
+      const prior = state.members.find(candidate => candidate.id === childId)
+      if (prior !== undefined) {
+        if (request.reservedMemberId === undefined || prior.name !== member.name || prior.group !== member.group
+          || prior.provider !== member.provider || prior.context !== member.context || prior.slotId !== member.slotId
+          || prior.preset?.id !== member.preset?.id || prior.preset?.revision !== member.preset?.revision) {
+          throw new TeamError('reserved member identity has another creation request', 'TEAM_PROVISIONING_CONFLICT')
+        }
+        if (prior.phase !== 'provisioning' && prior.phase !== 'active') {
+          throw new TeamError('reserved member creation already ended; plan another identity', 'TEAM_PROVISIONING_CONFLICT')
+        }
+        await this.journal.confirm(root)
+        return prior
+      }
+      if (childId === root.id || state.leadHistory?.some(item => item.executionId === childId)
+        || state.memberExecutions?.some(item => item.executionId === childId)
+        || state.memberCandidates?.some(item => item.executionId === childId)) {
+        throw new TeamError('reserved member identity belongs to another execution', 'TEAM_PROVISIONING_CONFLICT')
+      }
       if (state.members.some(member => member.name === name)) {
         throw new TeamError(`teammate name "${name}" was already used in this Team`, 'TEAM_MEMBER_NAME_TAKEN')
       }
@@ -425,12 +467,14 @@ export class TeamRoster {
         throw new TeamError(`active Team member limit ${this.maxActiveMembers} reached`, 'TEAM_ACTIVE_MEMBER_LIMIT')
       }
       await this.appendMember(root, member)
+      return member
     })
 
     if (mode !== undefined) {
-      const active = { ...member, phase: 'active' as const }
-      await this.settleProvisioning(root, active)
-      return { member: { ...this.memberView(active), executionStarted: false } }
+      const active = { ...recorded, phase: 'active' as const }
+      if (recorded.phase !== 'active') await this.settleProvisioning(root, active)
+      if (request.reservedMemberId !== undefined) await this.journal.confirm(root)
+      return { member: this.memberView(active, this.journal.state(root)) }
     }
 
     let started: ContinuableStart
@@ -630,31 +674,35 @@ export class TeamRoster {
 
   /** Stop the execution before publishing the final retired roster edge. */
   private async finishRetirement(root: Agent, memberId: SessionId): Promise<void> {
-    await this.stopTeammates(root, [memberId])
+    const state = this.journal.state(root)
+    const member = state.members.find(candidate => candidate.id === memberId)
+    if (member === undefined) throw new TeamError(`teammate "${memberId}" is not retiring`, 'TEAM_MEMBER_NOT_ACTIVE')
+    await this.stopTeammates(root, [currentMemberExecution(state, member).executionId])
     await this.journal.transact(root.id, async () => {
-      const current = this.journal.state(root).members.find(member => member.id === memberId)
-      if (current?.phase === 'retired') return
-      if (current?.phase !== 'retiring') {
-        throw new TeamError(`teammate "${memberId}" is not retiring`, 'TEAM_MEMBER_NOT_ACTIVE')
-      }
-      await this.appendMember(root, { ...current, phase: 'retired' })
+      // Roster rows are never removed; retiring has only the terminal retired successor.
+      if (this.journal.state(root).members.some(candidate => candidate.id === memberId && candidate.phase === 'retired')) return
+      await this.appendMember(root, { ...member, phase: 'retired' })
     })
   }
 
   /** Build one runtime member row after successful creation. */
-  private memberView(member: TeamMemberSnapshot & { readonly phase: 'active' }): TeamMemberView {
-    const live = this.ctx.agents.get(member.id)
+  private memberView(member: TeamMemberSnapshot & { readonly phase: 'active' }, state?: TeamState): TeamMemberView {
+    const binding = state === undefined ? undefined : currentMemberExecution(state, member)
+    const live = this.ctx.agents.get(binding?.executionId ?? member.id)
+    const slotId = currentMemberSlot(state?.composition, member)
     return {
       id: member.id,
       name: member.name,
       role: 'teammate',
       status: availability(live),
+      ...state?.mode === undefined ? {} : { executionStarted: memberExecutionStarted(state, member) },
+      ...binding === undefined || binding.generation === 1 ? {} : { execution: binding },
       description: member.description,
       ...member.group === undefined ? {} : { group: member.group },
       provider: member.provider,
       context: member.context,
       ...member.preset === undefined ? {} : { preset: member.preset },
-      ...member.slotId === undefined ? {} : { slotId: member.slotId },
+      ...slotId === undefined ? {} : { slotId },
       ...live?.options.model === undefined ? {} : { model: live.options.model },
       diagnostics: [],
     }

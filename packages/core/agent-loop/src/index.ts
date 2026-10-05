@@ -20,6 +20,7 @@ import type {
   CreateAgentOptions,
   ResumeAgentOptions,
   SessionStartSource,
+  StoredInputDriver,
   TurnBoundaryProjection,
 } from '@deepseek-ai/dsh-agent'
 import { errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -32,7 +33,7 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { ReactLoopAgent } from './agent.ts'
-import { inboxProjectionDefinition } from './inbox.ts'
+import { inboxProjectionDefinition, ReactLoopInbox } from './inbox.ts'
 import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from './constants.ts'
 import type {} from './runtime-context.ts'
 
@@ -400,6 +401,25 @@ export class AgentLoop extends Service implements AgentFactory {
         })
         return fiber.dispose
       }, `agentLoop.resume(${id})`)
+    }
+  }
+
+  /** Provide the existing inbox algorithm without creating or composing an Agent.
+   * @param session - exclusively owned detached source.
+   * @returns only pending reads and non-waking custody removal.
+   */
+  prepareStoredInput(session: Session): StoredInputDriver {
+    const inbox = new ReactLoopInbox(this.runtime.ctx.sessionProjections, session)
+    const active = () => {
+      if (!this.ownership.isActive()) throw new Error('agent loop is not active')
+    }
+    return {
+      pending: () => {
+        active()
+        return [...inbox.nextStep.map(message => ({ target: 'next-step' as const, message })),
+          ...inbox.nextTurn.map(message => ({ target: 'next-turn' as const, message }))]
+      },
+      hold: (messageId) => { active(); return inbox.holdControlled(messageId) },
     }
   }
 

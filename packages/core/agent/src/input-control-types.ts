@@ -2,7 +2,7 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { SessionLogOffset } from '@deepseek-ai/dsh-session/types'
+import type { SessionLogOffset, SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { UserMessage, ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { InboxTarget } from './types.ts'
 
@@ -43,6 +43,45 @@ export interface InputControlState {
 export interface InputReceipt {
   readonly messageId: MessageId
   readonly location: 'inbox' | 'held' | 'released'
+}
+
+/** One exact pending item exposed by the concrete stored-input driver. */
+export interface StoredPendingInput {
+  readonly target: InboxTarget
+  readonly message: UserMessage
+}
+
+/** Non-waking operations on a detached Session's existing durable inbox. */
+export interface StoredInputDriver {
+  /** @returns pending input in the driver's capture order. */
+  pending(): readonly StoredPendingInput[]
+  /** @param messageId - pending identity already placed into held custody. @returns whether it was removed. */
+  hold(messageId: MessageId): boolean
+}
+
+/** Detached original-source facts; reading these never makes the source executable. */
+export interface StoredInputCustodySource {
+  readonly header: Readonly<SessionHeader>
+  readonly events: readonly SessionEvent[]
+  readonly inheritedEventCount: SessionLogOffset
+}
+
+/** Current owned source plus reliable input custody and concrete pending work. */
+export interface StoredInputCustodySnapshot extends StoredInputCustodySource {
+  readonly inputControl: InputControlState
+  readonly pending: readonly StoredPendingInput[]
+}
+
+/** Exclusive original-Session custody with no Agent, append or wake capability. */
+export interface StoredInputCustody {
+  /** @returns a detached current cut of the exclusively owned source. */
+  read(): StoredInputCustodySnapshot
+  /** @returns all held input after pending capture and original-writer confirmation. */
+  holdPending(): Promise<readonly AgentInput[]>
+  /** @param messageId - exact held identity to settle. @returns after original-writer confirmation. */
+  releaseHeld(messageId: MessageId): Promise<void>
+  /** @returns after admitted mutations and the original writer close; no source is awakened. */
+  dispose(): Promise<void>
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {

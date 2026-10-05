@@ -18,7 +18,7 @@ import type { AgentOptions, SessionStartSource } from './runtime-types.ts'
 import { AgentInputControls } from './input-control.ts'
 import { inputControlProjection } from './input-control-projection.ts'
 import type { AgentInputController, ControlledInputDriver, InputControllerHandle } from './input-control.ts'
-import type { AgentInput, AgentInputMutation, InputControllerId, InputControlState, InputReceipt } from './input-control-types.ts'
+import type { AgentInput, AgentInputMutation, InputControllerId, InputControlState, InputReceipt, StoredInputDriver } from './input-control-types.ts'
 import type { Session } from '@deepseek-ai/dsh-session'
 
 export * from './runtime-types.ts'
@@ -29,6 +29,8 @@ export * from './model-selection.ts'
 export { agentCarrier, agentEvents, assembleContextFor, emitAgentEvent } from './dispatch.ts'
 export { InputControllerId, InputMutationUnavailableError } from './input-control.ts'
 export type { AgentInputController, ControlledInputDriver, InputControllerHandle, InputAdmission } from './input-control.ts'
+export type { StoredInputCustody, StoredInputCustodySource, StoredInputCustodySnapshot,
+  StoredInputDriver, StoredPendingInput } from './input-control-types.ts'
 export type { AgentEventDispatch, AgentSubjectEvent } from './dispatch.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -176,6 +178,11 @@ export interface AgentHandle {
  * depending on the concrete `dsh-agent-loop` package.
  */
 export interface AgentFactory {
+  /** Prepare only the concrete durable inbox, without Agent setup or composition.
+   * @param session - exclusively owned, unpublished original Session.
+   * @returns non-waking custody operations; omission refuses stored custody.
+   */
+  prepareStoredInput?(session: Session): StoredInputDriver
   /**
    * Create a new agent on a caller-supplied session id. Async because creation
    * awaits unpublished setup, invokes its optional synchronous commit, inserts
@@ -262,7 +269,11 @@ export class AgentRegistry extends Service {
 
   constructor(ctx: Context) {
     super(ctx, 'agents')
-    this.inputControl = new AgentInputControls(ctx)
+    this.inputControl = new AgentInputControls(ctx, (session) => {
+      const { target } = this.requireFactory()
+      if (target.prepareStoredInput === undefined) throw new Error('agent factory does not support stored input custody')
+      return target.prepareStoredInput(session)
+    })
     ctx.inject(['sessionProjections'], (scope) => {
       scope.sessionProjections.register(inputControlProjection)
     })

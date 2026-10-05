@@ -8,7 +8,11 @@ Types shared by the experimental implicit-root Team domain, model tools, and hos
 
 The optional stable Lead seat keeps `TeamLeadBinding` with an execution id, contiguous term, Preset id and declaration revision. `TeamLeadSeat` also describes the initial anchor at term one, whose Preset fields may be absent. A `LeadExecutionProvider` prepares the anchor and supplies current readiness; its owner receives a `LeadExecutionHandle` for ordinary candidate creation, exact-revision cold preparation and non-waking input custody. This capability does not itself implement a product transition workflow. The [package implementation](../../packages/experimental/agent-team/README.md#understand-the-implementation) owns identity and lifecycle behavior.
 
-`TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
+`TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's original Session id remains its persistent member identity, while `name` is an immutable model/UI label. `TeamMemberExecution` separates that address from the current execution id and contiguous generation without rewriting old authors.
+
+An optional `TeamMemberExecutionProvider` supplies non-waking anchor restoration and bounded reference material. Its `TeamMemberExecutionHandle` holds one member's admission, stores owner-scoped progress and confirms an unused prepared execution. Native commitment and release occupy the old execution through the continuation service before their serialized state checks; read-only blocker callbacks must not recursively acquire that execution. A registered owner can also record a roster intent before any member exists. These records use the native Team journal; explicit slot-transfer effects update current Profile associations without rewriting the original application target. Source metadata on continuation references grants no authorization.
+
+Dormant sources use exclusive stored-input custody without mounting a Preset. `TeamMemberBlockerReader` receives the actual execution id and, on that path, a detached stored snapshot. It must not treat a missing live Agent as proof that no work remains. Lost cataloged sources, unresolved effects and failed durability checks prevent admission release; ordinary continuation restoration retains its Preset checks.
 
 ```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
@@ -211,6 +215,10 @@ interface TeamMemberProjection {
   readonly error?: string
   /** Controlled-only state derived from durable input delivery receipts. */
   readonly executionStarted?: boolean
+  /** Current execution after renewal; historical member id and authors are unchanged. */
+  readonly execution?: TeamMemberExecution
+  /** The current member execution is held by an unfinished Host operation. */
+  readonly executionHeld?: boolean
 }
 ```
 
@@ -273,6 +281,26 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/** Resolve a stable member address without loading or waking its execution.
+ * @param agent - exact live Team reader, including its dormant anchor.
+ * @param memberId - immutable roster address.
+ * @returns detached current binding, or undefined for an unknown member.
+ */
+memberExecution(agent: Agent, memberId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined
+
+/** Resolve a recorded teammate execution without conferring current write authority.
+ * @param agent - exact live Team reader, including its dormant anchor.
+ * @param executionId - actual current or historical Session identity.
+ * @returns detached recorded binding, or undefined for a foreign execution.
+ */
+memberExecutionBySession(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined
+
+/** Install the optional Host owner of teammate execution replacement and input custody.
+ * @param provider - product-owned namespace and quiet anchor restoration.
+ * @returns disposable native admission and binding operations; no model tool is added.
+ */
+installMemberExecutions(provider: TeamMemberExecutionProvider): TeamMemberExecutionHandle
 
 /** Install one authenticated Host owner of ordinary Lead execution preparation.
  * @param provider - stable anchor activation, without driving its model.
@@ -372,9 +400,10 @@ async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<Spawn
  * @param caller - exact live Lead Agent.
  * @param targetName - immutable teammate name.
  * @param applicationId - matching in-progress user application, absent for an ordinary dynamic Team.
+ * @param memberOperationId - the registered Host operation holding this member, absent for ordinary retirement.
  * @returns the retired roster row.
  */
-async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView>
+async retireTeammate(caller: Agent, targetName: string, applicationId?: string, memberOperationId?: string): Promise<TeamMemberView>
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.
@@ -389,9 +418,10 @@ async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendT
  * @param caller - exact live Lead Agent.
  * @param targetName - immutable teammate name.
  * @param reason - durable explanation for cancellation.
+ * @param expectedIds - exact previewed pending set; retries confirm the same cancelled identities without touching later mail.
  * @returns ids of messages cancelled by this call.
  */
-async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]>
+async cancelPendingMessages(caller: Agent, targetName: string, reason: string, expectedIds?: readonly TeamMessageId[]): Promise<readonly TeamMessageId[]>
 
 /**
  * Create one unowned pending task in the Team Lead log.

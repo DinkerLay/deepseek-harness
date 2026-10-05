@@ -99,6 +99,10 @@ export interface Activation {
   readonly ownedChildren: Set<SessionId>
   /** The lifecycle observer that emits this epoch's start and terminal edges. */
   readonly observer: ActivationObserver
+  /** Whether this epoch has admitted executable input and published its run edge. */
+  lifecycleStarted: boolean
+  /** Silent Host maintenance owns this epoch until ordinary delivery enables settlement. */
+  preparation: boolean
   /**
    * Whether any delivery to this child was ever accepted. A materialization
    * rolled back before its first acceptance is a child the caller was told does
@@ -107,6 +111,12 @@ export interface Activation {
   announced: boolean
   /** Renewed whenever a settlement watcher must re-check residency state. */
   poke: PromiseWithResolvers<void>
+}
+
+/** A synchronous submission and its optional independently awaited custody receipt. */
+export interface SubmittedInput {
+  readonly messageId: MessageId
+  readonly receipt?: Promise<InputReceipt>
 }
 
 /** Inputs shared by fresh and resumed Activation materialization. */
@@ -133,6 +143,8 @@ export interface MaterializeInputs {
   composition: { persona?: string | undefined; toolFilter?: ToolRestriction | undefined }
   /** Persisted explicit composition; absent for inherited-composition children. */
   preset?: ContinuablePresetBinding
+  /** Compose a candidate without publishing a run or starting natural settlement. */
+  preparation?: true
   signal: AbortSignal
 }
 
@@ -142,8 +154,18 @@ export interface MaterializeInputs {
  * keep waiting even if an intermediate Agent leaves the registry meanwhile.
  */
 interface Materialization {
+  readonly childId: SessionId
   readonly lineage: readonly Agent[]
   readonly settled: Promise<void>
+}
+
+/** One writer reservation that never publishes an Activation. */
+export interface DormantReservation {
+  readonly childId: SessionId
+  readonly lineage: readonly Agent[]
+  readonly controller: AbortController
+  readonly settled: Promise<void>
+  release(): void
 }
 
 /** Residency state observed by the natural-settlement watcher. */
@@ -186,6 +208,7 @@ export class ContinuableActivationRegistry {
   private readonly rootPools = new WeakMap<Agent, ActivationPool>()
   /** Materializations admitted before drain, tracked through publication or rollback. */
   private readonly materializations = new Set<Materialization>()
+  private readonly dormant = new Map<SessionId, DormantReservation>()
   /** Per-child serializer shared by delivery, release, and disposal. */
   readonly locks = new ChildLock()
   /** Structural Cordis owner of every Activation handle. */
@@ -246,9 +269,46 @@ export class ContinuableActivationRegistry {
    * @param childId - proposed durable child session id.
    */
   assertChildIdAvailable(childId: SessionId): void {
-    if (this.ctx.agents.get(childId) !== undefined || this.ctx.get('sessions')?.get(childId) !== undefined) {
+    if (this.ctx.agents.get(childId) !== undefined || this.ctx.get('sessions')?.get(childId) !== undefined
+      || this.dormant.has(childId) || [...this.materializations].some(value => value.childId === childId)) {
       throw new SubagentError(`subagent "${childId}" already exists`, 'DUPLICATE_CHILD')
     }
+  }
+
+  /** Reject stored maintenance while this identity is live, attached or being materialized.
+   * @param childId - exact stored execution identity.
+   * @param reservation - this operation's existing reservation during its recheck.
+   */
+  assertDormant(childId: SessionId, reservation?: DormantReservation): void {
+    if (this.resident.has(childId) || this.ctx.agents.get(childId) !== undefined
+      || this.ctx.get('sessions')?.get(childId) !== undefined
+      || [...this.materializations].some(value => value.childId === childId)
+      || this.dormant.has(childId) && this.dormant.get(childId) !== reservation) {
+      throw new SubagentError(`subagent "${childId}" is not dormant`, 'EXECUTION_NOT_DORMANT')
+    }
+  }
+
+  /** Reserve an absent runtime identity under its child lock before acquiring a stored writer.
+   * @param parent - exact live direct parent retained by the caller.
+   * @param childId - cold or not-yet-created identity.
+   * @returns reservation retained until the stored writer has closed.
+   */
+  reserveDormant(parent: Agent, childId: SessionId): DormantReservation {
+    this.assertAdmitting(parent)
+    this.authorizeLineage(parent, childId, parent.id)
+    this.assertDormant(childId)
+    const done = Promise.withResolvers<void>()
+    const reservation: DormantReservation = { childId, lineage: this.liveLineage(parent), controller: new AbortController(),
+      settled: done.promise, release: () => { this.dormant.delete(childId); done.resolve() } }
+    this.dormant.set(childId, reservation)
+    return reservation
+  }
+
+  /** Abort matching stored operations and await their writer cleanup. */
+  private async drainDormant(select: (reservation: DormantReservation) => boolean): Promise<void> {
+    const reservations = [...this.dormant.values()].filter(select)
+    for (const reservation of reservations) reservation.controller.abort(new SubagentError('dormant continuation is draining', 'DRAINING'))
+    await Promise.all(reservations.map(value => value.settled))
   }
 
   /**
@@ -338,17 +398,20 @@ export class ContinuableActivationRegistry {
    * @param parent - exact live Agent receiving the message.
    * @param message - durable user message to deliver.
    * @param delivery - receiving inbox destination.
-   * @returns a durable receipt only for a controlled parent; ordinary and Activation delivery remain synchronous.
+   * @returns a durable receipt for a controlled parent; ordinary delivery remains synchronous.
    */
   sendWaking(parent: Agent, message: UserMessage, delivery: SubagentDelivery): Promise<InputReceipt> | undefined {
     const parentActivation = this.resident.get(parent.id)
     if (parentActivation !== undefined && parentActivation.handle.agent === parent) {
       try {
-        parentActivation.inbox.deliver(message, delivery)
+        const receipt = parentActivation.inbox.deliver(message, delivery)
+        if (receipt !== undefined) {
+          void receipt.then(() => { this.wake(parentActivation) }, () => { this.wake(parentActivation) })
+        }
+        return receipt
       } finally {
         this.wake(parentActivation)
       }
-      return
     }
     return this.ctx.agents.sendInput(parent, { message, target: delivery === 'steer' ? 'next-step' : 'next-turn', wakeup: true })
   }
@@ -360,6 +423,7 @@ export class ContinuableActivationRegistry {
    */
   async drain(): Promise<void> {
     this.draining = true
+    if (this.dormant.size > 0) await this.drainDormant(() => true)
     await Promise.all([...this.materializations].map(materialization => materialization.settled))
     const owned = new Set<SessionId>()
     for (const activation of this.resident.values()) {
@@ -380,6 +444,7 @@ export class ContinuableActivationRegistry {
     for (const root of roots) {
       this.closingMembers(root).add(root)
     }
+    const dormant = this.drainDormant(reservation => reservation.lineage.some(parent => roots.has(parent)))
 
     const targets: Activation[] = []
     for (const activation of this.resident.values()) {
@@ -415,6 +480,7 @@ export class ContinuableActivationRegistry {
     }
 
     await Promise.all(materializations.map(materialization => materialization.settled))
+    await dormant
     await this.disposeRoots(targetRoots, 'scoped activation(s)')
   }
 
@@ -443,6 +509,9 @@ export class ContinuableActivationRegistry {
     for (const activation of targets) {
       const disposal = this.dispose(activation)
       void disposal.catch(() => undefined)
+    }
+    if (this.dormant.size > 0) {
+      await this.drainDormant(reservation => reservation.lineage[0] === parent && childIds.includes(reservation.childId))
     }
     await this.disposeRoots(targets, 'selected activation(s)')
   }
@@ -492,11 +561,15 @@ export class ContinuableActivationRegistry {
   materialize(inputs: MaterializeInputs): Promise<Activation> {
     this.assertAdmitting(inputs.parent)
     inputs.signal.throwIfAborted()
+    if (this.dormant.has(inputs.childId) || [...this.materializations].some(value => value.childId === inputs.childId)) {
+      throw new SubagentError(`subagent "${inputs.childId}" is reserved`, 'DUPLICATE_CHILD')
+    }
     const lineage = this.liveLineage(inputs.parent)
     const pool = this.resident.get(inputs.parent.id)?.pool ?? this.rootPool(inputs.parent)
     const releaseSlot = pool.reserve(this.maxActiveSubagents())
     const settled = Promise.withResolvers<void>()
     const materialization: Materialization = {
+      childId: inputs.childId,
       lineage,
       settled: settled.promise,
     }
@@ -525,7 +598,7 @@ export class ContinuableActivationRegistry {
     delivery: SubagentDelivery,
     parent: Agent,
     signal: AbortSignal,
-  ): MessageId {
+  ): SubmittedInput {
     signal.throwIfAborted()
     this.assertAdmitting(parent)
     this.authorizeLineage(
@@ -534,12 +607,17 @@ export class ContinuableActivationRegistry {
       activation.handle.agent.session.header.parentSession,
     )
     this.acquireOwnership(parent, activation.childId)
+    this.enableDelivery(activation)
     try {
-      activation.inbox.deliver(message, delivery)
+      const receipt = activation.inbox.deliver(message, delivery)
+      if (receipt !== undefined) {
+        void receipt.then(() => { this.wake(activation) }, () => { this.wake(activation) })
+        return { messageId: message.id, receipt }
+      }
+      return { messageId: message.id }
     } finally {
       this.wake(activation)
     }
-    return message.id
   }
 
   /**
@@ -550,6 +628,27 @@ export class ContinuableActivationRegistry {
    */
   dispose(activation: Activation, finalStateFlushed = false): Promise<void> {
     return activation.inbox.close(() => this.finishDisposal(activation, finalStateFlushed))
+  }
+
+  /**
+   * Release an input-free candidate without a run or parent settlement notice.
+   * @param activation - unannounced candidate owned by the preparing operation.
+   * @returns after its handle, capacity slot, and parent hold have been released.
+   */
+  releasePrepared(activation: Activation): Promise<void> {
+    if (activation.announced || activation.inbox.hasPending) {
+      throw new SubagentError('prepared child received input before release', 'ACTIVATION_CLOSING')
+    }
+    return this.rollbackUnpublished(activation)
+  }
+
+  /** Enable ordinary delivery on a retained maintenance epoch without duplicating its run edge.
+   * @param activation - exact resident epoch about to receive business input.
+   */
+  enableDelivery(activation: Activation): void {
+    if (!activation.preparation) return
+    activation.preparation = false
+    this.watchSettlement(activation)
   }
 
   /** Dispose independent roots and report every branch failure after all settle. */
@@ -679,10 +778,12 @@ export class ContinuableActivationRegistry {
       parentSession: parent.id,
       provider,
       handle,
-      inbox: new SubagentInbox(handle.agent),
+      inbox: new SubagentInbox(handle.agent, this.ctx.agents),
       ancestry: new WeakSet([handle.agent, ...parentLineage]),
       ownedChildren: new Set(),
       observer,
+      lifecycleStarted: false,
+      preparation: inputs.preparation === true,
       announced: false,
       poke: Promise.withResolvers<void>(),
     }
@@ -694,14 +795,23 @@ export class ContinuableActivationRegistry {
       const wakeOnInboxRemoval = (): void => { this.wake(activation) }
       handle.agent.ctx.on('agent/inbox/claimed', wakeOnInboxRemoval)
       handle.agent.ctx.on('agent/inbox/discarded', wakeOnInboxRemoval)
-      observer.start(handle.agent)
+      if (inputs.preparation !== true && !this.ctx.agents.isInputControlled(handle.agent.session)) {
+        observer.start(handle.agent)
+        activation.lifecycleStarted = true
+      }
+      handle.agent.ctx.on('session/event', (session, event) => {
+        if (session !== handle.agent.session || activation.preparation || activation.lifecycleStarted
+          || event.type !== 'agent/inbox/spliced' || event.data.inserted.length === 0) return
+        observer.start(handle.agent, event.seq)
+        activation.lifecycleStarted = true
+      })
     } catch (error: unknown) {
       /* v8 ignore next -- rollback failure must not mask the admission failure
        * that prevented this operation from returning an accepted message id. */
       await this.rollbackUnpublished(activation).catch(() => undefined)
       throw error
     }
-    this.watchSettlement(activation)
+    if (!activation.preparation) this.watchSettlement(activation)
     return activation
   }
 
@@ -886,7 +996,7 @@ export class ContinuableActivationRegistry {
     activation.releaseSlot()
     await this.notifySettlement(activation, activation.observer.terminal(failure))
     this.releaseOwnership(childId)
-    activation.observer.settle(failure)
+    if (activation.lifecycleStarted) activation.observer.settle(failure)
     if (failure !== undefined) throw failure
   }
 

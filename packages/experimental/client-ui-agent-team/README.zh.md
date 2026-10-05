@@ -53,7 +53,7 @@ Roster 行展示持久名称与阶段；Lead 保持原生名称 `lead`，可选�
 <details>
 <summary>实现细节——点击展开</summary>
 
-Client export 通过 Cordis effect 注册 locale dictionary 和一个带六个可选子 slot（成员元数据、任务卡片操作、任务标题操作、图视图、任务区内容、面板页头操作）的 conversation-header slot；它不挂载任何 Remote namespace。Dispose plugin fiber 会移除这些 registration。
+Client export 通过 Cordis effect 注册 locale dictionary 和一个带七个可选子 slot（成员元数据、成员操作、任务卡片操作、任务标题操作、图视图、任务区内容、面板页头操作）的 conversation-header slot；它不挂载任何 Remote namespace。Dispose plugin fiber 会移除这些 registration。成员操作位于导航按钮外部，未启动成员没有可打开的 Session 时仍能使用。原生投影提供当前执行时，成员活动与跳转跟随该执行，卡片仍使用稳定 roster 身份。
 
 面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一行：Team 地址来自显式地址或当前 Session 的 subagent parent，Team 视图来自该地址的 `agentTeam` 投影，已提交的原生 Lead 席位选择运行状态与模型的执行查询，其余成员继续按自己的身份查询。成员活动以列表摘要为后备；每个 roster 行只选择自己的运行状态。唯一的注入回调使用当前和目标 Session id 及可选的稳定地址打开 roster Session。切换会话会关闭面板并清除导航失败。
 

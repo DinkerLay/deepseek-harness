@@ -40,6 +40,12 @@ import { teamLeadBindingSchema } from './lead-seat.ts'
 import type { TeamLeadBinding } from './lead-seat.ts'
 import { applyLeadTransition, leadCoordinationActive, teamLeadCoordinationSchema, teamLeadTransitionSchema } from './lead-coordination.ts'
 import type { TeamLeadCoordination } from './lead-coordination.ts'
+import { applyMemberControl, applyMemberExecution, currentMemberExecution, memberExecutionOwner, memberExecutionStarted,
+  teamMemberControlSchema, teamMemberDeliverySchema, teamMemberExecutionRecordSchema,
+  teamMemberExecutionSchema } from './member-execution.ts'
+import type { TeamMemberDeliveryReceipt, TeamMemberExecutionRecord, TeamMemberExecutionControl } from './member-execution.ts'
+import { applyMemberSlotTransfer, currentMemberSlot, teamMemberSlotTransferSchema, teamProfileSlotSchema } from './member-slots.ts'
+import type { TeamMemberSlotTransfer } from './member-slots.ts'
 
 const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const positiveSafeInteger = nonNegativeSafeInteger.min(1)
@@ -119,6 +125,7 @@ const teamCompositionStateSchema = z.object({
   profile: teamProfileAssociationSchema.optional(),
   application: teamCompositionApplicationSchema.optional(),
   appliedTargetJson: z.string().min(1).optional(),
+  slotBindings: z.array(teamProfileSlotSchema).optional(),
 }).strict() as z.ZodType<TeamCompositionState>
 const teamCompositionTransitionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('begin'), applicationId: z.string().min(1).max(200),
@@ -194,6 +201,30 @@ const teamMemberConfiguredEventSchema = z.object({
   teamId: teamIdSchema,
   member: teamMemberSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['team/member/configured']>
+
+const teamMemberExecutionEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema,
+  operationId: z.string().min(1).max(200), previousGeneration: positiveSafeInteger,
+  binding: teamMemberExecutionSchema,
+  record: z.object({ ownerId: z.string().min(1).max(200), recordId: z.string().min(1).max(200),
+    dataJson: z.string() }).strict().optional(),
+}).strict() as z.ZodType<SessionEventMap['team/member/execution']>
+
+const teamMemberDeliveredEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema, messageId: teamMessageIdSchema,
+  targetId: sessionIdSchema, executionId: sessionIdSchema, generation: positiveSafeInteger,
+}).strict() as z.ZodType<SessionEventMap['team/message/member-delivered']>
+
+const teamMemberControlEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema, control: teamMemberControlSchema,
+  record: z.object({ recordId: z.string().min(1).max(200), dataJson: z.string() }).strict(),
+  slotTransfer: teamMemberSlotTransferSchema.optional(),
+}).strict() as z.ZodType<SessionEventMap['team/member/control']>
+
+const teamMemberCandidateEventSchema = z.object({
+  version: z.literal(1), teamId: teamIdSchema, previousExecutionId: sessionIdSchema, control: teamMemberControlSchema,
+  record: z.object({ recordId: z.string().min(1).max(200), dataJson: z.string() }).strict(),
+}).strict() as z.ZodType<SessionEventMap['team/member/candidate']>
 
 const teamTaskEventSchema = z.object({
   version: z.literal(2),
@@ -295,6 +326,11 @@ export interface TeamState {
   readonly mode?: TeamControlledMode
   readonly composition?: TeamCompositionState
   readonly members: readonly TeamMemberSnapshot[]
+  /** Committed execution generations; the original roster address remains generation one. */
+  readonly memberExecutions?: readonly TeamMemberExecutionRecord[]
+  readonly memberDeliveries?: readonly TeamMemberDeliveryReceipt[]
+  readonly memberControls?: readonly TeamMemberExecutionControl[]
+  readonly memberCandidates?: readonly TeamMemberExecutionRecord[]
   readonly tasks: readonly TeamTaskSnapshot[]
   /** Durable event-derived writer identity for Tasks claimed by an extension. */
   readonly taskWriters: readonly { readonly taskId: TeamTaskId; readonly writerId: string }[]
@@ -307,6 +343,8 @@ export interface TeamState {
     readonly coordinatorOperation?: { readonly operationId: TeamLeadOperationId; readonly previousTerm: number }
     readonly leadEffectsHash?: string
     readonly noticeIds?: readonly TeamMessageId[]
+    readonly memberControl?: TeamMemberExecutionControl
+    readonly memberSlotTransfer?: TeamMemberSlotTransfer
   }[]
   readonly messages: readonly TeamMessageSnapshot[]
   readonly delivered: readonly TeamMessageId[]
@@ -354,6 +392,10 @@ const teamProjectionEntrySchema = z.object({
   mode: teamControlledModeSchema.optional(),
   composition: teamCompositionStateSchema.optional(),
   members: z.array(teamMemberSnapshotSchema),
+  memberExecutions: z.array(teamMemberExecutionRecordSchema).optional(),
+  memberDeliveries: z.array(teamMemberDeliverySchema).optional(),
+  memberControls: z.array(teamMemberControlSchema).optional(),
+  memberCandidates: z.array(teamMemberExecutionRecordSchema).optional(),
   tasks: z.array(teamTaskSnapshotSchema),
   taskWriters: z.array(z.object({ taskId: teamTaskIdSchema, writerId: z.string().min(1) }).strict()),
   extensionRecords: z.array(z.object({
@@ -363,6 +405,8 @@ const teamProjectionEntrySchema = z.object({
       previousTerm: positiveSafeInteger }).strict().optional(),
     leadEffectsHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     noticeIds: z.array(teamMessageIdSchema).optional(),
+    memberControl: teamMemberControlSchema.optional(),
+    memberSlotTransfer: teamMemberSlotTransferSchema.optional(),
   }).strict()).default([]),
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
@@ -383,6 +427,10 @@ export type TeamEventType =
   | 'team/composition'
   | 'team/member'
   | 'team/member/configured'
+  | 'team/member/execution'
+  | 'team/message/member-delivered'
+  | 'team/member/control'
+  | 'team/member/candidate'
   | 'team/task'
   | 'team/task/transaction'
   | 'team/extension'
@@ -406,6 +454,10 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/composition'
     || event.type === 'team/member'
     || event.type === 'team/member/configured'
+    || event.type === 'team/member/execution'
+    || event.type === 'team/message/member-delivered'
+    || event.type === 'team/member/control'
+    || event.type === 'team/member/candidate'
     || event.type === 'team/task'
     || event.type === 'team/task/transaction'
     || event.type === 'team/extension'
@@ -438,6 +490,14 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamMemberEventSchema, event.data) }
     case 'team/member/configured':
       return { ...event, data: parsePersisted(event.type, teamMemberConfiguredEventSchema, event.data) }
+    case 'team/member/execution':
+      return { ...event, data: parsePersisted(event.type, teamMemberExecutionEventSchema, event.data) }
+    case 'team/message/member-delivered':
+      return { ...event, data: parsePersisted(event.type, teamMemberDeliveredEventSchema, event.data) }
+    case 'team/member/control':
+      return { ...event, data: parsePersisted(event.type, teamMemberControlEventSchema, event.data) }
+    case 'team/member/candidate':
+      return { ...event, data: parsePersisted(event.type, teamMemberCandidateEventSchema, event.data) }
     case 'team/task':
       return { ...event, data: parsePersisted(event.type, teamTaskEventSchema, event.data) }
     case 'team/task/transaction':
@@ -469,7 +529,9 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
     const expectedVersion = event.type === 'team/lead/transaction' || event.type === 'team/mode' || event.type === 'team/composition'
       || event.type === 'team/task/transaction'
       || event.type === 'team/extension' || event.type === 'team/message/input-queued'
-      || event.type === 'team/message/lead-delivered' ? 1
+      || event.type === 'team/message/lead-delivered' || event.type === 'team/member/execution'
+      || event.type === 'team/message/member-delivered' || event.type === 'team/member/control'
+      || event.type === 'team/member/candidate' ? 1
       : event.type === 'team/member/configured' || event.type === 'team/message/cancelled' ? 3 : 2
     if (selector.version !== expectedVersion) {
       throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
@@ -497,6 +559,8 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       if (previousTerm !== (state.lead?.term ?? 1) || binding.term !== previousTerm + 1
         || binding.executionId === brandString<SessionId>(state.id)
         || state.leadHistory?.some(prior => prior.executionId === binding.executionId)
+        || state.memberExecutions?.some(prior => prior.executionId === binding.executionId)
+        || state.memberCandidates?.some(prior => prior.executionId === binding.executionId)
         || state.members.some(member => member.id === binding.executionId)) {
         throw new Error('Lead binding has a stale term or reused execution identity')
       }
@@ -565,7 +629,84 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       if (event.data.transition.kind === 'begin' && leadCoordinationActive(state.leadCoordination)) {
         throw new Error('Profile application conflicts with Lead coordination')
       }
+      if (event.data.transition.kind === 'begin' && state.memberControls?.some(control => control.held)) {
+        throw new Error('Profile application conflicts with member execution changes')
+      }
       return { ...state, composition: applyCompositionTransition(state.composition, event.data.transition, state.members) }
+    case 'team/member/execution': {
+      const memberExecutions = applyMemberExecution(state, event.data)
+      const record = event.data.record
+      let extensionRecords = state.extensionRecords
+      if (record !== undefined) {
+        if (state.memberControls?.find(item => item.memberId === event.data.binding.memberId)?.ownerId !== record.ownerId
+          || extensionRecords.some(item => item.writerId === record.ownerId && item.recordId === record.recordId)) {
+          throw new Error('member execution audit does not match its admission owner')
+        }
+        try { JSON.parse(record.dataJson) } catch { throw new Error('member execution audit is not JSON') }
+        extensionRecords = [...extensionRecords, { writerId: record.ownerId, recordId: record.recordId, dataJson: record.dataJson }]
+      }
+      return { ...state, memberExecutions, extensionRecords }
+    }
+    case 'team/member/control': {
+      const { control, record } = event.data
+      if (state.extensionRecords.some(item => item.writerId === control.ownerId && item.recordId === record.recordId)) {
+        throw new Error('member control record already exists')
+      }
+      try { JSON.parse(record.dataJson) } catch { throw new Error('member control record is not JSON') }
+      const slotTransfer = event.data.slotTransfer
+      if (slotTransfer !== undefined && (control.held || control.memberId !== slotTransfer.fromMemberId)) {
+        throw new Error('slot transfer requires its source member operation to finish')
+      }
+      const composition = slotTransfer === undefined ? state.composition
+        : applyMemberSlotTransfer(state.composition, state.members, slotTransfer)
+      const reserved = control.nextExecutionId !== undefined
+        && !state.memberCandidates?.some(candidate => candidate.executionId === control.nextExecutionId)
+        ? { memberId: control.memberId, executionId: control.nextExecutionId, generation: control.generation + 1,
+          operationId: control.operationId } : undefined
+      return { ...state, ...composition === undefined ? {} : { composition },
+        ...reserved === undefined ? {} : { memberCandidates: [...state.memberCandidates ?? [], reserved] },
+        memberControls: applyMemberControl(state, control), extensionRecords: [
+          ...state.extensionRecords, { writerId: control.ownerId, ...record, memberControl: control,
+            ...slotTransfer === undefined ? {} : { memberSlotTransfer: slotTransfer } },
+        ] }
+    }
+    case 'team/member/candidate': {
+      const { control, record, previousExecutionId } = event.data
+      const controls = state.memberControls ?? []
+      const candidates = state.memberCandidates ?? []
+      const old = controls.find(item => item.memberId === control.memberId && item.held)
+      const current = state.members.find(member => member.id === control.memberId)
+      if (old === undefined || current === undefined || old.nextExecutionId !== previousExecutionId
+        || control.nextExecutionId === undefined || control.nextExecutionId === previousExecutionId
+        || control.memberId !== old.memberId || control.ownerId !== old.ownerId || control.operationId !== old.operationId
+        || control.executionId !== old.executionId || control.generation !== old.generation
+        || control.leadTerm !== old.leadTerm || control.leadExecutionId !== old.leadExecutionId || !control.held
+        || currentMemberExecution(state, current).generation !== control.generation) {
+        throw new Error('candidate replacement does not match its held source')
+      }
+      const released = { ...state, memberControls: controls.filter(item => item !== old) }
+      const memberControls = applyMemberControl(released, control)
+      if (state.extensionRecords.some(item => item.writerId === control.ownerId && item.recordId === record.recordId)) {
+        throw new Error('candidate replacement record already exists')
+      }
+      try { JSON.parse(record.dataJson) } catch { throw new Error('candidate replacement record is not JSON') }
+      return { ...state, memberControls, memberCandidates: [...candidates, {
+        memberId: control.memberId, executionId: control.nextExecutionId, generation: control.generation + 1,
+        operationId: control.operationId,
+      }], extensionRecords: [...state.extensionRecords, { writerId: control.ownerId, ...record, memberControl: control }] }
+    }
+    case 'team/message/member-delivered': {
+      const { messageId, targetId, executionId, generation } = event.data
+      const owner = memberExecutionOwner(state, executionId)
+      const message = state.messages.find(candidate => candidate.id === messageId)
+      if (state.mode === undefined || message?.targetId !== targetId || owner?.member.id !== targetId
+        || owner.binding.generation !== generation || state.delivered.includes(messageId)
+        || state.cancelled.some(item => item.messageId === messageId)) {
+        throw new Error('member delivery does not match an unacknowledged message and recorded execution')
+      }
+      return { ...state, delivered: [...state.delivered, messageId],
+        memberDeliveries: [...state.memberDeliveries ?? [], { messageId, targetId, executionId, generation }] }
+    }
     case 'team/member':
     case 'team/member/configured': {
       const member: TeamMemberSnapshot = event.data.member
@@ -589,7 +730,7 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
         const retirementStart = (prior.phase === 'active' || prior.phase === 'failed') && member.phase === 'retiring'
         const retirementEnd = prior.phase === 'retiring' && member.phase === 'retired'
         const registeredStartFailure = state.mode !== undefined && prior.phase === 'active' && member.phase === 'failed'
-          && !state.messages.some(message => message.targetId === member.id && state.delivered.includes(message.id))
+          && !memberExecutionStarted(state, member)
         if (!provisioningExit && !retirementStart && !retirementEnd && !registeredStartFailure) {
           throw new Error(`teammate "${member.name}" has an invalid ${prior.phase} -> ${member.phase} transition`)
         }
@@ -747,6 +888,8 @@ const teamMemberProjectionSchema = z.object({
   slotId: z.string().min(1).max(200).optional(),
   error: z.string().optional(),
   executionStarted: z.boolean().optional(),
+  execution: teamMemberExecutionSchema.optional(),
+  executionHeld: z.boolean().optional(),
 }).strict() as z.ZodType<TeamMemberProjection>
 
 const teamTaskViewSchema = z.object({
@@ -786,16 +929,19 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
   const members: TeamMemberProjection[] = [{ id: rootId, name: 'lead', role: 'lead', phase: 'active',
     ...state.lead === undefined ? {} : { preset: { id: state.lead.presetId, revision: state.lead.revision } } }]
   for (const member of state.members) {
+    const slotId = currentMemberSlot(state.composition, member)
     members.push({
       id: member.id,
       name: member.name,
       role: 'teammate',
       phase: member.phase,
-      ...state.mode === undefined ? {} : { executionStarted: state.messages.some(message =>
-        message.targetId === member.id && state.delivered.includes(message.id)) },
+      ...state.memberExecutions?.some(binding => binding.memberId === member.id)
+        ? { execution: currentMemberExecution(state, member) } : {},
+      ...state.mode === undefined ? {} : { executionStarted: memberExecutionStarted(state, member) },
+      ...state.memberControls?.some(control => control.memberId === member.id && control.held) ? { executionHeld: true } : {},
       ...member.group === undefined ? {} : { group: member.group },
       ...member.preset === undefined ? {} : { preset: member.preset },
-      ...member.slotId === undefined ? {} : { slotId: member.slotId },
+      ...slotId === undefined ? {} : { slotId },
       ...member.error === undefined ? {} : { error: member.error },
     })
   }
@@ -848,7 +994,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 /** Team projection selected by the projected Session identity; the wire view carries durable roster and task state only. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 19,
+  stateVersion: 20,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,

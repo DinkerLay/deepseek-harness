@@ -21,6 +21,7 @@ const FIXTURE: Record<string, string> = {
       allowImportingTsExtensions: true,
       noEmit: true,
       skipLibCheck: true,
+      strictNullChecks: true,
       types: [],
     },
     include: ['vendor/**/*.ts', 'packages/**/*.ts'],
@@ -61,6 +62,14 @@ const FIXTURE: Record<string, string> = {
   'packages/fix/pkgc/src/helper.ts':
     "function scriptFire(args: [string]): void { void gEvents.dispatch('emit', args) }\n",
   'packages/fix/pkgc/src/caller.ts': "scriptFire(['pkgc/script-event'])\n",
+  'packages/fix/pkgd/src/index.ts': [
+    "import type { AgentEventDispatch } from '../../../core/agent/src/dispatch.ts'",
+    'declare const dispatcher: AgentEventDispatch | undefined',
+    "dispatcher?.emit('pkgd/optional-event', {})",
+    'declare const unknown: unknown',
+    "unknown?.emit('pkgd/unknown-event', {})",
+    '',
+  ].join('\n'),
 }
 
 const root = mkdtempSync(join(tmpdir(), 'gen-doc-graphs-'))
@@ -94,5 +103,10 @@ describe('event relation call-site indexing', () => {
     // pkgc alone: the script helper is the first demand, so a wrongly passing
     // proof would index helper.ts only and lose the caller.ts call site.
     expect(dispatchersOf(['pkgc'], 'pkgc/script-event')).toEqual(['pkgc'])
+  })
+
+  it('recognizes optional dispatch receivers without treating unknown receivers as event APIs', () => {
+    expect(dispatchersOf(['pkgd'], 'pkgd/optional-event')).toEqual(['pkgd'])
+    expect(dispatchersOf(['pkgd'], 'pkgd/unknown-event')).toEqual([])
   })
 })

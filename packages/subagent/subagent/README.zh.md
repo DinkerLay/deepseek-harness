@@ -27,7 +27,17 @@ kind: "package-reference"
 
 本包是每个委派组合都共享的约定。你通过把服务与一个或多个提供方后端以及面向模型的委派工具一起挂载来启用它；此后 agent 即可委派工作，服务会把每个请求路由到具名提供方。
 
-可信 Host 可以给 `deliverContinuableInput()` 提供预留的子会话 id 和稳定输入 id。它创建或恢复子会话，收到持久输入回执后才返回；重试不再插入另一份输入。恢复后的待处理输入使用驱动器可选的 `wakePending()` 能力，等待回执或退出时释放子会话锁。`synchronizeContinuablePermissions(parent, child, settingsSource?)` 显式让活跃的直接子会话对齐可选活跃设置来源的沙箱与权限选择，默认来源为父级。它要求真实亲子关系，保留子会话的审批策略、父子关系、深度和 Preset；普通委派不调用它。设置来源已释放时，它会在追加策略事实之前拒绝。
+可信 Host 可以给 `prepareContinuable()` 提供预留的 child id，在准入工作之前确认持久 descriptor、Preset 绑定、直接父级归属及父 catalog。准备不接受提示词，不请求模型、不发布运行生命周期，释放临时 Agent，也不发送结束通知。已存在的 child 必须匹配解析后的创建 descriptor、Preset 声明、工作目录、父级与委派深度；准备不会迁移权限批准。child 和父级确认都必须有持久监听者且成功；确认失败可能留下候选，因此应以同一 id 和创建规格重试，不重复追加 catalog。
+
+`deliverContinuableInput()` 接收预留的子会话 id 和稳定输入 id。它创建或恢复子会话，收到持久输入回执后才返回；重试不再插入另一份输入。已准备的 child 使用既有冷投递路径。恢复后的待处理输入使用驱动器可选的 `wakePending()` 能力。准备与带身份的投递共用一份 child 预留，等待确认、回执或退出时释放子锁。`synchronizeContinuablePermissions(parent, child, settingsSource?)` 显式让活跃的直接子会话对齐可选活跃设置来源的沙箱与权限选择，默认来源为父级。它要求真实亲子关系，保留子会话的审批策略、父子关系、深度和 Preset；普通委派不调用它。设置来源已释放时，它会在追加策略事实之前拒绝。
+
+绑定核心输入控制器的 child 通过异步 `agents.sendInput()` 确认接收，不走同步 followup/steer。Activation 保持驻留直到回执结算。`startContinuable()` 和 `deliverContinuableInput()` 返回受控保管的 `inputLocation`：held 或 released 不代表 inbox 投递或模型已处理。只有 held 回执时，不发布运行边或结束通知。受控确认失败会保留不确定输入；以同一 child 和输入身份重试，可确认原输入而不重复插入 inbox。
+
+`withContinuableExecution(parent, childId, signal, callback)` 为可信 Host 提供对已存在或从 descriptor 恢复的执行的静止维护访问。它要求已绑定的输入控制器同时禁止开工与领取，占用真实 Agent 维护阶段，不提交业务输入，也不改变准入策略。冷恢复的临时执行仅在可执行 inbox 为空时释放。回调遗留未保管的待处理输入会收到 `EXECUTION_PENDING_INPUT`；受限执行保持驻留以便保管输入或显式接管，不会在释放时丢弃输入。活跃执行交还原生命周期。回调持有既有输入控制能力，并必须响应取消信号。
+
+仅清理存储时，`withDormantContinuable()` 为没有在线、创建中或已附着执行的 child 预留身份，使用其注册输入控制器的独占原 writer。它在修复前校验父子关系与 descriptor，从不恢复 Preset，不暴露 Agent 或裸 append。只有真正未创建的身份才返回空 scope；已经记录在 catalog 的 child 丢失时拒绝清理。预留期间阻止并发创建。成功结果须等 writer 关闭并归还预留；父级或注册表释放会取消并等待操作退出。
+
+回调接收 `(scope, signal)`，即使来源确实不存在也有 signal。外部等待应使用此 signal。已进入的回调退出前，取消不会释放 writer 或预留；忽略取消会延迟拆卸，但不会让另一操作与该回调重叠。
 
 ### 启用委派
 
@@ -118,7 +128,7 @@ kind: "package-reference"
 
 管理器预留 child 身份、解析持久化描述符、创建（或冷恢复）child、把它安装进 Activation 并提交提示词。模型编写的消息通过固定 Steer 调度跨一条 parent/child 边；浏览器人类 prompt 通过内部适配器选择 Queue 或 best-effort Steer，其他 host 协议仍可保留 Queue 以创建独立轮次。Session queue command 仅根据 child 自身的 continuable descriptor 准入在线 subagent-owned Agent。Settlement 会等待 Agent 活动结束、Inbox 为空且没有所拥有子级，再在准入开放时 flush 最终 Session 状态。管理器随后在 child lock 内重新验证 wake generation、Session 序号、Inbox 与所拥有子级；`Agent.runMaintenance()` 的同步 task 入口会占用 idle 阶段，并在同一个 JavaScript turn 内关闭私有 subagent Inbox，然后才释放句柄。直接 child 不存在 Activation 时会从持久化会话冷恢复。默认情况下，管理器会在 Activation 结算时告知该 child 的直接 parent；由 effect 持有的运行时策略只能省略这条父级消息，不改 child 日志或生命周期事件。策略缺席、失败、超时或冲突时仍发送。
 
-本地子级创建成功时，父 Session 追加一条 `subagent/catalog` 事实。一次性创建在提供方返回后记录；可继续创建在初始 inbox 准入后、返回子级 id 前记录。失败会释放子级，不发布补偿性目录事件。一次性目录追加失败时会处理 run 的结果拒绝，并保留目录错误；资源释放失败会单独记录。`subagentCatalog` projection 排除 fork 继承的事实，通过 Session 观察和客户端快照中的 `projections.values.subagentCatalog` 暴露直接子级列表。每个 child 的 `subagentTiming` projection 会累加 descriptor 之后的耗时，并记录最近一个已结束轮次是否以 `completed` 结束；新轮次打开时会清除该完成状态。无效的自身 catalog payload（包括不支持的版本）会使 projection 恢复失败。projection 状态版本变更会从持久日志重新折叠缓存行。目录视图对 D 条事实以 O(D) 时间保留父目录事件顺序，其不可变存储和检查点校验使用 [`dsh-chunked-list`](../../util/chunked-list/README.zh.md)。[父目录决策](../../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 说明排序、持久化成本和替代方案。Catalog 载荷 v0 记录已知模式，v1 还接受未知模式，读取器支持两版。历史迁移在 descriptor 不可用时根据可读子 header 追加 v1 `subagent/catalog`；正常创建保留 v0。其 `mode: 'unknown'` 投影让子会话保持可见，但不表示支持继续执行；已有完整条目仍具有权威性。
+本地子级创建成功时，父 Session 追加一条 `subagent/catalog` 事实。一次性创建在提供方返回后记录；立即启动的可继续创建在初始 inbox 准入后、返回子级 id 前记录。无输入准备在 child 持久确认后记录 catalog，并在返回前确认父级写盘。失败会释放子级，不发布补偿性目录事件。一次性目录追加失败时会处理 run 的结果拒绝，并保留目录错误；资源释放失败会单独记录。`subagentCatalog` projection 排除 fork 继承的事实，通过 Session 观察和客户端快照中的 `projections.values.subagentCatalog` 暴露直接子级列表。每个 child 的 `subagentTiming` projection 会累加 descriptor 之后的耗时，并记录最近一个已结束轮次是否以 `completed` 结束；新轮次打开时会清除该完成状态。无效的自身 catalog payload（包括不支持的版本）会使 projection 恢复失败。projection 状态版本变更会从持久日志重新折叠缓存行。目录视图对 D 条事实以 O(D) 时间保留父目录事件顺序，其不可变存储和检查点校验使用 [`dsh-chunked-list`](../../util/chunked-list/README.zh.md)。[父目录决策](../../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 说明排序、持久化成本和替代方案。Catalog 载荷 v0 记录已知模式，v1 还接受未知模式，读取器支持两版。历史迁移在 descriptor 不可用时根据可读子 header 追加 v1 `subagent/catalog`；正常创建保留 v0。其 `mode: 'unknown'` 投影让子会话保持可见，但不表示支持继续执行；已有完整条目仍具有权威性。
 
 ### 所有权与不变式
 

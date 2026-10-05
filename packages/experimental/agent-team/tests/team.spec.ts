@@ -23,11 +23,18 @@ import { TeamRuntimeLifecycle } from '../src/lifecycle.ts'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamMemberSnapshot, TeamMessageCancellation, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
+import SessionQuery from '@deepseek-ai/dsh-session-query'
 
 const SIGNAL = new AbortController().signal
 const PRESET_TOOL = new URL('../../../subagent/subagent-in-process-driver/tests/fixtures/plugins/preset-tool.js', import.meta.url).href
 const roots: string[] = []
 const contexts: Context[] = []
+
+/** Real point-observation reader; these tests do not exercise corpus search. */
+class CompleteSessionQuery extends SessionQuery {
+  override searchSessions(): Promise<never> { return Promise.reject(new Error('search is not used')) }
+  override searchEvents(): Promise<never> { return Promise.reject(new Error('search is not used')) }
+}
 
 afterEach(async () => {
   vi.useRealTimers()
@@ -69,6 +76,7 @@ async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   config: ConstructorParameters<typeof TeamService>[1] = {},
   withPresets = false,
+  completeObservations = false,
 ) {
   const ctx = new Context()
   contexts.push(ctx)
@@ -85,7 +93,8 @@ async function setup(
   const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-'))
   roots.push(storageRoot)
   await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
-  await ctx.plugin(TestSessionQuery)
+  if (completeObservations) await ctx.plugin(CompleteSessionQuery)
+  else await ctx.plugin(TestSessionQuery)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(SubagentService)
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
@@ -165,6 +174,231 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
     return agent!
   }, { timeout: 5_000 })
 }
+
+describe('controlled member execution ownership', () => {
+  it('records non-started no-op and roster intents without holding or waking a member', async () => {
+    const { ctx, lead, adapter } = await setup([], { maxTaskExtensionBytes: 10_000, controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'groups',
+      permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations' })
+    const member = (await spawn(ctx, lead, 'unused')).member
+    const roster = { recordId: 'add-intent', dataJson: '{"reserved":"new-member"}' }
+    await owner.recordRoster(lead, (cut) => { expect(cut.members).toHaveLength(1); return roster })
+    await owner.recordRoster(lead, roster)
+    await expect(owner.recordRoster(lead, { ...roster, dataJson: '{}' })).rejects.toMatchObject({ code: 'TEAM_MEMBER_OPERATION_STALE' })
+    const noop = { recordId: 'unused:no-op', dataJson: '{"phase":"completed"}' }
+    await owner.record(lead, member.id, 'unused', (cut) => { expect(cut.execution.generation).toBe(1); return noop })
+    await owner.record(lead, member.id, 'unused', noop)
+    await expect(owner.record(lead, member.id, 'unused', { ...noop, dataJson: '{}' }))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_OPERATION_STALE' })
+    await expect(owner.recordRoster(lead, { recordId: 'bad-json', dataJson: '?' }))
+      .rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    await expect(owner.recordRoster(lead, { recordId: 'oversized', dataJson: JSON.stringify('x'.repeat(200_000)) }))
+      .rejects.toMatchObject({ code: 'TEAM_TASK_EXTENSION_TOO_LARGE' })
+    expect(owner.read(lead, member.id).control).toBeUndefined()
+    expect(adapter.requests).toHaveLength(0)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/extension')).toHaveLength(2)
+    await owner.dispose(); writer.dispose()
+  })
+
+  it('reserves one creation identity, rejects conflicting retries, and cancels only the confirmed message selection', async () => {
+    const { ctx, lead, adapter } = await setup([], { maxMembers: 1, maxActiveMembers: 1,
+      controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+        permissionTableId: 'groups', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations' })
+    const request = { name: 'reserved', provider: 'spawn', context: 'fresh' as const, presetId: 'standard',
+      prompt: content('unused controlled registration prompt'), reservedMemberId: SessionId('reserved-member'), signal: SIGNAL }
+    const member = (await ctx.agentTeams.spawnTeammate(lead, request)).member
+    expect((await ctx.agentTeams.spawnTeammate(lead, request)).member.id).toBe(member.id)
+    await expect(ctx.agentTeams.spawnTeammate(lead, { ...request, name: 'changed' })).rejects.toBeInstanceOf(TeamError)
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(2)
+    await owner.hold(lead, { memberId: member.id, operationId: 'messages', expectedGeneration: 1 },
+      () => ({ recordId: 'messages:hold', dataJson: '{}' }))
+    const first = await ctx.agentTeams.sendMessage(lead, { target: member.name, content: content('first'), signal: SIGNAL })
+    const second = await ctx.agentTeams.sendMessage(lead, { target: member.name, content: content('second'), signal: SIGNAL })
+    await expect(ctx.agentTeams.cancelPendingMessages(lead, member.name, 'recorded disposition', [first.messageId]))
+      .rejects.toBeInstanceOf(TeamError)
+    expect(durable(lead).cancelled).toHaveLength(0)
+    await ctx.agentTeams.cancelPendingMessages(lead, member.name, 'recorded disposition', [first.messageId, second.messageId])
+    const third = await ctx.agentTeams.sendMessage(lead, { target: member.name, content: content('later'), signal: SIGNAL })
+    await ctx.agentTeams.cancelPendingMessages(lead, member.name, 'recorded disposition', [first.messageId, second.messageId])
+    expect(durable(lead).pendingMessages.map(item => item.id)).toEqual([third.messageId])
+    expect(adapter.requests).toHaveLength(0)
+    await owner.dispose(); writer.dispose()
+  })
+
+  it('retargets an unused candidate without opening the held source or reusing the old reservation', async () => {
+    const { ctx, lead, adapter } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'groups',
+      permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations' })
+    const member = (await spawn(ctx, lead, 'candidate-worker')).member
+    const first = SessionId('candidate-first'), second = SessionId('candidate-second')
+    await owner.hold(lead, { memberId: member.id, operationId: 'retry', expectedGeneration: 1, nextExecutionId: first },
+      () => ({ recordId: 'retry:hold', dataJson: '{}' }))
+    await ctx.subagents.prepareContinuable({ childId: first, provider: 'spawn', label: 'standard',
+      preset: member.preset!, request: { parent: lead }, signal: SIGNAL })
+    const record = { recordId: 'retry:target-2', dataJson: '{}' }
+    await expect(owner.retarget(lead, member.id, 'retry', first, second, record, () => ['unknown outcome']))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_BLOCKED' })
+    await owner.retarget(lead, member.id, 'retry', first, second, record, () => [])
+    await owner.retarget(lead, member.id, 'retry', first, second, record, () => [])
+    expect(owner.read(lead, member.id).control).toMatchObject({ held: true, nextExecutionId: second })
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/member/candidate')).toHaveLength(1)
+    await expect(owner.retarget(lead, member.id, 'retry', second, first,
+      { recordId: 'retry:invalid', dataJson: '{}' }, () => [])).rejects.toBeInstanceOf(TeamError)
+    await ctx.subagents.prepareContinuable({ childId: second, provider: 'spawn', label: 'standard',
+      preset: member.preset!, request: { parent: lead }, signal: SIGNAL })
+    const committed = await owner.commit(lead, member.id, 'retry', { recordId: 'retry:commit', dataJson: '{}' }, () => [])
+    expect(committed.executionId).toBe(second)
+    await owner.release(lead, member.id, 'retry', { recordId: 'retry:release', dataJson: '{}' }, () => [])
+    expect(adapter.requests).toHaveLength(0)
+    await owner.dispose(); writer.dispose()
+  })
+
+  it('prepares and binds a new execution without a second member or a candidate model request', async () => {
+    const { ctx, lead, adapter } = await setup([textResponse('old coordination'), textResponse('Lead observed'), 'hang'],
+      { controlledMode: { kind: 'controlled', requiredTaskExtensionId: 'test-managed-writer',
+        permissionTableId: 'groups', permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations',
+      initialMaterial: async (_anchor, execution) => execution.generation === 1 ? [] : [{
+        recordId: 'renew-worker:bound', content: content('Reference only: continue from the Task Board, no inherited approval.'),
+      }] })
+    const member = (await spawn(ctx, lead, 'renew-worker')).member
+    await ctx.agentTeams.sendMessage(lead, { target: member.name, content: content('initial coordination'), signal: SIGNAL })
+    await waitNoAgent(ctx, member.id)
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+    await lead.whenIdle()
+    const beforeRequests = adapter.requests.length
+    const nextId = SessionId('renewed-worker-session')
+    await owner.hold(lead, { memberId: member.id, operationId: 'renew-worker', expectedGeneration: 1,
+      nextExecutionId: nextId }, () => ({ recordId: 'renew-worker:start', dataJson: '{}' }))
+    const preset = member.preset
+    if (preset === undefined) throw new Error('expected declared controlled Preset')
+    await ctx.subagents.prepareContinuable({ childId: nextId, provider: 'spawn', label: 'standard',
+      preset, request: { parent: lead }, signal: SIGNAL })
+    expect(adapter.requests).toHaveLength(beforeRequests)
+    expect(ctx.agentTeams.memberExecution(lead, member.id)?.executionId).toBe(member.id)
+    const record = { recordId: 'renew-worker:bound', dataJson: '{"phase":"bound"}' }
+    expect(await owner.commit(lead, member.id, 'renew-worker', record, () => []))
+      .toEqual({ memberId: member.id, executionId: nextId, generation: 2 })
+    await owner.release(lead, member.id, 'renew-worker', { recordId: 'renew-worker:ready', dataJson: '{}' }, () => [])
+    expect(await owner.commit(lead, member.id, 'renew-worker', record, () => []))
+      .toEqual({ memberId: member.id, executionId: nextId, generation: 2 })
+    expect(adapter.requests).toHaveLength(beforeRequests)
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(2)
+    expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ id: member.id, name: member.name,
+      executionStarted: false, execution: { memberId: member.id, executionId: nextId, generation: 2 } })
+    await ctx.subagents.withContinuableExecution(lead, member.id, SIGNAL, async (old) => {
+      expect(ctx.agentTeams.tryMembership(old)).toBeUndefined()
+      await expect(ctx.agentTeams.sendMessage(old, { target: 'lead', content: content('late old execution'), signal: SIGNAL }))
+        .rejects.toMatchObject({ code: 'TEAM_NOT_MEMBER' })
+    })
+    const sent = await ctx.agentTeams.sendMessage(lead, { target: member.name, content: content('new coordination'), signal: SIGNAL })
+    expect(sent.status).toBe('accepted')
+    const next = await waitRunning(ctx, nextId)
+    const references = next.session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'team-member-material')
+    expect(references).toHaveLength(1)
+    expect(references[0]).toMatchObject({ data: { source: { kind: 'team-member-material', form: 'recall',
+      memberId: member.id, generation: 2, recordId: 'renew-worker:bound' } } })
+    expect(ctx.agentTeams.membership(next)).toMatchObject({ role: 'teammate', name: member.name,
+      memberId: member.id, generation: 2 })
+    expect(ctx.agentTeams.memberExecutionBySession(lead, member.id))
+      .toEqual({ memberId: member.id, executionId: member.id, generation: 1 })
+    expect(ctx.agentTeams.listMembers(lead)[1]?.executionStarted).toBe(true)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/message/member-delivered'))
+      .toMatchObject([{ data: { messageId: sent.messageId, targetId: member.id, executionId: nextId, generation: 2 } }])
+    expect(next.session.snapshotEvents().filter(event => event.type === 'user/message').some(event =>
+      event.data.content.some(block => block.type === 'text' && block.text.includes('You are teammate "renew-worker"')))).toBe(true)
+    ctx.agentTeams.interrupt(lead, member.name)
+    await waitNoAgent(ctx, next.id)
+    await owner.dispose()
+    writer.dispose()
+  })
+
+  it('holds only the selected member and records confirmed progress without starting it', async () => {
+    const { ctx, lead, adapter } = await setup(['hang'], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'groups',
+      permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const a = (await spawn(ctx, lead, 'held-worker')).member
+    const b = (await spawn(ctx, lead, 'unaffected-worker')).member
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations' })
+    expect(() => ctx.agentTeams.installMemberExecutions({ id: 'other-owner' })).toThrow(/already installed/)
+    const request = { memberId: a.id, operationId: 'hold-a', expectedGeneration: 1 }
+    const record = { recordId: 'hold-a:start', dataJson: '{"phase":"stopping"}' }
+    await owner.hold(lead, request, () => record)
+    await owner.hold(lead, request, () => record)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/member/control')).toHaveLength(1)
+    expect(owner.read(lead, a.id).control).toMatchObject({ held: true, operationId: 'hold-a' })
+    expect(ctx.agentTeams.memberExecution(lead, a.id)).toEqual({ memberId: a.id, executionId: a.id, generation: 1 })
+    expect(ctx.agentTeams.memberExecutionBySession(lead, a.id)).toMatchObject({ memberId: a.id, generation: 1 })
+    const heldMail = await ctx.agentTeams.sendMessage(lead, { target: a.name, content: content('wait for new work'), signal: SIGNAL })
+    expect(heldMail.status).toBe('queued')
+    expect(await ctx.sessionPersistence.stat(a.id)).toBeUndefined()
+    expect(adapter.requests).toHaveLength(0)
+    await expect(writer.commit(lead, cut => ({ updates: [{ previousRevision: null, task: {
+      id: TeamTaskId(`task-${cut.nextTaskNumber}`), revision: 1, subject: 'blocked assignment', description: 'blocked',
+      status: 'in_progress', ownerId: a.id, blockedBy: [], writeScopes: [],
+    } }], dataJson: '{}' }))).rejects.toMatchObject({ code: 'TEAM_MEMBER_HELD' })
+    const independentSent = await ctx.agentTeams.sendMessage(lead, { target: b.name, content: content('independent work'), signal: SIGNAL })
+    expect(independentSent.status).toBe('accepted')
+    await waitRunning(ctx, b.id)
+    expect(adapter.requests).toHaveLength(1)
+    await expect(owner.release(lead, a.id, 'hold-a', { recordId: 'hold-a:stop', dataJson: '{}' },
+      () => ['external operation unconfirmed'])).rejects.toMatchObject({ code: 'TEAM_MEMBER_BLOCKED' })
+    expect(owner.read(lead, a.id).control?.held).toBe(true)
+    await owner.release(lead, a.id, 'hold-a', { recordId: 'hold-a:stop', dataJson: '{}' }, () => [])
+    await owner.release(lead, a.id, 'hold-a', { recordId: 'hold-a:stop', dataJson: '{}' }, () => [])
+    expect(owner.read(lead, a.id).control?.held).toBe(false)
+    expect(await ctx.sessionPersistence.stat(a.id)).toBeUndefined()
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/member/control')).toHaveLength(2)
+    ctx.agentTeams.interrupt(lead, b.name)
+    await waitNoAgent(ctx, b.id)
+    await owner.dispose()
+    writer.dispose()
+  })
+
+  it('keeps an unconfirmed hold closed and confirms the same request without another event', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'groups',
+      permissionRevision: 'rev', maxOrdinaryMessageBytes: 4096 } }, true)
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer',
+      validateMemberGroup: () => undefined, create: unavailable, update: unavailable })
+    const member = (await spawn(ctx, lead, 'checkpoint-worker')).member
+    const owner = ctx.agentTeams.installMemberExecutions({ id: 'member-operations' })
+    const request = { memberId: member.id, operationId: 'hold-checkpoint', expectedGeneration: 1 }
+    const record = { recordId: 'hold-checkpoint:start', dataJson: '{}' }
+    const flush = vi.spyOn(ctx.sessions, 'flush').mockResolvedValueOnce(false)
+    await expect(owner.hold(lead, request, () => record)).rejects.toMatchObject({ code: 'TEAM_INPUT_DURABILITY' })
+    expect(owner.read(lead, member.id).control?.held).toBe(true)
+    flush.mockRestore()
+    await owner.hold(lead, request, () => record)
+    expect(lead.session.snapshotEvents().filter(event => event.type === 'team/member/control')).toHaveLength(1)
+    await expect(owner.hold(lead, { ...request, expectedGeneration: 2 }, () => record))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_OPERATION_STALE' })
+    await expect(owner.release(lead, member.id, 'foreign', { recordId: 'foreign', dataJson: '{}' }, () => []))
+      .rejects.toMatchObject({ code: 'TEAM_MEMBER_OPERATION_STALE' })
+    await owner.dispose()
+    writer.dispose()
+  })
+})
 
 describe('controlled member settlement notices', () => {
   it('registers without a standby run and starts only on the first durable Team input', async () => {

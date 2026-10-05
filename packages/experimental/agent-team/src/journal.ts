@@ -7,6 +7,7 @@ import { TeamError } from './error.ts'
 import type { TeamEventType, TeamState } from './projection.ts'
 import type { TeamMessageId } from './types.ts'
 import { leadCoordinationFrozen } from './lead-coordination.ts'
+import { currentMemberExecution } from './member-execution.ts'
 
 type AppendTeamEvent = <T extends TeamEventType>(type: T, data: SessionEventMap[T]) => void
 type MutableTeamEventType = TeamEventType
@@ -24,6 +25,7 @@ export class TeamJournal {
     private readonly ctx: Context,
     private readonly onCommit: (root: Agent) => void,
     private readonly productModeRequired = false,
+    private readonly memberAdmitted: (root: Agent, memberId: SessionId) => boolean = () => true,
   ) {}
 
   /**
@@ -66,9 +68,15 @@ export class TeamJournal {
       if (leadCoordinationFrozen(state.leadCoordination)) {
         throw new TeamError('Lead Team writes are frozen during coordination', 'TEAM_LEAD_FROZEN')
       }
-    } else if (caller.session.header.parentSession !== root.id
-      || !state.members.some(member => member.id === caller.id && (member.phase === 'active' || member.phase === 'provisioning'))) {
-      throw new TeamError('Team mutation author no longer holds this seat', 'TEAM_NOT_MEMBER')
+    } else {
+      const member = state.members.find(item => currentMemberExecution(state, item).executionId === caller.id)
+      if (caller.session.header.parentSession !== root.id
+        || member === undefined || member.phase !== 'active' && member.phase !== 'provisioning') {
+        throw new TeamError('Team mutation author no longer holds this seat', 'TEAM_NOT_MEMBER')
+      }
+      if (!this.memberAdmitted(root, member.id)) {
+        throw new TeamError('member execution is being changed; wait for its owner', 'TEAM_MEMBER_HELD')
+      }
     }
     return state
   }
@@ -100,6 +108,14 @@ export class TeamJournal {
    */
   coordinationConfirmed(root: Agent): boolean {
     return this.unconfirmed.get(root.id)?.blockAdmission !== true
+  }
+
+  /** Read whether every owned journal effect has a confirmed checkpoint, without performing IO.
+   * @param root - exact stable Team journal owner.
+   * @returns false while any owned write still needs confirmation, including progress-only records.
+   */
+  recordsConfirmed(root: Agent): boolean {
+    return !this.unconfirmed.has(root.id)
   }
 
   /** Check a coordinated queue item's source checkpoint without gating unrelated execution.

@@ -1,6 +1,7 @@
 /** Shared Team task DAG commands and runtime-enriched views. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentSettlementNoticeFacts } from '@deepseek-ai/dsh-subagent'
 import type { TeamMembership } from './roster.ts'
 import { TeamError } from './error.ts'
@@ -57,6 +58,7 @@ export class TeamTaskBoard {
     private readonly isDisposed: () => boolean,
     private readonly dispatchNotices: (root: Agent) => void,
     private readonly anchorForRead: (agent: Agent) => Agent,
+    private readonly memberAdmitted: (anchor: Agent, memberId: SessionId) => boolean,
   ) {}
 
   /** Check the currently installed writer after an asynchronous checkpoint. */
@@ -301,20 +303,21 @@ export class TeamTaskBoard {
       }
       if (current.status === 'deleted') throw new TeamError(`team task "${current.id}" is deleted`, 'TEAM_TASK_DELETED')
       const lead = membership.role === 'lead'
-      const owner = current.ownerId === caller.id
+      const callerId = membership.memberId ?? caller.id
+      const owner = current.ownerId === callerId
       const authorizeOwner = (): void => {
         if (!lead && !owner) throw new TeamError('task mutation requires its owner or Team Lead', 'TEAM_TASK_UNAUTHORIZED')
       }
       let next: TeamTaskSnapshot
       switch (request.action) {
         case 'claim':
-          if (current.ownerId !== undefined && current.ownerId !== caller.id) {
+          if (current.ownerId !== undefined && current.ownerId !== callerId) {
             throw new TeamError(`team task "${current.id}" is owned by another member`, 'TEAM_TASK_ALREADY_CLAIMED')
           }
           if (current.status !== 'pending' || !taskReady(state, current)) {
             throw new TeamError(`team task "${current.id}" is not ready to claim`, 'TEAM_TASK_BLOCKED')
           }
-          next = { ...current, status: 'in_progress', ownerId: caller.id }
+          next = { ...current, status: 'in_progress', ownerId: callerId }
           break
         case 'release':
           authorizeOwner()
@@ -473,6 +476,10 @@ export class TeamTaskBoard {
         const ownerId = update.task.ownerId
         if (update.task.status === 'in_progress' && ownerId === undefined) {
           throw new TeamError(`in-progress Task "${update.task.id}" needs an owner`, 'TEAM_INVALID_ARGUMENT')
+        }
+        if (update.task.status === 'in_progress' && ownerId !== undefined && ownerId !== root.id
+          && !this.memberAdmitted(root, ownerId)) {
+          throw new TeamError('target member is being changed', 'TEAM_MEMBER_HELD')
         }
         if (ownerId !== undefined && ownerId !== prior?.ownerId && ownerId !== root.id
           && !state.members.some(member => member.id === ownerId && member.phase === 'active')) {

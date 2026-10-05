@@ -73,6 +73,7 @@ export function applyCompositionTransition(
       if (transition.kind === 'stop') {
         return { phase: application.changed ? 'dynamic' : application.previousPhase,
           ...state.profile === undefined ? {} : { profile: state.profile },
+          ...state.slotBindings === undefined ? {} : { slotBindings: state.slotBindings },
           ...state.appliedTargetJson === undefined ? {} : { appliedTargetJson: state.appliedTargetJson } }
       }
       if (members.some(member => member.phase === 'provisioning' || member.phase === 'retiring')) {

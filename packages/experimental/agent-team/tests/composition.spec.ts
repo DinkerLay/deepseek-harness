@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { applyCompositionTransition, compositionOf, noteCompositionMemberChange,
   noteCompositionPermissionChange } from '../src/composition.ts'
-import type { TeamMemberSnapshot } from '../src/types.ts'
+import type { TeamCompositionState, TeamMemberSnapshot } from '../src/types.ts'
 
 const member: TeamMemberSnapshot = { id: SessionId('worker'), name: 'worker', description: 'research',
   provider: 'spawn', context: 'fresh', phase: 'active' }
@@ -55,5 +55,59 @@ describe('native Team composition policy', () => {
     expect(() => applyCompositionTransition(undefined, begin, [])).toThrow(/not JSON/)
     expect(() => applyCompositionTransition(undefined, { ...begin, targetJson: '{}',
       retiringMemberIds: [SessionId('absent')] }, [])).toThrow(/not present/)
+  })
+
+  it('checks the complete UTF-8 target and rejects duplicate or retired retirement identities', () => {
+    const begin = { kind: 'begin' as const, applicationId: 'bounded', profileId: 'profile', profileVersion: 1,
+      targetJson: JSON.stringify('x'.repeat(262_142)), retiringMemberIds: [], previousPhase: 'dynamic' as const }
+    expect(applyCompositionTransition(undefined, begin, []).application?.targetJson).toBe(begin.targetJson)
+    expect(() => applyCompositionTransition(undefined, { ...begin, targetJson: JSON.stringify('文'.repeat(90_000)) }, []))
+      .toThrow(/maximum event size/)
+    expect(() => applyCompositionTransition(undefined, { ...begin, targetJson: '{}',
+      retiringMemberIds: [member.id, member.id] }, [member])).toThrow(/same member twice/)
+    expect(() => applyCompositionTransition(undefined, { ...begin, targetJson: '{}',
+      retiringMemberIds: [member.id] }, [{ ...member, phase: 'retired' }])).toThrow(/not present/)
+    expect(() => applyCompositionTransition({ phase: 'fixed' }, { ...begin, targetJson: '{}' }, []))
+      .toThrow(/changed before/)
+  })
+
+  it('rejects stale application changes and cannot lock an already fixed Team', () => {
+    const applying = applyCompositionTransition(undefined, { kind: 'begin', applicationId: 'current', profileId: 'profile',
+      profileVersion: 1, targetJson: '{}', retiringMemberIds: [], previousPhase: 'dynamic' }, [])
+    for (const kind of ['target', 'diagnostic', 'stop', 'finish'] as const) {
+      const transition = kind === 'target' ? { kind, applicationId: 'other', targetJson: '{}' }
+        : kind === 'diagnostic' ? { kind, applicationId: 'other', message: 'not this application' }
+          : { kind, applicationId: 'other' }
+      expect(() => applyCompositionTransition(applying, transition, [])).toThrow(/not current/)
+      expect(() => applyCompositionTransition(undefined, transition, [])).toThrow(/not current/)
+    }
+    expect(() => applyCompositionTransition({ phase: 'applying' }, { kind: 'stop', applicationId: 'missing' }, []))
+      .toThrow(/not current/)
+    expect(() => applyCompositionTransition({ phase: 'fixed' }, { kind: 'lock' }, [])).toThrow(/dynamic before locking/)
+  })
+
+  it('updates only the current application target and retains earlier Profile/slot facts when stopped', () => {
+    const previous: TeamCompositionState = { phase: 'fixed', profile: { id: 'old-profile', version: 1, modified: false },
+      appliedTargetJson: '{"old":true}', slotBindings: [{ slotId: 'research', memberId: member.id }] }
+    const applying = applyCompositionTransition(previous, { kind: 'begin', applicationId: 'replacement', profileId: 'new-profile',
+      profileVersion: 2, targetJson: '{"new":1}', retiringMemberIds: [], previousPhase: 'fixed' }, [member])
+    const target = applyCompositionTransition(applying, { kind: 'target', applicationId: 'replacement', targetJson: '{"new":2}' }, [member])
+    expect(target.application?.targetJson).toBe('{"new":2}')
+    expect(applying.application?.targetJson).toBe('{"new":1}')
+    expect(() => applyCompositionTransition(target, { kind: 'target', applicationId: 'replacement', targetJson: '{' }, []))
+      .toThrow(/not JSON/)
+    const diagnostic = applyCompositionTransition(target, { kind: 'diagnostic', applicationId: 'replacement', message: 'waiting for cleanup' }, [])
+    expect(diagnostic.application?.diagnostic).toBe('waiting for cleanup')
+    const stopped = applyCompositionTransition(diagnostic, { kind: 'stop', applicationId: 'replacement' }, [])
+    expect(stopped).toEqual(previous)
+    const changed = noteCompositionPermissionChange(diagnostic)
+    expect(changed?.application?.changed).toBe(true)
+    expect(changed?.profile?.modified).toBe(true)
+    expect(applyCompositionTransition(changed, { kind: 'stop', applicationId: 'replacement' }, []))
+      .toEqual({ ...previous, phase: 'dynamic', profile: { ...previous.profile, modified: true } })
+    expect(noteCompositionPermissionChange(undefined)).toBeUndefined()
+    expect(noteCompositionPermissionChange({ phase: 'dynamic' })).toEqual({ phase: 'dynamic' })
+    expect(noteCompositionMemberChange(applying, { ...member, phase: 'provisioning' }, member)).toBe(applying)
+    expect(noteCompositionMemberChange(undefined, undefined, member)).toBeUndefined()
   })
 })

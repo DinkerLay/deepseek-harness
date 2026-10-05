@@ -8,6 +8,12 @@ export interface TeamMemberMetaOwner {
   readonly presetId?: string
 }
 
+/** Host-backed product actions beside a roster card, outside its navigation button. */
+export interface TeamMemberActionOwner {
+  readonly member: TeamMemberProjection
+  readonly leadSessionId: SessionId
+}
+
 /** One task's product action beside the native expand control. */
 export interface TeamTaskCardActionOwner {
   readonly task: TeamTaskView
@@ -47,6 +53,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Optional name of the effective Agent Preset shown on a member card. */
     'agent-team.panel.member.meta': { kind: 'single'; scope: 'session'; owner: TeamMemberMetaOwner }
+    /** Optional member operations; the native card remains the navigation owner. */
+    'agent-team.panel.member.action': { kind: 'single'; scope: 'session'; owner: TeamMemberActionOwner }
     /** Optional Task navigation control beside the native expand toggle. */
     'agent-team.panel.task.action': { kind: 'single'; scope: 'session'; owner: TeamTaskCardActionOwner }
     /** Optional action that opens a task view without replacing the Team panel. */

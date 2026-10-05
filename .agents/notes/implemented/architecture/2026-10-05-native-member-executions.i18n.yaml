@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-05-native-member-executions.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-05-native-member-executions.md
+/agent-note-native-member-identity-and-execution-custody:
+  en: 35481f8a2b1e417a
+  zh: f24e2d73ac91d115
+/agent-note-native-member-identity-and-execution-custody/problem:
+  en: 433b620b9748fa69
+  zh: bf88f07314047424
+/agent-note-native-member-identity-and-execution-custody/decision:
+  en: ae07b9487cc1d3b2
+  zh: 1772af4f11d7d1f3
+/agent-note-native-member-identity-and-execution-custody/alternatives-considered:
+  en: e8ea7f7fdd58fa03
+  zh: 63ddfc92a5480a4c
+/agent-note-native-member-identity-and-execution-custody/consequences:
+  en: 94857ab42d65eeaf
+  zh: 9f75c6c99d9c65da

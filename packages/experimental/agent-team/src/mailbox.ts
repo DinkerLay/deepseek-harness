@@ -15,6 +15,7 @@ import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
 import type { TeamState } from './projection.ts'
+import { currentMemberExecution, memberExecutionOwner, memberExecutionStarted } from './member-execution.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
@@ -37,8 +38,7 @@ import type {
  */
 export function teamMessageDeliveryContent(message: TeamMessageSnapshot, state?: TeamState): ContentBlock[] {
   const member = state?.mode === undefined ? undefined : state.members.find(candidate => candidate.id === message.targetId)
-  const unstarted = member !== undefined && !state?.messages.some(candidate =>
-    candidate.targetId === member.id && state.delivered.includes(candidate.id))
+  const unstarted = member !== undefined && state !== undefined && !memberExecutionStarted(state, member)
   return [
     ...unstarted ? [{ type: 'text' as const, text: `<system-reminder>
 You are teammate "${member.name}" in group "${member.group ?? 'unassigned'}". Your Team Lead is "lead".
@@ -103,6 +103,7 @@ export class TeamMailbox {
     resolveSource: (anchor: Agent, id: SessionId, signal: AbortSignal) => Promise<Agent>,
     canDeliverLead: (anchor: Agent) => boolean,
     private readonly ownsLeadInput: (anchor: Agent) => boolean,
+    private readonly memberAdmitted: (anchor: Agent, memberId: SessionId) => boolean,
   ) {
     this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
       context: leadContext,
@@ -195,7 +196,7 @@ export class TeamMailbox {
     const messages = state.messages.filter(message =>
       !state.delivered.includes(message.id)
       && !state.cancelled.some(item => item.messageId === message.id)
-      && (membership.role === 'lead' || membership.role === 'host' || message.targetId === agent.id))
+      && (membership.role === 'lead' || membership.role === 'host' || message.targetId === membership.memberId))
     for (const message of messages) {
       signal.throwIfAborted()
       await this.tryDispatch(membership.root, message, signal)
@@ -215,9 +216,11 @@ export class TeamMailbox {
    * @param caller - exact live Lead Agent.
    * @param targetName - immutable teammate name.
    * @param reason - durable explanation for cancellation.
+   * @param expectedIds - optional exact pending set; a confirmed retry excludes newer messages.
    * @returns ids of messages cancelled by this call.
    */
-  async cancelPending(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]> {
+  async cancelPending(caller: Agent, targetName: string, reason: string,
+    expectedIds?: readonly TeamMessageId[]): Promise<readonly TeamMessageId[]> {
     if (this.lifecycle.disposed) throw new TeamError('Agent Teams service is disposing', 'TEAM_DISPOSED')
     const membership = this.roster.membership(caller)
     if (membership.role !== 'lead') throw new TeamError('only the Team Lead can cancel Team mail', 'TEAM_LEAD_REQUIRED')
@@ -238,11 +241,23 @@ export class TeamMailbox {
       const pending = state.messages.filter(message => message.targetId === target.id
         && !state.delivered.includes(message.id)
         && !state.cancelled.some(item => item.messageId === message.id))
+      if (expectedIds !== undefined) {
+        if (new Set(expectedIds).size !== expectedIds.length) throw new TeamError('message selection contains duplicates', 'TEAM_INVALID_ARGUMENT')
+        const prior = expectedIds.filter(id => state.cancelled.some(item =>
+          item.messageId === id && item.targetId === target.id && item.reason === explanation))
+        if (prior.length === expectedIds.length && expectedIds.length > 0) {
+          await this.journal.confirm(root)
+          return [...expectedIds]
+        }
+        if (pending.length !== expectedIds.length || pending.some(message => !expectedIds.includes(message.id))) {
+          throw new TeamError('pending messages changed; inspect the new input before cancelling', 'TEAM_MESSAGE_SELECTION_STALE')
+        }
+      }
       if (pending.length === 0) return []
       const messageIds = pending.map(message => message.id)
       await this.journal.appendAndFlush(root, 'team/message/cancelled', {
         version: 3, teamId: TeamId(root.id), targetId: target.id, messageIds, reason: explanation,
-      })
+      }, expectedIds !== undefined)
       return messageIds
     })))
   }
@@ -405,15 +420,16 @@ export class TeamMailbox {
       }
       const member = state.mode === undefined ? undefined : state.members.find(candidate => candidate.id === message.targetId)
       if (member !== undefined) {
-        if (member.phase !== 'active') return false
+        if (member.phase !== 'active' || !this.memberAdmitted(root, member.id)) return false
+        const binding = currentMemberExecution(state, member)
         try {
           const registry = this.ctx.get('agentPresets')
           if (registry === undefined || member.preset === undefined) throw new TeamError('registered member Preset is unavailable', 'TEAM_PRESET_UNAVAILABLE')
           await using lease = await registry.acquireComposition(member.preset.id)
           if (lease.revision !== member.preset.revision) throw new TeamError('registered member Preset revision changed; rebuild the member', 'TEAM_PRESET_UNAVAILABLE')
         } catch (error: unknown) {
-          const entered = this.ctx.sessions.get(member.id)
-          if (state.messages.some(candidate => candidate.targetId === member.id && state.delivered.includes(candidate.id))
+          const entered = this.ctx.sessions.get(binding.executionId)
+          if (memberExecutionStarted(state, member)
             || entered !== undefined && (this.ctx.get('sessionProjections')
               ?.stateOf(entered, 'subagentInputReceipts')?.length ?? 0) > 0) throw error
           await this.roster.failRegisteredMember(root, member.id, errorMessage(error))
@@ -423,11 +439,12 @@ export class TeamMailbox {
         }
         const input = createUserMessage({ content: teamMessageDeliveryContent(message, state),
           source: teamMessageSource(TeamId(root.id), message, state) })
-        await this.ctx.subagents.deliverContinuableInput({ childId: member.id, provider: member.provider,
+        const receipt = await this.ctx.subagents.deliverContinuableInput({ childId: binding.executionId, provider: member.provider,
           label: member.description, preset: member.preset,
           request: { parent: root, prompt: [...input.content] }, signal,
         }, Object.freeze({ ...input, id: brandString<MessageId>(message.id) }))
-        await this.markDelivered(root, message.id, message.targetId)
+        if (receipt.inputLocation === 'held' || receipt.inputLocation === 'released') return false
+        await this.markDelivered(root, message.id, message.targetId, binding.executionId)
         return true
       }
       const target = message.targetId === root.id ? root : this.ctx.agents.get(message.targetId)
@@ -510,24 +527,31 @@ export class TeamMailbox {
   ): Promise<boolean> {
     await this.ctx.sessions.flush(target)
     if (!this.targetRecorded(target, messageId)) return false
-    await this.markDelivered(root, messageId, target.id)
+    const owner = memberExecutionOwner(this.journal.state(root), target.id)
+    await this.markDelivered(root, messageId, owner?.member.id ?? target.id, target.id)
     return true
   }
 
   /** Record delivery unless the acknowledgement already exists. */
-  private async markDelivered(root: Agent, messageId: TeamMessageId, targetId: SessionId): Promise<void> {
+  private async markDelivered(root: Agent, messageId: TeamMessageId, targetId: SessionId,
+    executionId: SessionId = targetId): Promise<void> {
     await this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
       if (state.delivered.includes(messageId)) return
       const queued = state.messages.find(message => message.id === messageId)
       if (queued === undefined || queued.targetId !== targetId) return
       if (state.cancelled.some(item => item.messageId === messageId)) return
-      await this.journal.appendAndFlush(root, 'team/message/delivered', {
-        version: 2,
-        teamId: TeamId(root.id),
-        messageId,
-        targetId,
-      })
+      const owner = memberExecutionOwner(state, executionId)
+      if (owner !== undefined && owner.member.id === targetId && owner.binding.generation > 1) {
+        await this.journal.appendAndFlush(root, 'team/message/member-delivered', {
+          version: 1, teamId: TeamId(root.id), messageId, targetId, executionId,
+          generation: owner.binding.generation,
+        }, true)
+      } else {
+        await this.journal.appendAndFlush(root, 'team/message/delivered', {
+          version: 2, teamId: TeamId(root.id), messageId, targetId,
+        })
+      }
       const retry = this.retries.get(messageId)
       if (retry !== undefined) clearTimeout(retry.timer)
       this.retries.delete(messageId)

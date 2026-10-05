@@ -26,6 +26,8 @@ The [Team profile](../../../../packages/experimental/agent-team-profile/README.m
 
 ## Team identity
 
+Controlled deployments can retain member identity while changing its current execution through an optional native owner. The [member-execution decision](../architecture/2026-10-05-native-member-executions.md) owns that extension and its custody requirements; ordinary immediate creation below remains unchanged.
+
 The `spawn_teammate` tool prefixes the initial task with a user-role `<system-reminder>` stating `You are teammate "<name>".`. Identity and task enter the same durable inbox message. Shared system policy and all tool schemas stay uniform across members; execution owns role restrictions. Team tools resolve the caller’s Team and accept member names, so the model needs no Team id. Identity follows ordinary history through cold recovery and compaction; the plugin does not inspect reminder retention or add replacement messages. Forks inherit the recorded text without a Lead identity correction. Putting identity in the system prompt changes the prefix before inherited history; keeping it in the initial task preserves that prefix without per-step identity bookkeeping. Existing system-embedded identities may require a one-time prompt reconciliation; retained event generations are unchanged.
 
 ## Provisioning and recovery

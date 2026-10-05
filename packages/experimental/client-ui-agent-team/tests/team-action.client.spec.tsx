@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { Profiler } from 'react'
+import { Profiler, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -10,6 +10,7 @@ import type {
 import type { SessionListState, SessionSnapshot, SessionSummary, UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { TeamAction, type TeamActionInjected, type TeamActionProps } from '../src/client/TeamAction.tsx'
@@ -43,6 +44,17 @@ const worker: TeamMemberProjection = {
   id: WORKER, name: 'worker', role: 'teammate', phase: 'active',
 }
 const team: TeamProjection = { members: [lead, worker], tasks: [task] }
+
+function MemberModalAction() {
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState(false)
+  return <>
+    <button type="button" onClick={() => { setOpen(true) }}>Member fixture</button>
+    <Modal open={open} onClose={() => { setOpen(false) }} title="Member fixture dialog" closeLabel="Close member fixture">
+      <button type="button" onClick={() => { setSelected(true) }}>{selected ? 'Replacement selected' : 'Replace member fixture'}</button>
+    </Modal>
+  </>
+}
 
 function memberMeta(value: unknown): value is { member: { name: string }; presetId?: string } {
   return typeof value === 'object' && value !== null && 'member' in value
@@ -152,6 +164,97 @@ function setProjection(sessions: ReturnType<typeof bench>['sessions'], sessionId
 }
 
 describe('TeamAction', () => {
+  it('preserves hover ownership while a Modal is foreground, including an already scheduled dismissal', async () => {
+    vi.useFakeTimers()
+    const b = bench({ renderSlot: (key, owner) => key === 'agent-team.panel.member.action'
+      && memberMeta(owner) && owner.member.name === worker.name ? <MemberModalAction /> : null })
+    render(<TeamAction {...b.props} />)
+    fireEvent.mouseEnter(screen.getByRole('button', { name: zh.trigger }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+    const panel = screen.getByRole('dialog', { name: zh.trigger })
+    fireEvent.mouseLeave(panel)
+    fireEvent.click(screen.getByRole('button', { name: 'Member fixture' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    expect(screen.getByRole('dialog', { name: zh.trigger })).toBe(panel)
+    fireEvent.mouseLeave(panel)
+    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    expect(screen.getByRole('dialog', { name: zh.trigger })).toBe(panel)
+    fireEvent.click(screen.getByRole('button', { name: 'Close member fixture' }))
+    fireEvent.mouseLeave(panel)
+    await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+    expect(screen.queryByRole('dialog', { name: zh.trigger })).toBeNull()
+  })
+
+  it('yields pointer dismissal and Escape to a foreground portaled Modal without unmounting its owner', () => {
+    const b = bench({ renderSlot: (key, owner) => key === 'agent-team.panel.member.action'
+      && memberMeta(owner) && owner.member.name === worker.name ? <MemberModalAction /> : null })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Member fixture' }))
+    const replacement = screen.getByRole('button', { name: 'Replace member fixture' })
+    fireEvent.pointerDown(replacement)
+    fireEvent.click(replacement)
+    expect(screen.getByRole('dialog', { name: zh.trigger })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Replacement selected' })).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Replacement selected' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Member fixture dialog' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: zh.trigger })).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: zh.trigger }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: zh.trigger })).toBeNull()
+    openPanel()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: zh.trigger })).toBeNull()
+  })
+
+  it('uses the current member execution for status and navigation without changing its roster id', () => {
+    const execution = 'worker-generation-2' as SessionId
+    const renewed = { ...worker, execution: { memberId: WORKER, executionId: execution, generation: 2 } }
+    const b = bench({ projections: {
+      [SESSION]: { state: 'ready', error: null, values: { agentTeam: { ...team, members: [lead, renewed] } } },
+      [WORKER]: { state: 'ready', error: null, values: { modelSelection: { lastUsed: null,
+        next: { provider: 'p', model: 'old-model' } } } },
+      [execution]: { state: 'ready', error: null, values: { modelSelection: { lastUsed: null,
+        next: { provider: 'p', model: 'current-model' } } } },
+    }, running: { [execution]: true } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const row = screen.getByRole('button', { name: /^worker/u })
+    expect(row.textContent).toContain('current-model')
+    expect(row.textContent).not.toContain('old-model')
+    expect(row.textContent).toContain(zh['memberStatus.running'])
+    fireEvent.click(row)
+    expect(b.injected.openTeammate).toHaveBeenCalledWith(SESSION, execution)
+  })
+
+  it('renders member operations outside disabled navigation buttons', () => {
+    const b = bench({ renderSlot: (key, owner) => key === 'agent-team.panel.member.action'
+      && memberMeta(owner) && 'role' in owner.member && owner.member.role === 'teammate'
+      ? <button type="button">Member operations</button> : null })
+    setProjection(b.sessions, SESSION, { ...team, members: [lead, { ...worker, executionStarted: false }] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const operation = screen.getByRole('button', { name: 'Member operations' })
+    expect(operation.parentElement?.closest('button')).toBeNull()
+    expect(operation).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: /^worker/u })).toHaveProperty('disabled', true)
+  })
+
+  it('shows a held replacement as changing rather than ready and prevents candidate navigation', () => {
+    const b = bench({ projections: { [SESSION]: { state: 'ready', error: null, values: { agentTeam: {
+      ...team, members: [lead, { ...worker, executionHeld: true, executionStarted: false,
+        execution: { memberId: WORKER, executionId: 'candidate-ui' as SessionId, generation: 2 } }],
+    } } } } })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const row = screen.getByRole('button', { name: /^worker/u })
+    expect(row.textContent).toContain(zh['memberStatus.changing'])
+    expect(row.textContent).toContain(`${zh.generation} 2`)
+    expect(row.textContent).not.toContain(zh['memberStatus.unstarted'])
+    expect(row).toHaveProperty('disabled', true)
+    fireEvent.click(row)
+    expect(b.injected.openTeammate).not.toHaveBeenCalled()
+  })
+
   it.each(['agent-team.panel.header.actions', 'agent-team.panel.tasks.content', 'agent-team.panel.tasks.graph'] as const)(
     'keeps the native close callback owned by %s', (target) => {
       const slot: TeamActionProps['renderSlot'] = (key, owner) => {

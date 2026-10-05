@@ -4,9 +4,12 @@ import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type { Agent, SessionStartSource } from './runtime-types.ts'
 import type { AgentInput, AgentInputMutation, InputControllerId as ControllerId, InputControlState, InputReceipt } from './input-control-types.ts'
+import type { StoredInputCustody, StoredInputCustodySource, StoredInputDriver } from './input-control-types.ts'
+import { acquireStoredInputCustody, capturePendingInput, releaseHeldInput } from './input-control-stored.ts'
 /** Stable identity of one optional input policy provider. */
 export type InputControllerId = ControllerId
 
@@ -55,6 +58,14 @@ export interface InputControllerHandle {
    * @returns the captured input in its current queue order, after durable confirmation.
    */
   holdPending(agent: Agent): Promise<readonly AgentInput[]>
+  /** Own an inactive original Session's input without restoring its Agent or composition.
+   * @param sessionId - existing persisted source owned by this controller.
+   * @param signal - caller cancellation; a late acquired writer is still closed.
+   * @param validate - optional synchronous validation of the exclusive original cut before repair or any source write.
+   * @returns an exclusive custody capability after source repair durability is confirmed.
+   */
+  acquireStoredCustody(sessionId: SessionId, signal: AbortSignal,
+    validate?: (source: StoredInputCustodySource) => undefined): Promise<StoredInputCustody>
   dispose(): Promise<void>
 }
 
@@ -72,6 +83,8 @@ interface Registration {
   readonly policy: AgentInputController
   readonly jobs: Set<Promise<unknown>>
   active: boolean
+  readonly lifetime: AbortController
+  readonly stored: Set<StoredInputCustody>
 }
 
 interface DriverEntry {
@@ -87,8 +100,14 @@ interface DriverEntry {
 export class AgentInputControls {
   private readonly policies = new Map<ControllerId, Registration>()
   private readonly drivers = new WeakMap<Agent, DriverEntry>()
+  private readonly lifetime = new AbortController()
 
-  constructor(private readonly ctx: Context) {}
+  constructor(private readonly ctx: Context, private readonly prepareStoredInput: (session: Session) => StoredInputDriver) {
+    ctx.effect(() => async () => {
+      this.lifetime.abort(new Error('input-control registry is closed'))
+      await Promise.all([...this.policies.values()].flatMap(entry => [...entry.stored].map(scope => scope.dispose())))
+    }, 'agents.storedInputCustody()')
+  }
 
   /** Read one driver-owned fold, never a fork-inherited policy binding.
    * @param session - exact Session, including unpublished factory preparations.
@@ -127,11 +146,13 @@ export class AgentInputControls {
   register(owner: Context, id: ControllerId, policy: AgentInputController): InputControllerHandle {
     if (!id) throw new Error('input controller id is empty')
     if (this.policies.has(id)) throw new Error(`input controller "${id}" is already registered`)
-    const entry: Registration = { id, policy, jobs: new Set(), active: true }
+    const entry: Registration = { id, policy, jobs: new Set(), active: true, lifetime: new AbortController(), stored: new Set() }
     const dispose = owner.effect(() => {
       this.policies.set(id, entry)
       return async () => {
         entry.active = false
+        entry.lifetime.abort(new Error('input controller registration is closed'))
+        await Promise.all([...entry.stored].map(scope => scope.dispose()))
         await Promise.allSettled([...entry.jobs])
         this.policies.delete(id)
       }
@@ -147,6 +168,22 @@ export class AgentInputControls {
       preload: (agent, input, prepend = false) => this.deliver(agent, input, { entry, prepend }),
       release: (agent, messageId) => this.release(entry, agent, messageId),
       holdPending: agent => this.holdPending(entry, agent),
+      acquireStoredCustody: (sessionId, signal, validate) => {
+        const combined = AbortSignal.any([signal, entry.lifetime.signal, this.lifetime.signal])
+        const job = acquireStoredInputCustody(this.ctx, sessionId, combined, {
+          assertActive: () => { this.assertActive(entry) },
+          controllerId: entry.id,
+          state: session => this.state(session),
+          prepareDriver: this.prepareStoredInput,
+          acquired: (scope) => { this.assertActive(entry); entry.stored.add(scope) },
+          released: (scope) => { entry.stored.delete(scope) },
+          ...validate === undefined ? {} : { validate },
+        })
+        entry.jobs.add(job)
+        const settled = () => { entry.jobs.delete(job) }
+        void job.then(settled, settled)
+        return job
+      },
       dispose: async () => { await dispose() },
     }
   }
@@ -344,20 +381,11 @@ export class AgentInputControls {
   private async holdPending(entry: Registration, agent: Agent): Promise<readonly AgentInput[]> {
     if (this.state(agent.session).controllerId !== entry.id) throw new Error('capture capability belongs to another controller')
     return this.enqueue(entry, agent, async (driver) => {
-      const state = this.state(agent.session)
       const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
-      const inputs = pending.map((message) => {
-        const record = state.records.find(candidate => candidate.input.message.id === message.id)
-        if (record?.location !== 'inbox' || !isDeepStrictEqual(record.input.message, message)) {
-          throw new Error(`pending input "${message.id}" has no reliable recorded contents and wake intent`)
-        }
-        return record.input
+      capturePendingInput(agent.session, entry.id, this.state(agent.session), pending.map(message => ({ message })), (messageId) => {
+        driver.uncertain.add(messageId)
+        return driver.driver.hold(messageId)
       })
-      for (const input of inputs) {
-        driver.uncertain.add(input.message.id)
-        agent.session.append('agent/input/held', { version: 1, controllerId: entry.id, input, captured: true })
-        driver.driver.hold(input.message.id)
-      }
       const heldInputs = this.state(agent.session).records.filter(record => record.location === 'held').map(record => record.input)
       const sessions = this.ctx.get('sessions')
       if (sessions === undefined || !await sessions.flush(agent.session)) throw new Error('input capture durability was not confirmed')
@@ -370,12 +398,8 @@ export class AgentInputControls {
   private async release(entry: Registration, agent: Agent, messageId: MessageId): Promise<void> {
     if (this.state(agent.session).controllerId !== entry.id) return Promise.reject(new Error('release capability belongs to another controller'))
     return this.enqueue(entry, agent, async (driver) => {
-      const record = this.state(agent.session).records.find(item => item.input.message.id === messageId)
-      if (record?.location !== 'held' && record?.location !== 'released') throw new Error('input release requires held custody')
+      releaseHeldInput(agent.session, entry.id, this.state(agent.session), messageId)
       driver.uncertain.add(messageId)
-      if (record.location !== 'released') {
-        agent.session.append('agent/input/released', { version: 1, controllerId: entry.id, messageId })
-      }
       const sessions = this.ctx.get('sessions')
       if (sessions === undefined || !await sessions.flush(agent.session)) throw new Error('input release durability was not confirmed')
       this.assertActive(entry)

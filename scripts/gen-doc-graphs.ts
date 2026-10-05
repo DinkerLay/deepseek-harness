@@ -1187,7 +1187,7 @@ export class EventRelationCollector {
             }
           }
         } else if (ts.isPropertyAccessExpression(node.expression) && EVENT_API_METHODS.has(node.expression.name.text)) {
-          const receiverKind = this.receiverKind(node.expression.expression)
+          const receiverKind = this.receiverKind(node.expression.expression, node.expression.questionDotToken !== undefined)
           const method = node.expression.name.text
           if (receiverKind === 'events-service' && method === 'dispatch') {
             const argumentList = node.arguments[1]
@@ -1228,8 +1228,9 @@ export class EventRelationCollector {
   }
 
   /** Classify a receiver using assignability to the repository's actual event API types. */
-  private receiverKind(receiver: ts.Expression): EventReceiverKind | undefined {
-    const type = this.project.checker.getTypeAtLocation(receiver)
+  private receiverKind(receiver: ts.Expression, optional: boolean): EventReceiverKind | undefined {
+    const declared = this.project.checker.getTypeAtLocation(receiver)
+    const type = optional ? this.project.checker.getNonNullableType(declared) : declared
     if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
     if (this.project.checker.isTypeAssignableTo(type, this.eventsServiceType)) return 'events-service'
     if (this.project.checker.isTypeAssignableTo(type, this.contextType)) return 'context'

@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-subagent/types
  */
 
-import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions, StoredInputCustody } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
@@ -85,12 +85,35 @@ export interface ContinuableStartSpec {
   readonly signal: AbortSignal
 }
 
+/** Immutable creation inputs for a reserved child that must not receive work yet. */
+export type ContinuablePrepareSpec = Omit<ContinuableStartSpec,
+  'childId' | 'initialSource' | 'initialMessageId' | 'request'> & {
+  /** Caller-reserved identity reused for preparation retries and later delivery. */
+    readonly childId: SessionId
+    /** Creation composition only; preparation neither accepts nor stores a prompt. */
+    readonly request: Omit<ContinuableStartSpec['request'], 'prompt'>
+  }
+
+/** Stored input maintenance without composing or waking an Agent. The wrapper owns writer disposal. */
+export type DormantContinuableScope = Pick<StoredInputCustody, 'read' | 'holdPending' | 'releaseHeld'> & {
+  /** Caller, parent-tree and continuation-runtime cancellation combined for this reservation. */
+  readonly signal: AbortSignal
+}
+
+/** A durably prepared child with no newly admitted business input. */
+export interface ContinuablePrepared {
+  /** The prepared child's durable Session identity. */
+  readonly childId: SessionId
+}
+
 /** Identities returned once a continuable child accepted its initial prompt. */
 export interface ContinuableStart {
   /** The durable child session id, stable across activations. */
   readonly childId: SessionId
   /** The accepted initial prompt's inbox message id. */
   readonly messageId: MessageId
+  /** Controlled-input custody receipt; held/released does not mean executable delivery. */
+  readonly inputLocation?: 'inbox' | 'held' | 'released'
 }
 
 /**

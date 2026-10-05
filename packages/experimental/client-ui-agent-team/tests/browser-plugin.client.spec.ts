@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { TeamAction, type TeamActionInjected } from '../src/client/TeamAction.tsx'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as nodeApply } from '../src/index.ts'
 
 const SESSION = 'team-session' as SessionId
 const CHILD = 'team-child' as SessionId
+
+function ProductMemberAction(_props: PropsRuntime<'agent-team.panel.member.action'>) { return null }
 
 async function bench(options: { addressed?: boolean; leadExecution?: SessionId } = {}) {
   const ctx = new Context()
@@ -159,5 +162,25 @@ describe('ui-team browser plugin', () => {
 
   it('keeps the node half inert', () => {
     expect(() => { nodeApply() }).not.toThrow()
+  })
+
+  it('declares an empty official member-action slot and accepts a scoped consumer through header re-declaration', async () => {
+    const b = await bench()
+    const key = 'agent-team.panel.member.action'
+    try {
+      expect(b.ctx.slots.snapshot(key)[0]).toMatchObject({ type: 'slot', name: key, kind: 'single', scope: 'session' })
+      expect(b.ctx.slots.entries(key)).toEqual([])
+      const stop = b.ctx.slots.inject(key, () => b.ctx.slots.register({ name: key }, ProductMemberAction))
+      expect(b.ctx.slots.entries(key).map(entry => entry.component)).toEqual([ProductMemberAction])
+      b.collapseHeader()
+      expect(b.ctx.slots.entries(key)).toEqual([])
+      b.ctx.slots.register({ name: 'root', children: {
+        'conversation.session.header.actions': { kind: 'list', scope: 'session' },
+      } } as never, () => null)
+      await Promise.resolve()
+      expect(b.ctx.slots.entries(key).map(entry => entry.component)).toEqual([ProductMemberAction])
+      stop()
+      expect(b.ctx.slots.entries(key)).toEqual([])
+    } finally { await b.ctx.fiber.dispose() }
   })
 })

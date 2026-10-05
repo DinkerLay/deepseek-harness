@@ -172,8 +172,15 @@
   font-weight: 500;
 }
 
+.memberRow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .member {
   display: flex;
+  flex: 1;
   align-items: flex-start;
   gap: 8px;
   min-width: 0;

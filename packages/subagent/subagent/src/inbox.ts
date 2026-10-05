@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-subagent/inbox
  */
 
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentRegistry, InputReceipt } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import type { SubagentPromptRequest } from './control-types.ts'
 import { SubagentError } from './error.ts'
@@ -15,12 +15,14 @@ export type SubagentDelivery = SubagentPromptRequest['delivery']
 /** Delegate Queue and Steer to one live Agent until its Activation starts closing. */
 export class SubagentInbox {
   private closingPromise: Promise<void> | undefined
+  private readonly receipts = new Set<Promise<InputReceipt>>()
 
   /**
    * Wrap one live continuable Agent.
    * @param agent - the Agent whose inbox receives accepted deliveries.
    */
-  constructor(private readonly agent: Agent) {}
+  constructor(private readonly agent: Agent,
+    private readonly registry?: Pick<AgentRegistry, 'isInputControlled' | 'receiveInput'>) {}
 
   /**
    * Read the Activation's close transaction.
@@ -35,20 +37,28 @@ export class SubagentInbox {
    * @returns whether either Agent inbox destination is non-empty.
    */
   get hasPending(): boolean {
-    return this.agent.inbox.nextTurn.length > 0 || this.agent.inbox.nextStep.length > 0
+    return this.receipts.size > 0 || this.agent.inbox.nextTurn.length > 0 || this.agent.inbox.nextStep.length > 0
   }
 
   /**
    * Submit through the Agent only while its Activation remains resident.
    * @param message - the accepted input to submit.
    * @param delivery - whether to queue a distinct turn or steer the nearest step.
+   * @returns controlled-input durability confirmation, or undefined for synchronous delivery.
    */
-  deliver(message: UserMessage, delivery: SubagentDelivery): void {
+  deliver(message: UserMessage, delivery: SubagentDelivery): Promise<InputReceipt> | undefined {
     if (this.closingPromise !== undefined) {
       throw new SubagentError(
         `subagent "${this.agent.id}" activation is being disposed; the message was not accepted`,
         'ACTIVATION_CLOSING',
       )
+    }
+    if (this.registry?.isInputControlled(this.agent.session)) {
+      const receipt = this.registry.receiveInput(this.agent, { message,
+        target: delivery === 'steer' ? 'next-step' : 'next-turn', wakeup: true })
+      const pending = receipt.finally(() => { this.receipts.delete(pending) })
+      this.receipts.add(pending)
+      return pending
     }
     if (delivery === 'steer') this.agent.steer(message)
     else this.agent.followup(message)

@@ -53,7 +53,7 @@ function registerInputReceipts(ctx: Context): void {
         : event.type === 'user/message' ? [...state, event.data.id] : state })
   })
 }
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, InputControllerHandle } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -69,8 +69,11 @@ import type {
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
+  ContinuablePrepared,
+  ContinuablePrepareSpec,
   ContinuableStart,
   ContinuableStartSpec,
+  DormantContinuableScope,
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
   SubagentInterruptAuthority,
@@ -108,8 +111,11 @@ export { SubagentRunId } from './types.ts'
 export type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
+  ContinuablePrepared,
+  ContinuablePrepareSpec,
   ContinuableStart,
   ContinuableStartSpec,
+  DormantContinuableScope,
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
   SubagentInterruptAuthority,
@@ -255,7 +261,7 @@ export class SubagentRuntime extends TypertRemoteService {
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
-        prepareContinuable: (name, request) => this.prepareContinuable(name, request),
+        prepareContinuable: (name, request) => this.prepareProviderContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
         sendSettlementNotice: facts => this.sendSettlementNotice(facts),
       }, () => this.config.maxActiveSubagents.get())
@@ -292,10 +298,11 @@ export class SubagentRuntime extends TypertRemoteService {
   /**
    * Establish one durable continuable child and deliver its initial prompt.
    * Resolves when the child's inbox accepts that prompt, without waiting for the
-   * turn to start or for the message to reach the Session log; any earlier
-   * failure rejects with no ids and rolls back the child entirely.
+   * turn to start or for the message to reach the Session log. Controlled input
+   * instead confirms custody and reports its location; failed acknowledgement
+   * retains uncertain input for same-id recovery rather than discarding it.
    * @param spec - provider, delegation request, and caller cancellation.
-   * @returns the durable child id and the accepted prompt's message id.
+   * @returns the child id, accepted message id, and optional controlled custody location.
    * @throws when continuation services are unavailable or materialization fails.
    */
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
@@ -303,8 +310,50 @@ export class SubagentRuntime extends TypertRemoteService {
   }
 
   /**
+   * Prepare a reserved child's durable composition without input or model work.
+   * Existing children must match the resolved immutable creation fields. Failure
+   * may leave an unconfirmed candidate; retry the same identity and specification.
+   * @param spec - reserved identity, parent, composition, and caller cancellation.
+   * @returns the child identity after child and parent catalog confirmation.
+   */
+  async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared> {
+    return this.requireContinuations().prepareContinuable(spec)
+  }
+
+  /**
+   * Own a held continuable execution for Host maintenance without waking work.
+   * The input controller must forbid run and claim. A temporary cold execution
+   * is released only after its executable inbox is empty; unfinished custody
+   * leaves it resident and rejects with EXECUTION_PENDING_INPUT for takeover.
+   * @param parent - exact live direct parent authorizing maintenance.
+   * @param childId - durable continuable child whose descriptor owns recovery.
+   * @param signal - caller cancellation, forwarded to the owned maintenance callback.
+   * @param callback - operation using existing input-control capabilities on the exact Agent.
+   * @returns the callback result after safe release or live-execution handback.
+   */
+  async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal,
+    callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T> {
+    return this.requireContinuations().withContinuableExecution(parent, childId, signal, callback)
+  }
+
+  /** Maintain stored cold input without composing or waking an execution; ordinary recovery rules remain unchanged.
+   * @param parent - exact live direct parent whose durable lineage authorizes the source.
+   * @param childId - dormant continuation identity; never-created ids may return an undefined scope.
+   * @param input - registered Core input controller owning the stored custody.
+   * @param signal - cancellation forwarded through writer acquisition and callback work.
+   * @param callback - input maintenance over the exclusive stored capability; its second signal also covers an absent source.
+   *   Admitted work is awaited before writer/reservation release, even after cancellation, so it must honor that signal.
+   * @returns callback result after writer cleanup; close and confirmation failures reject.
+   */
+  async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal,
+    callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T> {
+    return this.requireContinuations().withDormantContinuable(parent, childId, input, signal, callback)
+  }
+
+  /**
    * Deliver a stable host input once, creating or resuming its reserved child.
-   * Completion confirms durable input receipt, not completion of model work.
+   * Completion confirms durable input receipt, not completion of model work;
+   * controlled held/released custody reports inputLocation without claiming delivery.
    * @param spec - creation inputs with a caller-reserved child id.
    * @param input - immutable host message with a retry-stable identity.
    * @returns the child and durably recorded input identities.
@@ -724,7 +773,7 @@ export class SubagentRuntime extends TypertRemoteService {
    * presence on the provider IS the capability, so a provider without it is
    * rejected before the manager reserves any child resources.
    */
-  private async prepareContinuable(
+  private async prepareProviderContinuable(
     name: string,
     request: ContinuableCreateRequest,
   ): Promise<ContinuableCreateSpec> {

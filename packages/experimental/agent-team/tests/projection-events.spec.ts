@@ -8,6 +8,7 @@ import { teamProjectionDefinition, teamProjectionView } from '../src/projection.
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import { TeamId, TeamMessageId, TeamTaskId } from '../src/types.ts'
 import type { TeamMemberLegacySnapshot, TeamMemberSnapshot, TeamMessageSnapshot, TeamTaskSnapshot } from '../src/types.ts'
+import type { TeamMemberExecutionControl } from '../src/member-execution.ts'
 
 const ROOT = SessionId('team-root')
 const TEAM = TeamId(ROOT)
@@ -89,7 +90,129 @@ function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnaps
   }
 }
 
+/** Real held-prefix replay shared by malformed control, candidate and binding events. */
+function memberChangePrefix() {
+  const nextExecutionId = SessionId('member-generation-2')
+  const control: TeamMemberExecutionControl = { memberId: CHILD, executionId: CHILD, generation: 1,
+    ownerId: 'member-operations', operationId: 'renew-worker', leadExecutionId: ROOT, leadTerm: 1, held: true, nextExecutionId }
+  const prefix = [
+    event('team/mode', { version: 1, teamId: TEAM, mode: { kind: 'controlled', requiredTaskExtensionId: 'tasks',
+      permissionTableId: 'table', permissionRevision: 'revision' } }, SessionSeq(0)),
+    event('team/member/configured', { version: 3, teamId: TEAM, member: configuredMember() }, SessionSeq(1)),
+    event('team/member/configured', { version: 3, teamId: TEAM, member: configuredMember({ phase: 'active' }) }, SessionSeq(2)),
+  ]
+  const hold = event('team/member/control', { version: 1, teamId: TEAM, control,
+    record: { recordId: 'hold-worker', dataJson: '{}' } }, SessionSeq(3))
+  return { control, prefix, hold, held: project(ROOT, [...prefix, hold]) }
+}
+
 describe('Agent Teams projection events', () => {
+  it('refuses Profile application while a member operation holds its execution', () => {
+    const { held } = memberChangePrefix()
+    const next = teamProjectionDefinition.apply(held, event('team/composition', { version: 1, teamId: TEAM,
+      transition: { kind: 'begin', applicationId: 'profile-conflict', profileId: 'profile', profileVersion: 1,
+        targetJson: '{}', retiringMemberIds: [], previousPhase: 'dynamic' } }, SessionSeq(4)))
+    expect(next.failure).toMatch(/member execution changes/)
+    expect(next.memberControls).toBe(held.memberControls)
+    expect(next.composition).toBeUndefined()
+  })
+
+  it('rejects binding audit ownership, duplicate record ids and invalid JSON without applying the execution', () => {
+    const { held, control } = memberChangePrefix()
+    for (const record of [{ ownerId: 'another-owner', recordId: 'commit-worker', dataJson: '{}' },
+      { ownerId: control.ownerId, recordId: 'hold-worker', dataJson: '{}' },
+      { ownerId: control.ownerId, recordId: 'commit-worker', dataJson: '{' }]) {
+      const next = teamProjectionDefinition.apply(held, event('team/member/execution', { version: 1, teamId: TEAM,
+        operationId: control.operationId, previousGeneration: 1,
+        binding: { memberId: CHILD, executionId: control.nextExecutionId!, generation: 2 }, record }, SessionSeq(4)))
+      expect(next.failure).toMatch(/audit/)
+      expect(next.memberExecutions).toBeUndefined()
+      expect(next.extensionRecords).toBe(held.extensionRecords)
+    }
+  })
+
+  it('requires unique control records, valid JSON and the matching completed source for a Profile slot effect', () => {
+    const { held, hold, control } = memberChangePrefix()
+    expect(teamProjectionDefinition.apply(held, { ...hold, seq: SessionSeq(4) }).failure).toMatch(/already exists/)
+    const malformed = event('team/member/control', { version: 1, teamId: TEAM, control: { ...control, held: false },
+      record: { recordId: 'bad-control-json', dataJson: '{' } }, SessionSeq(4))
+    expect(teamProjectionDefinition.apply(held, malformed).failure).toMatch(/not JSON/)
+    const slotTransfer = { profileId: 'profile', profileVersion: 1, appliedTargetFingerprint: 'a'.repeat(64),
+      slotId: 'research', fromMemberId: CHILD, toMemberId: SessionId('slot-target'), previousSlots: [] }
+    for (const data of [{ control, slotTransfer }, { control: { ...control, held: false },
+      slotTransfer: { ...slotTransfer, fromMemberId: SessionId('different-source') } }]) {
+      const next = teamProjectionDefinition.apply(held, event('team/member/control', { version: 1, teamId: TEAM, ...data,
+        record: { recordId: 'invalid-slot-finish', dataJson: '{}' } }, SessionSeq(4)))
+      expect(next.failure).toMatch(/source member operation to finish/)
+      expect(next.memberControls).toBe(held.memberControls)
+    }
+  })
+
+  it('rejects stale candidate swaps and refuses to retarget an already committed execution generation', () => {
+    const { held, control, prefix } = memberChangePrefix()
+    const nextControl = { ...control, nextExecutionId: SessionId('member-generation-2-retry') }
+    const candidate = event('team/member/candidate', { version: 1, teamId: TEAM,
+      previousExecutionId: control.nextExecutionId!, control: nextControl,
+      record: { recordId: 'candidate-retry', dataJson: '{}' } }, SessionSeq(4))
+    expect(teamProjectionDefinition.apply(project(ROOT, prefix), candidate).failure).toMatch(/held source/)
+    for (const changed of [{ ...nextControl, held: false }, { ...nextControl, operationId: 'other-operation' },
+      { ...nextControl, memberId: SessionId('unknown-member') }, { ...nextControl, ownerId: 'other-owner' },
+      { ...nextControl, executionId: SessionId('wrong-source') }, { ...nextControl, generation: 2 },
+      { ...nextControl, leadExecutionId: SessionId('other-lead') }, { ...nextControl, leadTerm: 2 },
+      { ...nextControl, nextExecutionId: control.nextExecutionId! }]) {
+      const next = teamProjectionDefinition.apply(held, { ...candidate, data: { ...candidate.data, control: changed } })
+      expect(next.failure).toMatch(/held source/)
+      expect(next.memberCandidates).toBe(held.memberCandidates)
+    }
+    const { nextExecutionId: _candidate, ...noCandidate } = nextControl
+    expect(teamProjectionDefinition.apply(held, { ...candidate, data: { ...candidate.data, control: noCandidate } }).failure)
+      .toMatch(/held source/)
+    expect(teamProjectionDefinition.apply(held, { ...candidate, data: { ...candidate.data,
+      previousExecutionId: SessionId('stale-candidate') } }).failure).toMatch(/held source/)
+    const committed = teamProjectionDefinition.apply(held, event('team/member/execution', { version: 1, teamId: TEAM,
+      operationId: control.operationId, previousGeneration: 1,
+      binding: { memberId: CHILD, executionId: control.nextExecutionId!, generation: 2 } }, SessionSeq(4)))
+    expect(committed.failure).toBeUndefined()
+    expect(teamProjectionDefinition.apply(committed, { ...candidate, seq: SessionSeq(5) }).failure).toMatch(/held source/)
+  })
+
+  it('preserves the original reservation when candidate audit ids or JSON are invalid', () => {
+    const { held, control } = memberChangePrefix()
+    for (const record of [{ recordId: 'hold-worker', dataJson: '{}' }, { recordId: 'bad-candidate-json', dataJson: '{' }]) {
+      const next = teamProjectionDefinition.apply(held, event('team/member/candidate', { version: 1, teamId: TEAM,
+        previousExecutionId: control.nextExecutionId!, control: { ...control, nextExecutionId: SessionId('next-candidate') },
+        record }, SessionSeq(4)))
+      expect(next.failure).toMatch(/record already exists|not JSON/)
+      expect(next.memberControls).toBe(held.memberControls)
+      expect(next.memberCandidates).toBe(held.memberCandidates)
+      expect(next.extensionRecords).toBe(held.extensionRecords)
+    }
+  })
+
+  it('accepts member receipts only for a known execution and unacknowledged target without another terminal outcome', () => {
+    const { prefix } = memberChangePrefix()
+    const queued = event('team/message/queued', { version: 2, teamId: TEAM, message: message() }, SessionSeq(3))
+    const base = project(ROOT, [...prefix, queued])
+    const received = event('team/message/member-delivered', { version: 1, teamId: TEAM, messageId: message().id,
+      targetId: CHILD, executionId: CHILD, generation: 1 }, SessionSeq(4))
+    const changes = [{ ...received.data, messageId: TeamMessageId('not-queued') },
+      { ...received.data, targetId: SessionId('wrong-target') }, { ...received.data, executionId: SessionId('unknown-execution') },
+      { ...received.data, generation: 2 }]
+    for (const data of changes) {
+      const next = teamProjectionDefinition.apply(base, { ...received, data })
+      expect(next.failure).toMatch(/unacknowledged message/)
+      expect(next.delivered).toBe(base.delivered)
+    }
+    const confirmed = teamProjectionDefinition.apply(base, received)
+    expect(confirmed.failure).toBeUndefined()
+    expect(teamProjectionDefinition.apply(confirmed, { ...received, seq: SessionSeq(5) }).failure).toMatch(/unacknowledged message/)
+    const cancelled = teamProjectionDefinition.apply(base, event('team/message/cancelled', { version: 3, teamId: TEAM,
+      targetId: CHILD, messageIds: [message().id], reason: 'work withdrawn' }, SessionSeq(4)))
+    expect(teamProjectionDefinition.apply(cancelled, { ...received, seq: SessionSeq(5) }).failure).toMatch(/unacknowledged message/)
+    const official = project(ROOT, [...prefix.slice(1), queued])
+    expect(teamProjectionDefinition.apply(official, received).failure).toMatch(/unacknowledged message/)
+  })
+
   it('keeps controlled mode first and rejects conversion after Team facts exist', () => {
     const mode = event('team/mode', { version: 1, teamId: TEAM, mode: { kind: 'controlled',
       requiredTaskExtensionId: 'writer', permissionTableId: 'table', permissionRevision: 'rev' } }, SessionSeq(1))

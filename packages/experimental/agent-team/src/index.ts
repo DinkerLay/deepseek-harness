@@ -19,6 +19,10 @@ import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
 import { TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
+import { currentMemberExecution, memberExecutionOwner } from './member-execution.ts'
+import type { TeamMemberExecution } from './member-execution.ts'
+import { TeamMemberExecutions } from './member-runtime.ts'
+import type { TeamMemberExecutionProvider, TeamMemberExecutionHandle } from './member-runtime.ts'
 import { TeamTaskBoard } from './task-board.ts'
 import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extension.ts'
 import { TeamId, TeamTaskId } from './types.ts'
@@ -42,6 +46,10 @@ import type {
 
 export type * from './types.ts'
 export type { TeamMembership } from './roster.ts'
+export type { TeamMemberExecution } from './member-execution.ts'
+export type { TeamMemberSlotTransfer } from './member-slots.ts'
+export type { TeamMemberExecutionHandle, TeamMemberExecutionProvider, TeamMemberExecutionSnapshot,
+  HoldTeamMemberExecution, TeamMemberMaterial, TeamMemberBlockerReader } from './member-runtime.ts'
 export type { TeamLeadExecutionIdentity } from './lead-execution.ts'
 export type { TeamLeadBinding, TeamLeadSeat, TeamLeadCommitPlan } from './lead-seat.ts'
 export type { TeamLeadCoordination, TeamLeadTransition, TeamLeadCoordinationPhase } from './lead-coordination.ts'
@@ -117,6 +125,7 @@ export class TeamService extends Service {
   private readonly tasks: TeamTaskBoard
   private readonly leadExecutions: TeamLeadExecutions
   private readonly leadCoordinators: TeamLeadCoordinators
+  private readonly memberExecutions: TeamMemberExecutions
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -152,7 +161,7 @@ export class TeamService extends Service {
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
     this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) },
-      this.config.controlledMode !== undefined)
+      this.config.controlledMode !== undefined, (root, memberId) => this.memberExecutions.admitted(root, memberId))
     this.leadExecutions = new TeamLeadExecutions(ctx, this.journal, this.config.controlledMode)
     this.roster = new TeamRoster(
       ctx, this.journal, this.lifecycle, this.config.maxMembers, this.config.maxActiveMembers,
@@ -174,6 +183,7 @@ export class TeamService extends Service {
       (anchor, id, signal) => this.leadExecutions.resolveSource(anchor, id, signal),
       anchor => this.leadExecutions.isReady(anchor),
       anchor => this.leadExecutions.isInputBound(anchor),
+      (anchor, memberId) => this.memberExecutions.admitted(anchor, memberId),
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
@@ -186,15 +196,19 @@ export class TeamService extends Service {
         })
       },
       agent => this.leadContext(agent).anchor,
+      (anchor, memberId) => this.memberExecutions.admitted(anchor, memberId),
     )
     this.leadCoordinators = new TeamLeadCoordinators(ctx, this.journal, this.leadExecutions, this.tasks, this.config)
+    this.memberExecutions = new TeamMemberExecutions(ctx, this.journal,
+      agent => this.roster.membership(agent), this.config.maxTaskExtensionBytes, agent => this.leadContext(agent).anchor,
+      anchor => this.compositionSnapshot(anchor))
 
     ctx.effect(() => ctx.subagents.registerSettlementNoticePolicy(async (facts) => {
       const root = ctx.agents.get(facts.parentSessionId)
       if (root === undefined) return undefined
       const state = this.journal.state(root)
       const member = state.mode?.kind === 'controlled'
-        ? state.members.find(candidate => candidate.id === facts.childSessionId) : undefined
+        ? memberExecutionOwner(state, facts.childSessionId)?.member : undefined
       if (member === undefined) return undefined
       const taskIds = await this.tasks.unsubmittedTaskIds(root, facts)
       const notice = { action: 'send' as const, subject: `Teammate ${member.name}`,
@@ -209,7 +223,7 @@ export class TeamService extends Service {
       if (root === undefined) return undefined
       const state = this.journal.state(root)
       const member = state.mode?.kind === 'controlled'
-        ? state.members.find(candidate => candidate.id === facts.childSessionId) : undefined
+        ? memberExecutionOwner(state, facts.childSessionId)?.member : undefined
       if (member === undefined) return undefined
       return { action: 'send', subject: `Teammate ${member.name}` }
     }), 'agentTeams.settlementNoticePolicy()')
@@ -252,6 +266,35 @@ export class TeamService extends Service {
    */
   membership(agent: Agent): TeamMembership {
     return this.roster.membership(agent)
+  }
+
+  /** Resolve a stable member address without loading or waking its execution.
+   * @param agent - exact live Team reader, including its dormant anchor.
+   * @param memberId - immutable roster address.
+   * @returns detached current binding, or undefined for an unknown member.
+   */
+  memberExecution(agent: Agent, memberId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined {
+    const state = this.journal.state(this.leadContext(agent).anchor)
+    const member = state.members.find(candidate => candidate.id === memberId)
+    return member === undefined ? undefined : currentMemberExecution(state, member)
+  }
+
+  /** Resolve a recorded teammate execution without conferring current write authority.
+   * @param agent - exact live Team reader, including its dormant anchor.
+   * @param executionId - actual current or historical Session identity.
+   * @returns detached recorded binding, or undefined for a foreign execution.
+   */
+  memberExecutionBySession(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined {
+    const state = this.journal.state(this.leadContext(agent).anchor)
+    return memberExecutionOwner(state, executionId)?.binding
+  }
+
+  /** Install the optional Host owner of teammate execution replacement and input custody.
+   * @param provider - product-owned namespace and quiet anchor restoration.
+   * @returns disposable native admission and binding operations; no model tool is added.
+   */
+  installMemberExecutions(provider: TeamMemberExecutionProvider): TeamMemberExecutionHandle {
+    return this.memberExecutions.install(provider)
   }
 
   /** Install one authenticated Host owner of ordinary Lead execution preparation.
@@ -365,6 +408,9 @@ export class TeamService extends Service {
       if (transition.kind === 'begin' && leadCoordinationActive(state.leadCoordination)) {
         throw new TeamError('Profile application conflicts with Lead coordination', 'TEAM_COMPOSITION_APPLYING')
       }
+      if (transition.kind === 'begin' && state.memberControls?.some(control => control.held)) {
+        throw new TeamError('finish or stop member execution changes before applying a Profile', 'TEAM_MEMBER_HELD')
+      }
       const next = applyCompositionTransition(state.composition, transition, state.members)
       await this.journal.appendAndFlush(root, 'team/composition', {
         version: 1, teamId: membership.id, transition,
@@ -424,10 +470,11 @@ export class TeamService extends Service {
    * @param caller - exact live Lead Agent.
    * @param targetName - immutable teammate name.
    * @param applicationId - matching in-progress user application, absent for an ordinary dynamic Team.
+   * @param memberOperationId - the registered Host operation holding this member, absent for ordinary retirement.
    * @returns the retired roster row.
    */
-  async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView> {
-    return await this.roster.retire(caller, targetName, applicationId)
+  async retireTeammate(caller: Agent, targetName: string, applicationId?: string, memberOperationId?: string): Promise<TeamMemberView> {
+    return await this.roster.retire(caller, targetName, applicationId, memberOperationId)
   }
 
   /**
@@ -445,10 +492,12 @@ export class TeamService extends Service {
    * @param caller - exact live Lead Agent.
    * @param targetName - immutable teammate name.
    * @param reason - durable explanation for cancellation.
+   * @param expectedIds - exact previewed pending set; retries confirm the same cancelled identities without touching later mail.
    * @returns ids of messages cancelled by this call.
    */
-  async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]> {
-    return await this.mailbox.cancelPending(caller, targetName, reason)
+  async cancelPendingMessages(caller: Agent, targetName: string, reason: string,
+    expectedIds?: readonly TeamMessageId[]): Promise<readonly TeamMessageId[]> {
+    return await this.mailbox.cancelPending(caller, targetName, reason, expectedIds)
   }
 
   /**

@@ -60,6 +60,8 @@ interface AgentHandle {
 
 一个 `InputControllerId` 标识唯一登记的 `AgentInputController`；它的接收、启动、领取与准备回调不授予工具权限。拥有者获得 `InputControllerHandle`，用于绑定、不唤醒的预投递、接管和释放；释放注册时关闭接收并等待已接受操作结束。`ControlledInputDriver` 提供具体队列修改及唤醒回调。[Agent 包](../../packages/core/agent/README.zh.md#control-input-before-it-becomes-executable)说明持久失败、重试身份与普通路径行为。
 
+`StoredInputCustodySource` 是冻结的头、事件序列及继承前缀切点，供独占 writer 下同步校验。`StoredInputCustodySnapshot` 增加输入审计和实际待处理队列事实。`StoredInputCustody` 提供读取、待处理捕获、准确释放和关闭，不暴露 Agent、Session 修改器或唤醒函数。`AgentFactory.prepareStoredInput` 可选地为未发布的原 Session 提供 `StoredInputDriver`，只准备持久 inbox，不挂载作用域组合。缺少支持时拒绝操作，不恢复 Preset，也不猜测队列意图。
+
 `Agent` 是每个插件（UI、钩子、orchestrator）面向编程的 surface；`ctx.agents.get(id)` 返回它，[发起者作用域](#initiating-agent)携带它。具体实现为 dsh-agent-loop 包内部细节；循环外没有任何组件依赖它。统一的 `send` 方法直接暴露 target 与 wakeup 路由；`followup`、`steer` 与 `inject` 是固定预设的别名方法。
 
 源码：[`packages/core/agent/src/types.ts`](../../packages/core/agent/src/types.ts)
@@ -468,6 +470,12 @@ Source: [`packages/core/agent-default-model/src/index.ts`](../../packages/core/a
 Concrete agent factory and driver service.
 
 ```ts cordis-catalog
+/** Provide the existing inbox algorithm without creating or composing an Agent.
+ * @param session - exclusively owned detached source.
+ * @returns only pending reads and non-waking custody removal.
+ */
+prepareStoredInput(session: Session): StoredInputDriver
+
 /**
  * Create an agent and session under one caller-supplied identity, owned by
  * the accessing fiber. Constructor-driven config calls mint a fresh combined
@@ -497,7 +505,7 @@ async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<Agent
 async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
 ```
 
-Types: [SessionHeader](persistence.zh.md)
+Types: [Session](session.zh.md) · [SessionHeader](persistence.zh.md)
 
 Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop/src/index.ts)
 

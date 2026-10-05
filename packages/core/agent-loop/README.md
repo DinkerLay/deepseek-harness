@@ -74,6 +74,8 @@ Every inbox mutation commits one normalized `agent/inbox/spliced` event. The pro
 
 The optional [input controller](../agent/README.md#control-input-before-it-becomes-executable) prepares bound Sessions before setup, checks admission before a turn starts and before inbox claim, and waits for durable receipt before waking. Unloading the agent factory cancels configured startup preparation before publication without waiting for its external preparation work to finish. Held input never enters the executable inbox. Provider-owned capture removes input without claiming or cancelling it; unbound Sessions retain the original driver path.
 
+The factory can also prepare only the stored inbox of an exclusively owned, unpublished Session. This uses the same projection and held-input removal as the live driver, but supplies no Agent dispatch or wake callback and mounts no Preset. The input controller owns writer confirmation and source release; this driver only identifies and removes actual pending occurrences.
+
 Each step sends the session's derived history — with the latest non-empty `system/message` node as the effective prompt, or no system messages when the rendered prompt is empty — and its visible tool schemas; the model's tool calls run through the guarded tool pipeline and every accepted fact is appended to the session log before the next step derives from it. Parallel-safe calls may overlap up to `maxParallelToolCalls`; exclusive calls run alone as ordering barriers. Cancellation is cooperative: `agent.cancel()` aborts the current activity and, unless `keepInbox` is set, clears pending work; a cancelled stream finalizes the text already delivered to the user.
 
 -----

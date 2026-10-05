@@ -8,7 +8,11 @@
 
 可选的稳定 Lead 席位用 `TeamLeadBinding` 保存执行 id、连续任期、Preset id 和声明修订。`TeamLeadSeat` 也表示第一任锚点，其 Preset 字段可能缺席。`LeadExecutionProvider` 准备锚点并提供当前就绪判断；拥有者获得 `LeadExecutionHandle`，用于创建普通候选、按准确修订冷准备，以及不唤醒的输入保留。此能力本身不实现产品交接流程。[包实现说明](../../packages/experimental/agent-team/README.zh.md#understand-the-implementation)负责身份及生命周期行为。
 
-`TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的 Session id 始终是持久身份，而 `name` 是不可变的模型／UI 标签。
+`TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 最初的 Session id 始终是持久成员身份，而 `name` 是不可变的模型／UI 标签。`TeamMemberExecution` 将此地址与当前执行 id、连续代次分开，不改写历史作者。
+
+可选的 `TeamMemberExecutionProvider` 提供不唤醒的锚点恢复和有界参考资料。其 `TeamMemberExecutionHandle` 限制单个成员的工作准入、保存拥有者的进度，并确认尚未使用的候选执行。原生提交和解除限制先通过接续服务占住旧执行，再进行串行状态核对；只读阻塞查询回调不得递归占用同一执行。注册拥有者也能在成员尚未存在时记录组队意图。这些记录均使用原生 Team 日志；显式槽位转移只更新当前 Profile 关联，不改写最初应用目标。接续资料的来源标记不授予权限。
+
+休眠来源使用独占的存储输入保管，不挂载 Preset。`TeamMemberBlockerReader` 接收实际执行 id，并在这条路径上接收独立存储快照。不能用没有活着的 Agent 推断工作已经结清。已登记来源丢失、外部效果未确定或写盘确认失败均阻止解除准入；正常接续恢复仍保留 Preset 校验。
 
 ```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
@@ -211,6 +215,10 @@ interface TeamMemberProjection {
   readonly error?: string
   /** Controlled-only state derived from durable input delivery receipts. */
   readonly executionStarted?: boolean
+  /** Current execution after renewal; historical member id and authors are unchanged. */
+  readonly execution?: TeamMemberExecution
+  /** The current member execution is held by an unfinished Host operation. */
+  readonly executionHeld?: boolean
 }
 ```
 
@@ -273,6 +281,26 @@ Agent Teams service backed by the exact live Lead Session log.
  * @returns its root, Team identity, role, and model-facing name.
  */
 membership(agent: Agent): TeamMembership
+
+/** Resolve a stable member address without loading or waking its execution.
+ * @param agent - exact live Team reader, including its dormant anchor.
+ * @param memberId - immutable roster address.
+ * @returns detached current binding, or undefined for an unknown member.
+ */
+memberExecution(agent: Agent, memberId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined
+
+/** Resolve a recorded teammate execution without conferring current write authority.
+ * @param agent - exact live Team reader, including its dormant anchor.
+ * @param executionId - actual current or historical Session identity.
+ * @returns detached recorded binding, or undefined for a foreign execution.
+ */
+memberExecutionBySession(agent: Agent, executionId: import('@deepseek-ai/dsh-session').SessionId): TeamMemberExecution | undefined
+
+/** Install the optional Host owner of teammate execution replacement and input custody.
+ * @param provider - product-owned namespace and quiet anchor restoration.
+ * @returns disposable native admission and binding operations; no model tool is added.
+ */
+installMemberExecutions(provider: TeamMemberExecutionProvider): TeamMemberExecutionHandle
 
 /** Install one authenticated Host owner of ordinary Lead execution preparation.
  * @param provider - stable anchor activation, without driving its model.
@@ -372,9 +400,10 @@ async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<Spawn
  * @param caller - exact live Lead Agent.
  * @param targetName - immutable teammate name.
  * @param applicationId - matching in-progress user application, absent for an ordinary dynamic Team.
+ * @param memberOperationId - the registered Host operation holding this member, absent for ordinary retirement.
  * @returns the retired roster row.
  */
-async retireTeammate(caller: Agent, targetName: string, applicationId?: string): Promise<TeamMemberView>
+async retireTeammate(caller: Agent, targetName: string, applicationId?: string, memberOperationId?: string): Promise<TeamMemberView>
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.
@@ -389,9 +418,10 @@ async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendT
  * @param caller - exact live Lead Agent.
  * @param targetName - immutable teammate name.
  * @param reason - durable explanation for cancellation.
+ * @param expectedIds - exact previewed pending set; retries confirm the same cancelled identities without touching later mail.
  * @returns ids of messages cancelled by this call.
  */
-async cancelPendingMessages(caller: Agent, targetName: string, reason: string): Promise<readonly TeamMessageId[]>
+async cancelPendingMessages(caller: Agent, targetName: string, reason: string, expectedIds?: readonly TeamMessageId[]): Promise<readonly TeamMessageId[]>
 
 /**
  * Create one unowned pending task in the Team Lead log.

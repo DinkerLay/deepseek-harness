@@ -10,7 +10,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   IconChevronDownOutlineRegular, IconCloseOutlineRegular,
   IconUserOutlineRegular, IconUsersOutlineRegular, StateDot, Tag, Tooltip,
-  useAnchoredPosition, useDismissOnOutsidePointer, type StateDotState,
+  isBehindModal, useAnchoredPosition, useDismissOnOutsidePointer, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -26,12 +26,12 @@ export interface TeamActionInjected {
 }
 
 /** Durable lifecycle overlaid with the member Session's live turn activity. */
-type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiring' | 'retired'
+type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed' | 'retiring' | 'retired' | 'changing'
 
 /** Full props of the Team conversation-header action. */
 export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
-  & PropsRenderSlots<'agent-team.panel.member.meta' | 'agent-team.panel.task.action'
+  & PropsRenderSlots<'agent-team.panel.member.meta' | 'agent-team.panel.member.action' | 'agent-team.panel.task.action'
     | 'agent-team.panel.tasks.action' | 'agent-team.panel.tasks.graph'
     | 'agent-team.panel.tasks.content' | 'agent-team.panel.header.actions'>
 
@@ -53,6 +53,7 @@ function memberStatusKey(status: MemberStatus): TeamKey {
     case 'failed': return 'memberStatus.failed'
     case 'retiring': return 'memberStatus.retiring'
     case 'retired': return 'memberStatus.retired'
+    case 'changing': return 'memberStatus.changing'
   }
 }
 
@@ -60,6 +61,7 @@ function memberDotState(status: Exclude<MemberStatus, 'inactive'>): StateDotStat
   switch (status) {
     case 'running':
     case 'provisioning':
+    case 'changing':
     case 'retiring': return 'ongoing'
     case 'failed': return 'error'
     case 'retired': return 'idle'
@@ -90,64 +92,68 @@ function TeamMemberRow({
   member, memberCount, leadSessionId, leadBinding, sessionId, useSessions, useSessionStatus, openTeammate, renderSlot, onError, t,
 }: TeamMemberRowProps) {
   const seat = member.role === 'lead' ? leadBinding : undefined
-  // Roster identity and navigation stay anchored; Lead runtime reads follow the native seat.
-  const executionId = seat?.executionId ?? member.id
+  // Stable roster identity and current execution are different navigation targets.
+  const executionId = seat?.executionId ?? member.execution?.executionId ?? member.id
   const model = useSessions(state => state.projectionsBySession[executionId]?.values.modelSelection?.next?.model)
   const preset = useSessions(state => state.byId[executionId]?.projectionValues?.agentPreset)
   const leadPreset = useSessions(state => state.byId[leadBinding?.executionId ?? leadSessionId]?.projectionValues?.agentPreset)
   const running = useSessionStatus(state => state.get(executionId)?.running)
   const summaryRunning = useSessions(state => state.byId[executionId]?.running)
-  const status: MemberStatus = member.phase === 'active'
+  const status: MemberStatus = member.executionHeld === true ? 'changing' : member.phase === 'active'
     ? (running ?? summaryRunning) === true ? 'running' : 'inactive'
     : member.phase
   const isCurrent = executionId === sessionId
-  const unstarted = member.phase === 'active' && member.executionStarted === false
+  const unstarted = status !== 'changing' && member.phase === 'active' && member.executionStarted === false
   const highlightCurrent = isCurrent && memberCount > 1
   const inert = isCurrent || unstarted || status === 'failed' || status === 'provisioning'
-    || status === 'retiring' || status === 'retired'
+    || status === 'retiring' || status === 'retired' || status === 'changing'
   const presetId = seat?.presetId ?? (typeof preset === 'string' ? preset
     : member.preset?.id ?? leadBinding?.presetId ?? (typeof leadPreset === 'string' ? leadPreset : undefined))
   const presetMeta = renderSlot('agent-team.panel.member.meta', { member,
     ...presetId === undefined ? {} : { presetId } })
 
   return (
-    <Tooltip label={t('open')} side="bottom" gap={4} disabled={inert}>
-      <button
-        type="button"
-        className={highlightCurrent ? `${css.member} ${css.memberCurrent}` : css.member}
-        disabled={inert}
-        onClick={() => {
-          try {
-            openTeammate(sessionId, member.id)
-          } catch (reason) {
-            onError(String(reason))
-          }
-        }}
-      >
-        <span className={css.memberDot}>
-          {status === 'inactive'
-            ? <IconUserOutlineRegular size={14} className={css.inactiveIcon} />
-            : <StateDot state={memberDotState(status)} />}
-        </span>
-        <span className={css.memberText}>
-          <span className={css.memberName}>
-            <span className={css.memberNameText}>{member.name}</span>
-            {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
+    <div className={css.memberRow}>
+      <Tooltip label={t('open')} side="bottom" gap={4} disabled={inert}>
+        <button
+          type="button"
+          className={highlightCurrent ? `${css.member} ${css.memberCurrent}` : css.member}
+          disabled={inert}
+          onClick={() => {
+            try {
+              openTeammate(sessionId, member.role === 'lead' ? member.id : executionId)
+            } catch (reason) {
+              onError(String(reason))
+            }
+          }}
+        >
+          <span className={css.memberDot}>
+            {status === 'inactive'
+              ? <IconUserOutlineRegular size={14} className={css.inactiveIcon} />
+              : <StateDot state={memberDotState(status)} />}
           </span>
-          <small>
-            {t(unstarted ? 'memberStatus.unstarted' : memberStatusKey(status))}
-            {(presetMeta === null || presetMeta === undefined) && presetId !== undefined && (
-              <span className={css.memberModel}>{` · ${t('preset')}: ${presetId}`}</span>
-            )}
-            {model !== undefined && (
-              <span className={css.memberModel}>{` · ${t('model')}: ${model}`}</span>
-            )}
-          </small>
-          {presetMeta}
-          {member.error !== undefined && <small className={css.diagnostic}>{member.error}</small>}
-        </span>
-      </button>
-    </Tooltip>
+          <span className={css.memberText}>
+            <span className={css.memberName}>
+              <span className={css.memberNameText}>{member.name}</span>
+              {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
+              {member.execution !== undefined && <Tag>{t('generation')} {member.execution.generation}</Tag>}
+            </span>
+            <small>
+              {t(unstarted ? 'memberStatus.unstarted' : memberStatusKey(status))}
+              {(presetMeta === null || presetMeta === undefined) && presetId !== undefined && (
+                <span className={css.memberModel}>{` · ${t('preset')}: ${presetId}`}</span>
+              )}
+              {model !== undefined && (
+                <span className={css.memberModel}>{` · ${t('model')}: ${model}`}</span>
+              )}
+            </small>
+            {presetMeta}
+            {member.error !== undefined && <small className={css.diagnostic}>{member.error}</small>}
+          </span>
+        </button>
+      </Tooltip>
+      {renderSlot('agent-team.panel.member.action', { member, leadSessionId })}
+    </div>
   )
 }
 
@@ -276,19 +282,21 @@ export function TeamAction({
 
   const scheduleHoverClose = (): void => {
     cancelHoverChange()
-    if (pinnedRef.current) return
+    if (pinnedRef.current || isBehindModal(rootRef.current)) return
     hoverTimer.current = setTimeout(() => {
       hoverTimer.current = undefined
-      changeOpen(false)
+      if (!isBehindModal(rootRef.current)) changeOpen(false)
     }, 120)
   }
 
-  useDismissOnOutsidePointer(rootRef, open, changeOpen, panelRef)
+  useDismissOnOutsidePointer(rootRef, open, (next) => {
+    if (!isBehindModal(rootRef.current)) changeOpen(next)
+  }, panelRef)
 
   useEffect(() => {
     if (!open) return
     const dismiss = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || isBehindModal(rootRef.current)) return
       event.preventDefault()
       cancelHoverChange()
       pinnedRef.current = false

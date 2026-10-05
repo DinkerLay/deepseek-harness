@@ -27,6 +27,12 @@
       "path": "../../session/session-projection"
     },
     {
+      "path": "../../session/session-persistence"
+    },
+    {
+      "path": "../../util/values"
+    },
+    {
       "path": "../../core/system-prompt"
     },
     {

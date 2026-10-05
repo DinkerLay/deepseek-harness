@@ -133,7 +133,13 @@ persisted Session
        -> zero or more owned child Activations
 ```
 
-`SubagentRuntime.startContinuable()` 会预留稳定的子 agent id，对版本化的 `subagent/descriptor` payload 建立快照，向指定提供方索取其分离的 `ContinuableCreateSpec`，通过私有的 activation-owner 作用域创建子 Agent，建立任何可继续父级的所有权，并提交初始提示词。当收件箱（inbox）准入产出消息 id 时，它以 `{ childId, messageId }` resolve——无需等待轮次开始，也无需等待消息进入会话日志。在该准入之前的任何失败都会以两个 id 都不返回的方式 reject，并 dispose（资源释放）任何已创建的 handle，回滚 Activation 与父级所有权。
+`SubagentRuntime.startContinuable()` 会预留稳定的子 agent id，对版本化的 `subagent/descriptor` payload 建立快照，向指定提供方索取其分离的 `ContinuableCreateSpec`，通过私有的 activation-owner 作用域创建子 Agent，建立任何可继续父级的所有权，并提交初始提示词。没有输入控制器时，它在收件箱准入后以 `{ childId, messageId }` resolve，早于模型轮次和日志插入。受控输入在子锁外等候持久保管，并额外返回 `inputLocation`；held 或 released 保管不代表已投递给模型。准入前失败会释放已创建的 handle，回滚 Activation 与父级所有权。
+
+`ContinuablePrepareSpec` 指定调用方预留的 child 与不含提示词的不可变创建输入。`prepareContinuable()` 确认 descriptor、固定 Preset 与父级 catalog，返回 `ContinuablePrepared`，不请求模型。同一身份重试会核对同一份创建输入。`withContinuableExecution()` 借用受限 child 执行 Host 维护，需要时安静恢复，并在子锁外等待空闲。尚未保管的可执行输入阻止临时释放；调用方必须先保管输入再重试。这些可选操作不选择 Team 成员，也不解释产品工作。
+
+`DormantContinuableScope` 则提供 Core 封闭的存储输入读取、捕获、释放及取消能力。包装层预留不驻留的 child 身份，排除正在激活或创建的对象，并在独占 writer 修复任何内容之前核对直接父级与 continuable descriptor。它从不挂载 Preset。丢失的存储来源与真正未创建的 child 分开处理，父 catalog 证据阻止把丢失日志当新身份。普通接续仍执行原来的 Preset 检查。
+
+回调的第二个参数是合并的取消 signal，即使 scope 缺席也会提供。已进入的回调结束后才释放输入保管与身份预留；取消不会让尚未退出回调的效果与新拥有者竞争。
 
 `SubagentRuntime.sendMessage()` 是唯一由模型编写消息的操作。它接收确切在线 sender 与目标 id，只允许直接 parent 或直接可继续 child，自行推导 sender 来源信息，并根据目标 child 的 Activation 驻留状态路由：
 
@@ -196,6 +202,8 @@ interface ContinuableStart {
   readonly childId: SessionId
   /** The accepted initial prompt's inbox message id. */
   readonly messageId: MessageId
+  /** Controlled-input custody receipt; held/released does not mean executable delivery. */
+  readonly inputLocation?: 'inbox' | 'held' | 'released'
 }
 ```
 
@@ -508,17 +516,52 @@ resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
 /**
  * Establish one durable continuable child and deliver its initial prompt.
  * Resolves when the child's inbox accepts that prompt, without waiting for the
- * turn to start or for the message to reach the Session log; any earlier
- * failure rejects with no ids and rolls back the child entirely.
+ * turn to start or for the message to reach the Session log. Controlled input
+ * instead confirms custody and reports its location; failed acknowledgement
+ * retains uncertain input for same-id recovery rather than discarding it.
  * @param spec - provider, delegation request, and caller cancellation.
- * @returns the durable child id and the accepted prompt's message id.
+ * @returns the child id, accepted message id, and optional controlled custody location.
  * @throws when continuation services are unavailable or materialization fails.
  */
 async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>
 
 /**
+ * Prepare a reserved child's durable composition without input or model work.
+ * Existing children must match the resolved immutable creation fields. Failure
+ * may leave an unconfirmed candidate; retry the same identity and specification.
+ * @param spec - reserved identity, parent, composition, and caller cancellation.
+ * @returns the child identity after child and parent catalog confirmation.
+ */
+async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared>
+
+/**
+ * Own a held continuable execution for Host maintenance without waking work.
+ * The input controller must forbid run and claim. A temporary cold execution
+ * is released only after its executable inbox is empty; unfinished custody
+ * leaves it resident and rejects with EXECUTION_PENDING_INPUT for takeover.
+ * @param parent - exact live direct parent authorizing maintenance.
+ * @param childId - durable continuable child whose descriptor owns recovery.
+ * @param signal - caller cancellation, forwarded to the owned maintenance callback.
+ * @param callback - operation using existing input-control capabilities on the exact Agent.
+ * @returns the callback result after safe release or live-execution handback.
+ */
+async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal, callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T>
+
+/** Maintain stored cold input without composing or waking an execution; ordinary recovery rules remain unchanged.
+ * @param parent - exact live direct parent whose durable lineage authorizes the source.
+ * @param childId - dormant continuation identity; never-created ids may return an undefined scope.
+ * @param input - registered Core input controller owning the stored custody.
+ * @param signal - cancellation forwarded through writer acquisition and callback work.
+ * @param callback - input maintenance over the exclusive stored capability; its second signal also covers an absent source.
+ *   Admitted work is awaited before writer/reservation release, even after cancellation, so it must honor that signal.
+ * @returns callback result after writer cleanup; close and confirmation failures reject.
+ */
+async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>
+
+/**
  * Deliver a stable host input once, creating or resuming its reserved child.
- * Completion confirms durable input receipt, not completion of model work.
+ * Completion confirms durable input receipt, not completion of model work;
+ * controlled held/released custody reports inputLocation without claiming delivery.
  * @param spec - creation inputs with a caller-reserved child id.
  * @param input - immutable host message with a retry-stable identity.
  * @returns the child and durably recorded input identities.
@@ -703,7 +746,7 @@ list(): string[]
 async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 ```
 
-Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageId](llm-streaming.zh.md) · [SessionId](core.zh.md) · [UserMessage](session.zh.md)
+Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [InputControllerHandle](core.zh.md) · [MessageId](llm-streaming.zh.md) · [SessionId](core.zh.md) · [UserMessage](session.zh.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
 
