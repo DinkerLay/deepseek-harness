@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -320,6 +320,57 @@ describe('LocalJobRegistry.start', () => {
 })
 
 describe('LocalJobRegistry reads and settlement', () => {
+  it('observes all owners without changing caller visibility, output consumption or event delivery', async () => {
+    const ctx = await harness(), pending: ReturnType<typeof producer>[] = []
+    onTestFinished(async () => {
+      for (const job of pending) job.settle({ status: 'killed' })
+      await ctx.fiber.dispose()
+    })
+    expect(ctx.jobs.listAll()).toEqual([])
+    const alice = await liveAgent(ctx, 'all-jobs-alice'), bob = await liveAgent(ctx, 'all-jobs-bob')
+    const first = producer({ owner: alice }), second = producer({ owner: bob }), unowned = producer()
+    pending.push(first, second, unowned)
+    const ids = [ctx.jobs.start(first.spec), ctx.jobs.start(second.spec), ctx.jobs.start(unowned.spec)]
+    first.job().append('unconsumed owner bytes')
+    const events = collect(ctx), beforeEvents = events.length
+    const views = ctx.jobs.listAll()
+    expect(views.map(job => job.id)).toEqual(ids)
+    expect(views.map(job => job.owner)).toEqual([alice.id, bob.id, undefined])
+    expect(ctx.jobs.list().map(job => job.id)).toEqual([ids[2]])
+    expect(ctx.jobs.list(alice.id).map(job => job.id)).toEqual([ids[0], ids[2]])
+    expect(ctx.jobs.list(bob.id).map(job => job.id)).toEqual([ids[1], ids[2]])
+    const next = ctx.jobs.listAll()
+    expect(next).not.toBe(views)
+    expect(next[0]).not.toBe(views[0])
+    expect(next[0]?.output).not.toBe(views[0]?.output)
+    expect(events).toHaveLength(beforeEvents)
+    const firstId = ids[0]
+    if (firstId === undefined) throw new Error('first actual job must be registered')
+    expect(ctx.jobs.read(firstId, alice.id).chunks.map(chunk => chunk.text)).toEqual(['unconsumed owner bytes'])
+    first.settle({ status: 'completed', result: 'unconsumed owner result' })
+    await ctx.jobs.wait(firstId, 1000, alice.id)
+    expect(ctx.jobs.listAll().find(job => job.id === firstId)?.status).toBe('completed')
+    expect(ctx.jobs.read(firstId, alice.id).result).toBe('unconsumed owner result')
+  })
+
+  it('observes a live owned job after public Agent unregistration until its actual source settles', async () => {
+    const ctx = await harness(), owner = stubAgent(ctx, 'detached-job-owner'), task = producer({ owner })
+    onTestFinished(async () => { task.settle({ status: 'killed' }); await ctx.fiber.dispose() })
+    const detach = await ctx.agents.register(owner), id = ctx.jobs.start(task.spec)
+    await detach()
+    expect(ctx.agents.get(owner.id)).toBeUndefined()
+    expect(ctx.agents.list()).toEqual([])
+    expect(ctx.jobs.list()).toEqual([])
+    expect(ctx.jobs.listAll()).toMatchObject([{ id, owner: owner.id, status: 'running' }])
+    expect(ctx.jobs.kill(id, owner.id, 'actual detached owner stop')).toBe('requested')
+    expect(ctx.jobs.listAll()).toMatchObject([{ id, owner: owner.id, status: 'stopping' }])
+    task.settle({ status: 'killed' })
+    await ctx.jobs.wait(id, 1000, owner.id)
+    expect(ctx.jobs.listAll()).toMatchObject([{ id, owner: owner.id, status: 'killed' }])
+    await disposeAgentScope(owner)
+    expect(ctx.jobs.listAll()).toEqual([])
+  })
+
   it('read consumes the ring from the model cursor and advances it; readAt never moves it', async () => {
     const ctx = await harness()
     const p = producer()

@@ -8354,7 +8354,7 @@ SHA-256: `0ab879d862527f6da3fcf9c48c0152ba410628b0460300a159676b27352cf70d`
 
 SHA-256: `b68f7b97125e2020e6fc5a63d4d24f77fcbd4a39d1f9ffe705d0fe3773e9d367`
 
-来源：[`packages/experimental/agent-team/src/member-runtime.ts:42`](../packages/experimental/agent-team/src/member-runtime.ts)
+来源：[`packages/experimental/agent-team/src/member-runtime.ts:45`](../packages/experimental/agent-team/src/member-runtime.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

@@ -56,6 +56,8 @@ The limit counts the exact owner's `running` and `stopping` records; all unowned
 
 Jobs belong to their owner and backend, not to the producer tool, so producer or controller reloads do not stop them. When an agent that owns jobs is disposed, its jobs are cancelled, their producers awaited, and their snapshots removed; service disposal does the same for every remaining job. A cancellation that throws during teardown force-fails the record and warns that the work may be orphaned, so teardown never deadlocks.
 
+Owner cleanup follows the Agent's scope lifetime. Removing only its Agent registry entry does not end a still-live job. `listAll()` reads the authoritative retained records across all owners, including such detached owners, without consuming output or changing job state; caller-scoped `list(caller?)` keeps its existing visibility.
+
 ### What can go wrong
 
 Starting work fails without a controller that serves the owner — loading `dsh-tool-jobs` attaches one, and `start()` otherwise refuses with a message naming it. A producer cancel that returns without settling `done` stays indistinguishable from a slow stop and can stall teardown while holding one capacity slot. Every record disappears when the harness process exits.

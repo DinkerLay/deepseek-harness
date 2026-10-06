@@ -1309,6 +1309,41 @@ export type Config = LocalConfig
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-fs-sandbox -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-git-resources -->
+<a id="deepseek-aidsh-git-resources"></a>
+
+## `@deepseek-ai/dsh-git-resources`
+
+- `inject`: `workspaceRegistry` · `storageDomain` · `subprocess`
+- `source`: [`packages/workspace/git-resources/src/index.ts:60`](../packages/workspace/git-resources/src/index.ts)
+
+```ts config-catalog
+/** Deployment bounds and the explicit Harness home, never a caller-selected arbitrary resource directory. */
+export interface Config {
+  /** Explicit Harness home containing the managed resource owner directory. */
+  home?: string
+  /** Local Git executable resolved lazily when an operation needs Git. */
+  gitExecutable?: string
+  /** Maximum elapsed time for one Git subprocess. */
+  timeoutMs?: number
+  /** Termination grace period after Git subprocess cancellation. */
+  graceMs?: number
+  /** Maximum captured bytes from a Git subprocess. */
+  maxOutputBytes?: number
+  /** Maximum files in one observed or preserved content selection. */
+  maxFiles?: number
+  /** Maximum bytes in one regular file, also bounded by subprocess output capacity. */
+  maxFileBytes?: number
+  /** Maximum total regular-file bytes in one observed or preserved selection. */
+  maxTotalBytes?: number
+  /** Maximum shutdown wait before retaining ownership for unfinished work. */
+  closeTimeoutMs?: number
+  /** Maximum UTF-8 bytes in the uninterpreted original consumer request JSON. */
+  maxConsumerRequestBytes?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-git-resources -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-goal -->
 <a id="deepseek-aidsh-goal"></a>
 
@@ -4346,6 +4381,23 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-workflow-ptc -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-workspace -->
+<a id="deepseek-aidsh-workspace"></a>
+
+## `@deepseek-ai/dsh-workspace`
+
+- `inject`: `storageDomain` · `sessionPersistence`
+- `source`: [`packages/workspace/workspace/src/index.ts:159`](../packages/workspace/workspace/src/index.ts)
+
+```ts config-catalog
+/** Choices for the registry's one-time historical Workspace grouping. */
+export interface Config {
+  /** Include child Session headers when creating initial groups; defaults to true. Existing records and header lookup are unchanged. */
+  readonly bootstrapChildSessions?: boolean | undefined
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-workspace -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-workspace-changes -->
 <a id="deepseek-aidsh-workspace-changes"></a>
 
@@ -4477,7 +4529,6 @@ export interface Config {
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
-| `@deepseek-ai/dsh-workspace` | `storageDomain` · `sessionPersistence` | [`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts) |
 <!-- END GENERATED config-catalog:no-config -->
 
 ## Seam 包（不可直接加载）
@@ -4566,6 +4617,7 @@ export interface Config {
 | `@deepseek-ai/dsh-typert-registry` | — | [`packages/typert/registry/src/index.ts`](../packages/typert/registry/src/index.ts) |
 | `@deepseek-ai/dsh-util-code-language` | — | [`packages/util/code-language/src/index.ts`](../packages/util/code-language/src/index.ts) |
 | `@deepseek-ai/dsh-util-crypto` | — | [`packages/util/crypto/src/index.ts`](../packages/util/crypto/src/index.ts) |
+| `@deepseek-ai/dsh-util-file-lease` | — | [`packages/util/file-lease/src/index.ts`](../packages/util/file-lease/src/index.ts) |
 | `@deepseek-ai/dsh-util-time` | — | [`packages/util/time/src/index.ts`](../packages/util/time/src/index.ts) |
 | `@deepseek-ai/dsh-util-values` | — | [`packages/util/values/src/index.ts`](../packages/util/values/src/index.ts) |
 | `@deepseek-ai/dsh-util-workspace-path` | — | [`packages/util/workspace-path/src/index.ts`](../packages/util/workspace-path/src/index.ts) |

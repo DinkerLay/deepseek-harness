@@ -25,6 +25,7 @@ import {
   SessionPersistenceNotFoundError,
 } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
+import { acquireFileLease, FileLeaseBusyError } from '@deepseek-ai/dsh-util-file-lease'
 import JsonlSessionPersistence from '../src/index.ts'
 import { LEASE_FILENAME, SessionWriteLease } from '../src/lease.ts'
 import type { JsonlSessionHandle } from '../src/storage.ts'
@@ -155,6 +156,15 @@ const EVENTS = [
 ] as const
 
 describe('cross-process write lock', () => {
+  it('uses the same kernel arbiter through the Session wrapper and generic public lease', async () => {
+    const dir = await freshRoot(), id = SessionId('shared-arbiter')
+    const session = await SessionWriteLease.acquire(dir, id)
+    try { await expect(acquireFileLease(join(dir, LEASE_FILENAME))).rejects.toBeInstanceOf(FileLeaseBusyError) }
+    finally { await session.release() }
+    const generic = await acquireFileLease(join(dir, LEASE_FILENAME))
+    try { await expect(SessionWriteLease.acquire(dir, id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError) }
+    finally { await generic.release() }
+  })
   it('excludes a second instance while the holder is live, and admits it after close', async () => {
     const root = await freshRoot()
     const first = await mount(root)

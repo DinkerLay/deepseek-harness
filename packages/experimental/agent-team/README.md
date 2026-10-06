@@ -29,7 +29,7 @@ Add this package to a composition when one agent should run a small team of name
 
 ### When to choose it
 
-Choose it when several agents must cooperate on one shared workspace and their roster, messages, and task state must survive crashes and restarts. Avoid it when teammates need separate working directories, when several processes must coordinate over one team, or when a task owner should be released automatically — none of those are supported. The team features need durable session storage to activate.
+Choose it when several agents must cooperate and their roster, messages, and task state must survive crashes and restarts. Members share the parent's directory by default; an installed Host execution owner may bind individual executions to existing directories. Avoid it when several processes must coordinate over one team or task owners should be released automatically. The team features need durable session storage to activate.
 
 ### Smallest working setup
 
@@ -173,6 +173,10 @@ A Host coordinator can prepare ordinary, unseeded Lead executions without making
 
 An optional member-execution owner can hold one controlled member, prepare a new continuation without a model request, and replace that member's current execution. The roster identity, name, Preset revision, group and historical authors remain unchanged. Mailbox receipts identify the receiving generation; an older receipt does not start the replacement. The owner stores its progress with native control or binding effects and must confirm physical quiescence before release. The native APIs do not interpret product replacement forms or manage ordinary tools. See [member runtime](src/member-runtime.ts), [identity projection](src/member-execution.ts) and [continuation preparation](../../subagent/subagent/README.md).
 
+The same owner may resolve an existing canonical directory for each exact execution or reserved future generation. Undefined deliberately leaves that execution unbound; unavailable resources reject rather than inherit another directory. Native preparation, input claim, identified delivery and execution commit check the immutable header cwd and the owner's synchronous resource-use assertion after asynchronous observation. Directory resolution runs outside the Team lock, and registration disposal aborts and drains its callbacks. A closed directory contribution rejects never-created queued work until a new owner explicitly replaces it. The resource service retains its own usage lease; native Team neither creates directories nor widens sandbox or Git metadata permissions.
+
+`withHeldExecution()` retains the exact existing member hold and actual quiet source while the Host confirms a resource handback. Its scope exposes only a detached read-only live, stored or verified-absent observation, an execution id, cancellation signal and synchronous validity check; it exposes no Agent or input mutators. The source occupation lasts through the callback, with caller and full hold identity rechecked before and after it. Cancellation drains an admitted callback before releasing that occupation. The scope expires on return, and this operation neither releases admission nor starts a model turn.
+
 An optional owned `resolveExecution(id, signal)` restores a recorded current recipient or historical source without running its model. The runtime shares concurrent resolution, cancels it when registration closes, and rechecks the exact live identity and full Preset binding. Owned queue and preload operations also carry that registration cancellation through persisted reads and transaction waits, and recheck it before late mutations or wakeup. Missing resolution, changed declarations, invalid identities and cancellation leave queued work or source custody intact with a diagnostic; no default model or Preset is selected.
 
 Unconfigured members retain the `team/member` version 2 record. A member with a Preset, group, or Profile slot uses `team/member/configured` version 3; its Preset identity and revision must match the child's continuable-Preset event on recovery. The projection accepts both records and rejects a change to an existing member's Preset binding, group, or slot id.
@@ -282,7 +286,7 @@ These limits describe what a team cannot do yet or what needs special operationa
 
 - **Whole-view broadcasts** — each roster or task change sends the complete roster and non-deleted task board, including descriptions, to every connected browser, even when it is viewing another Session.
 - **Experimental prototype with no stability promise** — the package is public, but its contracts can change freely while it incubates.
-- **One process and one shared checkout** — members share cwd and observe edits immediately; this package provides no worktree, remote member, merge, or filesystem lock.
+- **Process-local execution ownership** — members share cwd by default or use an existing Host-bound execution directory; this package creates no worktree and provides no remote member, merge, or filesystem lock.
 - **Advisory write scopes** — Bash, formatters, code generators, and direct external writers can bypass filesystem version checks; Leads must coordinate ownership and review the final diff.
 - **Flat immutable roster** — only the Lead creates direct teammates; there is no nested Team, rename, deletion, or name reuse.
 - **No automatic ownership release** — inactivity, interruption, process exit, and failed work do not release a task owner.

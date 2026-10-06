@@ -128,6 +128,129 @@ interface TeamMessageSource {
 
 `TeamContentAuthor` 为未改写的文字块记录实际执行 id 与其合法任期。当前发送者转派旧 Lead 的要求，不会成为该要求的作者。系统 framing、非文字块和引用资料的作者条目为空；产品先核对原 Task 指派记录，才把旧要求当作指令。`TeamLeadContext` 只读锚点、脱离原状态的席位、可选的在线执行和就绪状态，不授予操作权限，也不悄悄激活离线执行。
 
+## 成员执行目录与 held 来源
+
+已登记的执行提供方可将一个精确的原生成员代次解析为规范 Host 目录，并提供同步资源复核。未绑定执行仍继承父目录；已绑定资源不可用时拒绝。`withHeldExecution` 在拥有者确认资源交还期间保留既有 live 或独占 stored 来源，只读作用域随回调结束而失效。成员身份、准入和原输入队列仍由原生运行时拥有。
+
+```ts type-equiv
+/** An existing canonical Host directory and its bounded synchronous resource-use recheck. */
+interface TeamExecutionDirectory {
+  readonly cwd: string
+  readonly assertCurrent?: () => undefined
+}
+```
+
+```ts type-equiv
+/** Read-only access while the existing member hold retains its actual quiet source. */
+interface TeamHeldExecutionScope {
+  readonly executionId: SessionId
+  readonly source: 'live' | 'stored' | 'absent'
+  readonly signal: AbortSignal
+  /** @returns detached facts from this occupied source, or exclusively verified never-created absence. */
+  read(): StoredInputCustodySnapshot | undefined
+  /** Reject use after callback return, cancellation, changed control or current Lead authority. */
+  assertCurrent(): void
+}
+```
+
+```ts type-equiv
+/** Registered owner of controlled member execution changes, never a model identity. */
+interface TeamMemberExecutionProvider {
+  readonly id: string
+  /** Resolve the directory for an exact current, historical or reserved execution binding.
+   * Undefined means deliberately unbound; unavailable resources reject rather than falling back.
+   * @param anchor - stable native Team journal owner.
+   * @param execution - actual or reserved native identity and generation, never a browser assertion.
+   * @param signal - operation and registration cancellation; admitted callbacks drain before disposal.
+   * @returns an existing canonical directory and synchronous recheck, or explicit unbound behavior.
+   */
+  resolveExecutionDirectory?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal):
+  Promise<TeamExecutionDirectory | undefined>
+  /** Restore only the stable Team host before a bound child's composition mounts.
+   * @param id - durable direct parent identity.
+   * @param signal - registration lifetime.
+   * @returns exact live stable anchor without running its model.
+   */
+  resolveAnchor?(id: SessionId, signal: AbortSignal): Promise<Agent>
+  /** Return persisted reference material before the member's first waking input.
+   * Native delivery supplies a non-authorizing source and stable id without waking.
+   * @param anchor - stable Team journal owner.
+   * @param execution - exact current member binding, including an initial generation.
+   * @param signal - owner lifetime; no callback may outlive its registration.
+   * @returns bounded references owned by the caller's durable records.
+   */
+  initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>
+}
+```
+
+```ts type-equiv
+/** An owner-scoped capability; Team tools do not receive it. */
+interface TeamMemberExecutionHandle {
+  /** Read current native identities and this owner's audit without waking any execution. */
+  read(caller: Agent, memberId: SessionId): TeamMemberExecutionSnapshot
+  /** Inspect pending journal confirmation without publishing a successful result or causing IO. */
+  recordsConfirmed(caller: Agent): boolean
+  /** Confirm opaque progress for this member operation without changing its admission. */
+  record(caller: Agent, memberId: SessionId, operationId: string,
+    record: TeamExtensionRecord | ((snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord)): Promise<void>
+  /** Confirm owner-scoped roster intent before creation; the callback only inspects the serialized native cut. */
+  recordRoster(caller: Agent,
+    record: TeamExtensionRecord | ((snapshot: TeamCompositionSnapshot) => TeamExtensionRecord)): Promise<void>
+  /** Store factual material in an already loaded matching execution without waking it.
+   * Cold executions receive the same records through initialMaterial before their next working input.
+   */
+  preloadMaterial(caller: Agent, expected: TeamMemberExecution,
+    material: readonly TeamMemberMaterial[]): Promise<'stored' | 'deferred'>
+  /** Persist member-local admission and caller-owned progress in one native event.
+   * @param caller - actual current Lead, checked again under the Team lock.
+   * @param request - expected member generation and optional reserved replacement Session.
+   * @param build - synchronous preview/CAS validation and record producer under the same lock.
+   * @returns the confirmed native member control.
+   */
+  hold(caller: Agent, request: HoldTeamMemberExecution,
+    build: (snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord): Promise<TeamMemberExecutionControl>
+  /** Replace an unused failed preparation without releasing the original member's admission. */
+  retarget(caller: Agent, memberId: SessionId, operationId: string, expectedNextId: SessionId, nextId: SessionId,
+    record: TeamExtensionRecord, readBlockers: (executionId: SessionId) => readonly string[] | Promise<readonly string[]>): Promise<void>
+  /** Preserve a live held execution's pending inputs without consuming them. */
+  capture(execution: Agent): Promise<readonly AgentInput[]>
+  /** Capture the held source through the continuation owner, including a quiet cold source. */
+  captureCurrent(caller: Agent, memberId: SessionId, operationId: string, signal?: AbortSignal,
+    readBlockers?: TeamMemberBlockerReader): Promise<readonly AgentInput[]>
+  /** Retain the exact held source while the Host confirms an independently owned resource handback.
+   * @param caller - actual current Lead authorizing this member-local operation.
+   * @param memberId - stable held member address.
+   * @param operationId - exact existing hold owned by this registration.
+   * @param readBlockers - read-only current job/effect observations while source occupation is retained.
+   * @param signal - caller cancellation; admitted callbacks drain before source release.
+   * @param callback - scoped detached observation and synchronous recheck, with no input mutators or Agent.
+   * @returns callback result only after the final control and caller recheck succeeds.
+   */
+  withHeldExecution<T>(caller: Agent, memberId: SessionId, operationId: string, readBlockers: TeamMemberBlockerReader,
+    signal: AbortSignal, callback: (scope: TeamHeldExecutionScope) => Promise<T>): Promise<T>
+  /** Settle selected held source identities after the owner has recorded their explicit disposition. */
+  releaseCaptured(caller: Agent, memberId: SessionId, operationId: string,
+    messageIds: readonly import('@deepseek-ai/dsh-llm').MessageId[], record: TeamExtensionRecord,
+    signal?: AbortSignal): Promise<void>
+  /** Commit a previously prepared child after all affected Task executions and inputs are settled.
+   * @param caller - actual current Lead of the original operation term.
+   * @param memberId - immutable roster address.
+   * @param operationId - held operation identity.
+   * @param record - product audit committed with the execution binding.
+   * @param readBlockers - current background-job and external-effect observations, not model assertions.
+   * @returns durably confirmed current binding; admission remains held until explicit release.
+   */
+  commit(caller: Agent, memberId: SessionId, operationId: string, record: TeamExtensionRecord,
+    readBlockers: TeamMemberBlockerReader): Promise<TeamMemberExecution>
+  /** End this hold only after caller-observed safety conditions have been confirmed; never wakes old work. */
+  release(caller: Agent, memberId: SessionId, operationId: string, record: TeamExtensionRecord,
+    readBlockers: TeamMemberBlockerReader,
+    slotTransfer?: TeamMemberSlotTransfer): Promise<void>
+  /** Remove admission ownership and await admitted operations; bound Sessions remain closed. */
+  dispose(): Promise<void>
+}
+```
+
 ## 共享任务 DAG
 
 每条 task event 都存储完整快照。`revision` 是 compare-and-set 值，每次变更递增 1。`blockedBy` edge 必须指向未删除任务，并维持无环图。`writeScopes` 是规范化的提示性路径前缀，不是锁。

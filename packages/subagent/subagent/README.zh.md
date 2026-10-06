@@ -29,6 +29,8 @@ kind: "package-reference"
 
 可信 Host 可以给 `prepareContinuable()` 提供预留的 child id，在准入工作之前确认持久 descriptor、Preset 绑定、直接父级归属及父 catalog。准备不接受提示词，不请求模型、不发布运行生命周期，释放临时 Agent，也不发送结束通知。已存在的 child 必须匹配解析后的创建 descriptor、Preset 声明、工作目录、父级与委派深度；准备不会迁移权限批准。child 和父级确认都必须有持久监听者且成功；确认失败可能留下候选，因此应以同一 id 和创建规格重试，不重复追加 catalog。
 
+可信 continuation 调用方可以提供 Host 拥有的 `cwd`。创建会将已存在的绝对目录解析为规范路径，并记录在不可变 Session 头中；不会创建缺失目录。准备重试和按身份投递在接受已有输入回执之前也核对同一持久 cwd。省略时保持父目录继承，冷恢复读取 child 自己的头，而不是选择 parent 的当前目录。已经登记的 child 丢失持久日志时不可用，不视为可以重新创建的新身份。目录选择不增加权限，也不管理 Git 或资源。
+
 `deliverContinuableInput()` 接收预留的子会话 id 和稳定输入 id。它创建或恢复子会话，收到持久输入回执后才返回；重试不再插入另一份输入。已准备的 child 使用既有冷投递路径。恢复后的待处理输入使用驱动器可选的 `wakePending()` 能力。准备与带身份的投递共用一份 child 预留，等待确认、回执或退出时释放子锁。`synchronizeContinuablePermissions(parent, child, settingsSource?)` 显式让活跃的直接子会话对齐可选活跃设置来源的沙箱与权限选择，默认来源为父级。它要求真实亲子关系，保留子会话的审批策略、父子关系、深度和 Preset；普通委派不调用它。设置来源已释放时，它会在追加策略事实之前拒绝。
 
 绑定核心输入控制器的 child 通过异步 `agents.sendInput()` 确认接收，不走同步 followup/steer。Activation 保持驻留直到回执结算。`startContinuable()` 和 `deliverContinuableInput()` 返回受控保管的 `inputLocation`：held 或 released 不代表 inbox 投递或模型已处理。只有 held 回执时，不发布运行边或结束通知。受控确认失败会保留不确定输入；以同一 child 和输入身份重试，可确认原输入而不重复插入 inbox。

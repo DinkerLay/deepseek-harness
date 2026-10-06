@@ -14,6 +14,9 @@
 /subagent/continuable-children-and-activations:
   en: a7d3f91620ecfba0
   zh: 621021ad3ef14e15
+/subagent/continuable-children-and-activations/host-execution-directory:
+  en: 1fbee25495bed336
+  zh: ef2250dcc3ec364b
 /subagent/durable-enumeration-listchildren-listdescendants-and-their-entries:
   en: 5ff018408210d739
   zh: 909d4a1788d65629

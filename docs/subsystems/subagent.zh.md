@@ -274,6 +274,54 @@ interface ContinuableCreateSpec {
 
 本地一次性提供方会在子 agent 的初始轮次内、首次请求前追加描述符。继续执行管理器会在任何提供方提供的谱系之后、初始提示词获准之前追加描述符；`Session.inheritedEventCount` 仍是 fork 谱系边界：恢复时的描述符权威读取子 agent 自身的后缀，而身份投影以 last-wins 折叠 `subagent/descriptor`，子 agent 自己的描述符会覆盖 fork seed 中祖先的描述符。该事件只进入日志：不含 `surfaceOp`，绝不进入模型历史，并由仅追加日志跨压缩保留。格式错误的当前版本描述符属于损坏；本运行时无法对不受支持的版本进行分类。
 
+### Host 执行目录
+
+`ContinuableStartSpec.cwd` 可选定一个已存在的 Host 绝对目录；创建在物化前规范化它，准备或投递重试要求同一已保存的 `SessionHeader.cwd`。省略时继承父目录。已有目录账本但日志缺失的子会话会被拒绝，不会变成空白替代会话。模型委派 schema 不增加目录字段。
+
+```ts type-equiv
+/** What a caller asks for when starting a continuable background child. */
+interface ContinuableStartSpec {
+  /** The `ctx.subagents` provider whose continuable-creation capability establishes the child. */
+  readonly provider: string
+  /** The initial delegation's short `description`, persisted as the child's creation label. */
+  readonly label: string
+  /**
+   * Optional caller-reserved child identity. Omission preserves the manager's
+   * UUID allocation; supplying one lets a durable parent record provisioning
+   * before child materialization without a second identity handshake.
+   */
+  readonly childId?: SessionId
+  /** Host-verified execution directory; omission preserves parent-directory inheritance.
+   * Creation canonicalizes an existing absolute directory; delivery and preparation retries require the same stored cwd.
+   */
+  readonly cwd?: string
+  /** Host-owned first-input source; omission preserves the ordinary user source. */
+  readonly initialSource?: MessageSource
+  /** Host-reserved first-input identity; omission allocates a fresh message id. */
+  readonly initialMessageId?: MessageId
+  /** Explicit child preset, pinned to a captured declaration revision; omission inherits the parent's composition. */
+  readonly preset?: ContinuablePresetBinding
+  /**
+   * The delegation request. The manager reserves the stable child id, resolves
+   * the durable descriptor, and composes the child itself.
+   */
+  readonly request: Omit<SubagentStartRequest, 'label' | 'signal' | 'outputSchema'>
+  /** Caller cancellation, owning the operation only until inbox acceptance. */
+  readonly signal: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Immutable creation inputs for a reserved child that must not receive work yet. */
+type ContinuablePrepareSpec = Omit<ContinuableStartSpec,
+  'childId' | 'initialSource' | 'initialMessageId' | 'request'> & {
+  /** Caller-reserved identity reused for preparation retries and later delivery. */
+    readonly childId: SessionId
+    /** Creation composition only; preparation neither accepts nor stores a prompt. */
+    readonly request: Omit<ContinuableStartSpec['request'], 'prompt'>
+  }
+```
+
 ## 持久化枚举：`listChildren()`、`listDescendants()` 与其条目
 
 模型侧的 `list_agents` 适配器将当前活动表示为 `running` 或 `inactive`。这些值不描述任务完成情况，也不保证 `send_message` 会成功。

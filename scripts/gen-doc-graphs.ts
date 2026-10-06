@@ -459,7 +459,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'storage-domain',
     title: 'Domain data facility',
     mode: 'core',
-    consumers: ['workspace'],
+    consumers: ['workspace', 'git-resources'],
     note: 'Waits for every configured backend, then publishes the domain form as one lifecycle-bound service for typed durable state.',
   },
   {
@@ -481,8 +481,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'workspace',
     title: 'Workspace entity registry',
     mode: 'core',
-    consumers: ['api-workspace-controller', 'api-session-controller'],
+    consumers: ['api-workspace-controller', 'api-session-controller', 'git-resources'],
     note: 'Owns WorkspaceId-branded records over the domain facility; stable sessionIds accounts drive Host RPC and GUI projections.',
+  },
+  {
+    key: 'gitResources',
+    pkg: 'git-resources',
+    title: 'Managed local Git resources',
+    mode: 'service',
+    note: 'Optional same-host owner of work-copy identity, immutable Git versions and durable operation receipts; external Host adapters supply business authorization and execution quiescence.',
   },
   {
     key: 'sessionQuery',
@@ -639,7 +646,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Subprocess seam',
     mode: 'seam',
     implementations: ['subprocess-local', 'subprocess-ssh'],
-    consumers: ['bash-local', 'bash-sandbox', 'terminal-bash', 'lsp-stdio', 'subagent-acp', 'subagent-codex', 'subagent-claude-code'],
+    consumers: ['bash-local', 'bash-sandbox', 'terminal-bash', 'lsp-stdio', 'subagent-acp', 'subagent-codex', 'subagent-claude-code', 'git-resources'],
     note: 'The bash executors, the PTY shell backend, the LSP host, and the out-of-process ACP, Codex, and Claude Code subagent backends spawn through ctx.subprocess; the service owns process coordinates, tree/session lifetime, stdio dispositions, terminal mechanics, and kill escalation.',
   },
   {

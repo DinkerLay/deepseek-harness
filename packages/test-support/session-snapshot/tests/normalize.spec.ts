@@ -957,6 +957,21 @@ describe('normalizeSessionSnapshot', () => {
 
 describe('tokenizeSessionFixtureCwd', () => {
   it.each([
+    ['/tmp/family-root', '/tmp/family-root/worker', '{{cwd}}/worker'],
+    ['C:\\temp\\family-root', 'C:\\temp\\family-root\\worker', '{{cwd}}\\worker'],
+  ])('keeps a child directory relative to one explicitly shared family root %s', (root, child, expected) => {
+    const raw = [JSON.stringify({ type: 'session', id: 'child', createdAt: 2, cwd: child, parentSession: 'parent' }),
+      JSON.stringify({ type: 'tool/result', data: { text: `worker directory: ${child}; unrelated /outside/worker` } }), ''].join('\n')
+    const out = tokenizeSessionFixtureCwd(raw, root)
+    const header: unknown = JSON.parse(out.split('\n')[0]!)
+    const event: unknown = JSON.parse(out.split('\n')[1]!)
+    expect(header).toMatchObject({ cwd: expected })
+    expect(event).toMatchObject({ data: { text: `worker directory: ${expected}; unrelated /outside/worker` } })
+    expect(tokenizeSessionFixtureCwd(out)).toBe(out)
+    expect(tokenizeSessionFixtureCwd(out, root)).toBe(out)
+  })
+
+  it.each([
     {
       name: 'macOS',
       context: {

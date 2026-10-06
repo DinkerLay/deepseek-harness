@@ -48,6 +48,8 @@ kind: "package-reference"
 
 挂载这些行之后，创建项目会立即出现在列表中并在重启后保留；首次启动还会按会话运行的目录对既有会话分组。如果缺少某个必需依赖，workspace 功能会一直不可用，直到它被挂载。
 
+`bootstrapChildSessions` 默认为 `true`，保留顶层和子 Session 的历史分组。可在 Workspace 行上设为 `false`，让这次一次性自动分组跳过已设置 `parentSession` 的 header。注册表仍为明确挂接索引这些 header；已有 Workspace 记录、已初始化的领域和明确 create、attach、move 操作保持不变。
+
 ### 创建与排序项目
 
 从任何已存在的绝对目录路径创建项目：`C:\` 等文件系统根目录和普通目录都有效。相对路径、`C:work` 等 Windows 盘符相对路径、不存在的路径和文件都会被拒绝，且不会创建项目；为已有项目的目录再次创建会原样返回现有项目。你可以随时重命名项目，并把它移动到列表中的任意位置：

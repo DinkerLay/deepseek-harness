@@ -273,14 +273,16 @@ function tokenizeFixtureValue(
  * path.
  *
  * @param rawLog The raw or refresh-stabilized session JSONL fixture.
- * @returns Compact JSONL whose known cwd spellings become `{{cwd}}`.
+ * @param workspaceRoot Shared generated root for a session family; child cwd suffixes remain explicit.
+ * @returns Compact JSONL with a tokenized root and preserved relative child directory suffixes.
  * @throws If a non-empty line is invalid JSON or the session cwd has no basename.
  */
-export function tokenizeSessionFixtureCwd(rawLog: string): string {
+export function tokenizeSessionFixtureCwd(rawLog: string, workspaceRoot?: string): string {
   const lines = rawLog.split('\n')
   const firstLine = lines.find(line => line.trim().length > 0)
   const header = firstLine === undefined ? undefined : JSON.parse(firstLine) as { cwd?: unknown }
-  const cwd = typeof header?.cwd === 'string' ? header.cwd : ''
+  const ownCwd = typeof header?.cwd === 'string' ? header.cwd : ''
+  const cwd = workspaceRoot ?? (ownCwd.startsWith('{{cwd}}/') || ownCwd.startsWith('{{cwd}}\\') ? '{{cwd}}' : ownCwd)
   const basename = cwd.split(/[\\/]/).at(-1)
   if (basename === undefined || basename.length === 0) {
     throw new Error('acp-snapshot: cannot tokenize a cwd without a basename')

@@ -2,7 +2,7 @@
 
 English | [中文](workspace.zh.md)
 
-A workspace is the persistent record of a directory the user works in: a stable id over a canonical path, a display title, and the ordered account of sessions that belong to it. The subsystem is one package ([dsh-workspace](../../packages/workspace/workspace), `ctx.workspaceRegistry`) — an optional host-side capability, not part of the agent-loop spine, and invisible to models (no tools, no prompt text, no session events). It stores its records through the [storage domain form](storage.md) and validates session membership against [`SessionHeader.cwd`](persistence.md#sessionheader--metadata-beside-the-log), so `storageDomain` and `sessionPersistence` are mandatory startup dependencies: an unavailable persistence peer leaves the plugin pending rather than being mistaken for an empty history. Design record: [domain KV storage Agent Note](../../.agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.md); bootstrap and GUI ordering: [Workspace UI product-flow Agent Note](../../.agents/notes/archived/feature/2026-07-25-workspace-ui-product-flow.md).
+A workspace is the persistent record of a directory the user works in: a stable id over a canonical path, a display title, and the ordered account of sessions that belong to it. The registry package ([dsh-workspace](../../packages/workspace/workspace), `ctx.workspaceRegistry`) is an optional host-side capability, not part of the agent-loop spine, and invisible to models (no tools, no prompt text, no session events). It stores its records through the [storage domain form](storage.md) and validates session membership against [`SessionHeader.cwd`](persistence.md#sessionheader--metadata-beside-the-log), so `storageDomain` and `sessionPersistence` are mandatory startup dependencies: an unavailable persistence peer leaves the plugin pending rather than being mistaken for an empty history. Design record: [domain KV storage Agent Note](../../.agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.md); bootstrap and GUI ordering: [Workspace UI product-flow Agent Note](../../.agents/notes/archived/feature/2026-07-25-workspace-ui-product-flow.md).
 
 Source: [`packages/workspace/workspace/src/types.ts`](../../packages/workspace/workspace/src/types.ts)
 
@@ -121,6 +121,8 @@ Ownership truth is the record's ordered `sessionIds`, never derived from session
 
 Sessions get their cwd at create time from whoever creates them, not from this registry — the API gateway resolves a new session's cwd from the chosen workspace's `path` (falling back to an explicit or default cwd), creates the session so the cwd lands in its immutable [`SessionHeader`](persistence.md#sessionheader--metadata-beside-the-log), then calls `attachSession`, which re-validates that stored header cwd against the workspace path. On the first successful start, the registry bootstraps history from persisted headers alone (`id`, `cwd`, `createdAt` — never event bodies), grouping sessions with a valid canonical cwd into per-directory workspaces, newest first; the initialized marker is written last so an interrupted bootstrap resumes safely. The bootstrap is one-time: cwd-less legacy sessions stay Ungrouped, and sessions created afterwards join a workspace only through `attachSession`.
 
+The optional `bootstrapChildSessions` configuration defaults to true. Setting it to false excludes headers with `parentSession` only from the one-time historical grouping; existing registrations and the complete header index remain available.
+
 ## Default Workspace initialization
 
 The controller's `initializeDefault` takes no request: it owns the fixed `default-workspace` directory name, resolves the Documents location, and asks the registry to initialize once. The registry accepts a directory resolver, derives the initial title from the requested directory's final segment rather than the canonical one, and commits the registration with its durable identity. No language reaches the Host — browser consumers label a Workspace still carrying that automatic title through the controller's `workspaceDisplayTitle`, so only the on-screen name follows the reader's language. [First-use behavior and configuration](../../packages/api/workspace-controller/README.md#first-use-workspace) describe reuse and failure handling.
@@ -161,6 +163,550 @@ interface SessionActivity {
 ```
 
 `SessionActivityItem` carries the family-specific `id` (a session, job, or schedule id) and an optional display `label`. `archiveSession(sessionId)` asks the waterfall once, after the existence check, and rejects a non-empty answer with `WorkspaceActiveSessionError` (`sessionId`, `activity`) without writing; the controller maps it to the `workspace/session-active` error, whose details carry the same two fields. `archiveSession(sessionId, { stopActivity: true })` — the `ArchiveSessionOptions` field the transport request exposes as `stopActivity` — skips the check, writes the archive, then dispatches `workspace/session-stop`; a rejecting provider is logged and the archive stays, and the stopped work is never awaited to settlement. An already archived id neither asks nor stops. The shipped providers, what they stop, and the `agent/pre-step` gate that keeps an archived Session from running a model step are documented with the [registry package](../../packages/workspace/workspace/README.md#api-behavior); the decision record is the [archive-stops-running-work Agent Note](../../.agents/notes/implemented/feature/2026-09-21-archive-stops-running-session-work.md).
+
+## Managed Git resources
+
+The optional [`dsh-git-resources`](../../packages/workspace/git-resources/README.md) owner exposes `ctx.gitResources` for registered local Git projects. Its private work copies, immutable versions, use identities and operation receipts remain separate from Workspace registrations. The package README owns baseline selection, authority, recovery and cleanup semantics; the public declarations below define the detached requests and resource facts.
+
+### Resource identities and lifecycle
+
+Source: [`packages/workspace/git-resources/src/types.ts`](../../packages/workspace/git-resources/src/types.ts)
+
+```ts type-equiv
+/** One observed canonical local repository. */
+type GitRepositoryId = Branded<'GitRepositoryId'>
+```
+
+```ts type-equiv
+/** One managed local work copy, independent of its current user. */
+type GitResourceId = Branded<'GitResourceId'>
+```
+
+```ts type-equiv
+/** One caller-reserved durable operation identity. */
+type GitOperationId = Branded<'GitOperationId'>
+```
+
+```ts type-equiv
+/** Opaque consumer-owned grouping; the resource owner does not interpret its business identity. */
+type GitConsumerScope = Branded<'GitConsumerScope'>
+```
+
+```ts type-equiv
+/** Exact filesystem witness, meaningful only on the current host. */
+interface GitPathIdentity { readonly path: string; readonly device: string; readonly inode: string }
+```
+
+```ts type-equiv
+/** Repository identity does not confuse a moved branch with a replaced repository. */
+interface GitRepositoryIdentity {
+  readonly repositoryId: GitRepositoryId
+  readonly workspaceId: WorkspaceId
+  readonly root: GitPathIdentity
+  readonly gitDir: GitPathIdentity
+  readonly commonDir: GitPathIdentity
+  readonly objectFormat: 'sha1' | 'sha256'
+}
+```
+
+```ts type-equiv
+/** One caller's explicit source for a path relative to the repository root. */
+interface GitPathSelection { readonly path: string; readonly source: 'index' | 'worktree' | 'untracked' }
+```
+
+```ts type-equiv
+/** A selected baseline always starts from an explicitly named commit. */
+type GitBaselineSelection = { readonly kind: 'commit'; readonly commit: string }
+  | { readonly kind: 'selected'; readonly baseCommit: string; readonly paths: readonly GitPathSelection[] }
+```
+
+```ts type-equiv
+/** Baseline request for an already registered project directory. */
+interface GitResourcePreviewRequest { readonly workspaceId: WorkspaceId; readonly baseline: GitBaselineSelection }
+```
+
+```ts type-equiv
+/** Paths are returned without file contents; deletion is an explicit selected entry. */
+interface GitBaselineEntry {
+  readonly path: string
+  readonly source: GitPathSelection['source']
+  readonly mode: '100644' | '100755' | 'deleted'
+  readonly objectId?: string
+  readonly rawHash?: string
+  readonly bytes: number
+}
+```
+
+```ts type-equiv
+/** Complete dirty classification is bounded; truncation rejects instead of dropping paths. */
+interface GitDirtyState {
+  readonly staged: readonly string[]
+  readonly unstaged: readonly string[]
+  readonly untracked: readonly string[]
+  readonly unmerged: readonly string[]
+}
+```
+
+```ts type-equiv
+/** A detached, non-writing repository cut used by the later create CAS. */
+interface GitResourcePreview {
+  readonly request: GitResourcePreviewRequest
+  readonly permitted: boolean
+  readonly diagnostic?: string
+  readonly risks: readonly string[]
+  readonly repository?: GitRepositoryIdentity
+  readonly head?: string
+  readonly symbolicRef?: string
+  readonly indexHash?: string
+  readonly baseCommit?: string
+  readonly baseTree?: string
+  readonly dirty: GitDirtyState
+  readonly selected: readonly GitBaselineEntry[]
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** The caller supplies only its own immutable use identity, not a task or role. */
+interface GitResourceUseIdentity { readonly useId: string; readonly ownerId: string; readonly epoch: string }
+```
+
+```ts type-equiv
+/** An interrupted use stays held until its owner explicitly confirms quiet handback. */
+interface GitResourceUse extends GitResourceUseIdentity { readonly phase: 'held' | 'needs_attention' | 'released' }
+```
+
+```ts type-equiv
+/** One work copy and its independently preserved version. */
+interface GitResourceRecord {
+  readonly resourceId: GitResourceId
+  readonly repositoryId: GitRepositoryId
+  readonly consumerScope: GitConsumerScope
+  readonly revision: number
+  readonly path: string
+  readonly reservedAbsent: true
+  readonly pathIdentity?: GitPathIdentity
+  readonly privateRef: string
+  readonly baselineCommit?: string
+  readonly baselineTree?: string
+  readonly state: 'reserved' | 'available' | 'conflicted' | 'preserved' | 'needs_attention' | 'abandoned' | 'cleaned'
+  readonly preservedCommit?: string
+  readonly preservedTree?: string
+  readonly preservedManifestHash?: string
+  readonly preservedRef?: string
+  /** Real detached HEAD used as the preservation commit's parent; immutable baseline remains unchanged. */
+  readonly preservedHead?: string
+  /** Only a versioned seal is a code result; all-content preserves regular-file bytes, not index or directory state. */
+  readonly preservedContent?: 'versioned' | 'all'
+  readonly preservedConflictStages?: readonly GitIntegrationConflictStage[]
+  readonly preservedIntegrationOperationId?: GitOperationId
+  readonly unresolvedConflictIds?: readonly string[]
+  readonly resolutionOperationId?: GitOperationId
+  readonly resolvedPreserveOperationId?: GitOperationId
+  /** Ignored paths or directory prefixes not read or preserved by the latest seal. */
+  readonly unpreservedPaths?: readonly string[]
+  readonly use?: GitResourceUse
+  readonly useHistory: readonly GitResourceUse[]
+}
+```
+
+```ts type-equiv
+/** Durable intent and observed effect are separate from the resource's state. */
+interface GitResourceOperation {
+  readonly operationId: GitOperationId
+  readonly fingerprint: string
+  readonly kind: 'create' | 'preserve' | 'integrate' | 'resolve' | 'apply' | 'inverse' | 'cleanup'
+  readonly resourceId: GitResourceId
+  readonly repositoryId: GitRepositoryId
+  readonly consumerScope: GitConsumerScope
+  readonly phase: 'intended' | 'acting' | 'needs_attention' | 'confirmed' | 'failed' | 'abandoned'
+  readonly request: GitResourceCreateRequest | GitResourcePreserveRequest | GitIntegrationRequest
+    | GitIntegrationResolutionRequest | GitApplicationRequest | GitInverseRequest | GitResourceCleanupRequest
+  readonly createdAt: string
+  readonly preview?: GitResourcePreview
+  readonly integrationPreview?: GitIntegrationPreview
+  readonly integrationEffect?: GitIntegrationEffect
+  readonly resolutionPreview?: GitIntegrationResolutionPreview
+  readonly resolutionEffect?: GitIntegrationResolutionEffect
+  readonly applicationPreview?: GitApplicationPreview
+  readonly applicationObservation?: GitApplicationObservation
+  readonly applicationEffect?: GitApplicationEffect
+  readonly inversePreview?: GitInversePreview
+  readonly cleanupPreview?: GitResourceCleanupPreview
+  readonly cleanupObservation?: GitResourceCleanupObservation
+  readonly effectCommit?: string
+  readonly effectTree?: string
+  readonly effectManifestHash?: string
+  readonly effectRef?: string
+  readonly effectHead?: string
+  /** Immutable mode and remaining paths for this operation, independent of a later preservation. */
+  readonly effectContent?: 'versioned' | 'all'
+  /** Exact unresolved index stages; nonempty means a snapshot, not an integrated code result. */
+  readonly effectConflictStages?: readonly GitIntegrationConflictStage[]
+  readonly effectIntegrationOperationId?: GitOperationId
+  /** Known conflicts of the original integration remain unresolved for this exact seal without an explicit resolution receipt. */
+  readonly effectUnresolvedConflictIds?: readonly string[]
+  readonly unpreservedPaths?: readonly string[]
+  readonly worktreeCreateStarted?: true
+  /** False is a durable no-write witness; missing is unknown, never a safe abandonment claim. */
+  readonly externalWriteStarted?: boolean
+  readonly diagnostic?: string
+}
+```
+
+```ts type-equiv
+/** Creation names the exact non-writing preview rather than silently adopting fresh dirty files. */
+interface GitResourceCreateRequest extends GitResourcePreviewRequest {
+  readonly operationId: GitOperationId
+  readonly consumerScope: GitConsumerScope
+  readonly originalRequestJson: string
+  readonly expectedPreviewFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Preservation never checks out, resets, or modifies the user's project. */
+interface GitResourcePreserveRequest {
+  readonly operationId: GitOperationId
+  readonly resourceId: GitResourceId
+  readonly expectedRevision: number
+  /** Defaults to versioned: tracked plus nonignored untracked working bytes, never ignored dependencies. */
+  readonly content?: 'versioned' | 'all'
+  /** Optional bounded original consumer JSON for cold correlation; never interpreted as authority. */
+  readonly originalRequestJson?: string
+}
+```
+
+```ts type-equiv
+/** Query result carries resource facts without performing confirmation or repair. */
+interface GitResourceOperationView { readonly operation: GitResourceOperation; readonly resource: GitResourceRecord }
+```
+
+```ts type-equiv
+/** A live write-use scope can be asserted synchronously inside another owner's CAS. */
+interface GitResourceWriteScope {
+  readonly resource: GitResourceRecord
+  readonly signal: AbortSignal
+  /** Recheck the exact persisted use and resource revision; no IO or mutation. */
+  assertCurrent(): void
+}
+```
+
+```ts type-equiv
+/** Pure observed version facts, even during a caller-owned write use; not a quiescence or verification assertion. */
+interface GitWorkCopyInspection {
+  readonly resourceId: GitResourceId
+  readonly resourceRevision: number
+  readonly pathIdentity: GitPathIdentity
+  readonly head: string
+  readonly indexHash: string
+  readonly manifestHash: string
+  readonly conflictStages: readonly GitIntegrationConflictStage[]
+  readonly unpreservedPaths: readonly string[]
+}
+```
+
+### Integration and resolution
+
+Source: [`packages/workspace/git-resources/src/integration.ts`](../../packages/workspace/git-resources/src/integration.ts)
+
+```ts type-equiv
+/** Explicit immutable inputs; a prior preserved version can be selected as the starting tree. */
+interface GitIntegrationPreviewRequest {
+  readonly consumerScope: GitConsumerScope
+  readonly baseResourceId: GitResourceId
+  readonly basePreserveOperationId?: GitOperationId | undefined
+  readonly sourcePreserveOperationIds: readonly GitOperationId[]
+  readonly resolutionOperationIds?: readonly GitOperationId[] | undefined
+}
+```
+
+```ts type-equiv
+/** A resource owner records this request before writing objects or creating the new copy. */
+interface GitIntegrationRequest extends GitIntegrationPreviewRequest {
+  readonly operationId: GitOperationId
+  readonly originalRequestJson: string
+  readonly expectedPreviewFingerprint: string
+}
+```
+
+```ts type-equiv
+/** One historical operation, never the resource's latest mutable preservation fields. */
+interface GitIntegrationInput {
+  readonly operationId: GitOperationId
+  readonly resourceId: GitResourceId
+  readonly repositoryId: GitRepositoryId
+  readonly consumerScope: GitConsumerScope
+  readonly commit: string
+  readonly tree: string
+  readonly manifestHash: string
+  readonly ref: string
+  readonly resolutionOperationId?: GitOperationId | undefined
+}
+```
+
+```ts type-equiv
+/** Complete read-only input cut; merge conflicts are not computed by preview. */
+interface GitIntegrationPreview {
+  readonly request: GitIntegrationPreviewRequest
+  readonly repository: GitRepositoryIdentity
+  readonly baseCommit: string
+  readonly baseTree: string
+  readonly originalTargetBaseTree: string
+  readonly baseInput?: GitIntegrationInput | undefined
+  readonly sources: readonly GitIntegrationInput[]
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** Git's higher-order index entry; text markers alone cannot identify every conflict. */
+interface GitIntegrationConflictStage {
+  readonly path: string
+  readonly mode: '100644' | '100755'
+  readonly objectId: string
+  readonly stage: 1 | 2 | 3
+}
+```
+
+```ts type-equiv
+/** Informational paths are not filesystem authorization or a parsed human message. */
+interface GitIntegrationConflictMessage {
+  readonly paths: readonly string[]
+  readonly kind: string
+  readonly message: string
+}
+```
+
+```ts type-equiv
+/** Observed merge objects; remaining inputs are never silently folded through an unresolved tree. */
+interface GitIntegrationEffect {
+  readonly originalTargetBaseTree: string
+  readonly commit: string
+  readonly tree: string
+  readonly manifestHash: string
+  readonly result: 'prepared' | 'conflicted'
+  readonly attemptedInputCount: number
+  readonly remainingSourceOperationIds: readonly GitOperationId[]
+  readonly conflictStages: readonly GitIntegrationConflictStage[]
+  readonly conflictMessages: readonly GitIntegrationConflictMessage[]
+}
+```
+
+```ts type-equiv
+/** Exact conflict/version choices, separate from the later Host proof and operation identity. */
+interface GitIntegrationResolutionSelection {
+  readonly consumerScope: GitConsumerScope
+  readonly integrationOperationId: GitOperationId
+  readonly preserveOperationId: GitOperationId
+  readonly confirmedConflictIds: readonly string[]
+}
+```
+
+```ts type-equiv
+/** Independent resolution intent; original integration and preservation records stay unchanged. */
+interface GitIntegrationResolutionRequest extends GitIntegrationResolutionSelection {
+  readonly operationId: GitOperationId
+  readonly originalRequestJson: string
+  readonly expectedPreviewFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Resource facts only; normal verification and caller authority are supplied by the Host proof. */
+interface GitIntegrationResolutionEffect {
+  readonly integrationOperationId: GitOperationId
+  readonly preserveOperationId: GitOperationId
+  readonly resourceId: GitResourceId
+  readonly tree: string
+  readonly manifestHash: string
+  readonly conflictIds: readonly string[]
+}
+```
+
+```ts type-equiv
+/** Current quiet version and index cut used by the later resolution CAS. */
+interface GitIntegrationResolutionPreview {
+  readonly request: GitIntegrationResolutionSelection
+  readonly effect: GitIntegrationResolutionEffect
+  readonly resourceRevision: number
+  readonly head: string
+  readonly indexHash: string
+  readonly fingerprint: string
+}
+```
+
+### Target application and inverse candidates
+
+Source: [`packages/workspace/git-resources/src/application.ts`](../../packages/workspace/git-resources/src/application.ts)
+
+```ts type-equiv
+/** Exact owner-resolved version; no latest-resource lookup occurs inside application plumbing. */
+interface GitApplicationSource {
+  readonly repository: GitRepositoryIdentity
+  readonly integrationOperationId: GitOperationId
+  readonly preserveOperationId: GitOperationId
+  readonly resourceId: GitResourceId
+  readonly consumerScope: GitConsumerScope
+  readonly originalTargetBaseTree: string
+  readonly resultCommit: string
+  readonly resultTree: string
+  readonly manifestHash: string
+  readonly resolutionOperationId?: GitOperationId | undefined
+}
+```
+
+```ts type-equiv
+/** Explicit target Workspace and immutable source IDs, never an arbitrary Host path. */
+interface GitApplicationPreviewRequest {
+  readonly consumerScope: GitConsumerScope
+  readonly integrationOperationId: GitOperationId
+  readonly preserveOperationId: GitOperationId
+  readonly targetWorkspaceId: WorkspaceId
+  readonly resolutionOperationId?: GitOperationId | undefined
+}
+```
+
+```ts type-equiv
+/** The owner records this user-selected intent before the first working-file write. */
+interface GitApplicationRequest extends GitApplicationPreviewRequest {
+  readonly operationId: GitOperationId
+  readonly originalRequestJson: string
+  readonly expectedPreviewFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Full target CAS includes branch, index, touched bytes and every traversed directory. */
+interface GitApplicationTargetCut {
+  readonly repository: GitRepositoryIdentity
+  readonly head: string
+  readonly symbolicRef?: string | undefined
+  readonly indexHash: string
+  readonly touched: readonly GitApplicationPath[]
+  readonly ancestors: readonly GitApplicationAncestor[]
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** Read-only exact diff selection, with no implicit authorization to write its target. */
+interface GitApplicationPreview {
+  readonly source: GitApplicationSource
+  readonly target: GitApplicationTargetCut
+  readonly patchHash: string
+  /** Complete bounded Git diff; binary bodies remain Git's textual binary-patch representation. */
+  readonly patch: string
+  readonly binary: boolean
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** Interrupted writes are reported per path; unknown or partial outcomes never replay automatically. */
+interface GitApplicationObservation {
+  readonly state: 'before' | 'after' | 'partial' | 'unknown'
+  readonly paths: readonly { readonly path: string; readonly state: 'before' | 'after' | 'unknown' }[]
+  readonly headUnchanged: boolean
+  readonly indexUnchanged: boolean
+}
+```
+
+```ts type-equiv
+/** Only an exact all-after observation is a confirmed application effect. */
+interface GitApplicationEffect {
+  readonly preview: GitApplicationPreview
+  readonly observation: GitApplicationObservation
+}
+```
+
+```ts type-equiv
+/** Reverse preparation names the actual old effect and current target, never the old source inputs. */
+interface GitInversePreviewRequest {
+  readonly consumerScope: GitConsumerScope
+  readonly applicationOperationId: GitOperationId
+  readonly targetWorkspaceId: WorkspaceId
+}
+```
+
+```ts type-equiv
+/** Intent for a new independent inverse candidate; this request does not apply it to the target. */
+interface GitInverseRequest extends GitInversePreviewRequest {
+  readonly operationId: GitOperationId
+  readonly originalRequestJson: string
+  readonly expectedPreviewFingerprint: string
+}
+```
+
+```ts type-equiv
+/** Read-only current touched cut before any inverse snapshot objects are created. */
+interface GitInversePreview {
+  readonly applicationOperationId: GitOperationId
+  readonly original: GitApplicationEffect
+  readonly currentTarget: GitApplicationTargetCut
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** Directory witnesses include known absent parents needed for a newly added path. */
+interface GitApplicationAncestor {
+  readonly path: string
+  readonly identity?: GitPathIdentity | undefined
+}
+```
+
+```ts type-equiv
+/** Exact regular content or definite absence; unsupported types never become empty files. */
+type GitFileState = { readonly kind: 'absent' }
+  | { readonly kind: 'file'; readonly mode: '100644' | '100755'; readonly objectId: string; readonly rawHash: string }
+```
+
+```ts type-equiv
+/** One complete application path has both original and intended immutable bytes. */
+interface GitApplicationPath {
+  readonly path: string
+  readonly before: GitFileState
+  readonly after: GitFileState
+}
+```
+
+### Cleanup observations
+
+Source: [`packages/workspace/git-resources/src/cleanup.ts`](../../packages/workspace/git-resources/src/cleanup.ts)
+
+```ts type-equiv
+/** Read-only full file-content and metadata cut; empty directories and unpreserved index objects refuse. */
+interface GitResourceCleanupPreview {
+  readonly resourceId: GitResourceId
+  readonly resourceRevision: number
+  readonly pathIdentity: GitPathIdentity
+  readonly gitDirIdentity: GitPathIdentity
+  readonly preserveOperationId: GitOperationId
+  readonly commit: string
+  readonly tree: string
+  readonly manifestHash: string
+  readonly ref: string
+  readonly head: string
+  readonly indexHash: string
+  readonly fingerprint: string
+}
+```
+
+```ts type-equiv
+/** Stable explicit cleanup intent; no model-authored assertion can replace the Host unused-cwd proof. */
+interface GitResourceCleanupRequest {
+  readonly operationId: GitOperationId
+  readonly resourceId: GitResourceId
+  readonly expectedPreviewFingerprint: string
+  readonly originalRequestJson?: string | undefined
+}
+```
+
+```ts type-equiv
+/** Partial directory/admin removal is observable but never considered successful or blindly replayed. */
+interface GitResourceCleanupObservation { readonly pathAbsent: boolean; readonly metadataAbsent: boolean }
+```
 
 ## Consumers
 
@@ -223,6 +769,172 @@ Host service backing the generated `ctx.remote.directoryPicker` namespace. The s
 ```
 
 Source: [`packages/api/workspace-controller/src/directory-picker.ts`](../../packages/api/workspace-controller/src/directory-picker.ts)
+
+<a id="ctxgitresources--gitresources"></a>
+
+### `ctx.gitResources` — `GitResources`
+
+Sole same-host owner of managed work copies; no task, agent role or model tool policy.
+
+```ts cordis-catalog
+/** Observe a registered repository and an explicit immutable or selected baseline.
+ * @param request - registered project and explicit commit/layered baseline.
+ * @param signal - caller cancellation.
+ * @returns bounded detached observation; no Git object, ref, index, domain or user-file writes.
+ */
+async preview(request: GitResourcePreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourcePreview>
+
+/** Create the work copy reserved by an exact original request, or resume that same operation.
+ * @param request - exact earlier preview and stable caller-reserved operation id.
+ * @param signal - cancellation; intent and completed effects survive it.
+ * @returns confirmed resource or recoverable original operation, never a second work copy.
+ */
+async create(request: GitResourceCreateRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>
+
+/** Observe exact immutable versions; no merge objects, refs or new work copies are created.
+ * @param request - opaque scope, starting resource and ordered versioned preservation identities.
+ * @param signal - read-only observation cancellation.
+ * @returns immutable source facts and an integration creation fingerprint.
+ */
+async previewIntegration(request: GitIntegrationPreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitIntegrationPreview>
+
+/** Persist an integration intent, then create a separate work copy without applying anything to the project.
+ * @param request - exact earlier preview, original request JSON and stable operation identity.
+ * @param signal - caller cancellation; committed effects remain observable.
+ * @param assertCurrent - trusted synchronous Host recheck before each external write and final acknowledgement.
+ * @returns the original prepared or conflicted work copy and immutable Git conflict evidence.
+ */
+async integrate(request: GitIntegrationRequest, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>
+
+/** Observe an exact version and all known conflicts without inferring resolution from marker absence.
+ * @param selection - original integration, versioned seal and explicit complete conflict set.
+ * @param signal - observation cancellation.
+ * @returns a current quiet working/index cut; no Git objects or refs are written.
+ */
+async previewResolution(selection: GitIntegrationResolutionSelection, signal: AbortSignal = this.lifetime.signal): Promise<GitIntegrationResolutionPreview>
+
+/** Record independent Host-proven resolution of one exact immutable version; original records never change.
+ * @param request - stable operation and exact preview plus original consumer JSON.
+ * @param signal - admitted operation cancellation.
+ * @param assertProof - required synchronous Host authority/normal-verification proof, not a request-authored claim.
+ * @returns exact confirmed resolution receipt; new versions need their own explicit confirmation.
+ */
+async resolveIntegration(request: GitIntegrationResolutionRequest, signal: AbortSignal, assertProof: () => void): Promise<GitResourceOperationView>
+
+/** Observe an exact ready version and registered target; no file, index, ref or Git object writes.
+ * @param request - immutable version, optional exact resolution receipt and target Workspace identity.
+ * @param signal - read-only preview cancellation.
+ * @returns complete target HEAD/index/touched-path CAS and plain patch digest.
+ */
+async previewApplication(request: GitApplicationPreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitApplicationPreview>
+
+/** Explicit authenticated application, without moving the target HEAD/index or blindly replaying partial writes.
+ * @param request - stable original operation and exact target preview.
+ * @param signal - retained Host occupation cancellation.
+ * @param assertAuthorized - required current user authority and known-target-writer quiet proof, outside request JSON.
+ * @returns confirmed all-after observation; partial or unknown target effects remain attention-required.
+ */
+async apply(request: GitApplicationRequest, signal: AbortSignal, assertAuthorized: () => void): Promise<GitResourceOperationView>
+
+/** Observe a reverse candidate's CURRENT target without reapplying original inputs.
+ * @param request - exact old confirmed application and its registered target.
+ * @param signal - read-only cancellation.
+ * @returns fresh current touched-path cut, preserving unrelated target changes.
+ */
+async previewInverse(request: GitInversePreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitInversePreview>
+
+/** Prepare a separate reverse work copy from the current target, not a rollback or automatic target write.
+ * @param request - original reverse intention and exact current preview.
+ * @param signal - caller cancellation.
+ * @param assertCurrent - trusted synchronous Host freshness/occupation recheck before each write.
+ * @returns prepared/conflicted independent work copy requiring normal verification and a new application.
+ */
+async prepareInverse(request: GitInverseRequest, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>
+
+/** Observe already-created effects and confirm only the exact original resource evidence.
+ * @param operationId - earlier persisted identity.
+ * @param signal - reconciliation cancellation.
+ * @returns actual resource/ref identity or a retained attention diagnostic; unknown paths are not removed or adopted.
+ */
+async reconcile(operationId: GitOperationId, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>
+
+/** Terminally abandon an original creation only after proving that no external write ever began.
+ * This neither rolls back nor deletes Git objects, directories, refs or any partial effect.
+ * @param operationId - original immutable creation identity; never reusable after abandonment.
+ * @param expectedFingerprint - exact original request CAS.
+ * @param reason - bounded caller-owned diagnostic, not an authorization claim.
+ * @param signal - cancellation while waiting for the actual operation/resource lanes to drain.
+ * @param assertCurrent - trusted synchronous Host recheck immediately before the durable transform.
+ * @returns terminal receipt only when all ownership evidence is definitely absent.
+ */
+async abandonOperation(operationId: GitOperationId, expectedFingerprint: string, reason: string, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>
+
+/** Read detached resource metadata without repairing or confirming effects.
+ * @param resourceId - stored work-copy identity.
+ * @returns detached authoritative domain facts without IO, repair or confirmation.
+ */
+read(resourceId: GitResourceId): GitResourceRecord | undefined
+
+/** Read the original operation and its resource as a detached observation.
+ * @param operationId - stored operation identity.
+ * @returns detached observation without executing a recovery step.
+ */
+status(operationId: GitOperationId): GitResourceOperationView | undefined
+
+/** List only operations belonging to the exact opaque consumer scope.
+ * @param scope - exact opaque consumer grouping.
+ * @returns detached operation/resource views; this query never confirms or replays effects.
+ */
+listOperations(scope: GitConsumerScope): readonly GitResourceOperationView[]
+
+/** Observe current versioned working bytes without acquiring a write lane or mutating Git/domain facts.
+ * @param resourceId - caller-selected managed copy, including one already held by this execution.
+ * @param signal - observation cancellation.
+ * @returns exact observed hashes and unresolved stages; never a quiet or successful-test claim.
+ */
+async inspectWorkCopy(resourceId: GitResourceId, signal: AbortSignal = this.lifetime.signal): Promise<GitWorkCopyInspection>
+
+/** Preview removal only after full regular-file preservation, without claiming an index/directory backup.
+ * @param resourceId - exact owned copy, not a caller-provided filesystem path.
+ * @param signal - read-only cancellation.
+ * @returns all-content private-ref and directory/index cut; unpreserved content refuses explicitly.
+ */
+async previewCleanup(resourceId: GitResourceId, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceCleanupPreview>
+
+/** Remove only this exact preserved owned directory after the Host proves it is no current cwd or known writer.
+ * @param request - stable original request and exact earlier full-content preview.
+ * @param signal - retained Host occupation cancellation.
+ * @param assertUnused - required trusted current-cwd/job/source-detachment proof, never request-authored.
+ * @returns actual both-halves-absent receipt; refs/history are retained and partial deletion never blindly repeats.
+ */
+async cleanup(request: GitResourceCleanupRequest, signal: AbortSignal, assertUnused: () => void): Promise<GitResourceOperationView>
+
+/** Hold the resource's serial write use until the callback and durable handback settle.
+ * @param resourceId - known available work copy.
+ * @param identity - caller-owned use id and execution incarnation.
+ * @param signal - cancellation propagated to the callback.
+ * @param callback - work holding this resource lane; assertCurrent is synchronous for an external CAS.
+ * @returns callback result only after successful durable handback; rejected work keeps an explicit attention use.
+ */
+async withWriteUse<T>(resourceId: GitResourceId, identity: GitResourceUseIdentity, signal: AbortSignal, callback: (scope: GitResourceWriteScope) => Promise<T>): Promise<T>
+
+/** Explicit Host handback of a live or cold uncertain use; no model-authored quiet claim is accepted.
+ * @param resourceId - held work copy.
+ * @param identity - exact original owner/use/epoch.
+ * @param expectedRevision - current resource CAS.
+ * @param assertQuiescent - synchronous trusted caller proof checked at the durable transform.
+ */
+async confirmQuietUse(resourceId: GitResourceId, identity: GitResourceUseIdentity, expectedRevision: number, assertQuiescent: () => void): Promise<void>
+
+/** Preserve one exact resource version as immutable file-content and Git-ref facts.
+ * @param request - exact available resource revision and stable operation identity.
+ * @param signal - operation cancellation.
+ * @returns immutable versioned code seal by default; explicit all-content mode is directory preservation, not a code result.
+ */
+async preserve(request: GitResourcePreserveRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>
+```
+
+Source: [`packages/workspace/git-resources/src/index.ts`](../../packages/workspace/git-resources/src/index.ts)
 
 <a id="ctxterminalcontroller--terminalcontroller"></a>
 

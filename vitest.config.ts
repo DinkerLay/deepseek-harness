@@ -97,12 +97,12 @@ const windowsOnlyCoverageExclusions = process.platform !== 'win32'
 const windowsRunnerCoverageExclusions = process.platform === 'win32'
   ? [
       'packages/sandbox/sandbox-windows-acl/src/runner.ts',
-      // The session write lock's POSIX face (fs-ext flock plus inode
+      // The shared kernel lease's POSIX face (native flock plus inode
       // verification) executes only off-Windows: the Linux lanes hold its
       // per-file 100%, while the Windows branch is unit-pinned by
       // win32.spec's injected bindings and exercised natively by every
       // Windows suite through the real backend.
-      'packages/session/session-persistence-jsonl/src/lease.ts',
+      'packages/util/file-lease/src/index.ts',
     ]
   : []
 

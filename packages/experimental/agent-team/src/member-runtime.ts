@@ -2,10 +2,12 @@
 
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { InputControllerId } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentInput, InputControllerHandle, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId, SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -27,6 +29,7 @@ import type { TeamMemberSlotTransfer } from './member-slots.ts'
 import { teamProjectionDefinition } from './projection.ts'
 import { cancellable } from './lead-runtime.ts'
 import { leadCoordinationActive } from './lead-coordination.ts'
+import { readLiveExecution } from './execution-observation.ts'
 
 /** Reference material supplied by a registered owner from its durable operation record. */
 export interface TeamMemberMaterial {
@@ -75,9 +78,35 @@ export interface HoldTeamMemberExecution {
 export type TeamMemberBlockerReader = (executionId: SessionId,
   stored?: StoredInputCustodySnapshot) => readonly string[] | Promise<readonly string[]>
 
+/** An existing canonical Host directory and its bounded synchronous resource-use recheck. */
+export interface TeamExecutionDirectory {
+  readonly cwd: string
+  readonly assertCurrent?: () => undefined
+}
+
+/** Read-only access while the existing member hold retains its actual quiet source. */
+export interface TeamHeldExecutionScope {
+  readonly executionId: SessionId
+  readonly source: 'live' | 'stored' | 'absent'
+  readonly signal: AbortSignal
+  /** @returns detached facts from this occupied source, or exclusively verified never-created absence. */
+  read(): StoredInputCustodySnapshot | undefined
+  /** Reject use after callback return, cancellation, changed control or current Lead authority. */
+  assertCurrent(): void
+}
+
 /** Registered owner of controlled member execution changes, never a model identity. */
 export interface TeamMemberExecutionProvider {
   readonly id: string
+  /** Resolve the directory for an exact current, historical or reserved execution binding.
+   * Undefined means deliberately unbound; unavailable resources reject rather than falling back.
+   * @param anchor - stable native Team journal owner.
+   * @param execution - actual or reserved native identity and generation, never a browser assertion.
+   * @param signal - operation and registration cancellation; admitted callbacks drain before disposal.
+   * @returns an existing canonical directory and synchronous recheck, or explicit unbound behavior.
+   */
+  resolveExecutionDirectory?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal):
+  Promise<TeamExecutionDirectory | undefined>
   /** Restore only the stable Team host before a bound child's composition mounts.
    * @param id - durable direct parent identity.
    * @param signal - registration lifetime.
@@ -127,6 +156,17 @@ export interface TeamMemberExecutionHandle {
   /** Capture the held source through the continuation owner, including a quiet cold source. */
   captureCurrent(caller: Agent, memberId: SessionId, operationId: string, signal?: AbortSignal,
     readBlockers?: TeamMemberBlockerReader): Promise<readonly AgentInput[]>
+  /** Retain the exact held source while the Host confirms an independently owned resource handback.
+   * @param caller - actual current Lead authorizing this member-local operation.
+   * @param memberId - stable held member address.
+   * @param operationId - exact existing hold owned by this registration.
+   * @param readBlockers - read-only current job/effect observations while source occupation is retained.
+   * @param signal - caller cancellation; admitted callbacks drain before source release.
+   * @param callback - scoped detached observation and synchronous recheck, with no input mutators or Agent.
+   * @returns callback result only after the final control and caller recheck succeeds.
+   */
+  withHeldExecution<T>(caller: Agent, memberId: SessionId, operationId: string, readBlockers: TeamMemberBlockerReader,
+    signal: AbortSignal, callback: (scope: TeamHeldExecutionScope) => Promise<T>): Promise<T>
   /** Settle selected held source identities after the owner has recorded their explicit disposition. */
   releaseCaptured(caller: Agent, memberId: SessionId, operationId: string,
     messageIds: readonly import('@deepseek-ai/dsh-llm').MessageId[], record: TeamExtensionRecord,
@@ -156,6 +196,8 @@ export class TeamMemberExecutions {
   private readonly occupations = new Map<SessionId, { count: number }>()
   private input: InputControllerHandle | undefined
   private maintenanceLifetime: AbortSignal | undefined
+  private directoryOwner: { readonly resolve: NonNullable<TeamMemberExecutionProvider['resolveExecutionDirectory']>
+    readonly lifetime: AbortSignal } | undefined
   private readonly maintenanceJobs = new Set<Promise<unknown>>()
 
   /** @param ctx - runtime services owned by native Team.
@@ -188,13 +230,60 @@ export class TeamMemberExecutions {
   /** Drain scoped maintenance after native Team admission closes. */
   async settleMaintenance(): Promise<void> { await Promise.allSettled([...this.maintenanceJobs]) }
 
+  /** Resolve owned directory facts without holding a Team or child lock.
+   * @param anchor - stable native Team journal owner.
+   * @param execution - exact binding to inspect, including a reserved future generation.
+   * @param signal - admission cancellation, combined with the registration lifetime.
+   * @returns detached directory fields with an expiring synchronous owner check.
+   */
+  async resolveExecutionDirectory(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal):
+  Promise<TeamExecutionDirectory | undefined> {
+    const owner = this.directoryOwner
+    if (owner === undefined) return undefined
+    const { resolve, lifetime } = owner
+    const combined = AbortSignal.any([signal, lifetime])
+    // Re-registration requires the old contribution to abort and finish its memoized close first.
+    const current = () => { combined.throwIfAborted() }
+    current()
+    const job = (async () => {
+      const directory = await resolve(anchor, structuredClone(execution), combined)
+      current()
+      if (directory !== undefined) {
+        if (!isAbsolute(directory.cwd) || await realpath(directory.cwd) !== directory.cwd
+          || !(await stat(directory.cwd)).isDirectory()) {
+          throw new TeamError('Host execution directory is not a canonical existing directory', 'TEAM_MEMBER_OPERATION_STALE')
+        }
+        current()
+      }
+      return directory
+    })()
+    this.maintenanceJobs.add(job)
+    try {
+      const directory = await job
+      current()
+      return directory === undefined ? undefined : { cwd: directory.cwd, assertCurrent: () => {
+        current(); directory.assertCurrent?.(); return undefined
+      } }
+    } finally { this.maintenanceJobs.delete(job) }
+  }
+
+  /** Header cwd remains the sole durable execution-directory value. */
+  private assertDirectory(header: SessionHeader, directory: TeamExecutionDirectory | undefined): void {
+    directory?.assertCurrent?.()
+    if (directory !== undefined && header.cwd !== directory.cwd) {
+      throw new TeamError('execution cwd differs from its Host directory binding', 'TEAM_MEMBER_OPERATION_STALE')
+    }
+  }
+
   /** Retry only the mailbox's exact unacknowledged admission hold; captured custody never moves here.
    * @param anchor - stable native Team journal owner.
    * @param memberId - current logical recipient.
    * @param messageId - exact still-queued mailbox identity under its dispatch reservation.
    * @param signal - mailbox dispatch cancellation, checked around source confirmation.
+   * @param directory - optional Host binding rechecked before original input restoration.
    */
-  async restoreMailboxHeld(anchor: Agent, memberId: SessionId, messageId: TeamMessageId, signal: AbortSignal): Promise<void> {
+  async restoreMailboxHeld(anchor: Agent, memberId: SessionId, messageId: TeamMessageId, signal: AbortSignal,
+    directory?: TeamExecutionDirectory): Promise<void> {
     const input = this.input, lifetime = this.maintenanceLifetime
     if (input === undefined || lifetime === undefined) return
     const combined = AbortSignal.any([signal, lifetime])
@@ -218,6 +307,7 @@ export class TeamMemberExecutions {
           if (current?.executionId !== expected.executionId || current.generation !== expected.generation) return
           const source = scope.read()
           if (source === undefined) return
+          this.assertDirectory(source.header, directory)
           const record = source.inputControl.records.find(record => record.input.message.id === MessageId(messageId))
           if (record?.location !== 'held' || record.captured === true || record.input.message.source.kind !== 'team-message'
             || record.input.message.source.messageId !== messageId || record.input.message.source.teamId !== TeamId(anchor.id)
@@ -322,7 +412,24 @@ export class TeamMemberExecutions {
       const known = memberExecutionOwner(state, session.id)
       const candidate = state.memberCandidates?.find(item => item.executionId === session.id)
       const member = known?.member ?? state.members.find(item => item.id === candidate?.memberId)
-      return member === undefined ? undefined : { anchor, state, member, memberId: member.id }
+      const binding = known?.binding ?? candidate
+      return member === undefined || binding === undefined ? undefined
+        : { anchor, state, member, memberId: member.id,
+          binding: { memberId: binding.memberId, executionId: binding.executionId, generation: binding.generation } }
+    }
+    const prepareDirectory = async (session: Session, owner: NonNullable<ReturnType<typeof sessionOwner>>,
+      signal: AbortSignal): Promise<TeamExecutionDirectory | undefined> => {
+      const directory = await this.resolveExecutionDirectory(owner.anchor, owner.binding, signal)
+      if (directory === undefined) return
+      await this.journal.transact(owner.anchor.id, () => {
+        signal.throwIfAborted(); lifetime.signal.throwIfAborted()
+        if (!isDeepStrictEqual(sessionOwner(session)?.binding, owner.binding)) {
+          throw new TeamError('execution changed while resolving its directory', 'TEAM_MEMBER_OPERATION_STALE')
+        }
+        this.assertDirectory(session.header, directory)
+        return Promise.resolve()
+      })
+      return directory
     }
     const canRun = (agent: Agent): boolean => {
       if (lifetime.signal.aborted) return false
@@ -341,7 +448,9 @@ export class TeamMemberExecutions {
             throw new TeamError('member anchor resolver returned another execution', 'TEAM_NOT_MEMBER')
           }
         }
-        if (sessionOwner(session) === undefined) throw new TeamError('member execution has no recorded Team owner', 'TEAM_NOT_MEMBER')
+        const owner = sessionOwner(session)
+        if (owner === undefined) throw new TeamError('member execution has no recorded Team owner', 'TEAM_NOT_MEMBER')
+        await prepareDirectory(session, owner, lifetime.signal)
       },
       admit: (agent, material) => {
         const kind: string = material.message.source.kind
@@ -361,9 +470,12 @@ export class TeamMemberExecutions {
       canClaim: canRun,
       prepareClaim: async (agent, signal) => {
         const owner = sessionOwner(agent.session)
-        if (owner !== undefined && canRun(agent) && this.hasWorkPolicy()) {
+        if (owner !== undefined && canRun(agent)) {
+          const directory = await prepareDirectory(agent.session, owner, signal)
+          if (!this.hasWorkPolicy()) return
           await prepareControlledClaim(this.ctx, input, agent,
             material => this.workAdmitted(owner.anchor, owner.memberId, material), signal, () => {
+              this.assertDirectory(agent.session.header, directory)
               if (!canRun(agent)) throw new TeamError('member changed before input claim', 'TEAM_MEMBER_OPERATION_STALE')
             }, action => this.journal.transact(owner.anchor.id, action))
         }
@@ -371,6 +483,8 @@ export class TeamMemberExecutions {
     })
     this.input = input
     this.maintenanceLifetime = lifetime.signal
+    this.directoryOwner = provider.resolveExecutionDirectory === undefined ? undefined
+      : { resolve: provider.resolveExecutionDirectory.bind(provider), lifetime: lifetime.signal }
     const lead = (caller: Agent): Agent => {
       lifetime.signal.throwIfAborted()
       const member = this.membership(caller)
@@ -415,7 +529,10 @@ export class TeamMemberExecutions {
       if (blockers.length > 0) throw new TeamError(`member is blocked: ${blockers.join('; ')}`, 'TEAM_MEMBER_BLOCKED')
     }
     const atQuietExecution = async <T>(anchor: Agent, control: TeamMemberExecutionControl,
-      readBlockers: TeamMemberBlockerReader, action: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      readBlockers: TeamMemberBlockerReader, action: (signal: AbortSignal, source: TeamHeldExecutionScope['source'],
+        read: () => StoredInputCustodySnapshot | undefined) => Promise<T>, incoming = lifetime.signal): Promise<T> => {
+      const signal = AbortSignal.any([incoming, lifetime.signal])
+      signal.throwIfAborted()
       if (this.ctx.agents.get(control.executionId)?.status === 'running') {
         throw new TeamError('member execution has not stopped', 'TEAM_MEMBER_RUNNING')
       }
@@ -424,18 +541,18 @@ export class TeamMemberExecutions {
       occupation.count += 1
       try {
         if (this.ctx.agents.get(control.executionId) === undefined) {
-          return await this.ctx.subagents.withDormantContinuable(anchor, control.executionId, input, lifetime.signal,
+          return await this.ctx.subagents.withDormantContinuable(anchor, control.executionId, input, signal,
             async (source, signal) => {
               await checkQuiet(control, readBlockers, source?.read(), signal)
               await assertSourceAvailable(control, source !== undefined, signal)
-              return action(signal)
+              return action(signal, source === undefined ? 'absent' : 'stored', () => source?.read())
             })
         }
-        return await this.ctx.subagents.withContinuableExecution(anchor, control.executionId, lifetime.signal,
-          async (_execution, signal) => {
+        return await this.ctx.subagents.withContinuableExecution(anchor, control.executionId, signal,
+          async (execution, signal) => {
             await checkQuiet(control, readBlockers, undefined, signal)
             await assertSourceAvailable(control, true, signal)
-            return action(signal)
+            return action(signal, 'live', () => readLiveExecution(this.ctx, execution))
           })
       } finally {
         occupation.count -= 1
@@ -658,6 +775,34 @@ export class TeamMemberExecutions {
           return input.holdPending(execution)
         })
       }),
+      withHeldExecution: (caller, memberId, operationId, readBlockers, incoming, callback) => owned(async () => {
+        const signal = AbortSignal.any([incoming, lifetime.signal])
+        const anchor = lead(caller), control = held(anchor, memberId, operationId)
+        const recheck = (ownedSignal: AbortSignal) => {
+          ownedSignal.throwIfAborted(); lead(caller)
+          if (!isDeepStrictEqual(held(anchor, memberId, operationId), control)) {
+            throw new TeamError('held source changed during resource handback', 'TEAM_MEMBER_OPERATION_STALE')
+          }
+        }
+        await this.journal.transact(anchor.id, async () => {
+          recheck(signal); await confirm(anchor, memberId); recheck(signal)
+        })
+        return await atQuietExecution(anchor, control, readBlockers, async (ownedSignal, source, read) => {
+          await this.journal.transact(anchor.id, () => { recheck(ownedSignal); return Promise.resolve() })
+          const closed = new AbortController()
+          const assertCurrent = () => { closed.signal.throwIfAborted(); recheck(ownedSignal) }
+          const scope: TeamHeldExecutionScope = { executionId: control.executionId, source,
+            signal: AbortSignal.any([ownedSignal, closed.signal]), assertCurrent,
+            read: () => { assertCurrent(); return read() } }
+          const close = () => { closed.abort(new TeamError('held execution scope closed', 'TEAM_MEMBER_OPERATION_STALE')) }
+          try {
+            const result = await callback(scope)
+            close()
+            await this.journal.transact(anchor.id, () => { recheck(ownedSignal); return Promise.resolve() })
+            return result
+          } finally { close() }
+        }, signal)
+      }),
       releaseCaptured: (caller, memberId, operationId, messageIds, record, incoming) => owned(async () => {
         const signal = incoming === undefined ? lifetime.signal : AbortSignal.any([lifetime.signal, incoming])
         const anchor = lead(caller)
@@ -695,11 +840,20 @@ export class TeamMemberExecutions {
       commit: (caller, memberId, operationId, record, readBlockers) => owned(async () => {
         validateRecord(record)
         const anchor = lead(caller)
+        const before = this.journal.state(anchor)
+        const prior = before.memberExecutions?.find(item => item.operationId === operationId && item.memberId === memberId)
+        const reserved = before.memberCandidates?.find(item => item.operationId === operationId && item.memberId === memberId
+          && item.executionId === memberExecutionControl(before, memberId)?.nextExecutionId)
+        const expected = prior ?? reserved
+        const directory = expected === undefined ? undefined : await this.resolveExecutionDirectory(anchor, expected, lifetime.signal)
+        const directoryHeader = directory === undefined || expected === undefined ? undefined
+          : (await readPersistedSession(this.ctx.sessionPersistence, expected.executionId, lifetime.signal)).header
         const committed = await this.journal.transact(anchor.id, async () => {
           lead(caller)
           const state = this.journal.state(anchor)
           const prior = state.memberExecutions?.find(item => item.operationId === operationId && item.memberId === memberId)
           if (prior === undefined) return undefined
+          if (directoryHeader !== undefined) this.assertDirectory(directoryHeader, directory)
           const audit = state.extensionRecords.find(item => item.writerId === ownerId && item.recordId === record.recordId)
           if (audit?.dataJson !== record.dataJson) throw new TeamError('member commit retry conflicts', 'TEAM_MEMBER_OPERATION_STALE')
           await confirm(anchor, memberId)
@@ -717,6 +871,10 @@ export class TeamMemberExecutions {
           signal.throwIfAborted()
           lead(caller)
           const state = this.journal.state(anchor)
+          if (directory !== undefined && (expected?.executionId !== candidateId || expected.generation !== control.generation + 1)) {
+            throw new TeamError('prepared execution changed while resolving its directory', 'TEAM_MEMBER_OPERATION_STALE')
+          }
+          this.assertDirectory(candidate.header, directory)
           const active = held(anchor, memberId, operationId)
           const cut = snapshot(anchor, memberId)
           const previous = cut.records.find(item => item.recordId === record.recordId)
@@ -810,6 +968,10 @@ export class TeamMemberExecutions {
         await input.dispose()
         // Registration remains exclusive until this memoized close finishes.
         this.input = undefined; this.maintenanceLifetime = undefined
+        // A closed directory contributor cannot turn never-created queued work into inherited-directory work.
+        if (provider.resolveExecutionDirectory === undefined) {
+          this.directoryOwner = undefined
+        }
         this.registration = undefined
       })(),
     }

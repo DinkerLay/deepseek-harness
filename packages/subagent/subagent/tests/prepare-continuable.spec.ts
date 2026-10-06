@@ -1,6 +1,6 @@
 /** Reserved continuable candidates through a real Loader and JSONL composition. */
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, realpath, readdir, rename, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -663,9 +663,121 @@ describe('input-free continuable preparation', () => {
     const test = await setup()
     test.parent.session.append('subagent/catalog', { version: 0, childId: test.spec.childId,
       childCreatedAt: 1, mode: 'continuable', label: 'Wrong immutable label' })
-    await expect(test.ctx.subagents.prepareContinuable(test.spec)).rejects.toMatchObject({ code: 'PREPARATION_MISMATCH' })
+    await expect(test.ctx.subagents.prepareContinuable(test.spec)).rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' })
+    expect(await test.ctx.sessionPersistence.stat(test.spec.childId)).toBeUndefined()
     expect(await test.ctx.subagents.listChildren(test.parent.id)).toHaveLength(1)
     expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it.each(['spawn', 'fork'])('binds a Host directory before %s preparation and preserves it on retries and cold delivery', async (provider) => {
+    const test = await setup()
+    const executionDirectory = await realpath(await mkdtemp(join(test.root, 'execution-cwd-')))
+    const alias = join(test.root, 'execution-alias')
+    await symlink(executionDirectory, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const spec = { ...test.spec, provider, cwd: alias }
+    await test.ctx.subagents.prepareContinuable(spec)
+    const before = await stored(test)
+    expect(before.meta.cwd).toBe(executionDirectory)
+    expect(test.ctx.agents.get(spec.childId)).toBeUndefined()
+    expect(test.adapter.requests).toHaveLength(0)
+    await test.ctx.subagents.prepareContinuable(spec)
+    expect((await stored(test)).events).toEqual(before.events)
+    const input = createUserMessage({ content: [{ type: 'text', text: 'Use the bound directory' }], source: { kind: 'user' } })
+    await test.ctx.subagents.deliverContinuableInput({ ...spec, request: { ...spec.request, prompt: [...input.content] } }, input)
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    await test.ctx.agents.get(spec.childId)?.whenIdle()
+    expect((await stored(test)).meta.cwd).toBe(executionDirectory)
+    expect(await test.ctx.subagents.listChildren(test.parent.id)).toHaveLength(1)
+  })
+
+  it.each([false, true])('rejects an identified receipt for a different Host cwd without another execution or input (prepared=%s)', async (prepared) => {
+    const test = await setup()
+    const cwd = await realpath(await mkdtemp(join(test.root, 'expected-cwd-')))
+    const other = await realpath(await mkdtemp(join(test.root, 'wrong-cwd-')))
+    const spec = { ...test.spec, cwd }
+    if (prepared) await test.ctx.subagents.prepareContinuable(spec)
+    const input = createUserMessage({ content: [{ type: 'text', text: 'Original identified work' }], source: { kind: 'user' } })
+    const delivery = { ...spec, request: { ...spec.request, prompt: [...input.content] } }
+    await test.ctx.subagents.deliverContinuableInput(delivery, input)
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    await test.ctx.agents.get(spec.childId)?.whenIdle()
+    const before = await stored(test)
+    await expect(test.ctx.subagents.deliverContinuableInput({ ...delivery, cwd: other }, input))
+      .rejects.toMatchObject({ code: 'PREPARATION_MISMATCH' })
+    await test.ctx.subagents.deliverContinuableInput(delivery, input)
+    const after = await stored(test)
+    expect(after.meta.cwd).toBe(cwd)
+    expect(after.events.filter(event => event.type === 'user/message' && event.data.id === input.id)).toHaveLength(1)
+    expect(after.events).toEqual(before.events)
+    expect(test.adapter.requests).toHaveLength(1)
+  })
+
+  it.each(['relative', 'missing', 'file'])('refuses an explicit %s execution directory before creation', async (invalid) => {
+    const test = await setup()
+    const file = join(test.root, 'not-a-directory')
+    await writeFile(file, 'Not a directory')
+    const cwd = invalid === 'relative' ? 'relative-execution' : invalid === 'missing' ? join(test.root, 'missing-cwd') : file
+    await expect(test.ctx.subagents.prepareContinuable({ ...test.spec, cwd })).rejects.toThrow()
+    await expect(test.ctx.subagents.startContinuable({ ...test.spec, cwd,
+      request: { ...test.spec.request, prompt: [{ type: 'text', text: 'Never dispatched' }] } })).rejects.toThrow()
+    expect(await test.ctx.sessionPersistence.stat(test.spec.childId)).toBeUndefined()
+    expect(await test.ctx.subagents.listChildren(test.parent.id)).toHaveLength(0)
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it.each(['prepare', 'start'] as const)('rechecks the actual directory after provider preparation before %s creates a child', async (operation) => {
+    const test = await setup()
+    const cwd = await realpath(await mkdtemp(join(test.root, 'changed-cwd-')))
+    const target = await realpath(await mkdtemp(join(test.root, 'replacement-cwd-')))
+    test.ctx.subagents.registerProvider({ name: 'moving-directory', inheritsParentContext: false,
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      start: () => Promise.reject(new Error('one-shot execution is outside this test')),
+      prepareContinuable: async () => {
+        await rename(cwd, `${cwd}-retained`)
+        await symlink(target, cwd, process.platform === 'win32' ? 'junction' : 'dir')
+        return {}
+      } })
+    const spec = { ...test.spec, provider: 'moving-directory', cwd }
+    await expect(operation === 'prepare' ? test.ctx.subagents.prepareContinuable(spec)
+      : test.ctx.subagents.startContinuable({ ...spec, request: { ...spec.request, prompt: [] } }))
+      .rejects.toMatchObject({ code: 'PREPARATION_MISMATCH' })
+    expect(await test.ctx.sessionPersistence.stat(spec.childId)).toBeUndefined()
+    expect(await test.ctx.subagents.listChildren(test.parent.id)).toHaveLength(0)
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it('refuses a contradictory catalog for an existing prepared source without appending another creation fact', async () => {
+    const test = await setup()
+    await test.ctx.subagents.prepareContinuable(test.spec)
+    const source = await stored(test)
+    test.parent.session.append('subagent/catalog', { version: 0, childId: test.spec.childId,
+      childCreatedAt: source.meta.createdAt, mode: 'one-shot' })
+    const before = test.parent.session.seq
+    await expect(test.ctx.subagents.prepareContinuable(test.spec)).rejects.toMatchObject({ code: 'PREPARATION_MISMATCH' })
+    expect(test.parent.session.seq).toBe(before)
+    expect((await stored(test)).events).toEqual(source.events)
+    expect(test.adapter.requests).toHaveLength(0)
+  })
+
+  it('does not recreate a known child after its actual stored log disappears', async () => {
+    const test = await setup()
+    await test.ctx.subagents.prepareContinuable(test.spec)
+    const relative = (await readdir(test.root, { recursive: true })).find(path => path.endsWith(`/${test.spec.childId}`))
+    if (relative === undefined) throw new Error('actual prepared child directory was not found')
+    const source = join(test.root, relative), parked = join(test.root, 'parked-known-child')
+    await rename(source, parked)
+    try {
+      const prompt = [{ type: 'text' as const, text: 'Never recreate the lost source' }]
+      const delivery = { ...test.spec, request: { ...test.spec.request, prompt } }
+      await expect(test.ctx.subagents.prepareContinuable(test.spec)).rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' })
+      await expect(test.ctx.subagents.startContinuable(delivery)).rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' })
+      await expect(test.ctx.subagents.deliverContinuableInput(delivery, createUserMessage({ content: prompt, source: { kind: 'user' } })))
+        .rejects.toMatchObject({ code: 'SOURCE_UNAVAILABLE' })
+      expect(await test.ctx.sessionPersistence.stat(test.spec.childId)).toBeUndefined()
+      expect(test.ctx.agents.get(test.spec.childId)).toBeUndefined()
+      expect(await test.ctx.subagents.listChildren(test.parent.id)).toHaveLength(1)
+      expect(test.adapter.requests).toHaveLength(0)
+    } finally { await rename(parked, source) }
   })
 
   it('reports direct identified held creation as custody, not executable delivery', async () => {

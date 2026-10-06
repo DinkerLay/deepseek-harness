@@ -9,7 +9,7 @@
   ],
   "references": [
     {
-      "path": "../../../native/system/packages/entry"
+      "path": "../../util/file-lease"
     },
     {
       "path": "../../../vendor/cosmokit"

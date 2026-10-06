@@ -1,0 +1,9 @@
+version: 1
+scenario: continuable-directory
+profile: sdk
+composition: sdk-continuable-directory
+recording: authored
+header:
+  class: sdk-continuable-directory
+  pin: true
+  childSystemPrompts: [1]

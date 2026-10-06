@@ -1418,6 +1418,138 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'gitResources',
+    summary: 'Sole same-host owner of managed work copies; no task, agent role or model tool policy.',
+    description: 'Sole same-host owner of managed work copies; no task, agent role or model tool policy.',
+    methods: [
+      {
+        signature: 'async preview(request: GitResourcePreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourcePreview>',
+        description: 'Observe a registered repository and an explicit immutable or selected baseline.',
+        parameters: [{ name: 'request', description: 'registered project and explicit commit/layered baseline.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'bounded detached observation; no Git object, ref, index, domain or user-file writes.',
+      },
+      {
+        signature: 'async create(request: GitResourceCreateRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>',
+        description: 'Create the work copy reserved by an exact original request, or resume that same operation.',
+        parameters: [{ name: 'request', description: 'exact earlier preview and stable caller-reserved operation id.' }, { name: 'signal', description: 'cancellation; intent and completed effects survive it.' }],
+        returns: 'confirmed resource or recoverable original operation, never a second work copy.',
+      },
+      {
+        signature: 'async previewIntegration(request: GitIntegrationPreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitIntegrationPreview>',
+        description: 'Observe exact immutable versions; no merge objects, refs or new work copies are created.',
+        parameters: [{ name: 'request', description: 'opaque scope, starting resource and ordered versioned preservation identities.' }, { name: 'signal', description: 'read-only observation cancellation.' }],
+        returns: 'immutable source facts and an integration creation fingerprint.',
+      },
+      {
+        signature: 'async integrate(request: GitIntegrationRequest, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>',
+        description: 'Persist an integration intent, then create a separate work copy without applying anything to the project.',
+        parameters: [{ name: 'request', description: 'exact earlier preview, original request JSON and stable operation identity.' }, { name: 'signal', description: 'caller cancellation; committed effects remain observable.' }, { name: 'assertCurrent', description: 'trusted synchronous Host recheck before each external write and final acknowledgement.' }],
+        returns: 'the original prepared or conflicted work copy and immutable Git conflict evidence.',
+      },
+      {
+        signature: 'async previewResolution(selection: GitIntegrationResolutionSelection, signal: AbortSignal = this.lifetime.signal): Promise<GitIntegrationResolutionPreview>',
+        description: 'Observe an exact version and all known conflicts without inferring resolution from marker absence.',
+        parameters: [{ name: 'selection', description: 'original integration, versioned seal and explicit complete conflict set.' }, { name: 'signal', description: 'observation cancellation.' }],
+        returns: 'a current quiet working/index cut; no Git objects or refs are written.',
+      },
+      {
+        signature: 'async resolveIntegration(request: GitIntegrationResolutionRequest, signal: AbortSignal, assertProof: () => void): Promise<GitResourceOperationView>',
+        description: 'Record independent Host-proven resolution of one exact immutable version; original records never change.',
+        parameters: [{ name: 'request', description: 'stable operation and exact preview plus original consumer JSON.' }, { name: 'signal', description: 'admitted operation cancellation.' }, { name: 'assertProof', description: 'required synchronous Host authority/normal-verification proof, not a request-authored claim.' }],
+        returns: 'exact confirmed resolution receipt; new versions need their own explicit confirmation.',
+      },
+      {
+        signature: 'async previewApplication(request: GitApplicationPreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitApplicationPreview>',
+        description: 'Observe an exact ready version and registered target; no file, index, ref or Git object writes.',
+        parameters: [{ name: 'request', description: 'immutable version, optional exact resolution receipt and target Workspace identity.' }, { name: 'signal', description: 'read-only preview cancellation.' }],
+        returns: 'complete target HEAD/index/touched-path CAS and plain patch digest.',
+      },
+      {
+        signature: 'async apply(request: GitApplicationRequest, signal: AbortSignal, assertAuthorized: () => void): Promise<GitResourceOperationView>',
+        description: 'Explicit authenticated application, without moving the target HEAD/index or blindly replaying partial writes.',
+        parameters: [{ name: 'request', description: 'stable original operation and exact target preview.' }, { name: 'signal', description: 'retained Host occupation cancellation.' }, { name: 'assertAuthorized', description: 'required current user authority and known-target-writer quiet proof, outside request JSON.' }],
+        returns: 'confirmed all-after observation; partial or unknown target effects remain attention-required.',
+      },
+      {
+        signature: 'async previewInverse(request: GitInversePreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitInversePreview>',
+        description: 'Observe a reverse candidate\'s CURRENT target without reapplying original inputs.',
+        parameters: [{ name: 'request', description: 'exact old confirmed application and its registered target.' }, { name: 'signal', description: 'read-only cancellation.' }],
+        returns: 'fresh current touched-path cut, preserving unrelated target changes.',
+      },
+      {
+        signature: 'async prepareInverse(request: GitInverseRequest, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>',
+        description: 'Prepare a separate reverse work copy from the current target, not a rollback or automatic target write.',
+        parameters: [{ name: 'request', description: 'original reverse intention and exact current preview.' }, { name: 'signal', description: 'caller cancellation.' }, { name: 'assertCurrent', description: 'trusted synchronous Host freshness/occupation recheck before each write.' }],
+        returns: 'prepared/conflicted independent work copy requiring normal verification and a new application.',
+      },
+      {
+        signature: 'async reconcile(operationId: GitOperationId, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>',
+        description: 'Observe already-created effects and confirm only the exact original resource evidence.',
+        parameters: [{ name: 'operationId', description: 'earlier persisted identity.' }, { name: 'signal', description: 'reconciliation cancellation.' }],
+        returns: 'actual resource/ref identity or a retained attention diagnostic; unknown paths are not removed or adopted.',
+      },
+      {
+        signature: 'async abandonOperation(operationId: GitOperationId, expectedFingerprint: string, reason: string, signal: AbortSignal = this.lifetime.signal, assertCurrent: () => void = () => {}): Promise<GitResourceOperationView>',
+        description: 'Terminally abandon an original creation only after proving that no external write ever began. This neither rolls back nor deletes Git objects, directories, refs or any partial effect.',
+        parameters: [{ name: 'operationId', description: 'original immutable creation identity; never reusable after abandonment.' }, { name: 'expectedFingerprint', description: 'exact original request CAS.' }, { name: 'reason', description: 'bounded caller-owned diagnostic, not an authorization claim.' }, { name: 'signal', description: 'cancellation while waiting for the actual operation/resource lanes to drain.' }, { name: 'assertCurrent', description: 'trusted synchronous Host recheck immediately before the durable transform.' }],
+        returns: 'terminal receipt only when all ownership evidence is definitely absent.',
+      },
+      {
+        signature: 'read(resourceId: GitResourceId): GitResourceRecord | undefined',
+        description: 'Read detached resource metadata without repairing or confirming effects.',
+        parameters: [{ name: 'resourceId', description: 'stored work-copy identity.' }],
+        returns: 'detached authoritative domain facts without IO, repair or confirmation.',
+      },
+      {
+        signature: 'status(operationId: GitOperationId): GitResourceOperationView | undefined',
+        description: 'Read the original operation and its resource as a detached observation.',
+        parameters: [{ name: 'operationId', description: 'stored operation identity.' }],
+        returns: 'detached observation without executing a recovery step.',
+      },
+      {
+        signature: 'listOperations(scope: GitConsumerScope): readonly GitResourceOperationView[]',
+        description: 'List only operations belonging to the exact opaque consumer scope.',
+        parameters: [{ name: 'scope', description: 'exact opaque consumer grouping.' }],
+        returns: 'detached operation/resource views; this query never confirms or replays effects.',
+      },
+      {
+        signature: 'async inspectWorkCopy(resourceId: GitResourceId, signal: AbortSignal = this.lifetime.signal): Promise<GitWorkCopyInspection>',
+        description: 'Observe current versioned working bytes without acquiring a write lane or mutating Git/domain facts.',
+        parameters: [{ name: 'resourceId', description: 'caller-selected managed copy, including one already held by this execution.' }, { name: 'signal', description: 'observation cancellation.' }],
+        returns: 'exact observed hashes and unresolved stages; never a quiet or successful-test claim.',
+      },
+      {
+        signature: 'async previewCleanup(resourceId: GitResourceId, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceCleanupPreview>',
+        description: 'Preview removal only after full regular-file preservation, without claiming an index/directory backup.',
+        parameters: [{ name: 'resourceId', description: 'exact owned copy, not a caller-provided filesystem path.' }, { name: 'signal', description: 'read-only cancellation.' }],
+        returns: 'all-content private-ref and directory/index cut; unpreserved content refuses explicitly.',
+      },
+      {
+        signature: 'async cleanup(request: GitResourceCleanupRequest, signal: AbortSignal, assertUnused: () => void): Promise<GitResourceOperationView>',
+        description: 'Remove only this exact preserved owned directory after the Host proves it is no current cwd or known writer.',
+        parameters: [{ name: 'request', description: 'stable original request and exact earlier full-content preview.' }, { name: 'signal', description: 'retained Host occupation cancellation.' }, { name: 'assertUnused', description: 'required trusted current-cwd/job/source-detachment proof, never request-authored.' }],
+        returns: 'actual both-halves-absent receipt; refs/history are retained and partial deletion never blindly repeats.',
+      },
+      {
+        signature: 'async withWriteUse<T>(resourceId: GitResourceId, identity: GitResourceUseIdentity, signal: AbortSignal, callback: (scope: GitResourceWriteScope) => Promise<T>): Promise<T>',
+        description: 'Hold the resource\'s serial write use until the callback and durable handback settle.',
+        parameters: [{ name: 'resourceId', description: 'known available work copy.' }, { name: 'identity', description: 'caller-owned use id and execution incarnation.' }, { name: 'signal', description: 'cancellation propagated to the callback.' }, { name: 'callback', description: 'work holding this resource lane; assertCurrent is synchronous for an external CAS.' }],
+        returns: 'callback result only after successful durable handback; rejected work keeps an explicit attention use.',
+      },
+      {
+        signature: 'async confirmQuietUse(resourceId: GitResourceId, identity: GitResourceUseIdentity, expectedRevision: number, assertQuiescent: () => void): Promise<void>',
+        description: 'Explicit Host handback of a live or cold uncertain use; no model-authored quiet claim is accepted.',
+        parameters: [{ name: 'resourceId', description: 'held work copy.' }, { name: 'identity', description: 'exact original owner/use/epoch.' }, { name: 'expectedRevision', description: 'current resource CAS.' }, { name: 'assertQuiescent', description: 'synchronous trusted caller proof checked at the durable transform.' }],
+      },
+      {
+        signature: 'async preserve(request: GitResourcePreserveRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>',
+        description: 'Preserve one exact resource version as immutable file-content and Git-ref facts.',
+        parameters: [{ name: 'request', description: 'exact available resource revision and stable operation identity.' }, { name: 'signal', description: 'operation cancellation.' }],
+        returns: 'immutable versioned code seal by default; explicit all-content mode is directory preservation, not a code result.',
+      },
+    ],
+  },
+  {
     key: 'goals',
     summary: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
     description: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
@@ -1597,6 +1729,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'List caller-owned and unowned jobs in registration order.',
         parameters: [{ name: 'caller', description: 'reading session; omission sees only unowned jobs.' }],
         returns: 'fresh projections.',
+      },
+      {
+        signature: 'abstract listAll(): JobView[]',
+        description: 'Observe every retained registry job for trusted Host safety checks. Includes owned, unowned and terminal records even when the owning Agent is no longer registered. Reads neither consume output nor change lifecycle. This snapshot covers this registry, not arbitrary external processes.',
+        parameters: [],
+        returns: 'fresh projections in registration order for every owner.',
       },
       {
         signature: 'abstract get(id: JobId, caller?: SessionId): JobView',
@@ -5303,7 +5441,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ContinuableStartSpec',
-    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly initialSource?: MessageSource;\n    readonly initialMessageId?: MessageId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly cwd?: string;\n    readonly initialSource?: MessageSource;\n    readonly initialMessageId?: MessageId;\n    readonly preset?: ContinuablePresetBinding;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'ContinuableSubagentDescriptorData',
@@ -5716,6 +5854,198 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'GenericResultView',
     declaration: 'export interface GenericResultView {\n    card: \'generic\';\n    title?: string;\n    content?: ContentBlock[];\n}',
+  },
+  {
+    name: 'GitApplicationAncestor',
+    declaration: 'export interface GitApplicationAncestor {\n    readonly path: string;\n    readonly identity?: GitPathIdentity | undefined;\n}',
+  },
+  {
+    name: 'GitApplicationEffect',
+    declaration: 'export interface GitApplicationEffect {\n    readonly preview: GitApplicationPreview;\n    readonly observation: GitApplicationObservation;\n}',
+  },
+  {
+    name: 'GitApplicationObservation',
+    declaration: 'export interface GitApplicationObservation {\n    readonly state: \'before\' | \'after\' | \'partial\' | \'unknown\';\n    readonly paths: readonly {\n        readonly path: string;\n        readonly state: \'before\' | \'after\' | \'unknown\';\n    }[];\n    readonly headUnchanged: boolean;\n    readonly indexUnchanged: boolean;\n}',
+  },
+  {
+    name: 'GitApplicationPath',
+    declaration: 'export interface GitApplicationPath {\n    readonly path: string;\n    readonly before: GitFileState;\n    readonly after: GitFileState;\n}',
+  },
+  {
+    name: 'GitApplicationPreview',
+    declaration: 'export interface GitApplicationPreview {\n    readonly source: GitApplicationSource;\n    readonly target: GitApplicationTargetCut;\n    readonly patchHash: string;\n    readonly patch: string;\n    readonly binary: boolean;\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitApplicationPreviewRequest',
+    declaration: 'export interface GitApplicationPreviewRequest {\n    readonly consumerScope: GitConsumerScope;\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly targetWorkspaceId: WorkspaceId;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
+  },
+  {
+    name: 'GitApplicationRequest',
+    declaration: 'export interface GitApplicationRequest extends GitApplicationPreviewRequest {\n    readonly operationId: GitOperationId;\n    readonly originalRequestJson: string;\n    readonly expectedPreviewFingerprint: string;\n}',
+  },
+  {
+    name: 'GitApplicationSource',
+    declaration: 'export interface GitApplicationSource {\n    readonly repository: GitRepositoryIdentity;\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly consumerScope: GitConsumerScope;\n    readonly originalTargetBaseTree: string;\n    readonly resultCommit: string;\n    readonly resultTree: string;\n    readonly manifestHash: string;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
+  },
+  {
+    name: 'GitApplicationTargetCut',
+    declaration: 'export interface GitApplicationTargetCut {\n    readonly repository: GitRepositoryIdentity;\n    readonly head: string;\n    readonly symbolicRef?: string | undefined;\n    readonly indexHash: string;\n    readonly touched: readonly GitApplicationPath[];\n    readonly ancestors: readonly GitApplicationAncestor[];\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitBaselineEntry',
+    declaration: 'export interface GitBaselineEntry {\n    readonly path: string;\n    readonly source: GitPathSelection[\'source\'];\n    readonly mode: \'100644\' | \'100755\' | \'deleted\';\n    readonly objectId?: string;\n    readonly rawHash?: string;\n    readonly bytes: number;\n}',
+  },
+  {
+    name: 'GitBaselineSelection',
+    declaration: 'export type GitBaselineSelection = {\n    readonly kind: \'commit\';\n    readonly commit: string;\n} | {\n    readonly kind: \'selected\';\n    readonly baseCommit: string;\n    readonly paths: readonly GitPathSelection[];\n};',
+  },
+  {
+    name: 'GitConsumerScope',
+    declaration: 'export type GitConsumerScope = Branded<\'GitConsumerScope\'>;',
+  },
+  {
+    name: 'GitDirtyState',
+    declaration: 'export interface GitDirtyState {\n    readonly staged: readonly string[];\n    readonly unstaged: readonly string[];\n    readonly untracked: readonly string[];\n    readonly unmerged: readonly string[];\n}',
+  },
+  {
+    name: 'GitFileState',
+    declaration: 'export type GitFileState = {\n    readonly kind: \'absent\';\n} | {\n    readonly kind: \'file\';\n    readonly mode: \'100644\' | \'100755\';\n    readonly objectId: string;\n    readonly rawHash: string;\n};',
+  },
+  {
+    name: 'GitIntegrationConflictMessage',
+    declaration: 'export interface GitIntegrationConflictMessage {\n    readonly paths: readonly string[];\n    readonly kind: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'GitIntegrationConflictStage',
+    declaration: 'export interface GitIntegrationConflictStage {\n    readonly path: string;\n    readonly mode: \'100644\' | \'100755\';\n    readonly objectId: string;\n    readonly stage: 1 | 2 | 3;\n}',
+  },
+  {
+    name: 'GitIntegrationEffect',
+    declaration: 'export interface GitIntegrationEffect {\n    readonly originalTargetBaseTree: string;\n    readonly commit: string;\n    readonly tree: string;\n    readonly manifestHash: string;\n    readonly result: \'prepared\' | \'conflicted\';\n    readonly attemptedInputCount: number;\n    readonly remainingSourceOperationIds: readonly GitOperationId[];\n    readonly conflictStages: readonly GitIntegrationConflictStage[];\n    readonly conflictMessages: readonly GitIntegrationConflictMessage[];\n}',
+  },
+  {
+    name: 'GitIntegrationInput',
+    declaration: 'export interface GitIntegrationInput {\n    readonly operationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly repositoryId: GitRepositoryId;\n    readonly consumerScope: GitConsumerScope;\n    readonly commit: string;\n    readonly tree: string;\n    readonly manifestHash: string;\n    readonly ref: string;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
+  },
+  {
+    name: 'GitIntegrationPreview',
+    declaration: 'export interface GitIntegrationPreview {\n    readonly request: GitIntegrationPreviewRequest;\n    readonly repository: GitRepositoryIdentity;\n    readonly baseCommit: string;\n    readonly baseTree: string;\n    readonly originalTargetBaseTree: string;\n    readonly baseInput?: GitIntegrationInput | undefined;\n    readonly sources: readonly GitIntegrationInput[];\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitIntegrationPreviewRequest',
+    declaration: 'export interface GitIntegrationPreviewRequest {\n    readonly consumerScope: GitConsumerScope;\n    readonly baseResourceId: GitResourceId;\n    readonly basePreserveOperationId?: GitOperationId | undefined;\n    readonly sourcePreserveOperationIds: readonly GitOperationId[];\n    readonly resolutionOperationIds?: readonly GitOperationId[] | undefined;\n}',
+  },
+  {
+    name: 'GitIntegrationRequest',
+    declaration: 'export interface GitIntegrationRequest extends GitIntegrationPreviewRequest {\n    readonly operationId: GitOperationId;\n    readonly originalRequestJson: string;\n    readonly expectedPreviewFingerprint: string;\n}',
+  },
+  {
+    name: 'GitIntegrationResolutionEffect',
+    declaration: 'export interface GitIntegrationResolutionEffect {\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly tree: string;\n    readonly manifestHash: string;\n    readonly conflictIds: readonly string[];\n}',
+  },
+  {
+    name: 'GitIntegrationResolutionPreview',
+    declaration: 'export interface GitIntegrationResolutionPreview {\n    readonly request: GitIntegrationResolutionSelection;\n    readonly effect: GitIntegrationResolutionEffect;\n    readonly resourceRevision: number;\n    readonly head: string;\n    readonly indexHash: string;\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitIntegrationResolutionRequest',
+    declaration: 'export interface GitIntegrationResolutionRequest extends GitIntegrationResolutionSelection {\n    readonly operationId: GitOperationId;\n    readonly originalRequestJson: string;\n    readonly expectedPreviewFingerprint: string;\n}',
+  },
+  {
+    name: 'GitIntegrationResolutionSelection',
+    declaration: 'export interface GitIntegrationResolutionSelection {\n    readonly consumerScope: GitConsumerScope;\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly confirmedConflictIds: readonly string[];\n}',
+  },
+  {
+    name: 'GitInversePreview',
+    declaration: 'export interface GitInversePreview {\n    readonly applicationOperationId: GitOperationId;\n    readonly original: GitApplicationEffect;\n    readonly currentTarget: GitApplicationTargetCut;\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitInversePreviewRequest',
+    declaration: 'export interface GitInversePreviewRequest {\n    readonly consumerScope: GitConsumerScope;\n    readonly applicationOperationId: GitOperationId;\n    readonly targetWorkspaceId: WorkspaceId;\n}',
+  },
+  {
+    name: 'GitInverseRequest',
+    declaration: 'export interface GitInverseRequest extends GitInversePreviewRequest {\n    readonly operationId: GitOperationId;\n    readonly originalRequestJson: string;\n    readonly expectedPreviewFingerprint: string;\n}',
+  },
+  {
+    name: 'GitOperationId',
+    declaration: 'export type GitOperationId = Branded<\'GitOperationId\'>;',
+  },
+  {
+    name: 'GitPathIdentity',
+    declaration: 'export interface GitPathIdentity {\n    readonly path: string;\n    readonly device: string;\n    readonly inode: string;\n}',
+  },
+  {
+    name: 'GitPathSelection',
+    declaration: 'export interface GitPathSelection {\n    readonly path: string;\n    readonly source: \'index\' | \'worktree\' | \'untracked\';\n}',
+  },
+  {
+    name: 'GitRepositoryId',
+    declaration: 'export type GitRepositoryId = Branded<\'GitRepositoryId\'>;',
+  },
+  {
+    name: 'GitRepositoryIdentity',
+    declaration: 'export interface GitRepositoryIdentity {\n    readonly repositoryId: GitRepositoryId;\n    readonly workspaceId: WorkspaceId;\n    readonly root: GitPathIdentity;\n    readonly gitDir: GitPathIdentity;\n    readonly commonDir: GitPathIdentity;\n    readonly objectFormat: \'sha1\' | \'sha256\';\n}',
+  },
+  {
+    name: 'GitResourceCleanupObservation',
+    declaration: 'export interface GitResourceCleanupObservation {\n    readonly pathAbsent: boolean;\n    readonly metadataAbsent: boolean;\n}',
+  },
+  {
+    name: 'GitResourceCleanupPreview',
+    declaration: 'export interface GitResourceCleanupPreview {\n    readonly resourceId: GitResourceId;\n    readonly resourceRevision: number;\n    readonly pathIdentity: GitPathIdentity;\n    readonly gitDirIdentity: GitPathIdentity;\n    readonly preserveOperationId: GitOperationId;\n    readonly commit: string;\n    readonly tree: string;\n    readonly manifestHash: string;\n    readonly ref: string;\n    readonly head: string;\n    readonly indexHash: string;\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitResourceCleanupRequest',
+    declaration: 'export interface GitResourceCleanupRequest {\n    readonly operationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly expectedPreviewFingerprint: string;\n    readonly originalRequestJson?: string | undefined;\n}',
+  },
+  {
+    name: 'GitResourceCreateRequest',
+    declaration: 'export interface GitResourceCreateRequest extends GitResourcePreviewRequest {\n    readonly operationId: GitOperationId;\n    readonly consumerScope: GitConsumerScope;\n    readonly originalRequestJson: string;\n    readonly expectedPreviewFingerprint: string;\n}',
+  },
+  {
+    name: 'GitResourceId',
+    declaration: 'export type GitResourceId = Branded<\'GitResourceId\'>;',
+  },
+  {
+    name: 'GitResourceOperation',
+    declaration: 'export interface GitResourceOperation {\n    readonly operationId: GitOperationId;\n    readonly fingerprint: string;\n    readonly kind: \'create\' | \'preserve\' | \'integrate\' | \'resolve\' | \'apply\' | \'inverse\' | \'cleanup\';\n    readonly resourceId: GitResourceId;\n    readonly repositoryId: GitRepositoryId;\n    readonly consumerScope: GitConsumerScope;\n    readonly phase: \'intended\' | \'acting\' | \'needs_attention\' | \'confirmed\' | \'failed\' | \'abandoned\';\n    readonly request: GitResourceCreateRequest | GitResourcePreserveRequest | GitIntegrationRequest | GitIntegrationResolutionRequest | GitApplicationRequest | GitInverseRequest | GitResourceCleanupRequest;\n    readonly createdAt: string;\n    readonly preview?: GitResourcePreview;\n    readonly integrationPreview?: GitIntegrationPreview;\n    readonly integrationEffect?: GitIntegrationEffect;\n    readonly resolutionPreview?: GitIntegrationResolutionPreview;\n    readonly resolutionEffect?: GitIntegrationResolutionEffect;\n    readonly applicationPreview?: GitApplicationPreview;\n    readonly applicationObservation?: GitApplicationObservation;\n    readonly applicationEffect?: GitApplicationEffect;\n    readonly inversePreview?: GitInversePreview;\n    readonly cleanupPreview?: GitResourceCleanupPreview;\n    readonly cleanupObservation?: GitResourceCleanupObservation;\n    readonly effectCommit?: string;\n    readonly effectTree?: string;\n    readonly effectManifestHash?: string;\n    readonly effectRef?: string;\n    readonly effectHead?: string; /* …truncated — full shape in source */',
+  },
+  {
+    name: 'GitResourceOperationView',
+    declaration: 'export interface GitResourceOperationView {\n    readonly operation: GitResourceOperation;\n    readonly resource: GitResourceRecord;\n}',
+  },
+  {
+    name: 'GitResourcePreserveRequest',
+    declaration: 'export interface GitResourcePreserveRequest {\n    readonly operationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly expectedRevision: number;\n    readonly content?: \'versioned\' | \'all\';\n    readonly originalRequestJson?: string;\n}',
+  },
+  {
+    name: 'GitResourcePreview',
+    declaration: 'export interface GitResourcePreview {\n    readonly request: GitResourcePreviewRequest;\n    readonly permitted: boolean;\n    readonly diagnostic?: string;\n    readonly risks: readonly string[];\n    readonly repository?: GitRepositoryIdentity;\n    readonly head?: string;\n    readonly symbolicRef?: string;\n    readonly indexHash?: string;\n    readonly baseCommit?: string;\n    readonly baseTree?: string;\n    readonly dirty: GitDirtyState;\n    readonly selected: readonly GitBaselineEntry[];\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitResourcePreviewRequest',
+    declaration: 'export interface GitResourcePreviewRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly baseline: GitBaselineSelection;\n}',
+  },
+  {
+    name: 'GitResourceRecord',
+    declaration: 'export interface GitResourceRecord {\n    readonly resourceId: GitResourceId;\n    readonly repositoryId: GitRepositoryId;\n    readonly consumerScope: GitConsumerScope;\n    readonly revision: number;\n    readonly path: string;\n    readonly reservedAbsent: true;\n    readonly pathIdentity?: GitPathIdentity;\n    readonly privateRef: string;\n    readonly baselineCommit?: string;\n    readonly baselineTree?: string;\n    readonly state: \'reserved\' | \'available\' | \'conflicted\' | \'preserved\' | \'needs_attention\' | \'abandoned\' | \'cleaned\';\n    readonly preservedCommit?: string;\n    readonly preservedTree?: string;\n    readonly preservedManifestHash?: string;\n    readonly preservedRef?: string;\n    readonly preservedHead?: string;\n    readonly preservedContent?: \'versioned\' | \'all\';\n    readonly preservedConflictStages?: readonly GitIntegrationConflictStage[];\n    readonly preservedIntegrationOperationId?: GitOperationId;\n    readonly unresolvedConflictIds?: readonly string[];\n    readonly resolutionOperationId?: GitOperationId;\n    readonly resolvedPreserveOperationId?: GitOperationId;\n    readonly unpreservedPaths?: readonly string[];\n    readonly use?: GitResourceUse;\n    readonly useHistory: readonly GitResourceUse[];\n}',
+  },
+  {
+    name: 'GitResourceUse',
+    declaration: 'export interface GitResourceUse extends GitResourceUseIdentity {\n    readonly phase: \'held\' | \'needs_attention\' | \'released\';\n}',
+  },
+  {
+    name: 'GitResourceUseIdentity',
+    declaration: 'export interface GitResourceUseIdentity {\n    readonly useId: string;\n    readonly ownerId: string;\n    readonly epoch: string;\n}',
+  },
+  {
+    name: 'GitResourceWriteScope',
+    declaration: 'export interface GitResourceWriteScope {\n    readonly resource: GitResourceRecord;\n    readonly signal: AbortSignal;\n    assertCurrent(): void;\n}',
+  },
+  {
+    name: 'GitWorkCopyInspection',
+    declaration: 'export interface GitWorkCopyInspection {\n    readonly resourceId: GitResourceId;\n    readonly resourceRevision: number;\n    readonly pathIdentity: GitPathIdentity;\n    readonly head: string;\n    readonly indexHash: string;\n    readonly manifestHash: string;\n    readonly conflictStages: readonly GitIntegrationConflictStage[];\n    readonly unpreservedPaths: readonly string[];\n}',
   },
   {
     name: 'GoalActivation',
@@ -7974,6 +8304,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamControlledMode {\n    readonly kind: \'controlled\';\n    readonly requiredTaskExtensionId: string;\n    readonly permissionTableId: string;\n    readonly permissionRevision: string;\n    readonly maxOrdinaryMessageBytes?: number;\n    readonly memberToolLimit?: TeamMemberToolLimit | undefined;\n}',
   },
   {
+    name: 'TeamExecutionDirectory',
+    declaration: 'export interface TeamExecutionDirectory {\n    readonly cwd: string;\n    readonly assertCurrent?: () => undefined;\n}',
+  },
+  {
     name: 'TeamExecutionMaintenanceRequest',
     declaration: 'export interface TeamExecutionMaintenanceRequest {\n    readonly target: TeamExecutionMaintenanceTarget;\n    readonly assertCurrent?: () => void;\n}',
   },
@@ -8016,6 +8350,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamExtensionRecordWritePlan',
     declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly affectsComposition?: true;\n}',
+  },
+  {
+    name: 'TeamHeldExecutionScope',
+    declaration: 'export interface TeamHeldExecutionScope {\n    readonly executionId: SessionId;\n    readonly source: \'live\' | \'stored\' | \'absent\';\n    readonly signal: AbortSignal;\n    read(): StoredInputCustodySnapshot | undefined;\n    assertCurrent(): void;\n}',
   },
   {
     name: 'TeamId',
@@ -8111,11 +8449,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberExecutionHandle',
-    declaration: 'export interface TeamMemberExecutionHandle {\n    read(caller: Agent, memberId: SessionId): TeamMemberExecutionSnapshot;\n    recordsConfirmed(caller: Agent): boolean;\n    record(caller: Agent, memberId: SessionId, operationId: string, record: TeamExtensionRecord | ((snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord)): Promise<void>;\n    recordRoster(caller: Agent, record: TeamExtensionRecord | ((snapshot: TeamCompositionSnapshot) => TeamExtensionRecord)): Promise<void>;\n    preloadMaterial(caller: Agent, expected: TeamMemberExecution, material: readonly TeamMemberMaterial[]): Promise<\'stored\' | \'deferred\'>;\n    hold(caller: Agent, request: HoldTeamMemberExecution, build: (snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord): Promise<TeamMemberExecutionControl>;\n    retarget(caller: Agent, memberId: SessionId, operationId: string, expectedNextId: SessionId, nextId: SessionId, record: TeamExtensionRecord, readBlockers: (executionId: SessionId) => readonly string[] | Promise<readonly string[]>): Promise<void>;\n    capture(execution: Agent): Promise<readonly AgentInput[]>;\n    captureCurrent(caller: Agent, memberId: SessionId, operationId: string, signal?: AbortSignal, readBlockers?: TeamMemberBlockerReader): Promise<readonly AgentInput[]>;\n    releaseCaptured(caller: Agent, memberId: SessionId, operationId: string, messageIds: readonly import(\'@deepseek-ai/dsh-llm\').MessageId[], record: TeamExtensionRecord, signal?: AbortSignal): Promise<void>;\n    commit(ca /* …truncated — full shape in source */',
+    declaration: 'export interface TeamMemberExecutionHandle {\n    read(caller: Agent, memberId: SessionId): TeamMemberExecutionSnapshot;\n    recordsConfirmed(caller: Agent): boolean;\n    record(caller: Agent, memberId: SessionId, operationId: string, record: TeamExtensionRecord | ((snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord)): Promise<void>;\n    recordRoster(caller: Agent, record: TeamExtensionRecord | ((snapshot: TeamCompositionSnapshot) => TeamExtensionRecord)): Promise<void>;\n    preloadMaterial(caller: Agent, expected: TeamMemberExecution, material: readonly TeamMemberMaterial[]): Promise<\'stored\' | \'deferred\'>;\n    hold(caller: Agent, request: HoldTeamMemberExecution, build: (snapshot: TeamMemberExecutionSnapshot) => TeamExtensionRecord): Promise<TeamMemberExecutionControl>;\n    retarget(caller: Agent, memberId: SessionId, operationId: string, expectedNextId: SessionId, nextId: SessionId, record: TeamExtensionRecord, readBlockers: (executionId: SessionId) => readonly string[] | Promise<readonly string[]>): Promise<void>;\n    capture(execution: Agent): Promise<readonly AgentInput[]>;\n    captureCurrent(caller: Agent, memberId: SessionId, operationId: string, signal?: AbortSignal, readBlockers?: TeamMemberBlockerReader): Promise<readonly AgentInput[]>;\n    withHeldExecution<T>(caller: Agent, memberId: SessionId, operationId: string, readBlockers: TeamMemberBlockerReader, signal: AbortSignal, callback: (scope: TeamHeldExecutionScope) => Promise<T>): Promise<T>;\n    releas /* …truncated — full shape in source */',
   },
   {
     name: 'TeamMemberExecutionProvider',
-    declaration: 'export interface TeamMemberExecutionProvider {\n    readonly id: string;\n    resolveAnchor?(id: SessionId, signal: AbortSignal): Promise<Agent>;\n    initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>;\n}',
+    declaration: 'export interface TeamMemberExecutionProvider {\n    readonly id: string;\n    resolveExecutionDirectory?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<TeamExecutionDirectory | undefined>;\n    resolveAnchor?(id: SessionId, signal: AbortSignal): Promise<Agent>;\n    initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>;\n}',
   },
   {
     name: 'TeamMemberExecutionSnapshot',

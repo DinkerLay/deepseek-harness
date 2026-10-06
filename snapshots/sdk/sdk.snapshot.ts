@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -101,6 +101,8 @@ function dirOf(url: string): string {
 }
 
 interface SdkAssertions {
+  /** Exact Host-selected child directory below the untouched scenario workspace. */
+  childDirectory?: string
   /** Candidate executions have durable lineage, but no delegated run to finish. */
   ordinaryChildren?: true
   /** Additional profile patches applied after the shared composition. */
@@ -127,6 +129,7 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'continuable-directory': { childDirectory: 'worker' },
   'controlled-input': {
     patches: [fileURLToPath(new URL('./controlled-input/runtime.cordis.yml', import.meta.url))],
     expectedFinalResponse: 'SDK snapshot OK',
@@ -561,7 +564,10 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   finalWorkspace: WorkspaceSnapshotEntry[]
   cwd: string
 }> {
-  const cwd = await mkdtemp(join(tmpdir(), `sdk-snapshot-${scenario.name}-`))
+  const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
+  const allocated = await mkdtemp(join(tmpdir(), `sdk-snapshot-${scenario.name}-`))
+  // This scenario compares the Host's canonical child cwd with its exact root.
+  const cwd = assertions.childDirectory === undefined ? allocated : await realpath(allocated)
   const dshHome = join(cwd, '.dsh')
   const sessionsRoot = join(dshHome, 'sessions')
   const replayFixtures = recording ? [] : await hydrateReplayFixtures(scenario, cwd)
@@ -571,7 +577,6 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   const route = modelFromSession(primaryFixture)
   const patchRoot = join(cwd, '.snapshot-patches')
   await mkdir(patchRoot, { recursive: true })
-  const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
   const patches = [...authoredPatches(scenario, !recording), ...assertions.patches ?? []]
     .map((patch, index) => materializeProfilePatch(patch, cwd, 'sdk', patchRoot, index))
   let childSessionsRoot: string | undefined
@@ -866,6 +871,12 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       reconcileCatalogCreationTimes(ordered.map(log => log.content), 'validate')
       const actualContext = contextOf(ordered, cwd)
+      if (assertions.childDirectory !== undefined) {
+        expect(ordered).toHaveLength(2)
+        expect(ordered[0]!.header.cwd).toBe(cwd)
+        expect(ordered[1]!.header.cwd).toBe(join(cwd, assertions.childDirectory))
+        expect(ordered[1]!.header.parentSession).toBe(ordered[0]!.header.id)
+      }
       if (scenario.name === 'dynamic-tool-updates') {
         const selectedTypes = new Set(['request/header', 'request/context', 'developer/message', 'tool/call', 'tool/result'])
         const events = results.flatMap(result => result.events).filter(event => selectedTypes.has(event.type))
@@ -957,7 +968,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
 
       if (recording) {
         expectedContents = redactSessionSnapshotIds(stabilizeFixtureMessageIds(
-          ordered.map(log => scrubSessionSnapshot(tokenizeSessionFixtureCwd(log.content))),
+          ordered.map(log => scrubSessionSnapshot(tokenizeSessionFixtureCwd(log.content, cwd))),
           expectedContents,
         ))
       }
@@ -974,7 +985,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
           const existing = expectedContents[index]
           if (existing === undefined) throw new Error(`no fixture for persisted log ${index}`)
           return scrubSessionSnapshot(tokenizeSessionFixtureCwd(
-            stabilizeRefreshLog(log.content, existing, replacements, actualContext),
+            stabilizeRefreshLog(log.content, existing, replacements, actualContext), cwd,
           ))
         })
         expectedContents = redactSessionSnapshotIds(stabilizeFixtureMessageIds(reconcileCatalogCreationTimes(refreshed, 'preserve-headers'), expectedContents))

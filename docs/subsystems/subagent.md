@@ -274,6 +274,54 @@ The descriptor (`SubagentDescriptorData` in [descriptor.ts](../../packages/subag
 
 A local one-shot provider appends the descriptor inside the child's initial turn before its first request. The continuation manager appends the descriptor after any provider-supplied lineage and before the initial prompt is admitted; `Session.inheritedEventCount` remains the fork-lineage boundary: resume-time descriptor authority reads the child's own suffix, while the identity projection folds `subagent/descriptor` last-wins so the child's own descriptor overrides a fork-seeded ancestor's. The event is log-only: no `surfaceOp`, never in model history, and retained across compaction by the append-only log. Malformed current-version descriptors are corrupt; unsupported versions cannot be classified by this runtime.
 
+### Host execution directory
+
+`ContinuableStartSpec.cwd` optionally selects an existing absolute Host directory; creation canonicalizes it before materialization, and preparation or delivery retries require the same stored `SessionHeader.cwd`. Omission inherits the parent directory. An already catalogued child with a missing log rejects instead of becoming an empty replacement. Model-facing delegation schemas do not gain a directory field.
+
+```ts type-equiv
+/** What a caller asks for when starting a continuable background child. */
+interface ContinuableStartSpec {
+  /** The `ctx.subagents` provider whose continuable-creation capability establishes the child. */
+  readonly provider: string
+  /** The initial delegation's short `description`, persisted as the child's creation label. */
+  readonly label: string
+  /**
+   * Optional caller-reserved child identity. Omission preserves the manager's
+   * UUID allocation; supplying one lets a durable parent record provisioning
+   * before child materialization without a second identity handshake.
+   */
+  readonly childId?: SessionId
+  /** Host-verified execution directory; omission preserves parent-directory inheritance.
+   * Creation canonicalizes an existing absolute directory; delivery and preparation retries require the same stored cwd.
+   */
+  readonly cwd?: string
+  /** Host-owned first-input source; omission preserves the ordinary user source. */
+  readonly initialSource?: MessageSource
+  /** Host-reserved first-input identity; omission allocates a fresh message id. */
+  readonly initialMessageId?: MessageId
+  /** Explicit child preset, pinned to a captured declaration revision; omission inherits the parent's composition. */
+  readonly preset?: ContinuablePresetBinding
+  /**
+   * The delegation request. The manager reserves the stable child id, resolves
+   * the durable descriptor, and composes the child itself.
+   */
+  readonly request: Omit<SubagentStartRequest, 'label' | 'signal' | 'outputSchema'>
+  /** Caller cancellation, owning the operation only until inbox acceptance. */
+  readonly signal: AbortSignal
+}
+```
+
+```ts type-equiv
+/** Immutable creation inputs for a reserved child that must not receive work yet. */
+type ContinuablePrepareSpec = Omit<ContinuableStartSpec,
+  'childId' | 'initialSource' | 'initialMessageId' | 'request'> & {
+  /** Caller-reserved identity reused for preparation retries and later delivery. */
+    readonly childId: SessionId
+    /** Creation composition only; preparation neither accepts nor stores a prompt. */
+    readonly request: Omit<ContinuableStartSpec['request'], 'prompt'>
+  }
+```
+
 ## Durable enumeration: `listChildren()`, `listDescendants()`, and their entries
 
 The model-facing `list_agents` adapter reports current activity as `running` or `inactive`. These values do not describe task completion or guarantee that `send_message` will succeed.

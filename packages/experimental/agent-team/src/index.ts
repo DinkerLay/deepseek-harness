@@ -49,7 +49,8 @@ export type { TeamMembership } from './roster.ts'
 export type { TeamMemberExecution } from './member-execution.ts'
 export type { TeamMemberSlotTransfer } from './member-slots.ts'
 export type { TeamMemberExecutionHandle, TeamMemberExecutionProvider, TeamMemberExecutionSnapshot,
-  HoldTeamMemberExecution, TeamMemberMaterial, TeamMemberBlockerReader } from './member-runtime.ts'
+  HoldTeamMemberExecution, TeamMemberMaterial, TeamMemberBlockerReader, TeamExecutionDirectory,
+  TeamHeldExecutionScope } from './member-runtime.ts'
 export type { TeamLeadExecutionIdentity } from './lead-execution.ts'
 export type { TeamLeadBinding, TeamLeadSeat, TeamLeadCommitPlan } from './lead-seat.ts'
 export type { TeamLeadCoordination, TeamLeadTransition, TeamLeadCoordinationPhase } from './lead-coordination.ts'
@@ -190,7 +191,9 @@ export class TeamService extends Service {
       (anchor, memberId) => this.memberExecutions.admitted(anchor, memberId),
       (anchor, targetId, input) => this.tasks.inputAdmitted(anchor, targetId, input),
       anchor => this.tasks.workPolicyAvailable(anchor),
-      (anchor, memberId, messageId, signal) => this.memberExecutions.restoreMailboxHeld(anchor, memberId, messageId, signal),
+      (anchor, memberId, messageId, signal, directory) =>
+        this.memberExecutions.restoreMailboxHeld(anchor, memberId, messageId, signal, directory),
+      (anchor, binding, signal) => this.memberExecutions.resolveExecutionDirectory(anchor, binding, signal),
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,

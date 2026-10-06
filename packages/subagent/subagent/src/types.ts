@@ -70,6 +70,10 @@ export interface ContinuableStartSpec {
    * before child materialization without a second identity handshake.
    */
   readonly childId?: SessionId
+  /** Host-verified execution directory; omission preserves parent-directory inheritance.
+   * Creation canonicalizes an existing absolute directory; delivery and preparation retries require the same stored cwd.
+   */
+  readonly cwd?: string
   /** Host-owned first-input source; omission preserves the ordinary user source. */
   readonly initialSource?: MessageSource
   /** Host-reserved first-input identity; omission allocates a fresh message id. */

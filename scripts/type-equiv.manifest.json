@@ -2,6 +2,276 @@
   "comment": "Maps each primary ` ```ts type-equiv ` or ` ```ts public-api ` block (by doc + declared symbol + projection) to the source declaration and original JSDoc it must match. Paired `.zh.md` blocks are byte-identical derivatives checked through their unsuffixed sibling and have no duplicate entry. Omit projection for the complete declaration; use public-api with a ` ```ts public-api ` block for a body-stripped public class declaration. verify-type-equiv.ts enforces a 1:1 correspondence between primary blocks and entries. Add an entry when you add a primary source-equivalence block; remove it when you remove the block.",
   "entries": [
     {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationAncestor",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitFileState",
+      "source": "packages/workspace/git-resources/src/manifest.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationPath",
+      "source": "packages/workspace/git-resources/src/manifest.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitRepositoryId",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceId",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitOperationId",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitConsumerScope",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitPathIdentity",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitRepositoryIdentity",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitPathSelection",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitBaselineSelection",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourcePreviewRequest",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitBaselineEntry",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitDirtyState",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourcePreview",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceUseIdentity",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceUse",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceRecord",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceOperation",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceCreateRequest",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourcePreserveRequest",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceOperationView",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceWriteScope",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitWorkCopyInspection",
+      "source": "packages/workspace/git-resources/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationPreviewRequest",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationRequest",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationInput",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationPreview",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationConflictStage",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationConflictMessage",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationEffect",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationResolutionSelection",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationResolutionRequest",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationResolutionEffect",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitIntegrationResolutionPreview",
+      "source": "packages/workspace/git-resources/src/integration.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationSource",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationPreviewRequest",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationRequest",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationTargetCut",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationPreview",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationObservation",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationEffect",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitInversePreviewRequest",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitInverseRequest",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitInversePreview",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceCleanupPreview",
+      "source": "packages/workspace/git-resources/src/cleanup.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceCleanupRequest",
+      "source": "packages/workspace/git-resources/src/cleanup.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitResourceCleanupObservation",
+      "source": "packages/workspace/git-resources/src/cleanup.ts"
+    },
+    {
+      "doc": "docs/subsystems/subagent.md",
+      "symbol": "ContinuableStartSpec",
+      "source": "packages/subagent/subagent/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/subagent.md",
+      "symbol": "ContinuablePrepareSpec",
+      "source": "packages/subagent/subagent/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamExecutionDirectory",
+      "source": "packages/experimental/agent-team/src/member-runtime.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamHeldExecutionScope",
+      "source": "packages/experimental/agent-team/src/member-runtime.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMemberExecutionProvider",
+      "source": "packages/experimental/agent-team/src/member-runtime.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamMemberExecutionHandle",
+      "source": "packages/experimental/agent-team/src/member-runtime.ts"
+    },
+    {
       "doc": "docs/subsystems/compaction.md",
       "symbol": "ImageOffloadTarget",
       "source": "packages/compaction/compaction-image-offload/src/projection.ts"

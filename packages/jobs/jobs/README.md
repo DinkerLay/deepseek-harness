@@ -37,6 +37,10 @@ A producer streams output by naming pull sources on its spec — non-consuming o
 
 A job belongs to the agent session that started it: another agent cannot read or stop it. Ids such as `bash-1` are predictable, so this fence is authorization, not secrecy. A job started without an owner is open to any caller and lasts until the service is disposed.
 
+### Host safety observations
+
+Trusted Host consumers use `listAll()` for fresh projections of every retained registry job, including jobs whose Agent has been unregistered. The read does not consume output, change lifecycle or emit events; terminal records remain until their existing removal. `list(caller?)` keeps caller-owned plus unowned visibility, and omission still sees only unowned jobs. This observation covers the registry's jobs, not arbitrary external processes.
+
 ### Starting background work needs a controller
 
 A producer can start work only while a controller that serves the owner is attached — loading `dsh-tool-jobs` attaches one. An agent whose composition loads no controller cannot start background work; `start()` fails with a message that names the missing controller rather than starting work the agent could never collect or stop.
@@ -85,7 +89,7 @@ This section explains the design decisions behind the contract and points at the
 
 ### Service operations
 
-Each read or control operation accepts an optional caller `SessionId`; omitting it permits only unowned jobs: `list` and `get` return fresh projections, `read` advances the model's cursor and hands out the producer's result once after settlement, `readAt` reads retained chunks at an absolute offset without consuming anything, `kill` invokes producer cancellation before changing status and records the reason for the terminal `detail`, `wait` blocks up to a timeout, `remove` drops a settled record a caller collected through its own wait and never handed out, and `start()` preflights access, validation, and admission before invoking the producer's `run()` once while refusing any owner no attached controller serves; `events.subscribe` delivers registration, progress, stopping, settlement, removal, and output commits at owner, scope, or process granularity.
+Caller-scoped read or control operations accept an optional caller `SessionId`; omitting it permits only unowned jobs: `list` and `get` return fresh projections, `read` advances the model's cursor and hands out the producer's result once after settlement, `readAt` reads retained chunks at an absolute offset without consuming anything, `kill` invokes producer cancellation before changing status and records the reason for the terminal `detail`, `wait` blocks up to a timeout, `remove` drops a settled record a caller collected through its own wait and never handed out, and `start()` preflights access, validation, and admission before invoking the producer's `run()` once while refusing any owner no attached controller serves; `events.subscribe` delivers registration, progress, stopping, settlement, removal, and output commits at owner, scope, or process granularity.
 
 Every implementation also answers the Workspace registry's archive admission ([seam](../../workspace/workspace/README.md)), installed by the seam's constructor through the abstract `list` and `kill` alone: `workspace/session-activity` reports the running or stopping jobs the asked Session owns as the `job` family, one item per job with its label; `workspace/session-stop` kills each of them with the reason `session archived`, one at a time, so a producer that throws on cancel is logged while the Session's other jobs still stop. Unowned jobs belong to nobody and are never reported or killed for a Session.
 

@@ -509,4 +509,5 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 
 | Package | Config | Description |
 |---|---|---|
-| `@deepseek-ai/dsh-workspace` | no | Workspace entity registry (ctx.workspaceRegistry): durable workspace records with validated session attachment over the domain data form for the DeepSeek Harness |
+| `@deepseek-ai/dsh-git-resources` | yes | Host-owned local Git work copies, explicit baselines and durable resource operations |
+| `@deepseek-ai/dsh-workspace` | yes | Workspace entity registry (ctx.workspaceRegistry): durable workspace records with validated session attachment over the domain data form for the DeepSeek Harness |

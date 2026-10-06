@@ -14,6 +14,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, InputControllerHandle, StoredInputCustody, StoredInputCustodySource, StoredInputCustodySnapshot } from '@deepseek-ai/dsh-agent'
@@ -126,6 +128,24 @@ export class SubagentContinuationManager {
     })
     return { childDepth, agentOptions, descriptor,
       delegatedPolicies: captureDelegatedPolicyOverrides(request.parent) }
+  }
+
+  /** Resolve only an explicitly supplied Host directory, never creating or adopting a missing path. */
+  private async resolveCwd(cwd: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted()
+    if (!isAbsolute(cwd)) throw new SubagentError('continuable cwd must be an absolute directory', 'INVALID_CWD')
+    const canonical = await realpath(cwd)
+    signal.throwIfAborted()
+    if (!(await stat(canonical)).isDirectory()) throw new SubagentError('continuable cwd is not a directory', 'INVALID_CWD')
+    signal.throwIfAborted()
+    return canonical
+  }
+
+  /** Check the immutable target directory before an idempotent receipt or new input can be accepted. */
+  private assertCwd(header: SessionHeader, cwd: string | undefined): void {
+    if (cwd !== undefined && header.cwd !== cwd) {
+      throw new SubagentError(`subagent "${header.id}" execution directory changed`, 'PREPARATION_MISMATCH')
+    }
   }
 
   /**
@@ -397,6 +417,7 @@ export class SubagentContinuationManager {
     const creation = this.snapshotCreation(spec)
     const { childId, signal, request: { parent } } = spec
     return this.withChildOperation(childId, parent, signal, async () => {
+      const cwd = spec.cwd === undefined ? undefined : await this.resolveCwd(spec.cwd, signal)
       const releaseHold = this.activations.holdOwnership(parent, childId)
       let candidate: Activation | undefined
       try {
@@ -407,14 +428,18 @@ export class SubagentContinuationManager {
         this.activations.assertAdmitting(parent)
         let header: SessionHeader
         if (persisted === undefined && live === undefined) {
+          this.assertUncreatedChild(parent, childId, signal)
           this.activations.assertChildIdAvailable(childId)
           const prepared = await this.host.prepareContinuable(spec.provider, { sessionId: childId, parent, signal })
           signal.throwIfAborted()
           this.activations.assertAdmitting(parent)
           this.activations.assertChildIdAvailable(childId)
+          if (cwd !== undefined && await this.resolveCwd(cwd, signal) !== cwd) {
+            throw new SubagentError('continuable execution directory changed before creation', 'PREPARATION_MISMATCH')
+          }
           candidate = await this.activations.materialize({ childId, provider: spec.provider, parent,
             create: { seed: prepared.seed,
-              meta: { ...childSessionMeta(parent, creation.childDepth, prepared.seed !== undefined),
+              meta: { ...childSessionMeta(parent, creation.childDepth, prepared.seed !== undefined, cwd),
                 ...spec.preset === undefined ? {} : { agentPreset: spec.preset.id } },
               inheritedEventCount: SessionLogOffset(prepared.seed?.length ?? 0),
               delegatedPolicies: creation.delegatedPolicies, descriptor: creation.descriptor },
@@ -435,7 +460,7 @@ export class SubagentContinuationManager {
           using observed = await this.requireSessionQuery().observeSession(childId, { signal })
           this.activations.authorizeLineage(parent, childId, observed.header.parentSession)
           const own = observed.events.slice(observed.inheritedEventCount)
-          const expectedMeta = childSessionMeta(parent, creation.childDepth, observed.header.isSeeded)
+          const expectedMeta = childSessionMeta(parent, creation.childDepth, observed.header.isSeeded, cwd)
           if (!isDeepStrictEqual(foldSubagentDescriptor(own), creation.descriptor)
             || !isDeepStrictEqual(foldContinuablePreset(own), spec.preset)
             || observed.header.origin !== 'subagent' || observed.header.cwd !== expectedMeta.cwd
@@ -504,6 +529,7 @@ export class SubagentContinuationManager {
     const request = spec.request
     const parent = request.parent
     this.activations.assertAdmitting(parent)
+    const cwd = spec.cwd === undefined ? undefined : await this.resolveCwd(spec.cwd, spec.signal)
     const persistence = this.requirePersistence()
     const childId = spec.childId ?? brandString<SessionId>(randomUUID())
     this.activations.assertChildIdAvailable(childId)
@@ -536,6 +562,10 @@ export class SubagentContinuationManager {
           if (persisted !== undefined) {
             throw new SubagentError(`subagent "${childId}" already exists`, 'DUPLICATE_CHILD')
           }
+          this.assertUncreatedChild(parent, childId, spec.signal)
+        }
+        if (cwd !== undefined && await this.resolveCwd(cwd, spec.signal) !== cwd) {
+          throw new SubagentError('continuable execution directory changed before creation', 'PREPARATION_MISMATCH')
         }
         const activation = await this.activations.materialize({
           childId,
@@ -544,7 +574,7 @@ export class SubagentContinuationManager {
           create: {
             seed,
             meta: {
-              ...childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+              ...childSessionMeta(parent, childDepth, prepared.seed !== undefined, cwd),
               ...spec.preset === undefined ? {} : { agentPreset: spec.preset.id },
             },
             inheritedEventCount,
@@ -589,11 +619,13 @@ export class SubagentContinuationManager {
   ): Promise<ContinuableStart> {
     const { childId, signal } = spec
     return this.withChildOperation(childId, spec.request.parent, signal, async () => {
+      const cwd = spec.cwd === undefined ? undefined : await this.resolveCwd(spec.cwd, signal)
       while (true) {
         signal.throwIfAborted()
         const session = this.requireSessions().get(childId)
         if (session !== undefined) {
           this.activations.authorizeLineage(spec.request.parent, childId, session.header.parentSession)
+          this.assertCwd(session.header, cwd)
           await this.requireSessions().flush(session)
           if (this.liveInputRecorded(session, input.id)) {
             return { childId, messageId: input.id }
@@ -603,6 +635,7 @@ export class SubagentContinuationManager {
           if (stored !== undefined) {
             using observed = await this.requireSessionQuery().observeSession(childId, { signal })
             this.activations.authorizeLineage(spec.request.parent, childId, observed.header.parentSession)
+            this.assertCwd(observed.header, cwd)
             if (this.inputRecorded(observed.events.slice(observed.inheritedEventCount), input.id)) {
               return { childId, messageId: input.id }
             }
@@ -626,6 +659,7 @@ export class SubagentContinuationManager {
         }
         const stored = await this.requirePersistence().stat(childId, { signal })
         if (stored === undefined && running === undefined) {
+          this.assertUncreatedChild(spec.request.parent, childId, signal)
           const accepted = await this.startContinuable({ ...spec, initialSource: input.source,
             initialMessageId: input.id, request: { ...spec.request, prompt: [...input.content] } })
           if (accepted.inputLocation !== undefined) return accepted

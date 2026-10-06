@@ -1,6 +1,7 @@
 /** Durable Team mailbox admission, target-local dispatch, acknowledgement, and recovery. */
 
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, AgentInput, InputControllerHandle } from '@deepseek-ai/dsh-agent'
@@ -16,6 +17,8 @@ import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
 import type { TeamState } from './projection.ts'
 import { currentMemberExecution, memberExecutionOwner, memberExecutionStarted } from './member-execution.ts'
+import type { TeamExecutionDirectory } from './member-runtime.ts'
+import type { TeamMemberExecution } from './types.ts'
 import { resolveActiveMember } from './roster.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId, TeamMessageId } from './types.ts'
@@ -108,7 +111,9 @@ export class TeamMailbox {
     private readonly workAdmitted: (anchor: Agent, targetId: SessionId, input: AgentInput) => boolean,
     private readonly workPolicyAvailable: (anchor: Agent) => boolean,
     private readonly restoreMemberHeld: (anchor: Agent, memberId: SessionId, messageId: TeamMessageId,
-      signal: AbortSignal) => Promise<void>,
+      signal: AbortSignal, directory?: TeamExecutionDirectory) => Promise<void>,
+    private readonly resolveMemberDirectory: (anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal) =>
+    Promise<TeamExecutionDirectory | undefined>,
   ) {
     this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
       context: leadContext,
@@ -466,6 +471,18 @@ export class TeamMailbox {
       if (member !== undefined) {
         if (member.phase !== 'active' || !this.memberAdmitted(root, member.id)) return false
         const binding = currentMemberExecution(state, member)
+        const directory = await this.resolveMemberDirectory(root, binding, signal)
+        const assertDirectory = () => {
+          signal.throwIfAborted()
+          directory?.assertCurrent?.()
+          const current = this.journal.state(root)
+          const target = current.members.find(candidate => candidate.id === member.id)
+          if (target?.phase !== 'active' || !this.memberAdmitted(root, member.id)
+            || !this.workPolicyAvailable(root) || !isDeepStrictEqual(currentMemberExecution(current, target), binding)) {
+            throw new TeamError('member changed while resolving its execution directory', 'TEAM_MEMBER_OPERATION_STALE')
+          }
+        }
+        if (directory !== undefined) await this.journal.transact(root.id, () => { assertDirectory(); return Promise.resolve() })
         try {
           const registry = this.ctx.get('agentPresets')
           if (registry === undefined || member.preset === undefined) throw new TeamError('registered member Preset is unavailable', 'TEAM_PRESET_UNAVAILABLE')
@@ -483,14 +500,16 @@ export class TeamMailbox {
         }
         const input = createUserMessage({ content: teamMessageDeliveryContent(message, state),
           source: teamMessageSource(TeamId(root.id), message, state) })
-        await this.restoreMemberHeld(root, member.id, message.id, signal)
+        await this.restoreMemberHeld(root, member.id, message.id, signal, directory)
         const receipt = await this.ctx.subagents.deliverContinuableInput({ childId: binding.executionId, provider: member.provider,
           label: member.description, preset: member.preset,
+          ...directory === undefined ? {} : { cwd: directory.cwd },
           request: { parent: root, prompt: [...input.content] }, signal,
         }, Object.freeze({ ...input, id: brandString<MessageId>(message.id) }))
         if (receipt.inputLocation === 'held') { this.scheduleRetry(root, message); return false }
         if (receipt.inputLocation === 'released') return false
-        await this.markDelivered(root, message.id, message.targetId, binding.executionId)
+        await this.markDelivered(root, message.id, message.targetId, binding.executionId,
+          directory === undefined ? undefined : assertDirectory)
         return true
       }
       const target = message.targetId === root.id ? root : this.ctx.agents.get(message.targetId)
@@ -580,9 +599,10 @@ export class TeamMailbox {
 
   /** Record delivery unless the acknowledgement already exists. */
   private async markDelivered(root: Agent, messageId: TeamMessageId, targetId: SessionId,
-    executionId: SessionId = targetId): Promise<void> {
+    executionId: SessionId = targetId, assertCurrent?: () => void): Promise<void> {
     await this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
+      assertCurrent?.()
       if (state.delivered.includes(messageId)) return
       const queued = state.messages.find(message => message.id === messageId)
       if (queued === undefined || queued.targetId !== targetId) return

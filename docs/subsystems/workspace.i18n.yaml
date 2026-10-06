@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/workspace.md
 /workspaces:
-  en: 183fd2f466e3279c
-  zh: 6e79009b7294c240
+  en: 3bd02295fda6e935
+  zh: 66a457e140c6adaf
 /workspaces/identity:
   en: d61a7e78bbc1fb56
   zh: 8397869f70cd5b28
@@ -12,8 +12,8 @@
   en: 697698bc46adc477
   zh: 73d073933ed68c53
 /workspaces/the-registry-ctx-workspaceregistry:
-  en: 7ba5b4e06c162bd6
-  zh: f1dd7eacacd07e0b
+  en: f791484b0cb792a7
+  zh: 5b4ca55e94a4ab90
 /workspaces/default-workspace-initialization:
   en: c4307480e504ba81
   zh: dc8a98e1b447b900
@@ -23,6 +23,21 @@
 /workspaces/archive-admission:
   en: f4ae8ce5eb2ef329
   zh: 333106e86263be40
+/workspaces/managed-git-resources:
+  en: 83bb6780f68a576e
+  zh: 3e3db62a8ae01941
+/workspaces/managed-git-resources/resource-identities-and-lifecycle:
+  en: b45080c6c57ef798
+  zh: e3e4700db140fe70
+/workspaces/managed-git-resources/integration-and-resolution:
+  en: caa06b31db37073d
+  zh: b2eb89abd09ee2b7
+/workspaces/managed-git-resources/target-application-and-inverse-candidates:
+  en: 73d4389b7087d6d1
+  zh: 62c3e03629e10514
+/workspaces/managed-git-resources/cleanup-observations:
+  en: 149263e8e3ecb67a
+  zh: 54bf7ffd03a8adcc
 /workspaces/consumers:
   en: 6b592294ff18b4d3
   zh: a48bec961b8182a9

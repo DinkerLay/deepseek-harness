@@ -309,6 +309,10 @@ export class LocalJobRegistry extends JobRegistry {
       .map(job => this.view(job))
   }
 
+  listAll(): JobView[] {
+    return [...this.store.values()].map(job => this.view(job))
+  }
+
   get(id: JobId, caller?: SessionId): JobView {
     return this.view(this.expect(id, caller))
   }

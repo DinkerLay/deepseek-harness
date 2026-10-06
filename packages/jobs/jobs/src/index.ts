@@ -117,6 +117,15 @@ export abstract class JobRegistry extends Service {
   abstract list(caller?: SessionId): JobView[]
 
   /**
+   * Observe every retained registry job for trusted Host safety checks.
+   * Includes owned, unowned and terminal records even when the owning Agent
+   * is no longer registered. Reads neither consume output nor change lifecycle.
+   * This snapshot covers this registry, not arbitrary external processes.
+   * @returns fresh projections in registration order for every owner.
+   */
+  abstract listAll(): JobView[]
+
+  /**
    * Project one job without changing its cursor. Throws for an unknown or
    * foreign job.
    * @param id - job to look up.

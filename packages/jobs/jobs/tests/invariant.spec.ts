@@ -42,6 +42,7 @@ async function setup() {
     }
     start(): never { throw new Error('unsupported') }
     list(): never { throw new Error('unsupported') }
+    listAll(): never { throw new Error('unsupported') }
     read(): never { throw new Error('unsupported') }
     readAt(): never { throw new Error('unsupported') }
     kill(): never { throw new Error('unsupported') }

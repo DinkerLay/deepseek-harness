@@ -8352,7 +8352,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:333`](../packages/exper
 
 SHA-256: `b68f7b97125e2020e6fc5a63d4d24f77fcbd4a39d1f9ffe705d0fe3773e9d367`
 
-Sources: [`packages/experimental/agent-team/src/member-runtime.ts:42`](../packages/experimental/agent-team/src/member-runtime.ts)
+Sources: [`packages/experimental/agent-team/src/member-runtime.ts:45`](../packages/experimental/agent-team/src/member-runtime.ts)
 
 | Property | Presence | Type |
 |---|---|---|

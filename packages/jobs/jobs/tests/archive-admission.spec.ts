@@ -33,6 +33,10 @@ class ScriptedJobRegistry extends JobRegistry {
       .map(row => this.view(row))
   }
 
+  listAll(): JobView[] {
+    return this.rows.map(row => this.view(row))
+  }
+
   get(id: JobId): JobView {
     const row = this.rows.find(candidate => candidate.id === id)
     if (row === undefined) throw new Error(`unknown job ${id}`)

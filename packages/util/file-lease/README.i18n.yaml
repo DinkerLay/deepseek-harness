@@ -1,0 +1,46 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/util/file-lease/README.md
+/:
+  en: ce20ad6e67bceed2
+  zh: cbdcf6b95195a025
+/deepseek-ai-dsh-util-file-lease:
+  en: 903177aa209d4fb9
+  zh: 484d067ce5d4dc8f
+/deepseek-ai-dsh-util-file-lease/summary:
+  en: ff01abf3e72fd4ba
+  zh: 2b8877b56583064a
+/deepseek-ai-dsh-util-file-lease/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 725b47765ee8f30b
+/deepseek-ai-dsh-util-file-lease/use-this-package:
+  en: adbea150af7ed608
+  zh: c8f8a75f4a99e922
+/deepseek-ai-dsh-util-file-lease/understand-the-implementation:
+  en: 22a92dafc26a33a1
+  zh: 6464ef25698a8897
+/deepseek-ai-dsh-util-file-lease/further-exploration:
+  en: 6af593d1b0b50297
+  zh: 6196e20bccd96857
+/deepseek-ai-dsh-util-file-lease/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-util-file-lease/model-experience/kernel-ownership:
+  en: f14830f991687c5f
+  zh: 8d4ec91e3c6a882f
+/deepseek-ai-dsh-util-file-lease/model-experience/kernel-ownership/what-the-model-sees:
+  en: c5656ac476635991
+  zh: 74f323aed7231c41
+/deepseek-ai-dsh-util-file-lease/model-experience/kernel-ownership/token-effect:
+  en: cda2c779cc9c14b8
+  zh: 8821aa380635034a
+/deepseek-ai-dsh-util-file-lease/model-experience/kernel-ownership/kv-cache-effect:
+  en: 815e93723a98919c
+  zh: 96b829a54c2d69f2
+/deepseek-ai-dsh-util-file-lease/known-limitations-and-deferred-work:
+  en: 04b4d4adc1061968
+  zh: 4ff653b1853d1efe
+/deepseek-ai-dsh-util-file-lease/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

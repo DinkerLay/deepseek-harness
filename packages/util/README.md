@@ -36,6 +36,7 @@ Each package provides one primitive; open a package page for how to use it.
 | [`http-proxy/`](http-proxy/README.md) | Resolves one outbound proxy policy and installs it for `fetch`, SDK agents, and spawned children |
 | [`launch-environment/`](launch-environment/README.md) | Frozen launch environment that remembers which layer supplied each value |
 | [`atomic-write/`](atomic-write/README.md) | Atomic file replacement and cross-process writer locking |
+| [`file-lease/`](file-lease/README.md) | Non-blocking kernel leases shared by Session writers and managed Git resources |
 | [`lazy-require/`](lazy-require/README.md) | Loads CommonJS-compatible Host dependencies on first use with caller-relative resolution |
 | [`native-command/`](native-command/README.md) | Runs host-native commands directly, never through a shell string |
 | [`workspace-path/`](workspace-path/README.md) | Provides browser-safe Workspace path and display helpers |

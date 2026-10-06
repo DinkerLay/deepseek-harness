@@ -49,6 +49,10 @@ class StubJobRegistry extends JobRegistry {
     return [this.view(JobId('bash-1'), caller)]
   }
 
+  listAll(): JobView[] {
+    return this.list()
+  }
+
   get(id: JobId, caller?: SessionId): JobView {
     return this.view(id, caller)
   }
@@ -89,6 +93,7 @@ describe('JobRegistry seam', () => {
 
     const jobs = ctx.jobs
     expect(jobs.list(caller)).toHaveLength(1)
+    expect(jobs.listAll()).toHaveLength(1)
     expect(jobs.get(id, caller).status).toBe('running')
     expect(jobs.get(id, caller).owner).toBe(caller)
     expect(jobs.read(id, caller)).toMatchObject({ chunks: [], lossy: false, job: { id } })

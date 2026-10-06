@@ -5,6 +5,7 @@ import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 import { TeamError } from './error.ts'
 import { cancellable } from './lead-runtime.ts'
+import { readLiveExecution } from './execution-observation.ts'
 
 /** Owner closures preserve the sole controller and seat-specific identity rules. */
 export interface ExecutionMaintenanceOwner {
@@ -178,13 +179,7 @@ export async function maintainExecution<T>(ctx: Context, request: TeamExecutionM
       assert()
       if (!await ctx.sessions.flush(current.session)) throw new TeamError('execution source durability was not confirmed', 'TEAM_INPUT_DURABILITY')
       assert(); ownedSignal.throwIfAborted()
-      const read = (): StoredInputCustodySnapshot => {
-        // oxlint-disable-next-line typescript/no-deprecated -- This scope owns the exact live driver cut and does not export the Session.
-        return structuredClone({ header: current.session.header, events: current.session.snapshotEvents(),
-          inheritedEventCount: current.session.inheritedEventCount, inputControl: ctx.agents.inputControlState(current.session),
-          pending: [...current.inbox.nextStep.map(message => ({ target: 'next-step' as const, message })),
-            ...current.inbox.nextTurn.map(message => ({ target: 'next-turn' as const, message }))] })
-      }
+      const read = () => readLiveExecution(ctx, current)
       return invoke('live', read, ids => owner.input.holdPending(current, ids), async (ids) => {
         for (const id of ids) {
           const record = ctx.agents.inputControlState(current.session).records.find(record => record.input.message.id === id)

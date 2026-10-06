@@ -163,7 +163,7 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope �
 - **不删除会话文件**——日志在 `root` 下累积，直到外部移除；seam 无删除接口。
 - **每会话一个活动写入方**——写句柄认领在所属后端实例内排除第二个写入方，内核锁（`session.lock` 上的非阻塞 `flock(2)`；Windows 上为由该路径派生的命名内核信号量，零文件系统足迹）排除其他所有实例与进程；锁在以写模式打开既有产物时立即获取，新建会话则仅在首次实体化写入之前获取，因此未实体化的会话不留任何文件系统足迹。崩溃持有者的锁随其进程消亡，会话立即可再写入，而活着但卡死的持有者会阻塞写入方直到其进程退出（POSIX 上删除锁文件即放弃该排他；释放本身从不删除它）。咨询式 `flock` 在部分网络文件系统（NFSv3）上不可靠，Windows 信号量名按登录会话隔离。
 - **POSIX 实体化需要硬链接支持**——第一次 append 使用 `link()`，使同 id 竞态失败而不覆盖已提交日志；Windows 使用无替换 write-through rename。
-- **POSIX 写入需要匹配的预编译系统 addon**——[`node-addon-system`](../../../native/system/README.zh.md) 提供异步 flock，无须在用户侧编译。addon 缺失时拒绝写入所有权；Windows 保留其信号量实现。
+- **共享内核拥有权**——[`file-lease`](../../util/file-lease/README.zh.md) 拥有非阻塞内核锁；本后端保留 Session 目录创建、`session.lock` 和 Session 专属拥有权错误。POSIX 需要匹配的预编译[系统 addon](../../../native/system/README.zh.md)；缺失时拒绝拥有权。Windows 保持同一路径派生的信号量命名空间。
 
 <a id="dev-note"></a>
 ### 开发备注

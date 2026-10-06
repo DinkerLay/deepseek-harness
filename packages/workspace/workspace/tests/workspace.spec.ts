@@ -19,7 +19,7 @@ import WorkspaceRegistry, {
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
 } from '../src/index.ts'
-import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
+import type { Config, WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath } from '../src/paths.ts'
 
 const DOMAIN_VERSION = 2
@@ -33,6 +33,7 @@ const header = (id: string, cwd?: string, createdAt = 0): SessionHeader => ({
 })
 
 interface HarnessOptions {
+  config?: Config
   pool?: MemoryMediaPool
   sessions?: SessionHeader[]
   liveSessions?: SessionHeader[]
@@ -69,7 +70,7 @@ async function harness(options: HarnessOptions = {}) {
 
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
-  const fiber = await ctx.plugin(WorkspaceRegistry)
+  const fiber = await ctx.plugin(WorkspaceRegistry, options.config)
   const initChanges = [...changes]
   changes.length = 0
   return {
@@ -191,6 +192,49 @@ afterEach(async () => {
 })
 
 describe('WorkspaceRegistry lifecycle and bootstrap', () => {
+  it.each([undefined, true])('preserves historical child grouping by default and when explicitly enabled (%s)', async (enabled) => {
+    const parentPath = await makeDir('bootstrap-parent'), childPath = await makeDir('bootstrap-child')
+    const parent = header('parent', parentPath, 100)
+    const child = { ...header('child', childPath, 200), parentSession: parent.id }
+    const result = await harness({ sessions: [parent, child],
+      ...enabled === undefined ? {} : { config: { bootstrapChildSessions: enabled } } })
+    expect(result.registry.list().map(workspace => workspace.path)).toEqual([childPath, parentPath])
+    expect(result.registry.list().map(workspace => workspace.sessionIds)).toEqual([[child.id], [parent.id]])
+  })
+
+  it('omits only child bootstrap membership while retaining cached headers and explicit child attachment', async () => {
+    const parentPath = await makeDir('top-level-project'), childPath = await makeDir('isolated-child')
+    const parent = header('top-level', parentPath, 100)
+    const child = { ...header('isolated', childPath, 200), parentSession: parent.id }
+    const sharedChild = { ...header('same-cwd-child', parentPath, 300), parentSession: parent.id }
+    const result = await harness({ sessions: [parent, child, sharedChild], config: { bootstrapChildSessions: false } })
+    expect(result.registry.list().map(workspace => workspace.path)).toEqual([parentPath])
+    const parentWorkspace = result.registry.list()[0]!
+    expect(parentWorkspace.sessionIds).toEqual([parent.id])
+    const explicit = await result.registry.create(childPath)
+    expect(explicit.sessionIds).toEqual([])
+    await explicit.attachSession(child.id)
+    await parentWorkspace.attachSession(sharedChild.id)
+    expect(explicit.sessionIds).toEqual([child.id])
+    expect(parentWorkspace.sessionIds).toEqual([sharedChild.id, parent.id])
+    expect(result.list).toHaveBeenCalledTimes(1)
+    expect(result.open).not.toHaveBeenCalled(); expect(result.stat).not.toHaveBeenCalled()
+  })
+
+  it('does not rewrite already initialized child Workspace records when child bootstrap is disabled', async () => {
+    const childPath = await makeDir('previous-child-workspace')
+    const child = { ...header('existing-child', childPath, 100), parentSession: SessionId('existing-parent') }
+    const id = WorkspaceId('00000000-0000-4000-8000-000000000009')
+    const before = record(childPath, [child.id])
+    const pool = storedPool([[id, before]], { initialized: true, workspaceIds: [id], archivedSessionIds: [], pinnedSessionIds: [] })
+    const result = await harness({ pool, sessions: [child], config: { bootstrapChildSessions: false } })
+    expect(result.registry.list().map(workspace => workspace.id)).toEqual([id])
+    expect(result.registry.list()[0]!.sessionIds).toEqual([child.id])
+    expect(storedRecord(pool, id)).toEqual(before)
+    expect(storedState(pool).workspaceIds).toEqual([id])
+    expect(result.initChanges).toEqual([])
+  })
+
   it('stays pending without sessionPersistence and never opens or marks the domain', async () => {
     const pool = new MemoryMediaPool()
     const ctx = await storageContext(pool)

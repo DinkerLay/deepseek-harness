@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
+import { z } from 'zod'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
@@ -154,6 +155,12 @@ interface BootstrapGroup {
   readonly newestAt: number
 }
 
+/** Choices for the registry's one-time historical Workspace grouping. */
+export interface Config {
+  /** Include child Session headers when creating initial groups; defaults to true. Existing records and header lookup are unchanged. */
+  readonly bootstrapChildSessions?: boolean | undefined
+}
+
 const sameIds = (left: readonly WorkspaceId[], right: readonly WorkspaceId[]): boolean =>
   left.length === right.length && left.every((id, index) => id === right[index])
 
@@ -169,6 +176,7 @@ const compareHeaders = (left: SessionHeader, right: SessionHeader): number =>
  */
 export class WorkspaceRegistry extends Service {
   static inject = ['storageDomain', 'sessionPersistence']
+  static Config = z.object({ bootstrapChildSessions: z.boolean().default(true) }).default({ bootstrapChildSessions: true })
 
   private table?: KvTable<WorkspaceId, WorkspaceRecord>
   private global?: DomainGlobal<WorkspaceDomainState>
@@ -189,7 +197,8 @@ export class WorkspaceRegistry extends Service {
     },
   }
 
-  constructor(ctx: Context) {
+  /** @param ctx - registry owner. @param config - one-time bootstrap grouping choices. */
+  constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'workspaceRegistry')
   }
 
@@ -650,6 +659,7 @@ export class WorkspaceRegistry extends Service {
     const state = this.requireState()
     const groupsByPath = new Map<string, SessionHeader[]>()
     for (const header of headers) {
+      if (this.config.bootstrapChildSessions === false && header.parentSession !== undefined) continue
       const path = this.sessionPaths.get(header.id)
       if (path === undefined) continue
       const group = groupsByPath.get(path)
