@@ -304,6 +304,9 @@ describe('translation pairing records', () => {
 describe('translation scope discovery', () => {
   it.each([
     'README.md',
+    'FORK.md',
+    'FORK.zh.md',
+    'FORK.i18n.yaml',
     'CONTRIBUTING.md',
     'CONTRIBUTING.zh.md',
     'CONTRIBUTING.i18n.yaml',

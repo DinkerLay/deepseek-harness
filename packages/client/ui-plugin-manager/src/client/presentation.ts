@@ -47,6 +47,7 @@ function registryHost(registry: string): string {
 /** The sentence each of the Host's refusal codes reads as. */
 const CODE_KEYS = {
   'management-required': 'reasonManagementRequired',
+  'deployment-managed': 'reasonDeploymentManaged',
   'unaddressable': 'reasonUnaddressable',
   'unknown-plugin': 'reasonUnknownPlugin',
   'invalid-spec': 'reasonInvalidSpec',

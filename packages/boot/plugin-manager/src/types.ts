@@ -6,7 +6,17 @@ export type { PluginEntryId } from '@deepseek-ai/dsh-host-plugin-inventory/types
 import type { PluginEntryId } from '@deepseek-ai/dsh-host-plugin-inventory/types'
 
 /** Reasons a profile control cannot modify its target. */
-export type ReadOnlyReason = 'management-required' | 'unaddressable'
+export type ReadOnlyReason = 'management-required' | 'unaddressable' | 'deployment-managed'
+
+/** Deployment-owned state of one exact composition row; actual runtime enablement remains separate. */
+export interface PluginDeploymentPolicy {
+  /** Exact module specifier to which this rule applies. */
+  moduleName: string
+  /** Enablement required by the deployment, rather than the row's current fiber state. */
+  enabled: boolean
+  /** Technical module identity supplying the replacement when this row must stay disabled. */
+  replacementModule?: string
+}
 
 /** A package whose declared DSH peers reject the running DSH version, without an exemption for the exact pair. */
 export interface IncompatiblePlugin {
@@ -26,7 +36,7 @@ export interface ManagementError {
 }
 
 /** One running-profile entry and its persistent control availability. */
-export type PluginInfo = PluginInventoryEntry & (
+export type PluginInfo = PluginInventoryEntry & { deploymentPolicy?: PluginDeploymentPolicy } & (
   | { patchId: string; readOnlyReason?: never }
   | { patchId?: never; readOnlyReason: ReadOnlyReason }
 )
@@ -41,6 +51,8 @@ export interface BundleRowInfo {
   meta?: PluginLocalizedMeta
   /** The Loader entry carrying this row, when exactly one live entry has its id. */
   entryId?: PluginEntryId
+  /** Desired deployment state, independent of whether a live entry currently exists. */
+  deploymentPolicy?: PluginDeploymentPolicy
 }
 
 /** One installed or installation-provided bundle. */
@@ -67,6 +79,12 @@ export interface BundleInfo {
   rows: BundleRowInfo[]
   /** Ids of rows the bundle's patch changes without declaring them: the built-in rows it configures or disables. */
   overrides: string[]
+}
+
+/** Bundle declarations and runtime entries captured together under the profile and HMR locks. */
+export interface PluginManagerSnapshot {
+  bundles: BundleInfo[]
+  plugins: PluginInfo[]
 }
 
 /** A registry to install from: an http(s) URL, or null for the one pnpm's own configuration names. */

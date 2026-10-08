@@ -18,6 +18,8 @@ Workspace Project 清单保持共享，部署可选择独立归档/置顶元数�
 
 Conversation 消费者可围绕规范 Session 绑定注册由 Effect 管理的 UI 事件源适配器。适配器保留来源身份和单调修订，不克隆绑定、不改变原生传输，也不改变持久或模型可见历史。
 
+Profile 插件管理提供序列化的组合包／运行快照，以及部署拥有的精确行状态规则。Host 操作拒绝移除必需行、重新激活被替代 UI 或清除管理策略的修改；Client 丢弃失效读取，并在刷新结束前保留忙碌状态。实际启用状态与运行阶段独立于所需状态。[快照与策略决策](.agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.zh.md)维护这项通用能力。
+
 ## 原生 V4 范围
 
 下游发布使用独立 V4 Session generation，不导入或恢复升级前 Session 数据。旧文件与自有目录保留在活动分配和删除范围之外。本 fork 不保留自定义旧 reader、迁移坐标 API、SQLite Session 转换或 feedback 伴随记录导入。原生 V4 codec 与投影理解 required 执行目录和标题事件。

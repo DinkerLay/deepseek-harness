@@ -8,6 +8,7 @@ import type { BundleInfo, ChangeResult, ManagementError, PluginEntryId, PluginIn
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConfigLedger } from '../src/client/config-ledger.ts'
+import type { PluginManagerSnapshot } from '@deepseek-ai/dsh-plugin-manager/types'
 import { offeredRegistries, packageView, PluginManagerController, rowKey, sortPackages } from '../src/client/manager-store.ts'
 
 const INCOMPATIBLE = { name: 'dsh-late', version: '2.0.0', runtimeVersion: '0.1.0', peers: { '@deepseek-ai/dsh': '^0.2.0' } }
@@ -88,12 +89,18 @@ function bench(overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {}
     setPluginEnabled: vi.fn(() => Promise.resolve(ok(APPLIED))),
     ...overrides,
   }
+  const snapshot = overrides.snapshot ?? vi.fn(async () => {
+    const [bundles, rows] = await Promise.all([plugins.listBundles(), plugins.listPlugins()])
+    if (!bundles.ok) return bundles
+    if (!rows.ok) return rows
+    return ok({ bundles: bundles.value, plugins: rows.value })
+  })
   const probe = { fastest: overrides.fastest ?? vi.fn(() => Promise.resolve(ok(null))) }
   const track = vi.fn()
   const ctx = {
     get: () => ({ enabled, track }),
     configForms: { describe: () => ({ getSnapshot: () => ({ view: { namespaces: [] } }), subscribe: () => () => {} }), get: vi.fn((id: string) => `form:${id}`) },
-    remote: { pluginManager: plugins, pluginInventory: inventory, pluginRegistryProbe: probe },
+    remote: { pluginManager: { ...plugins, snapshot }, pluginInventory: inventory, pluginRegistryProbe: probe },
   } as never
   const controller = new PluginManagerController(ctx)
   onTestFinished(() => { controller.dispose() })
@@ -104,7 +111,7 @@ function bench(overrides: Partial<Record<string, ReturnType<typeof vi.fn>>> = {}
     await vi.waitFor(() => { expect(state().install.phase).toBe('starting') })
     return state().install.requestId as PluginInstallRequestId
   }
-  return { plugins, inventory, probe, controller, face, state, started, track }
+  return { plugins: { ...plugins, snapshot }, inventory, probe, controller, face, state, started, track }
 }
 
 it('hands a custom page the shared configuration form of its entry', () => {
@@ -113,6 +120,15 @@ it('hands a custom page the shared configuration form of its entry', () => {
 })
 
 describe('packageView', () => {
+  it('keeps a declared replacement policy when the row has no live Loader entry', () => {
+    const deploymentPolicy = { moduleName: 'dsh-better-sidebar/theme', enabled: false, replacementModule: '@acme/new-theme' }
+    const declared: BundleInfo = {
+      ...BUNDLE, rows: [{ rowId: 'theme', moduleName: deploymentPolicy.moduleName, deploymentPolicy }],
+    }
+    expect(packageView(declared, []).rows[0]).toMatchObject({
+      rowId: 'theme', enabled: false, phase: null, deploymentPolicy,
+    })
+  })
   it('joins a bundle with the entries its rows run as', () => {
     expect(packageView(BUNDLE, PLUGINS)).toEqual({
       name: 'dsh-better-sidebar', version: '0.16.0', description: 'A sidebar.',
@@ -137,6 +153,110 @@ describe('packageView', () => {
         { rowId: 'gone', moduleName: 'x', entryId: 'include:gone', enabled: false, phase: null },
       ],
     })
+  })
+})
+
+describe('profile snapshot consistency', () => {
+  it('reads one Host snapshot instead of independently joining legacy list responses', async () => {
+    const { controller, plugins, state } = bench({
+      snapshot: vi.fn(async () => ok({ bundles: [BUNDLE], plugins: PLUGINS })),
+      listBundles: vi.fn(() => { throw new Error('independent bundle query') }),
+      listPlugins: vi.fn(() => { throw new Error('independent plugin query') }),
+    })
+    await controller.load()
+    expect(plugins.snapshot).toHaveBeenCalledOnce()
+    expect(plugins.listBundles).not.toHaveBeenCalled()
+    expect(plugins.listPlugins).not.toHaveBeenCalled()
+    expect(state().packages).toEqual([packageView(BUNDLE, PLUGINS)])
+  })
+
+  it('retains the accepted row state while an invalidated snapshot waits for its replacement', async () => {
+    const accepted = { bundles: [BUNDLE], plugins: PLUGINS }
+    const stale = deferred<ReturnType<typeof ok<PluginManagerSnapshot>>>()
+    const fresh = deferred<ReturnType<typeof ok<PluginManagerSnapshot>>>()
+    const snapshot = vi.fn().mockResolvedValueOnce(ok(accepted)).mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+    const { controller, state } = bench({ snapshot })
+    await controller.load()
+    const loading = controller.load()
+    onTestFinished(async () => {
+      controller.dispose()
+      stale.resolve(ok(accepted))
+      fresh.resolve(ok(accepted))
+      await loading
+    })
+    await vi.waitFor(() => { expect(snapshot).toHaveBeenCalledTimes(2) })
+    void controller.load()
+    stale.resolve(ok({ bundles: [BUNDLE], plugins: [] }))
+    await vi.waitFor(() => { expect(snapshot).toHaveBeenCalledTimes(3) })
+    expect(state().packages).toEqual([packageView(BUNDLE, PLUGINS)])
+    fresh.resolve(ok(accepted))
+    await loading
+    expect(state().packages).toEqual([packageView(BUNDLE, PLUGINS)])
+  })
+
+  it('keeps a toggle busy until the Host snapshot confirms the new state', async () => {
+    const accepted = { bundles: [BUNDLE], plugins: PLUGINS }
+    const written = deferred<ReturnType<typeof ok<ChangeResult>>>()
+    const read = deferred<ReturnType<typeof ok<PluginManagerSnapshot>>>()
+    const { face, state, controller, plugins } = bench({
+      snapshot: vi.fn().mockResolvedValueOnce(ok(accepted)).mockReturnValueOnce(read.promise),
+      setBundleEnabled: vi.fn().mockReturnValueOnce(written.promise),
+    })
+    await controller.load()
+    onTestFinished(() => {
+      controller.dispose()
+      written.resolve(ok(APPLIED))
+      read.resolve(ok(accepted))
+    })
+    face.setEnabled(BUNDLE.name, true)
+    expect(state().busy).toEqual([BUNDLE.name])
+    written.resolve(ok(APPLIED))
+    await vi.waitFor(() => { expect(plugins.snapshot).toHaveBeenCalledTimes(2) })
+    expect(state().busy).toEqual([BUNDLE.name])
+    face.setEnabled(BUNDLE.name, false)
+    expect(plugins.setBundleEnabled).toHaveBeenCalledOnce()
+    read.resolve(ok({ bundles: [{ ...BUNDLE, enabled: true }], plugins: PLUGINS }))
+    await vi.waitFor(() => { expect(state().busy).toEqual([]) })
+    expect(state().packages[0]?.enabled).toBe(true)
+  })
+
+  it('publishes a first-page transport failure and allows a later reconnect read', async () => {
+    const { face, state, controller } = bench({
+      snapshot: vi.fn().mockRejectedValueOnce(new Error('connection lost'))
+        .mockResolvedValueOnce(ok({ bundles: [BUNDLE], plugins: PLUGINS })),
+    })
+    face.ensure()
+    await vi.waitFor(() => { expect(state().status).toBe('error') })
+    await controller.load()
+    expect(state().status).toBe('ready')
+    expect(state().packages).toEqual([packageView(BUNDLE, PLUGINS)])
+  })
+
+  it('drops an invalidated transport failure before reading its replacement', async () => {
+    const failed = Promise.withResolvers<ReturnType<typeof ok<{ entries: never[]; managementAvailable: boolean }>>>()
+    const inventory = vi.fn().mockReturnValueOnce(failed.promise)
+      .mockResolvedValueOnce(ok({ entries: [], managementAvailable: true }))
+    const { controller, state } = bench({ inventory })
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(inventory).toHaveBeenCalledOnce() })
+    void controller.load()
+    failed.reject(new Error('retired connection'))
+    await loading
+    expect(state().status).toBe('ready')
+  })
+
+  it('ignores a transport rejection after the controller is disposed', async () => {
+    let reject!: (error: Error) => void
+    const pending = new Promise<ReturnType<typeof ok<PluginManagerSnapshot>>>((_resolve, rejectPromise) => { reject = rejectPromise })
+    const snapshot = vi.fn().mockReturnValueOnce(pending)
+    const { controller, state } = bench({ snapshot })
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(snapshot).toHaveBeenCalledOnce() })
+    const before = state()
+    controller.dispose()
+    reject(new Error('closed transport'))
+    await loading
+    expect(state()).toBe(before)
   })
 })
 
@@ -222,10 +342,11 @@ describe('PluginManagerController', () => {
     expect(state().status).toBe('ready')
     expect(state().packages).toEqual([packageView(BUNDLE, PLUGINS)])
     expect(inventory.list).toHaveBeenCalledTimes(2)
-    expect(plugins.listBundles).toHaveBeenCalledTimes(2)
-    expect(plugins.listPlugins).toHaveBeenCalledTimes(2)
+    expect(plugins.snapshot).toHaveBeenCalledOnce()
+    expect(plugins.listBundles).toHaveBeenCalledOnce()
+    expect(plugins.listPlugins).toHaveBeenCalledOnce()
     face.ensure()
-    expect(plugins.listBundles).toHaveBeenCalledTimes(2)
+    expect(plugins.snapshot).toHaveBeenCalledOnce()
   })
 
   it('keeps cached packages while a manual refresh reads and ignores repeated refreshes without a success notice', async () => {
@@ -387,7 +508,7 @@ describe('PluginManagerController', () => {
     await vi.advanceTimersByTimeAsync(400)
     expect(plugins.listBundles).toHaveBeenCalledTimes(3)
     expect(state()).toMatchObject({ status: 'ready', refreshStatus: 'refreshing', notice: null })
-    expect(state().packages[0]?.version).toBe('0.17.0')
+    expect(state().packages[0]?.version).toBe('0.16.0')
     face.refresh()
     rerun.resolve(ok([{ ...BUNDLE, version: '0.18.0' }]))
     await completion

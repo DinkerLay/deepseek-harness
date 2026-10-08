@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-08-profile-plugin-snapshot-and-deployment-policy.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.md
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy:
+  en: 2f8cc9b5f3c1d75c
+  zh: a079596b889c278f
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy/problem:
+  en: e90c55c293430f32
+  zh: 7ab7902376b64427
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy/decision:
+  en: 16e20888fec72326
+  zh: ce0d4835f79f4d4a
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy/alternatives-considered:
+  en: 6fa7352377052795
+  zh: fb71cab3d2637df4
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy/consequences:
+  en: 07a49bbe8b50c214
+  zh: 331515b4c417552d
+/agent-note-profile-plugin-snapshots-and-deployment-owned-row-policy/verification:
+  en: 0f7119cdcfc73e03
+  zh: 3be625aa8069bd20

@@ -13,7 +13,7 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import { pluginEntryId, readPluginInventory } from '@deepseek-ai/dsh-host-plugin-inventory'
 import {
   readPluginMeta, readProfileManifest, resolveBundleDir, loadOverlayPatches, composeEntries,
-  reconcileProfilePatches, readProfilePatches, OPTIONAL_BUNDLES, bundlePatchPaths,
+  reconcileProfilePatches, readProfilePatches, loadProfileDirectory, OPTIONAL_BUNDLES, bundlePatchPaths,
   evaluatePluginCompatibility, readProfileCompatibility, readProfileVersionExemptions,
   setProfileVersionExemption, PROFILE_COMPATIBILITY_FILENAME,
 } from '@deepseek-ai/dsh-app-boot'
@@ -30,7 +30,7 @@ import { checkGithubConnection } from './github-connection.ts'
 import type {
   BundleInfo, BundleRowInfo, ChangeResult, InspectOptions, InstallBundleOptions, ManagementError, PackageResult, PluginChange,
   PluginEntryId, PluginInfo, PluginInspectProblem, PluginInstallCancellation, PluginInstallProgress, PluginInstallRequestId,
-  PluginRegistries, PluginSpecInspection, Registry,
+  PluginRegistries, PluginSpecInspection, PluginManagerSnapshot, PluginDeploymentPolicy, Registry,
 } from './types.ts'
 export type * from './types.ts'
 export { classifyInstallFailure, type InstallFailureFacts } from './install-failure.ts'
@@ -38,6 +38,8 @@ export { InvalidInstallSpecError, parseInstallSpec, type ParsedInstallSpec } fro
 
 /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
 export interface Config {
+  /** Exact composition rows whose desired state and replacement are owned by this deployment. */
+  managedRows?: Record<string, PluginDeploymentPolicy>
   /** The pnpm executable name or path; resolved through `PATH` like the `dsh plugin` command. */
   pnpmCommand?: string
   /** Maximum retained package-operation diagnostic bytes. */
@@ -75,6 +77,10 @@ const protectedModules = new Set([
   '@deepseek-ai/dsh-hmr',
 ])
 
+const replaceableManagementUi = new Set([
+  '@deepseek-ai/dsh-client-ui-plugin-manager', '@deepseek-ai/dsh-client-ui-settings-plugin-inventory',
+])
+
 /** The profile files an installation writes and a failed or cancelled one restores. */
 const RESTORED_FILES = ['package.json', 'pnpm-lock.yaml'] as const
 
@@ -84,6 +90,25 @@ const ANSI_SEQUENCE = /\x1b\[[0-9;]*m/g
 /** Flatten only the groups addressable by the profile's patch composer. */
 function flatten(rows: EntryOptions[]): EntryOptions[] {
   return rows.flatMap(row => [row, ...(row.group && Array.isArray(row.config) ? flatten(row.config as EntryOptions[]) : [])])
+}
+
+/** Effective static enablement includes ancestor groups; conditional states remain unresolved. */
+function managementRowStates(
+  rows: readonly EntryOptions[],
+): Map<string, { moduleName: string; enabled: boolean | undefined; conditions: string }> {
+  const result = new Map<string, { moduleName: string; enabled: boolean | undefined; conditions: string }>()
+  const visit = (entries: readonly EntryOptions[], parent: boolean | undefined, conditions: string): void => {
+    for (const entry of entries) {
+      const disabled = entry.disabled
+      const enabled = parent === false || disabled === true ? false
+        : parent === undefined || (disabled !== undefined && disabled !== false) ? undefined : true
+      const nextConditions = enabled === undefined ? conditions + JSON.stringify(disabled) : ''
+      if (typeof entry.id === 'string') result.set(entry.id, { moduleName: entry.name, enabled, conditions: nextConditions })
+      if (entry.group && Array.isArray(entry.config)) visit(entry.config, enabled, nextConditions)
+    }
+  }
+  visit(rows, true, '')
+  return result
 }
 
 /** Preserve the exact observed diagnostic, including non-Error failures. */
@@ -176,6 +201,11 @@ declare module '@deepseek-ai/cordis' {
 export class PluginManager extends TypertRemoteService {
   static inject = ['loader', 'profileContext']
   static Config: z<Config> = z.object({
+    managedRows: z.dict(z.object({
+      moduleName: z.string().min(1).required(),
+      enabled: z.boolean().required(),
+      replacementModule: z.string().min(1),
+    })).default({}),
     pnpmCommand: z.string().default('pnpm'),
     outputBytes: z.number().step(1).min(1).default(16384),
     lockWaitMs: z.number().step(1).min(0).default(120000),
@@ -187,6 +217,7 @@ export class PluginManager extends TypertRemoteService {
   })
   /** Management bundles remain protected if their files become unreadable. */
   private readonly managementBundles = new Set<string>()
+  private readonly managedRows: Readonly<Record<string, PluginDeploymentPolicy>>
   private readonly ownerEntryId: string | undefined
   private readonly packageOperations = new Set<Promise<unknown>>()
   private readonly profile: ProfileContext
@@ -206,6 +237,17 @@ export class PluginManager extends TypertRemoteService {
     super(ctx, 'pluginManager')
     this.ownerEntryId = ctx.fiber.entry?.id
     this.ownerContext = ctx
+    this.managedRows = (config as Required<Config>).managedRows
+    for (const [id, policy] of Object.entries(this.managedRows)) {
+      if (id.trim() === '') throw new Error('plugin-manager: managedRows requires nonempty composition row ids')
+      if (!policy.enabled && protectedModules.has(policy.moduleName) && !replaceableManagementUi.has(policy.moduleName)) {
+        throw new Error(`plugin-manager: managedRows cannot disable the required management module ${policy.moduleName}`)
+      }
+      const owner = [...ctx.loader.entries()].find(entry => entry.id === this.ownerEntryId)
+      if (!policy.enabled && owner?.options.id === id && owner.options.name === policy.moduleName) {
+        throw new Error('plugin-manager: managedRows cannot disable the running manager')
+      }
+    }
     this.profile = ctx.profileContext
     for (const name of this.profile.startedBundles) this.protectsManager(name)
     this.outputBytes = (config as Required<Config>).outputBytes
@@ -260,7 +302,17 @@ export class PluginManager extends TypertRemoteService {
       const actual = [...this.ctx.loader.entries()].find(row => row.id === entry.entryId)
       const candidates = rows.filter(row => row.id === actual?.options.id)
       const candidate = candidates[0]
-      if (protectedModules.has(entry.moduleName) || entry.entryId === this.ownerEntryId) {
+      if (entry.entryId === this.ownerEntryId) return { ...entry, readOnlyReason: 'management-required' as const }
+      const policy = actual?.options.id === undefined ? undefined : this.managedRows[actual.options.id]
+      if (policy?.moduleName === entry.moduleName
+        && (!protectedModules.has(entry.moduleName) || replaceableManagementUi.has(entry.moduleName))) {
+        if (candidate === undefined || candidates.length > 1 || candidate.name !== entry.moduleName
+          || actual?.parent.tree.ctx.fiber.entry?.id !== 'include') {
+          return { ...entry, readOnlyReason: 'unaddressable' as const, deploymentPolicy: policy }
+        }
+        return { ...entry, readOnlyReason: 'deployment-managed' as const, deploymentPolicy: policy }
+      }
+      if (protectedModules.has(entry.moduleName)) {
         return { ...entry, readOnlyReason: 'management-required' as const }
       }
       if (candidate === undefined || candidates.length > 1 || candidate.name !== entry.moduleName
@@ -316,6 +368,17 @@ export class PluginManager extends TypertRemoteService {
       }
     }
     return Promise.resolve(bundles)
+  }
+
+  /** Read bundle rows and their runtime entries in one serialized profile generation.
+   * @returns Saved bundle selections joined with the same generation's Loader entry identities and phases.
+   */
+  @Remote
+  snapshot(): Promise<PluginManagerSnapshot> {
+    return withFileLock(join(this.profile.dir, 'package.json'), () => this.configure(async () => ({
+      bundles: await this.listBundles(),
+      plugins: await this.listPlugins(),
+    })), { waitMs: this.lockWaitMs })
   }
 
   /** Read the registries this manager asks: the configured first one, its fallbacks in order, and what pnpm's own configuration names.
@@ -426,9 +489,15 @@ export class PluginManager extends TypertRemoteService {
     return this.change(result => this.configure(async () => {
       const row = (await this.listPlugins()).find(item => item.entryId === id)
       if (row === undefined) throw new ManagementFailure('unknown-plugin')
-      if (row.readOnlyReason !== undefined) throw new ManagementFailure(row.readOnlyReason)
-      await writePluginEnabled(this.profile.patchPath, row.patchId, row.moduleName, enabled)
-      result.warnings = await this.reload(enabled ? [row.patchId] : [])
+      if (row.readOnlyReason === 'deployment-managed') {
+        if (row.deploymentPolicy?.enabled !== enabled) throw new ManagementFailure('deployment-managed')
+      } else if (row.readOnlyReason !== undefined) throw new ManagementFailure(row.readOnlyReason)
+      const patchId = row.readOnlyReason === 'deployment-managed'
+        ? [...this.ctx.loader.entries()].find(entry => entry.id === id)?.options.id
+        : row.patchId
+      if (patchId === undefined) throw new ManagementFailure('unaddressable')
+      await writePluginEnabled(this.profile.patchPath, patchId, row.moduleName, enabled)
+      result.warnings = await this.reload(enabled ? [patchId] : [])
       const current = (await this.listPlugins()).find(item => item.entryId === id)
       return current?.enabled !== enabled && this.ownerContext.get('hmr') !== undefined ? 'overridden' : undefined
     }), { stage: 'enable', target: id, enabled }, 'plugin')
@@ -648,8 +717,10 @@ export class PluginManager extends TypertRemoteService {
       const entryId = active?.entryId
       const base = active?.baseUrl ?? pathToFileURL(join(dir, 'package.json')).href
       const meta = packages?.metaOf(row.name, base)
+      const policy = this.managedRows[row.id]
       rows.push({ rowId: row.id, moduleName: row.name,
-        ...entryId === undefined ? {} : { entryId }, ...meta === undefined ? {} : { meta } })
+        ...entryId === undefined ? {} : { entryId }, ...meta === undefined ? {} : { meta },
+        ...policy?.moduleName === row.name ? { deploymentPolicy: policy } : {} })
     }
     const declared = new Set(rows.map(row => row.rowId))
     const overrides = [...new Set(patches.flatMap(item =>
@@ -729,9 +800,49 @@ export class PluginManager extends TypertRemoteService {
     }
     const bundles = enabled ? [...previous, ...previous.includes(name) ? [] : [name]] : previous.filter(item => item !== name)
     if (JSON.stringify(previous) === JSON.stringify(bundles)) return
+    this.assertManagedComposition(previous, bundles)
     manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } }
     await saveManifest(this.profile.dir, manifest)
     if (enabled) this.protectsManager(name)
+  }
+
+  /** Reject a bundle selection that changes a managed row away from its declared module and state. */
+  private assertManagedComposition(previous: readonly string[], selected: readonly string[]): void {
+    if (Object.keys(this.managedRows).length === 0) return
+    const profile = loadProfileDirectory('dsh', this.profile.dir, this.profile.installAnchor)
+    const layers = selected.flatMap((name) => {
+      const existing = profile.layers.find(layer => layer.packageName === name)
+      if (existing !== undefined) return [existing]
+      if (previous.includes(name)) return []
+      const info = bundleManifest(name, this.profile.dir, this.profile.installAnchor)
+      if (info?.dsh?.bundle === undefined) throw new ManagementFailure('not-bundle')
+      const packageDir = resolveBundleDir('dsh', name, this.profile.installAnchor, this.profile.dir)
+      const patchPaths = bundlePatchPaths(packageDir, info.dsh.bundle)
+      return [{ packageName: name, packageDir, patchPaths, patches: patchPaths.flatMap(path => loadOverlayPatches('dsh', path)) }]
+    })
+    const beforeEntries = composeEntries([readProfilePatches('dsh', this.profile, profile)])
+    const afterEntries = composeEntries([readProfilePatches('dsh', this.profile, { ...profile, layers })])
+    const ownerId = [...this.ctx.loader.entries()].find(entry => entry.id === this.ownerEntryId)?.options.id
+    const beforeOwner = flatten(beforeEntries).find(entry => entry.id === ownerId)
+    const afterOwner = flatten(afterEntries).find(entry => entry.id === ownerId)
+    const policyConfiguration = (entry: EntryOptions | undefined): unknown => {
+      const config = entry?.config
+      if (config !== null && typeof config === 'object' && 'managedRows' in config) return config.managedRows
+      return config
+    }
+    if (beforeOwner?.name !== afterOwner?.name
+      || JSON.stringify(policyConfiguration(beforeOwner)) !== JSON.stringify(policyConfiguration(afterOwner))) {
+      throw new ManagementFailure('deployment-managed')
+    }
+    const before = managementRowStates(beforeEntries)
+    const after = managementRowStates(afterEntries)
+    for (const [id, policy] of Object.entries(this.managedRows)) {
+      const old = before.get(id), next = after.get(id)
+      if (old?.moduleName === next?.moduleName && old?.enabled === next?.enabled && old?.conditions === next?.conditions) continue
+      if (next?.moduleName !== policy.moduleName || next.enabled !== policy.enabled) {
+        throw new ManagementFailure('deployment-managed')
+      }
+    }
   }
 
   private bundleRows(name: string): EntryOptions[] {
@@ -748,7 +859,12 @@ export class PluginManager extends TypertRemoteService {
       // Unreadable bundles contribute no new rows; listBundles reports their diagnostics.
       return false
     }
-    const protectedBundle = rows.some(row => protectedModules.has(row.name) || `include:${row.id}` === this.ownerEntryId)
+    const protectedBundle = rows.some((row) => {
+      if (`include:${row.id}` === this.ownerEntryId) return true
+      const policy = typeof row.id === 'string' ? this.managedRows[row.id] : undefined
+      return protectedModules.has(row.name)
+        && !(replaceableManagementUi.has(row.name) && policy?.moduleName === row.name && !policy.enabled)
+    })
     if (protectedBundle) this.managementBundles.add(name)
     return protectedBundle
   }

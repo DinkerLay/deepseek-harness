@@ -191,6 +191,15 @@ function MetadataError({ error, t }: { readonly error: string | undefined; reado
  * registered a page, and, when the pack is on, a switch. A pack like base
  * carries close to a hundred rows, so a long list gets a filter.
  */
+function DeploymentState({ row, t }: { readonly row: PackageRow; readonly t: Translate }): ReactNode {
+  const policy = row.deploymentPolicy
+  if (policy === undefined) return null
+  return <p className={css.reason} data-plugin-deployment-state>
+    {t(policy.enabled ? 'deploymentRequired' : 'deploymentDisabled')}
+    {policy.replacementModule === undefined ? null : <> {t('deploymentReplacement', { module: policy.replacementModule })}</>}
+  </p>
+}
+
 function RowsSection({ rows, t, resolveText, toggle, configure }: {
   readonly rows: readonly PackageRow[]
   readonly t: Translate
@@ -234,6 +243,7 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
                 data-plugin-row={row.entryId ?? row.rowId}
                 {...row.phase === 'failed' ? { 'data-state': 'failed' } : row.enabled ? {} : { 'data-state': 'off' }}
               >
+                <DeploymentState row={row} t={t} />
                 <div className={css.rowLine}>
                   <span className={css.rowIcon} aria-hidden="true"><PackageArtwork key={row.meta?.icon} src={row.meta?.icon} row /></span>
                   <div className={css.rowMain}>
@@ -524,6 +534,7 @@ function RowDetail({ pkg, row, t, resolveText, onBack, renderSlot, form }: {
         <p className={css.detailDesc}>{description ?? renderSlot('plugins.row.config', { view: 'summary' }, { entryKey: key })}</p>
       </div>
       <MetadataError error={row.meta?.error} t={t} />
+      <DeploymentState row={row} t={t} />
       <div className={css.detailSections} data-plugin-config>
         {renderSlot('plugins.row.config', { view: 'page', form }, { entryKey: key })}
         {renderSlot('plugins.detail.section', { subject })}

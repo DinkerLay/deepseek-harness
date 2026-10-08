@@ -2304,6 +2304,8 @@ export interface PlanModeConfig {
 ```ts config-catalog
 /** The pnpm executable, registries, and limits for diagnostics, lookups and connection checks. */
 export interface Config {
+  /** Exact composition rows whose desired state and replacement are owned by this deployment. */
+  managedRows?: Record<string, PluginDeploymentPolicy>
   /** The pnpm executable name or path; resolved through `PATH` like the `dsh plugin` command. */
   pnpmCommand?: string
   /** Maximum retained package-operation diagnostic bytes. */
@@ -2324,6 +2326,16 @@ export interface Config {
    * unless that is npm's own registry or one of these.
    */
   fallbackRegistries?: string[]
+}
+
+/** Deployment-owned state of one exact composition row; actual runtime enablement remains separate. */
+export interface PluginDeploymentPolicy {
+  /** Exact module specifier to which this rule applies. */
+  moduleName: string
+  /** Enablement required by the deployment, rather than the row's current fiber state. */
+  enabled: boolean
+  /** Technical module identity supplying the replacement when this row must stay disabled. */
+  replacementModule?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-plugin-manager -->

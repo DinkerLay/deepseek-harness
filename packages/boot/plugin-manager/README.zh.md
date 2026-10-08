@@ -41,6 +41,12 @@ kind: "package-reference"
 
 已选择但无法加载的组合包仍会出现在 `listBundles` 中，并携带 `error`；`enabled` 表示保存的选择，不代表加载成功。插件页面显示错误并允许取消选择。损坏的组合包无法启用。管理组合包的文件变得不可读后仍受保护。
 
+部署按组合行 id 配置 `managedRows`（默认 `{}`）。每条规则提供精确的 `moduleName`、所需 `enabled` 值及可选的 `replacementModule`。匹配行单独报告 `deploymentPolicy`，不替换实际启用状态或阶段。管理器拒绝相反的启停请求；修复到所需状态仍要求唯一且可定位的行。管理后端保护不能降级，明确支持的管理 UI 替代则可保持禁用。规则不安装模块，也不选择可选组合包。
+
+组合包变更在保存前检查候选组合，包括用户、home 与调用覆盖层。违背受管理行或改变当前管理器策略声明的修改以 `deployment-managed` 失败；禁用祖先 group 也视为禁用其受管理子行。无关的可选组合包仍可选择。策略不改写操作者的直接配置。
+
+`snapshot()` 在 profile manifest 锁与 HMR 队列内读取组合包声明和运行条目，包括异步清单工作。需要同一配置代次视图的消费方使用它；独立列表方法仍可用。运行阶段保持为观测值。参见[快照与策略决策](../../../.agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.zh.md)。
+
 `listBundles` 为各组合包及其声明的插件行提供可选的展示 `meta`，包括已禁用的组合包。Client 从这些值中选择语言。单独的 `description` 字段是该组合包原始的 `package.json.description`；元信息诊断不会阻止管理操作。`plugin_manager` 工具的列表结果不包含 UI 展示元信息。
 
 `inspect(spec, options)` 在任何东西安装之前读出 spec 指向什么：注册表包名通过 `pnpm view` 询问注册表，在 profile 目录中运行，因而与安装使用同样的代理与认证设置；绝对路径读取其 `package.json`；git 地址或 tarball 只答复自己的形式和它被拉取的 `host`。答复携带名称、版本、描述、该包是否声明组合包，以及作答的 `registry`，否则给出 `problem`：`invalid-spec`、`already-installed`、`not-found`、`not-a-package`、`not-a-bundle`、`network` 或 `unknown`，并附上问过的 `registries`。调用方的 `signal` 或 `inspectTimeoutMs` 会结束查询。

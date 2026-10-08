@@ -191,6 +191,25 @@ function renderTab(
 }
 
 describe('PluginManagerPage', () => {
+  it('labels deployment-owned state and replacement without changing the actual row switch', () => {
+    const required = row({ enabled: false, phase: null, readOnlyReason: 'deployment-managed',
+      deploymentPolicy: { moduleName: 'dsh-better-sidebar', enabled: true } })
+    const replaced = row({ rowId: 'legacy', moduleName: '@acme/legacy-ui', enabled: false, phase: null,
+      readOnlyReason: 'deployment-managed',
+      deploymentPolicy: { moduleName: '@acme/legacy-ui', enabled: false, replacementModule: '@acme/new-ui' } })
+    const b = renderTab({ packages: [pkg({ rows: [required, replaced] })] })
+    act(() => { b.navigation.actions.setView({ kind: 'package', name: 'dsh-better-sidebar' }) })
+    expect(screen.getByText(en.deploymentRequired)).toBeTruthy()
+    const replacement = screen.getByText(en.deploymentDisabled, { exact: false })
+    expect(replacement.textContent).toContain(en.deploymentReplacement.replace('{module}', '@acme/new-ui'))
+    const toggle = screen.getByRole('switch', { name: en.partToggle.replace('{name}', 'dsh-better-sidebar') })
+    expect(toggle).toHaveProperty('disabled', true)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    b.setLanguage(zh)
+    expect(screen.getByText(zh.deploymentRequired)).toBeTruthy()
+    expect(screen.getByText(zh.deploymentDisabled, { exact: false }).textContent)
+      .toContain(zh.deploymentReplacement.replace('{module}', '@acme/new-ui'))
+  })
   it('opens the requested bundle after its inventory arrives and falls back when it is absent', () => {
     const b = renderTab({ status: 'loading' })
     act(() => { b.navigation.actions.setView({ kind: 'package', name: 'dsh-better-sidebar' }) })

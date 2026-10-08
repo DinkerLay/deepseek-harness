@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execa } from 'execa'
 import type { Context } from '@deepseek-ai/cordis'
+import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest'
 import {
   boot, composeEntries, initProfile, loadProfileDirectory, readProfilePatches, readProfileManifest,
@@ -30,7 +31,8 @@ let restoreGitCommandLineConfig: () => void
 beforeAll(() => { restoreGitCommandLineConfig = isolateGitCommandLineConfig() })
 afterAll(() => { restoreGitCommandLineConfig() })
 
-async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, prepare?: (ctx: Context) => void, config: Config = {}, packageManager?: ProfileContext['packageManager'], prepareFiles?: (dir: string) => void) {
+async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, prepare?: (ctx: Context) => void,
+  config: Config | ((dir: string) => Config) = {}, packageManager?: ProfileContext['packageManager'], prepareFiles?: (dir: string) => void) {
   const temporaryHome = mkdtempSync(join(tmpdir(), 'plugin-manager-'))
   let owner: Context | undefined
   onTestFinished(async () => { await owner?.fiber.dispose(); rmSync(temporaryHome, { recursive: true, force: true }) })
@@ -47,7 +49,7 @@ async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, pre
     writeFileSync(join(path, 'cordis.patch.yml'), JSON.stringify([{ insert: rows }]))
     writeFileSync(join(path, 'plugin.mjs'), 'export function apply(ctx, config) { if (config?.fail) throw new Error("test activation failed"); ctx.provide(config?.service ?? "managedProbe", true) }\n')
   }
-  bundle('core', [{ id: 'manager', name: 'cordis:manager', config }])
+  bundle('core', [{ id: 'manager', name: 'cordis:manager', config: typeof config === 'function' ? config(dir) : config }])
   bundle('extra', [{ id: 'managed', name: './plugin.mjs' }])
   const manifest = readProfileManifest('test', dir)
   manifest.dependencies = { extra: '1.0.0' }
@@ -82,6 +84,126 @@ async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, pre
   }
   return { ctx, dir, manager: ctx.pluginManager, bundle, profile, stopHmr, overlays, connection }
 }
+
+it('captures bundle rows and live entries after an in-flight profile write commits', async () => {
+  const { manager, dir } = await fixture()
+  const filename = join(dir, 'package.json')
+  const original = readFileSync(filename, 'utf8')
+  const ready = Promise.withResolvers<undefined>(), release = Promise.withResolvers<undefined>()
+  const writer = withFileLock(filename, async () => {
+    const intermediate = JSON.parse(original) as { dsh: { profile: { bundles: string[] } } }
+    intermediate.dsh.profile.bundles = ['core']
+    writeFileSync(filename, JSON.stringify(intermediate))
+    ready.resolve(undefined)
+    await release.promise
+    writeFileSync(filename, original)
+  })
+  onTestFinished(async () => { release.resolve(undefined); await writer })
+  await ready.promise
+  const reading = manager.snapshot()
+  release.resolve(undefined)
+  await writer
+  const snapshot = await reading
+  const extra = snapshot.bundles.find(bundle => bundle.name === 'extra')
+  expect(extra?.enabled).toBe(true)
+  const id = extra?.rows.find(row => row.rowId === 'managed')?.entryId
+  expect(id).toBeDefined()
+  expect(snapshot.plugins.find(plugin => plugin.entryId === id)).toMatchObject({ enabled: true, fiberPhase: 'active' })
+})
+
+it('keeps a deployment-required row readable while refusing a different desired state', async () => {
+  const { manager, dir } = await fixture('live', false, undefined, dir => ({
+    managedRows: { managed: { moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href, enabled: true } },
+  }))
+  const observed = await manager.snapshot()
+  const entry = observed.plugins.find(plugin => plugin.entryId === 'include:managed')
+  expect(entry).toMatchObject({
+    enabled: true, readOnlyReason: 'deployment-managed', deploymentPolicy: { enabled: true },
+  })
+  const before = readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
+  expect(await manager.setPluginEnabled(entry!.entryId, false)).toMatchObject({
+    application: 'failed', changed: false, error: { code: 'deployment-managed' },
+  })
+  expect(readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')).toBe(before)
+  expect(await manager.setPluginEnabled(entry!.entryId, true)).toMatchObject({ application: 'applied' })
+})
+
+it('refuses disabling a bundle that supplies a required row without writing its manifest', async () => {
+  const { manager, dir, bundle } = await fixture('live', false, undefined, dir => ({
+    managedRows: { managed: { moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href, enabled: true } },
+  }))
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  expect(await manager.setBundleEnabled('extra', false)).toMatchObject({
+    application: 'failed', changed: false, error: { code: 'deployment-managed' },
+  })
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+  bundle('optional', [{ id: 'optional-feature', name: './plugin.mjs', config: { service: 'optionalProbe' } }])
+  expect(await manager.setBundleEnabled('optional', true)).toMatchObject({ application: 'applied' })
+})
+
+it('refuses a new bundle that clears deployment policy or replaces a required row', async () => {
+  const { manager, dir, bundle } = await fixture('live', false, undefined, dir => ({
+    managedRows: { managed: { moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href, enabled: true } },
+  }))
+  for (const [name, patches] of [
+    ['clear-policy', [{ id: 'manager', config: { managedRows: {} } }]],
+    ['replace-required', [{ insert: [{ id: 'managed', name: 'replacement.mjs' }] }]],
+    ['disable-required', [{ id: 'managed', disabled: true }]],
+  ] as const) {
+    bundle(name, [])
+    writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), JSON.stringify(patches))
+    const before = readFileSync(join(dir, 'package.json'), 'utf8')
+    expect(await manager.setBundleEnabled(name, true)).toMatchObject({
+      application: 'failed', changed: false, error: { code: 'deployment-managed' },
+    })
+    expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+  }
+})
+
+it('keeps replacement policy distinct from the actual disabled state and refuses enabling that row', async () => {
+  const { manager, dir } = await fixture('live', true, undefined, dir => ({
+    managedRows: { managed: {
+      moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href,
+      enabled: false, replacementModule: '@acme/new-presentation',
+    } },
+  }))
+  const snapshot = await manager.snapshot()
+  const entry = snapshot.plugins.find(plugin => plugin.entryId === 'include:managed')!
+  expect(entry).toMatchObject({
+    enabled: false, readOnlyReason: 'deployment-managed',
+    deploymentPolicy: { enabled: false, replacementModule: '@acme/new-presentation' },
+  })
+  const before = readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')
+  expect(await manager.setPluginEnabled(entry.entryId, true)).toMatchObject({
+    application: 'failed', changed: false, error: { code: 'deployment-managed' },
+  })
+  expect(readFileSync(join(dir, 'cordis.patch.yml'), 'utf8')).toBe(before)
+})
+
+it('does not apply a managed rule to a different module under the same row id', async () => {
+  const { manager } = await fixture('live', false, undefined, {
+    managedRows: { managed: { moduleName: '@acme/retired-module', enabled: true } },
+  })
+  const entry = (await manager.snapshot()).plugins.find(plugin => plugin.entryId === 'include:managed')!
+  expect(entry.deploymentPolicy).toBeUndefined()
+  expect(entry.readOnlyReason).toBeUndefined()
+  expect(await manager.setPluginEnabled(entry.entryId, false)).toMatchObject({ application: 'applied' })
+})
+
+it('does not turn an ambiguous managed row into a writable repair target', async () => {
+  const { manager, profile } = await fixture('live', false, undefined, dir => ({
+    managedRows: { managed: { moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href, enabled: true } },
+  }))
+  const duplicate = composeEntries([readProfilePatches('test', profile)]).find(row => row.id === 'managed')!
+  writeFileSync(profile.patchPath, JSON.stringify([{ insert: [duplicate] }]))
+  const entry = (await manager.snapshot()).plugins.find(plugin => plugin.entryId === 'include:managed')!
+  expect(entry.readOnlyReason).toBe('unaddressable')
+  const before = readFileSync(profile.patchPath, 'utf8')
+  expect(await manager.setPluginEnabled(entry.entryId, true)).toMatchObject({
+    application: 'failed', changed: false, error: { code: 'unaddressable' },
+  })
+  expect(readFileSync(profile.patchPath, 'utf8')).toBe(before)
+})
 
 it.each(['network', 'timeout'] as const)('stops a GitHub %s before pnpm and attributes it to the repository', async (kind) => {
   const { manager, dir, connection } = await fixture()

@@ -18,6 +18,8 @@ Workspace Project inventory stays shared while deployments may select a separate
 
 Conversation consumers can register an effect-owned UI event-source adapter around the canonical Session binding. Adapters preserve source identity and monotonic revision; they do not clone bindings, change native transport or alter durable/model-visible history.
 
+Profile plugin management provides a serialized bundle/runtime snapshot and deployment-owned exact-row state rules. Host operations reject changes that remove required rows, reactivate their replaced UI or erase management policy; Client reads discard invalidated passes and retain busy state through refresh. Actual enablement and runtime phase remain separate from required state. The [snapshot and policy decision](.agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.md) owns this generic capability.
+
 ## Native V4 scope
 
 The downstream release starts a separate V4 Session generation and excludes pre-upgrade Session data from import and resume. Old files and owned directories remain outside active allocation and deletion. This fork does not retain custom legacy readers, migration-coordinate APIs, SQLite Session conversion or feedback sidecar import. Required execution-directory and title events are understood by the native V4 codec and projections.

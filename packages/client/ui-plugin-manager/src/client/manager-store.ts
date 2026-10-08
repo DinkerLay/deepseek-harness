@@ -32,6 +32,7 @@ import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { LocalizedText, PluginLocalizedMeta } from '@deepseek-ai/dsh-package-manifest'
 import type { SettingsDescribeFace, ConfigForms } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConfigLedger } from './config-ledger.ts'
+import type { PluginDeploymentPolicy } from '@deepseek-ai/dsh-plugin-manager/types'
 import { shortName } from './presentation.ts'
 
 /** The action a failed notice names. */
@@ -74,6 +75,8 @@ export interface PackageRow {
   readonly phase: PluginInfo['fiberPhase']
   /** Why the Host refuses to switch the row, when it does. */
   readonly readOnlyReason?: ReadOnlyReason
+  /** Deployment-required state and optional replacement; never substitutes for actual enablement. */
+  readonly deploymentPolicy?: PluginDeploymentPolicy
 }
 
 /** One bundle as the page shows it: the Host's bundle joined with the entries its rows run as. */
@@ -408,6 +411,7 @@ export function rowKey(entryId: string): string {
 export function packageView(bundle: BundleInfo, plugins: readonly PluginInfo[]): PackageView {
   const rows = bundle.rows.map((row): PackageRow => {
     const live = row.entryId === undefined ? undefined : plugins.find(plugin => plugin.entryId === row.entryId)
+    const deploymentPolicy = live?.deploymentPolicy ?? row.deploymentPolicy
     return {
       rowId: row.rowId,
       moduleName: row.moduleName,
@@ -416,6 +420,7 @@ export function packageView(bundle: BundleInfo, plugins: readonly PluginInfo[]):
       ...row.meta === undefined ? {} : { meta: row.meta },
       ...row.entryId === undefined ? {} : { entryId: row.entryId },
       ...live?.readOnlyReason === undefined ? {} : { readOnlyReason: live.readOnlyReason },
+      ...deploymentPolicy === undefined ? {} : { deploymentPolicy },
     }
   })
   return {
@@ -742,9 +747,6 @@ export class PluginManagerController {
     })
     try {
       await this.load()
-    } catch (_error) {
-      // A rejected transport request leaves the cached cards available for retry.
-      this.patch({ status: 'error' })
     } finally {
       // Hold the spinner to its minimum so a fast read does not flash it, then settle.
       const remaining = REFRESH_SPINNER_MIN_MS - (Date.now() - startedAt)
@@ -768,34 +770,40 @@ export class PluginManagerController {
         this.rerun = false
         const generation = ++this.generation
         if (this.getSnapshot().status === 'idle') this.patch({ status: 'loading' })
+        try {
         // The manager Remote is mounted whether or not the Host manages a
         // profile; the inventory says whether it does.
-        const inventory = await this.ctx.remote.pluginInventory.list()
-        if (generation !== this.generation) return
-        if (!inventory.ok) {
+          const inventory = await this.ctx.remote.pluginInventory.list()
+          if (generation !== this.generation) return
+          if (this.rerun) continue
+          if (!inventory.ok) {
+            this.patch({ status: 'error' })
+            continue
+          }
+          if (inventory.value.managementAvailable !== true) {
+            this.hasCachedInventory = false
+            this.patch({ status: 'unavailable', packages: [] })
+            continue
+          }
+          const snapshot = await this.ctx.remote.pluginManager.snapshot()
+          if (generation !== this.generation) return
+          if (this.rerun) continue
+          if (!snapshot.ok) {
+            this.patch({ status: 'error' })
+            continue
+          }
+          this.hasCachedInventory = true
+          this.patch({
+            status: 'ready',
+            refreshStatus: this.getSnapshot().refreshStatus === 'refreshing' ? 'refreshing' : 'idle',
+            packages: sortPackages(snapshot.value.bundles.map(bundle => packageView(bundle, snapshot.value.plugins))),
+          })
+        } catch (_error) {
+          // Background and first-page reads own their transport failures; callers must not leave unhandled promises.
+          if (generation !== this.generation) return
+          if (this.rerun) continue
           this.patch({ status: 'error' })
-          continue
         }
-        if (inventory.value.managementAvailable !== true) {
-          this.hasCachedInventory = false
-          this.patch({ status: 'unavailable', packages: [] })
-          continue
-        }
-        const [bundles, plugins] = await Promise.all([
-          this.ctx.remote.pluginManager.listBundles(),
-          this.ctx.remote.pluginManager.listPlugins(),
-        ])
-        if (generation !== this.generation) return
-        if (!bundles.ok || !plugins.ok) {
-          this.patch({ status: 'error' })
-          continue
-        }
-        this.hasCachedInventory = true
-        this.patch({
-          status: 'ready',
-          refreshStatus: this.getSnapshot().refreshStatus === 'refreshing' ? 'refreshing' : 'idle',
-          packages: sortPackages(bundles.value.map(bundle => packageView(bundle, plugins.value))),
-        })
       } while (this.shouldRerun())
     } finally {
       this.inFlight = undefined
@@ -1101,9 +1109,9 @@ export class PluginManagerController {
       // `patch` drops the notice after disposal.
       this.patch({ notice: failedNotice(error, subject, ++this.noticeSeq) })
     } finally {
-      this.patch({ busy: this.getSnapshot().busy.filter(entry => entry !== key) })
+      try { await this.load() }
+      finally { this.patch({ busy: this.getSnapshot().busy.filter(entry => entry !== key) }) }
     }
-    await this.load()
   }
 
   /**
