@@ -26,6 +26,8 @@ The Host rejects manager requests that contradict a matching rule. Repair to the
 
 **Protecting every installed plugin or forcing defaults at startup.** This removes legitimate optional choices and hides saved configuration behind desired values. Exact deployment rules protect only named rows and keep actual state visible.
 
+The browser Remote assembly ships with the updated manager because it embeds the generated method descriptors and codecs. Its public client exports include the snapshot and deployment-policy types.
+
 ## Consequences
 
 The Host and Client snapshot consumers ship together. Reads can wait behind package operations or HMR work. Manager-controlled changes preserve deployment rules before saving, while operator-authored configuration remains separate authority and is not normalized by this policy. The manager owns no extra persisted projection and changes no Session format or model request construction.

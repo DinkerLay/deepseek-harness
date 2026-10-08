@@ -66,6 +66,14 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-api-remotes",
+      "path": "packages/api/remotes",
+      "purpose": "Assemble and expose the coherent plugin inventory and deployment-policy Remote contracts",
+      "source": [
+        "src/client/index.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-api-session-controller",
       "path": "packages/api/session-controller",
       "purpose": "Exact recoverable forks, external creation receipts, deletion publication checks, and removed-Session notifications",
@@ -570,6 +578,7 @@
     "@deepseek-ai/dsh-agent-loop",
     "@deepseek-ai/dsh-agent-preset",
     "@deepseek-ai/dsh-api-gateway",
+    "@deepseek-ai/dsh-api-remotes",
     "@deepseek-ai/dsh-api-session-controller",
     "@deepseek-ai/dsh-api-terminal-controller",
     "@deepseek-ai/dsh-api-workspace-controller",
