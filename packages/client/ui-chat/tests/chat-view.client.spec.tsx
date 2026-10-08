@@ -21,7 +21,7 @@ import type {
   ConversationSnapshot, ConversationViewSnapshotStore, GroupKey, GroupSnapshot, NodeKey, TurnLocation,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionSeq, type SessionId, type TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
@@ -684,7 +684,8 @@ describe('Chat node rendering', () => {
       turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_650 }]]), turnEnds: new Map([[1, 3]]) })
     const turn = original.timeline.turns.get(1)
     if (turn?.end === undefined) throw new Error('fixture requires a recorded Turn end')
-    const reason = kind === 'error' ? { kind, error: { code: 'AUTH', message: 'invalid' } } : { kind }
+    const reason: TurnEndReason = kind === 'error' ? { kind, error: { code: 'AUTH', message: 'invalid' } }
+      : { kind, reason: { kind: 'user' } }
     const ended: TurnLocation = { ...turn, end: { ...turn.end, data: { turn: 1, reason } } }
     const nodes = original.nodes.values().map(node => node.location.kind === 'turn' || node.location.kind === 'step'
       ? { ...node, location: { ...node.location, turn: ended } } : node)
@@ -703,8 +704,7 @@ describe('Chat node rendering', () => {
     const original = chatSnapshotFixture({ nodes: [assistant(2, 'partial answer')], turnEnds: new Map([[1, 3]]) })
     const turn = original.timeline.turns.get(1)
     if (turn?.end === undefined) throw new Error('fixture requires a recorded Turn end')
-    const { start: _start, ...partial } = turn
-    const ended: TurnLocation = { ...partial, end: { ...turn.end,
+    const ended: TurnLocation = { ...turn, start: undefined, end: { ...turn.end,
       data: { turn: 1, reason: { kind: 'error', error: { code: 'AUTH', message: 'invalid' } } },
     } }
     const nodes = original.nodes.values().map(node => node.location.kind === 'turn' || node.location.kind === 'step'

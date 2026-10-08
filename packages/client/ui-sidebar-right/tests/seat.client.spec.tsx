@@ -7,7 +7,7 @@ import { SlotTestRuntime, type SlotView } from '@deepseek-ai/dsh-client-test-run
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { FactoryComponentPropsOf, PropsRuntime, SessionAreaProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { FactoryComponentPropsOf, PropsRuntime, SessionAreaProps as NativeSessionAreaProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PaneId, SplitId, TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { dockPaneIds, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
@@ -35,7 +35,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotFactoryMap {
     'sidebar-right.test.area': {
       scope: 'root'
-      props: SessionAreaProps
+      props: NativeSessionAreaProps
       children: { 'sidebar-right.test.area.child': { kind: 'single'; scope: 'session' } }
     }
   }
