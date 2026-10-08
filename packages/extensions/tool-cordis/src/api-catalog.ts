@@ -1671,6 +1671,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Package versions, manifest descriptions, rows, optional display metadata, activation selections, whether the installation offers the bundle, and removal availability.',
       },
       {
+        signature: '@Remote snapshot(): Promise<PluginManagerSnapshot>',
+        description: 'Read bundle rows and their runtime entries in one serialized profile generation.',
+        parameters: [],
+        returns: 'Saved bundle selections joined with the same generation\'s Loader entry identities and phases.',
+      },
+      {
         signature: '@Remote async registries(): Promise<PluginRegistries>',
         description: 'Read the registries this manager asks: the configured first one, its fallbacks in order, and what pnpm\'s own configuration names.',
         parameters: [],
@@ -4875,7 +4881,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BundleRowInfo',
-    declaration: 'export interface BundleRowInfo {\n    rowId: string;\n    moduleName: string;\n    meta?: PluginLocalizedMeta;\n    entryId?: PluginEntryId;\n}',
+    declaration: 'export interface BundleRowInfo {\n    rowId: string;\n    moduleName: string;\n    meta?: PluginLocalizedMeta;\n    entryId?: PluginEntryId;\n    deploymentPolicy?: PluginDeploymentPolicy;\n}',
   },
   {
     name: 'ChangeResult',
@@ -6094,6 +6100,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PluginChange {\n    readonly reason: \'plugin\' | \'bundle\' | \'install\' | \'remove\';\n}',
   },
   {
+    name: 'PluginDeploymentPolicy',
+    declaration: 'export interface PluginDeploymentPolicy {\n    moduleName: string;\n    enabled: boolean;\n    replacementModule?: string;\n}',
+  },
+  {
     name: 'PluginEntryId',
     declaration: 'export type PluginEntryId = Branded<\'PluginEntryId\'>;',
   },
@@ -6103,7 +6113,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PluginInfo',
-    declaration: 'export type PluginInfo = PluginInventoryEntry & ({\n    patchId: string;\n    readOnlyReason?: never;\n} | {\n    patchId?: never;\n    readOnlyReason: ReadOnlyReason;\n});',
+    declaration: 'export type PluginInfo = PluginInventoryEntry & {\n    deploymentPolicy?: PluginDeploymentPolicy;\n} & ({\n    patchId: string;\n    readOnlyReason?: never;\n} | {\n    patchId?: never;\n    readOnlyReason: ReadOnlyReason;\n});',
   },
   {
     name: 'PluginInspectProblem',
@@ -6136,6 +6146,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PluginLocalizedMeta',
     declaration: 'export interface PluginLocalizedMeta {\n    readonly title?: LocalizedText;\n    readonly description?: LocalizedText;\n    readonly icon?: string;\n    readonly error?: string;\n}',
+  },
+  {
+    name: 'PluginManagerSnapshot',
+    declaration: 'export interface PluginManagerSnapshot {\n    bundles: BundleInfo[];\n    plugins: PluginInfo[];\n}',
   },
   {
     name: 'PluginRegistries',
@@ -6315,7 +6329,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ReadOnlyReason',
-    declaration: 'export type ReadOnlyReason = \'management-required\' | \'unaddressable\';',
+    declaration: 'export type ReadOnlyReason = \'management-required\' | \'unaddressable\' | \'deployment-managed\';',
   },
   {
     name: 'ReadResultView',

@@ -10,6 +10,8 @@ Official DSH owns native V4 history, Agent execution, continuation, tools, provi
 
 Public browser libraries load without activating their default plugins. Conversation builder decorators forward grouping and publication; Chat presentation can exclude replaced Turns from logical navigation and counts. Markdown local links retain caller-owned resolution. Administrative channels retain authenticated loopback authority. Browser index authentication errors accept deployment-owned plain-text guidance while preserving status, headers and token exchange. Model catalogs distinguish registered execution providers from providers with available models.
 
+Chat exposes a decorative running glyph Slot while retaining native activity timing, labels, layout and status announcements. Transcript grouping and rendering remain owned by the native Chat plugin.
+
 Subagent Sidebar registration declares all nested resource dependencies and its public Client entry exposes the readonly resource type plus the associated Slot, protocol and retention-source declarations. Downstream presentation reuses native retention, restore and disposal.
 
 The PiAi bridge carries additive developer Tool changes through pi-ai transcript system messages. Route capability is explicit and bound to the prepared model snapshot; unsupported routes use the native DSH compatibility projection. Provider-specific protocol support requires real transport evidence before enablement.

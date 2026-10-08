@@ -6,7 +6,7 @@ import {
   SlotTestRuntime, stubConfigForm, usePinnedBrowserLanguages,
 } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
+import { resolveSlotLabel, type PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -26,6 +26,8 @@ import type {
 import type { QuotaNoticeInjected } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { PerformanceUsageRowInjected } from '../src/client/settings/PerformanceUsageRow.tsx'
 import { CHAT_SETTINGS_NAMESPACE, type ChatSettings } from '../src/chat-settings.ts'
+import { registerTurnActivity } from '../src/client/chat/TurnActivity.tsx'
+import { en, NS, zh } from '../src/client/locale.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ConversationTurnDataMap {
@@ -129,13 +131,56 @@ describe('Chat apply wiring', () => {
     expect(b.runtime.slots.spec('conversation.chat.activity'))
       .toMatchObject({ kind: 'single', scope: 'session' })
     expect(b.runtime.slots.entries('conversation.chat.activity')).toHaveLength(1)
+    expect(b.runtime.slots.spec('conversation.chat.activity.icon'))
+      .toMatchObject({ kind: 'single', scope: 'session' })
+    expect(b.runtime.slots.entries('conversation.chat.activity.icon')).toHaveLength(1)
     expect(b.runtime.slots.entries('conversation.composer.dock').map(row => row.options.id))
       .toEqual(['stats'])
     expect(b.runtime.slots.entries('settings.general.item').map(row => row.options.id))
       .toEqual(['transcript-view', 'link-opening', 'composer-enter', 'performance-usage'])
     await b.chat.dispose()
     expect(b.runtime.slots.entries('conversation.chat.activity')).toEqual([])
+    expect(b.runtime.slots.entries('conversation.chat.activity.icon')).toEqual([])
     await b.runtime.dispose()
+  })
+
+  it('replaces only the running glyph and restores the native glyph on disposal', async () => {
+    const runtime = await SlotTestRuntime.create()
+    onTestFinished(() => runtime.dispose())
+    const locale = new LocaleRuntime(runtime.ctx)
+    runtime.ctx.provide('locale', locale)
+    runtime.slots.installLocale(locale)
+    runtime.ctx.effect(() => locale.register(NS, { en, zh }))
+    await runtime.declare({ 'conversation.chat.activity': { kind: 'single', scope: 'session' } })
+    await runtime.mount({ inject: ['slots'], apply: registerTurnActivity })
+    await runtime.sessions.add({ id: SID })
+    const reference = runtime.sessions.retain(SID)
+    onTestFinished(async () => { await runtime.dispose(); reference.release() })
+    const view = runtime.renderSlot('conversation.chat.activity', { startTime: null }, { session: reference })
+    const status = view.view.getByRole('status')
+    const row = view.container.querySelector('[data-chat-running]')
+    expect(row?.querySelector('svg')).not.toBeNull()
+    expect(status.textContent).toBe('深度求索中')
+    function Icon({ startTime }: PropsRuntime<'conversation.chat.activity.icon'>) {
+      return <span data-test-running-icon data-start-time={startTime ?? 'pending'} aria-hidden="true" />
+    }
+    let remove = () => {}
+    await act(async () => {
+      remove = runtime.slots.register({ name: 'conversation.chat.activity.icon', priority: -100 }, Icon)
+    })
+    onTestFinished(() => { remove() })
+    expect(view.container.querySelector('[data-test-running-icon]')?.getAttribute('data-start-time')).toBe('pending')
+    expect(row?.querySelector('svg')).toBeNull()
+    expect(view.view.getByRole('status')).toBe(status)
+    expect(view.container.querySelector('[data-chat-running]')).toBe(row)
+    view.update({ startTime: 1_000 })
+    expect(view.container.querySelector('[data-test-running-icon]')?.getAttribute('data-start-time')).toBe('1000')
+    expect(view.view.getByRole('status')).toBe(status)
+    expect(row?.textContent).toContain('深度求索中，用时')
+    await act(async () => { remove() })
+    expect(view.container.querySelector('[data-test-running-icon]')).toBeNull()
+    expect(row?.querySelector('svg')).not.toBeNull()
+    expect(view.view.getByRole('status')).toBe(status)
   })
 
   it.each([

@@ -87,6 +87,8 @@ Work-details modes control process-group display and reasoning previews. Compact
 
 Presentation decorators may publish `ChatSnapshot.excludedTurns` to suppress replaced Turns from the whole-log navigation rail and displayed Turn counts. Navigation still addresses original Turn identities; executed Step totals, timings, and token accounting remain unchanged. The `conversation.chat.activity` Slot receives the running Turn start time and supports replacing only its activity presentation.
 
+The nested `conversation.chat.activity.icon` Slot replaces its decorative glyph while retaining the native label, clock, layout and status announcement. Its session-scoped owner receives `startTime`, including null before the Turn clock is known. Removing a higher-priority contribution restores the native whale glyph. The [glyph ownership decision](../../../.agents/notes/implemented/architecture/2026-10-08-running-activity-glyph.md) keeps this extension separate from transcript and process-group rendering.
+
 File-mention providers receive the viewed Session ID with the closing-turn owner, so links into inherited history can address the fork itself.
 
 Chat registers its process Group Definition through `uiConversation.groups`. React renders the mixed `node`/`group` root sequence through stable Group and Node seats; group headers subscribe to data separately from member arrays. Settled group titles remain independent of the live-detail preference; only running titles update when that preference changes. [Process-group business rules](src/client/conversation-nodes/README.md#process-grouping) define segmentation and activity summaries.

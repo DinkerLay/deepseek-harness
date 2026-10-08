@@ -12,6 +12,8 @@ The [boot package group](../../packages/boot/README.md) owns launcher-provided p
 
 `BundleInfo` carries the package name, optional installed version, selected enablement, removal availability and optional resolution error. Its optional `meta` and each `BundleRowInfo.meta` contain display text or a metadata diagnostic; Clients select a language at render time.
 
+`PluginManagerSnapshot` contains `bundles: BundleInfo[]` and `plugins: PluginInfo[]`. `snapshot()` reads both under the profile manifest lock and HMR queue; runtime phases remain observations. Matching deployment rules appear separately as `deploymentPolicy` on plugin and declared bundle rows. The [Plugin Manager contract](../../packages/boot/plugin-manager/README.md) owns mutation policy and failure semantics.
+
 `InstallBundleOptions.enabled` defaults to true. False installs without selecting the bundle layer. `approvedBuilds` grants persistent script permission to the supplied pending package names before installation. `registry` names the registry asked first; absent, the configured one.
 
 `PluginRegistries` carries the configured first registry, `null` for the one pnpm's own configuration names, the fallbacks asked after it, and `resolved`, the URL pnpm's own configuration names or `null` while unread. `InspectOptions.registry` names the registry a lookup asks first.
@@ -115,6 +117,11 @@ Manage profile files and apply their declared reload lifecycle.
  * whether the installation offers the bundle, and removal availability.
  */
 @Remote listBundles(): Promise<BundleInfo[]>
+
+/** Read bundle rows and their runtime entries in one serialized profile generation.
+ * @returns Saved bundle selections joined with the same generation's Loader entry identities and phases.
+ */
+@Remote snapshot(): Promise<PluginManagerSnapshot>
 
 /** Read the registries this manager asks: the configured first one, its fallbacks in order, and what pnpm's own configuration names.
  * @returns The registries in pnpm's comparison form; null is the one pnpm's own configuration names, `resolved` as pnpm reads it now.

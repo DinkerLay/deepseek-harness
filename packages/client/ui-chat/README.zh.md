@@ -87,6 +87,8 @@ Chat 末尾为进行中的 Turn 控制行，且该轮尚无可见输入时，第
 
 展示装饰器可发布 `ChatSnapshot.excludedTurns`，从完整日志导航标记与展示轮次数中排除已替换轮次。导航仍定位原轮次身份；已执行步骤总数、时间与 token 计费保持不变。`conversation.chat.activity` Slot 接收运行中轮次的开始时间，可仅替换活动展示。
 
+嵌套的 `conversation.chat.activity.icon` Slot 可替换装饰图标，同时保留原生文字、时钟、布局和状态播报。其 Session 作用域 owner 接收 `startTime`；轮次时钟尚未知时为 null。移除更高优先级贡献会恢复原生鲸鱼图标。[图标归属决策](../../../.agents/notes/implemented/architecture/2026-10-08-running-activity-glyph.zh.md)将这项扩展与 transcript 和过程分组渲染分开。
+
 文件提及提供方同时接收当前查看的会话 ID 与收尾轮次的属主信息，因此继承历史中的链接可以指向 fork 自身。
 
 Chat 通过 `uiConversation.groups` 注册过程 Group Definition。React 通过稳定的 Group 与 Node 容器渲染混合 `node`/`group` 根序列，组头数据与成员数组分别订阅。已结束组的标题独立于实时详情偏好，只有运行中的标题在该偏好变化时更新。[过程分组业务规则](src/client/conversation-nodes/README.zh.md#process-grouping) 定义切分方式与活动摘要。

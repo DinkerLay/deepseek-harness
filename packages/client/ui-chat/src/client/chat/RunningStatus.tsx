@@ -1,5 +1,5 @@
 /** Running Turn clock isolated from the transcript's render cycle. */
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
 import { TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import { formatRunDuration, LIVE_RUN_CLOCK_INTERVAL_MS } from './message-chrome.ts'
@@ -10,6 +10,8 @@ import css from './ChatView.module.css'
 interface RunningStatusProps {
   readonly startTime: number | undefined
   readonly t: ChatViewSlotProps['t']
+  /** Decorative glyph from the running activity slot; omitted callers retain the native whale. */
+  readonly glyph?: ReactNode
 }
 
 /**
@@ -17,7 +19,7 @@ interface RunningStatusProps {
  * @param props - Current Turn start time and localized copy.
  * @returns the blue running indicator; mount only while the Session is running.
  */
-export const RunningStatus = memo(function RunningStatus({ startTime, t }: RunningStatusProps) {
+export const RunningStatus = memo(function RunningStatus({ startTime, t, glyph = <RunningWhaleTail /> }: RunningStatusProps) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (startTime === undefined) return
@@ -33,7 +35,7 @@ export const RunningStatus = memo(function RunningStatus({ startTime, t }: Runni
       <span className={a11yCss.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{t('chat.deepDiving')}</span>
       <span className={css.runningDivider} aria-hidden="true" />
       <span className={css.runningContent}>
-        <RunningWhaleTail />
+        {glyph}
         <TextShimmer active className={css.runningText}>{label}</TextShimmer>
       </span>
     </div>

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-08-running-activity-glyph.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-08-running-activity-glyph.md
+/agent-note-running-activity-glyph-ownership:
+  en: 7cd06376e3ab15fa
+  zh: d93634c0cb11af43
+/agent-note-running-activity-glyph-ownership/problem:
+  en: 51076e624a71eef7
+  zh: 7954bfccbd554334
+/agent-note-running-activity-glyph-ownership/decision:
+  en: c9caa2ccc3c7c439
+  zh: b14f1ce214fd16ab
+/agent-note-running-activity-glyph-ownership/alternatives-considered:
+  en: 3ec93b12409303a6
+  zh: 31bd8132ef3d77f6
+/agent-note-running-activity-glyph-ownership/consequences:
+  en: b55f6c4754f37416
+  zh: 7badc25c309b1f62

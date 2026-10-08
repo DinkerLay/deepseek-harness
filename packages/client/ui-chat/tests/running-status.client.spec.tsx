@@ -66,4 +66,22 @@ describe('RunningStatus', () => {
     expect(view.content()?.textContent).not.toContain('-')
   })
 
+  it('retains its clock and announcement when the decorative glyph changes', () => {
+    const view = render(<RunningStatus startTime={1_000} t={t} glyph={<span data-test-glyph aria-hidden="true" />} />)
+    const status = view.getByRole('status')
+    const row = view.container.querySelector('[data-chat-running]')
+    expect(row?.querySelector('[data-test-glyph]')).not.toBeNull()
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(row?.textContent).toContain('用时 6秒')
+    view.rerender(<RunningStatus startTime={1_000} t={t} glyph={null} />)
+    expect(row?.querySelector('[data-test-glyph], svg')).toBeNull()
+    expect(view.getByRole('status')).toBe(status)
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => { vi.advanceTimersByTime(1_000) })
+    expect(row?.textContent).toContain('用时 7秒')
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
 })

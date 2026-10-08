@@ -306,6 +306,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   WorkspaceFileDiff: 'deliverables.md',
   Reload: 'boot.md',
   PluginInfo: 'boot.md',
+  PluginManagerSnapshot: 'boot.md',
   BundleInfo: 'boot.md',
   ChangeResult: 'boot.md',
   InstallBundleOptions: 'boot.md',

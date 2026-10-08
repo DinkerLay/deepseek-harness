@@ -152,10 +152,11 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-chat",
       "path": "packages/client/ui-chat",
-      "purpose": "Keep presentation-excluded Turns out of whole-log navigation and logical counts",
+      "purpose": "Keep presentation-excluded Turns out of navigation and logical counts; replace running glyphs independently",
       "source": [
         "src/client/apply.ts",
         "src/client/chat/ChatView.tsx",
+        "src/client/chat/RunningStatus.tsx",
         "src/client/chat/StatsPills.tsx",
         "src/client/chat/TurnActivity.tsx",
         "src/client/chat/TurnNavigator.tsx",

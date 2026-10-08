@@ -284,6 +284,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Running Turn activity; replacement changes presentation without changing execution or timing. */
     'conversation.chat.activity': { kind: 'single'; scope: 'session'; owner: { startTime: number | null } }
+    /** Decorative running glyph; replacement retains the native clock, label and status announcement. */
+    'conversation.chat.activity.icon': { kind: 'single'; scope: 'session'; owner: { startTime: number | null } }
     /**
      * Final Chat node renderer, keyed by `ChatNodeKind`. The component receives
      * the typed node, shared Chat actions, and Turn-data hook. Reusing a key

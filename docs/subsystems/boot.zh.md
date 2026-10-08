@@ -12,6 +12,8 @@
 
 `BundleInfo` 包含包名、可选的安装版本、组合层选择状态、删除可用性及可选的解析错误。它的可选 `meta` 与各行的 `BundleRowInfo.meta` 包含展示文本或元信息诊断；Client 在渲染时选择语言。
 
+`PluginManagerSnapshot` 包含 `bundles: BundleInfo[]` 和 `plugins: PluginInfo[]`。`snapshot()` 在 Profile manifest 锁及 HMR 队列中读取两者；运行阶段仍为观测值。匹配的部署规则通过插件及声明组合行上的 `deploymentPolicy` 独立呈现。[Plugin Manager 契约](../../packages/boot/plugin-manager/README.zh.md)拥有修改策略及失败语义。
+
 `InstallBundleOptions.enabled` 默认为 true，false 表示安装但不选择组合包层。`approvedBuilds` 在安装前向指定的待审批包名授予持久脚本权限。`registry` 指定首先询问的注册表；缺省为配置的那个。
 
 `PluginRegistries` 携带配置的第一个注册表（`null` 即 pnpm 自身配置指定的那个）、随后依次询问的备选注册表，以及 `resolved`——pnpm 自身配置指向的 URL，未读到时为 `null`。`InspectOptions.registry` 指定一次查询首先询问的注册表。
@@ -115,6 +117,11 @@ Manage profile files and apply their declared reload lifecycle.
  * whether the installation offers the bundle, and removal availability.
  */
 @Remote listBundles(): Promise<BundleInfo[]>
+
+/** Read bundle rows and their runtime entries in one serialized profile generation.
+ * @returns Saved bundle selections joined with the same generation's Loader entry identities and phases.
+ */
+@Remote snapshot(): Promise<PluginManagerSnapshot>
 
 /** Read the registries this manager asks: the configured first one, its fallbacks in order, and what pnpm's own configuration names.
  * @returns The registries in pnpm's comparison form; null is the one pnpm's own configuration names, `resolved` as pnpm reads it now.

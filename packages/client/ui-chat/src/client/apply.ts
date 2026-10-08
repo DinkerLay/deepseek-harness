@@ -28,7 +28,7 @@ import type { ChatSnapshot } from './contract/snapshot.ts'
 import { EMPTY_CHAT_SNAPSHOT } from './contract/snapshot.ts'
 import { ApprovalCommand } from './chat/ApprovalCommand.tsx'
 import { ChatView } from './chat/ChatView.tsx'
-import { TurnActivity } from './chat/TurnActivity.tsx'
+import { registerTurnActivity } from './chat/TurnActivity.tsx'
 import { registerChatNodeRenderers } from './chat/register-node-renderers.ts'
 import { StatsPills } from './chat/StatsPills.tsx'
 import { registerConversationNodes } from './conversation-nodes/register.ts'
@@ -110,9 +110,7 @@ export function apply(ctx: Context): void {
     return source
   }
   registerConversationNodes(ctx)
-  ctx.slots.inject('conversation.chat.activity', () => ctx.slots.register({
-    name: 'conversation.chat.activity', locale: NS,
-  }, TurnActivity))
+  registerTurnActivity(ctx)
   ctx.uiSession.provide({
     hooks: ['chat'],
     resolve: binding => ({ hooks: { chat: chatSource(binding) } }),
