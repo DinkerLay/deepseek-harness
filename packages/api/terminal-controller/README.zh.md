@@ -100,3 +100,7 @@ Client 在分配前将每条 Session/内容与终端身份的关联保存到独�
 不发布运行时 invariant companion。终端元数据与屏幕更新由同一对象按序写入，没有独立的进程尺寸观测可供比较。
 
 </details>
+
+部署可以提供 `ctx.terminalSpawnPolicy(agent, request, spec)`，用于准备工作区、约束启动或持有外部资源。它返回提供方 handle 与实际工作目录；原生身份、传输和清理规则保持不变。`requireSpawnPolicy` 默认 `false`，设为 `true` 时策略不可用就拒绝分配。策略负责包装层清理，并须在提供方清理成功之前保留外部租约。未要求且未提供策略时仍使用默认用户 Shell 权限。
+
+Client 界面通过 `retainTabsFor(surface, tabs)` 提供互不覆盖的窗口保留列表，通过 `releaseView(sessionId, key)` 释放视图而不关闭进程。既有 `retainTabs` 方法负责原生 Sidebar 的那份保留列表。

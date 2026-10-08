@@ -22,6 +22,24 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.title:disabled {
+  cursor: default;
+}
+
+.compactTitle {
+  flex: none;
+}
+
+.title[data-quiet],
+.title[data-quiet] .activityIcon,
+.title[data-quiet] .chevron {
+  transition: none;
+}
+
+.root[data-summary-inline]:not([data-group-open]) {
+  display: contents;
+}
+
 /* The leading box and its glyph ride the body font-size delta so the icon
    keeps its optical share of the row at every Settings size. */
 .leading {

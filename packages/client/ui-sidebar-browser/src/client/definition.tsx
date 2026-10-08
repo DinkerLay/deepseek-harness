@@ -4,6 +4,7 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
 import { GuideArtworkBrowser } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from './locales.ts'
+import { browserResourceTarget } from './browser/resource-address.ts'
 
 /** Browser tab kind. */
 export const BROWSER_KIND = 'browser'
@@ -18,6 +19,8 @@ export function browserDefinition(t: TranslateNS<'sidebarBrowser'>): SidebarRigh
     kind: BROWSER_KIND,
     multiple: true,
     priority: 'builtin',
+    patterns: ['dsh-resource://webpage/**'],
+    canOpen: address => browserResourceTarget(address).ok,
     title: () => t('type.label'),
     guide: [{
       id: 'new', commandId: 'browser.new' as ShortcutCommandId, order: 30, title: () => t('guide.title'),

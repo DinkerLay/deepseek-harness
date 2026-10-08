@@ -259,11 +259,13 @@ export interface SettingsControllerInternals {
 ## `@deepseek-ai/dsh-api-terminal-controller`
 
 - `inject`: `subprocess` · `sandboxPolicy` · `typert`
-- `source`: [`packages/api/terminal-controller/src/index.ts:27`](../packages/api/terminal-controller/src/index.ts)
+- `source`: [`packages/api/terminal-controller/src/index.ts:33`](../packages/api/terminal-controller/src/index.ts)
 
 ```ts config-catalog
 /** Deployment limits and an optional shell profile. */
 export interface Config {
+  /** Refuse terminal creation if the deployment's launch policy is unavailable. */
+  readonly requireSpawnPolicy?: boolean
   /** Explicit shell profile; omission uses the execution environment's default shell. */
   readonly shell?: {
     /** Executable path or PATH name, verified by the subprocess provider. */

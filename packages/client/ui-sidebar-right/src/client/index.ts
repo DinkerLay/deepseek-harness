@@ -30,6 +30,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { ILayout } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { RegisterFactoryOptions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from './contract/slots.ts'
 import { GuideBody, type GuideInjected } from './tabs/guide/GuideBody.tsx'
@@ -47,6 +48,15 @@ import { GUIDE_ID, guideDefinition } from './tabs/guide/definition.ts'
 import { guideTabInfoFactory, tabInfoFactory } from './tab-info.ts'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { defaultSeed } from './contract/seed.ts'
+import {
+  factoryRightbarRoot, SIDEBAR_RIGHT_SESSION_FACTORY,
+  type SidebarRightSessionFactoryOptions, type SidebarRightSessionMount,
+} from './session-factory.tsx'
+
+/** Public native Sidebar assembly with a reusable Session factory and store handle. */
+export const sidebarSessionFactoryVersion = 1
+export { SIDEBAR_RIGHT_SESSION_FACTORY } from './session-factory.tsx'
+export type { SidebarRightSessionFactoryOptions, SidebarRightSessionMount, SidebarRightStoreHandle } from './session-factory.tsx'
 
 export type { SidebarRightTarget } from './focus.ts'
 export type { RightbarSeatProps, SidebarRightInjected, SidebarRightPresentation } from './shell/SidebarRight.tsx'
@@ -99,6 +109,22 @@ declare module '@deepseek-ai/cordis' {
  * @param ctx - client root context carrying the slot registry, the frame's face, and copy.
  */
 export function apply(ctx: ClientContext): void {
+  mountSidebarRight(ctx)
+}
+
+/**
+ * Mount native Sidebar services and presentation through a reusable Session factory.
+ * @param ctx - owning Client context with the standard Sidebar dependencies.
+ * @param options - deployment Session boundary and optional declared factory name.
+ * @returns the registered factory name and its native, Session-scoped store handle.
+ */
+export function applyWithSessionFactory(ctx: ClientContext, options: SidebarRightSessionFactoryOptions): SidebarRightSessionMount {
+  return mountSidebarRight(ctx, options)
+}
+
+function mountSidebarRight(ctx: ClientContext, factoryOptions?: SidebarRightSessionFactoryOptions): SidebarRightSessionMount {
+  const factoryName = factoryOptions?.factoryName ?? SIDEBAR_RIGHT_SESSION_FACTORY
+  if (factoryName.trim() === '') throw new TypeError('sidebarRight: Session factory name must be non-empty')
   // The registry and the face it backs are built here, at apply's top level,
   // and never inside an effect. A registry other packages register into cannot
   // have an effect-internal scope as its host: `register()` adds an effect to
@@ -165,26 +191,26 @@ export function apply(ctx: ClientContext): void {
   }), 'ui-sidebar-right: shortcuts')
   if (typeof document !== 'undefined') ctx.effect(() => observeSidebarFocus(document), 'ui-sidebar-right: focus')
 
+  const handle = createSidebarRightStore(() => defaultSeed(tabs))
+  // Each Session Context generation owns one Store. Background tab actions
+  // use the latest adoption for that Session.
+  const adoptions = new Map<SessionId, () => void>()
+  const store: typeof handle = {
+    ...handle,
+    create: (scopeKey) => {
+      const instance = handle.create(scopeKey)
+      if (scopeKey !== undefined) {
+        const sessionId = scopeKey as SessionId
+        adoptions.get(sessionId)?.()
+        adoptions.set(sessionId, adopt(sessionId, instance))
+      }
+      return { ...instance, clearPersisted() {
+        instance.clearPersisted()
+        if (scopeKey !== undefined) forget(scopeKey as SessionId)
+      } }
+    },
+  }
   ctx.effect(() => {
-    const handle = createSidebarRightStore(() => defaultSeed(tabs))
-    // Each Session Context generation owns one Store. Background tab actions
-    // use the latest adoption for that Session.
-    const adoptions = new Map<SessionId, () => void>()
-    const store: typeof handle = {
-      ...handle,
-      create: (scopeKey) => {
-        const instance = handle.create(scopeKey)
-        if (scopeKey !== undefined) {
-          const sessionId = scopeKey as SessionId
-          adoptions.get(sessionId)?.()
-          adoptions.set(sessionId, adopt(sessionId, instance))
-        }
-        return { ...instance, clearPersisted() {
-          instance.clearPersisted()
-          if (scopeKey !== undefined) forget(scopeKey as SessionId)
-        } }
-      },
-    }
     const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab' | 'measureRoom'> = {
       syncPresentation({ shown, track, fullscreen }) {
         if (shown) layout.openRightbar(track, fullscreen)
@@ -201,35 +227,43 @@ export function apply(ctx: ClientContext): void {
     }
 
     const disposeTypes = [tabs.register(guideDefinition(t))]
+    const seat = {
+      locale: NS,
+      children: {
+        'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
+        'sidebar.right.pane.tab.title': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
+        'sidebar.right.tab.menu.item': { kind: 'list', scope: 'session' },
+      },
+      store,
+      inject: (sessionId: SessionId): SidebarRightInjected => ({
+        ...injected,
+        measureRoom: (canSplitPane) => { measure(sessionId, canSplitPane) },
+        closeTab: (tabId) => {
+          try { controller.closeIn(sessionId, tabId) }
+          catch (error) { console.error('Sidebar tab close failed:', error) }
+        },
+        keyedHooks: { tabNavigation: key => controller.tabDomain.occurrence(sessionId, { id: key as TabId }).navigation },
+        occurrence: tab => controller.tabDomain.occurrence(sessionId, tab),
+      }),
+    } as const
+    const definition = {
+      ...seat, name: SIDEBAR_RIGHT_SESSION_FACTORY, scope: 'session',
+    } satisfies RegisterFactoryOptions<typeof SIDEBAR_RIGHT_SESSION_FACTORY>
+    const disposeFactory: (() => void) | undefined = factoryOptions === undefined ? undefined
+      : Reflect.apply(ctx.slots.registerFactory, ctx.slots, [{ ...definition, name: factoryName }, RightbarSeat])
     const disposeSeat = ctx.slots.inject('rightbar', function* () {
-      yield ctx.slots.register({
-        name: 'rightbar',
-        children: { 'rightbar.session': { kind: 'single', scope: 'session' } },
+      const root = {
+        name: 'rightbar' as const,
         inject: (): RightbarRootInjected => ({
           hooks: { views: views.source },
           mountView: reference => views.mount(reference),
         }),
+      }
+      if (factoryOptions === undefined) yield ctx.slots.register({
+        ...root, children: { 'rightbar.session': { kind: 'single', scope: 'session' } },
       }, RightbarRoot)
-      yield ctx.slots.register({
-        name: 'rightbar.session',
-        locale: NS,
-        children: {
-          'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
-          'sidebar.right.pane.tab.title': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
-          'sidebar.right.tab.menu.item': { kind: 'list', scope: 'session' },
-        },
-        store,
-        inject: (sessionId): SidebarRightInjected => ({
-          ...injected,
-          measureRoom: (canSplitPane) => { measure(sessionId, canSplitPane) },
-          closeTab: (tabId) => {
-            try { controller.closeIn(sessionId, tabId) }
-            catch (error) { console.error('Sidebar tab close failed:', error) }
-          },
-          keyedHooks: { tabNavigation: key => controller.tabDomain.occurrence(sessionId, { id: key as TabId }).navigation },
-          occurrence: tab => controller.tabDomain.occurrence(sessionId, tab),
-        }),
-      }, RightbarSeat)
+      else yield ctx.slots.register(root, factoryRightbarRoot(factoryOptions))
+      if (factoryOptions === undefined) yield ctx.slots.register({ ...seat, name: 'rightbar.session' }, RightbarSeat)
     })
     // The expand button shares the panel's store: it only needs to know whether
     // the panel is expanded, and to ask for it to be. The header's corner seat
@@ -271,9 +305,11 @@ export function apply(ctx: ClientContext): void {
       disposeGuide()
       disposeExpand()
       disposeSeat()
+      disposeFactory?.()
       for (const dispose of disposeTypes.reverse()) dispose()
       for (const release of adoptions.values()) release()
       adoptions.clear()
     }
   }, 'ui-sidebar-right: seats and shipped tab type')
+  return { factoryName, store }
 }

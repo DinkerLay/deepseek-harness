@@ -38,7 +38,7 @@ const absentState = {
 }
 
 function mountBrowser(navigation?: { readonly url?: string },
-  options: { initial?: BrowserTabState; createPage?: BrowserPageFactory; refreshShortcut?: ReturnType<BrowserBodyProps['useTabInfo']>['tab']['refreshShortcut'] } = {}) {
+  options: { initial?: BrowserTabState; createPage?: BrowserPageFactory; address?: string; revision?: number; refreshShortcut?: ReturnType<BrowserBodyProps['useTabInfo']>['tab']['refreshShortcut'] } = {}) {
   const store = createBrowserStore().create(`browser-body-test-${String(++mountSequence)}`)
   if (options.initial !== undefined) store.actions.replace(TAB, options.initial)
   const lifetime = new AbortController()
@@ -53,8 +53,8 @@ function mountBrowser(navigation?: { readonly url?: string },
       useTabInfo: () => ({
         sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane' as PaneId },
         tab: {
-          id: TAB, kind: 'browser', title: 'Browser', contentId: 'sidebar://browser/1', visible: true,
-          navigation: { address: 'sidebar://browser/1', params: navigation, revision: 0 },
+          id: TAB, kind: 'browser', title: 'Browser', contentId: options.address ?? 'sidebar://browser/1', visible: true,
+          navigation: { address: options.address ?? 'sidebar://browser/1', params: navigation, revision: options.revision ?? 0 },
           signal: lifetime.signal,
           actions: tabActions, refreshShortcut: options.refreshShortcut,
         },
@@ -266,7 +266,9 @@ describe('BrowserBody', () => {
   })
 
   it('reloads the latest controlled URL instead of replaying the initial URL after remount', async () => {
-    const mounted = mountBrowser({ url: 'https://initial.example/path' })
+    const mounted = mountBrowser(undefined, {
+      address: `dsh-resource://webpage/${encodeURIComponent('https://initial.example/path')}`, revision: 1,
+    })
     const input = mounted.view.getByRole('textbox')
     await waitFor(() => { expect(mounted.view.container.querySelector('iframe')?.getAttribute('src')).toBe('https://initial.example/path') })
     fireEvent.change(input, { target: { value: 'https://latest.example/path' } })
@@ -280,4 +282,25 @@ describe('BrowserBody', () => {
     expect(mounted.store.getSnapshot().byTab[TAB]?.entries.at(-1)?.url).toBe('https://latest.example/path')
   })
 
+})
+
+it('opens an explicit stable webpage resource without navigation params', async () => {
+  const address = `dsh-resource://webpage/${encodeURIComponent('https://example.com/path?q=1')}`
+  const mounted = mountBrowser(undefined, { address, revision: 1 })
+  await waitFor(() => { expect(mounted.view.container.querySelector('iframe')?.getAttribute('src')).toBe('https://example.com/path?q=1') })
+})
+
+it('restores a URL from its resource identity when the Browser checkpoint is absent, without automatic loading', async () => {
+  const address = `dsh-resource://webpage/${encodeURIComponent('https://example.com/restore')}`
+  const mounted = mountBrowser(undefined, { address, revision: 0 })
+  expect(mounted.view.getByRole('textbox')).toHaveProperty('value', 'https://example.com/restore')
+  expect(mounted.view.container.querySelector('iframe')).toBeNull()
+  fireEvent.click(mounted.view.getByRole('button', { name: zh['restore.action'] }))
+  await waitFor(() => { expect(mounted.view.container.querySelector('iframe')?.getAttribute('src')).toBe('https://example.com/restore') })
+})
+
+it('keeps title-only legacy resources unavailable instead of inventing their URL', () => {
+  const mounted = mountBrowser(undefined, { address: 'dsh-resource://retired-page/title/random-id' })
+  expect(mounted.view.getByText(zh['restore.unavailable'])).toBeTruthy()
+  expect(mounted.view.container.querySelector('iframe')).toBeNull()
 })

@@ -89,6 +89,10 @@ Chat 末尾为进行中的 Turn 控制行，且该轮尚无可见输入时，第
 
 嵌套的 `conversation.chat.activity.icon` Slot 可替换装饰图标，同时保留原生文字、时钟、布局和状态播报。其 Session 作用域 owner 接收 `startTime`；轮次时钟尚未知时为 null。移除更高优先级贡献会恢复原生鲸鱼图标。[图标归属决策](../../../.agents/notes/implemented/architecture/2026-10-08-running-activity-glyph.zh.md)将这项扩展与 transcript 和过程分组渲染分开。
 
+`quietActivity` 默认为 false。启用后，原生活动显示静态本地化文字及已用时间，不调用装饰图标 Slot；分组及 Think 标题省略 shimmer。`inlineCompletedSummary` 同样默认为 false，将已关闭分组的原有控件放到轮次状态和耗时旁。多个分组共享一份类别摘要，仍按原生顺序保留各自可访问的展开控件。打开分组前先展开其外层轮次。窄框中状态、耗时和摘要可换行。公开 Client 入口声明 `turnPresentationVersion: 1`；部署可通过公开注入策略固定这些展示标志。[静态轮次展示](../../../.agents/notes/implemented/architecture/2026-10-09-native-chat-turn-presentation.zh.md)拥有这些选择。
+
+完成、失败和停止控件都使用已记录的轮次结束时间减去开始时间。边界缺失时省略耗时，已加载的失败历史不会伪造时钟。整轮及分组展开、推理、消息、工具和排序仍由原生组件拥有，历史加载及工作详情模式变化也保留这些归属。
+
 文件提及提供方同时接收当前查看的会话 ID 与收尾轮次的属主信息，因此继承历史中的链接可以指向 fork 自身。
 
 Chat 通过 `uiConversation.groups` 注册过程 Group Definition。React 通过稳定的 Group 与 Node 容器渲染混合 `node`/`group` 根序列，组头数据与成员数组分别订阅。已结束组的标题独立于实时详情偏好，只有运行中的标题在该偏好变化时更新。[过程分组业务规则](src/client/conversation-nodes/README.zh.md#process-grouping) 定义切分方式与活动摘要。

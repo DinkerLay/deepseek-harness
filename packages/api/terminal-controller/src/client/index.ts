@@ -12,6 +12,9 @@ import { TerminalCloseRequests, type TerminalCloseRequest } from './close-reques
 import { TerminalWindowHold } from './retention.ts'
 import { TerminalBindings } from './bindings.ts'
 
+/** Multiple UI surfaces can retain and release independent terminal view occurrences. */
+export const terminalSurfaceVersion = 1 as const
+
 export type { TerminalView, TerminalViewState, TerminalViewIssue, TerminalRenderFrame, TerminalRemote } from './model.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -46,6 +49,7 @@ export class ClientTerminals extends Service {
   private readonly bindings = new TerminalBindings()
   private readonly holds = new Map<SessionId, Map<WebTerminalId, TerminalWindowHold>>()
   private readonly releasing = new Set<Promise<void>>()
+  private readonly surfaceTabs = new Map<string, readonly { sessionId: SessionId; tabId: string; contentId: string }[]>()
   private openTabs: readonly { sessionId: SessionId; tabId: string; contentId: string }[] = []
 
   /**
@@ -61,6 +65,8 @@ export class ClientTerminals extends Service {
       this.bindings.clear()
       const holds = [...this.holds.values()].flatMap(holds => [...holds.values()].map(hold => hold.dispose()))
       this.holds.clear()
+      this.surfaceTabs.clear()
+      this.openTabs = []
       await Promise.all([...detaching, ...holds, ...this.releasing, ...this.closing.values()])
     }, 'terminal-controller.client.views')
     for (const request of this.requests.pending()) this.cleanup(request)
@@ -138,8 +144,32 @@ export class ClientTerminals extends Service {
    * @param tabs - terminal-kind membership supplied by the sidebar layout owner.
    */
   retainTabs(tabs: readonly { sessionId: SessionId; tabId: string; contentId: string }[]): void {
-    this.openTabs = tabs
+    this.retainTabsFor('sidebar', tabs)
+  }
+
+  /**
+   * Retain a surface's tabs without replacing another surface's window holds.
+   * @param surface - independent presentation owner; an empty tab set releases its holds.
+   * @param tabs - terminal occurrences retained by this surface, including dormant Sessions.
+   */
+  retainTabsFor(surface: string, tabs: readonly { sessionId: SessionId; tabId: string; contentId: string }[]): void {
+    if (tabs.length === 0) this.surfaceTabs.delete(surface)
+    else this.surfaceTabs.set(surface, tabs)
+    this.openTabs = [...this.surfaceTabs.values()].flat()
     this.reconcileHolds()
+  }
+
+  /**
+   * Release a DOM occurrence without closing its Host process or removing its content binding.
+   * @param sessionId - owning Session of the DOM occurrence.
+   * @param key - presentation-local occurrence identity.
+   */
+  async releaseView(sessionId: SessionId, key: string): Promise<void> {
+    const views = this.views.get(sessionId)
+    const view = views?.get(key)
+    views?.delete(key)
+    if (views?.size === 0) this.views.delete(sessionId)
+    await view?.dispose()
   }
 
   private hold(sessionId: SessionId, id: WebTerminalId): TerminalWindowHold {

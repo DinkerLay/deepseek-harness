@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-09-native-chat-turn-presentation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-09-native-chat-turn-presentation.md
+/agent-note-native-quiet-activity-and-inline-turn-summaries:
+  en: 10367ef9dac207b0
+  zh: 49a90a3dae22c311
+/agent-note-native-quiet-activity-and-inline-turn-summaries/problem:
+  en: 8b0ea7637da4764f
+  zh: fdaa1ccda8b39856
+/agent-note-native-quiet-activity-and-inline-turn-summaries/decision:
+  en: 69ec58dc44249b5f
+  zh: b2a8cbd7f02e54ba
+/agent-note-native-quiet-activity-and-inline-turn-summaries/alternatives-considered:
+  en: ce624c3bf1a13667
+  zh: 652f02d00c46a316
+/agent-note-native-quiet-activity-and-inline-turn-summaries/consequences:
+  en: eeecdee1b04fe09c
+  zh: 4a87a5449fe02456

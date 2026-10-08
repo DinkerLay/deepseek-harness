@@ -167,6 +167,8 @@ export const SERVICE_PAGE: Record<string, string> = {
 export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   invocation: 'not a service: per-call accessor (RemoteInvocation | undefined) the Gateway derives for each Remote call — packages/api/gateway/README.md owns the contract',
   webTerminals: 'client-side terminal view models — packages/api/terminal-controller/README.md owns the API',
+  terminalSpawnPolicy: 'optional deployment-owned spawn function — packages/api/terminal-controller/README.md owns the hook',
+  uiChangesSummary: 'client-side read-only native changes cache — packages/client/ui-deliverables/README.md owns the API',
   appReady: 'not a service: launcher-provided successful-startup signal — packages/boot/cmdline/README.md owns the launcher contract',
   appExit: 'not a service: launcher-provided bounded process-exit callback — packages/boot/cmdline/README.md owns the launcher contract',
   cmdlineArgs: 'not a service: launcher-provided immutable app argument accessor — packages/boot/cmdline/README.md owns the launcher contract',

@@ -1,5 +1,7 @@
 /** Browser Chat target plugin. */
 export { apply, inject } from './apply.ts'
+/** Quiet running status, truthful settled elapsed time and inline native group controls. */
+export const turnPresentationVersion = 1
 export type {} from './conversation-nodes/assistant.ts'
 export type {} from './conversation-nodes/command.ts'
 export type {} from './conversation-nodes/compaction.ts'

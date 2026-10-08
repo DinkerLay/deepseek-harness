@@ -2,6 +2,7 @@
 import { resolveSessionCwd } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
@@ -16,15 +17,24 @@ import type {
 
 export type * from './types.ts'
 
+/** Optional deployment launch policy; terminal identities and transport remain native. */
+export const terminalSpawnPolicyVersion = 1 as const
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Interactive user terminals, separate from the Agent terminal tool registry. */
     terminalController: TerminalController
+    /** Apply deployment workspace/permission policy while retaining native terminal ownership. */
+    terminalSpawnPolicy?: (
+      agent: Agent, request: TerminalCreateRequest, spec: SubprocessTerminalSpawnSpec,
+    ) => Promise<{ handle: SubprocessTerminalHandle; cwd: string }>
   }
 }
 
 /** Deployment limits and an optional shell profile. */
 export interface Config {
+  /** Refuse terminal creation if the deployment's launch policy is unavailable. */
+  readonly requireSpawnPolicy?: boolean
   /** Explicit shell profile; omission uses the execution environment's default shell. */
   readonly shell?: {
     /** Executable path or PATH name, verified by the subprocess provider. */
@@ -76,6 +86,7 @@ interface OwnedSession {
 export class TerminalController extends TypertRemoteService {
   static inject = ['subprocess', 'sandboxPolicy', 'typert']
   static Config: z<Config> = z.object({
+    requireSpawnPolicy: z.boolean().default(false),
     shell: z.union([z.object({
       path: z.string().required(), name: z.string().required(), args: z.array(z.string()).default([]),
     }), z.const(undefined)]),
@@ -149,7 +160,7 @@ export class TerminalController extends TypertRemoteService {
   }
 
   /**
-   * Allocate a user shell once for a caller-generated identity, without Agent sandbox or approval restrictions.
+   * Allocate a user shell once for a caller-generated identity, applying an optional deployment launch policy.
    * @param agent - Session owner supplied by the Gateway.
    * @param request - initial dimensions and idempotency identity.
    * @param signal - allocation cancellation; committed terminals survive disconnection.
@@ -344,14 +355,19 @@ export class TerminalController extends TypertRemoteService {
       ? await resolveShell(subprocess, this.config.shell, signal)
       : (await this.shells(agent, signal)).find(candidate => candidate.path === request.shellPath)
     if (shell === undefined) throw new Error('Selected shell is not available in this execution environment')
-    const handle = await subprocess.spawnTerminal({
+    const policy = this.ctx.get('terminalSpawnPolicy')
+    if (this.config.requireSpawnPolicy && policy === undefined) throw new Error('Terminal launch policy is unavailable')
+    const spec: SubprocessTerminalSpawnSpec = {
       argv: [shell.path, ...shell.args], cwd: environment.cwd, cols: request.cols, rows: request.rows,
       terminalType: 'xterm-256color', env: { DSH_SESSION_ID: agent.id },
       shellActivity: true,
       graceMs: this.config.disposeGraceMs, signal,
-    })
+    }
+    const { handle, cwd } = policy === undefined
+      ? { handle: await subprocess.spawnTerminal(spec), cwd: environment.cwd }
+      : await policy(agent, request, spec)
     const info: WebTerminalInfo = {
-      id: request.id, shell, title: shell.name, cwd: environment.cwd,
+      id: request.id, shell, title: shell.name, cwd,
       cols: request.cols, rows: request.rows, state: 'running', exitCode: null,
     }
     try {

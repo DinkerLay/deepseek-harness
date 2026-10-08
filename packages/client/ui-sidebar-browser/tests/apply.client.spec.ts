@@ -10,7 +10,8 @@ import { BrowserBody } from '../src/client/view/BrowserBody.tsx'
 import { BrowserTitle } from '../src/client/view/BrowserTitle.tsx'
 import type { BrowserInjected } from '../src/client/browser/BrowserController.ts'
 import { BROWSER_ID, BROWSER_KIND } from '../src/client/definition.tsx'
-import { apply, inject } from '../src/client/index.ts'
+import { apply, applyWithPageFactory, inject, pageFactoryVersion, type BrowserPageProvider } from '../src/client/index.ts'
+import type { BrowserFrameState } from '../src/client/browser/BrowserFrame.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { createBrowserStore } from '../src/client/browser/store.ts'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
@@ -32,7 +33,7 @@ interface Recorded {
   component: unknown
 }
 
-async function boot(platform: ShortcutPlatform = 'macos', runtime: 'desktop' | 'web' = 'desktop') {
+async function boot(platform: ShortcutPlatform = 'macos', runtime: 'desktop' | 'web' = 'desktop', provider?: BrowserPageProvider) {
   const ctx = new Context()
   contexts.push(ctx)
   const tabs = new SidebarRightTabRegistry(ctx)
@@ -64,7 +65,8 @@ async function boot(platform: ShortcutPlatform = 'macos', runtime: 'desktop' | '
   ctx.provide('workspaces', { list: createSnapshotStore({ phase: 'ready', items: [] }) } as never)
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale as never)
-  const fiber = ctx.plugin({ inject: [...inject], apply })
+  const fiber = ctx.plugin({ inject: [...inject],
+    apply: provider === undefined ? apply : (scoped: Context) => { applyWithPageFactory(scoped, provider) } })
   await fiber.await()
   return { tabs, registered, dictionaries, fiber, openTabs, registry, sidebar, target }
 }
@@ -174,4 +176,31 @@ describe('ui-sidebar-browser apply', () => {
     expect(registered).toEqual([])
     expect(dictionaries.size).toBe(0)
   })
+})
+
+it('uses an explicit public carrier factory while retaining the native controller and disposal owner', async () => {
+  const state = createSnapshotStore<BrowserFrameState>({ target: undefined, address: 'empty', loading: false,
+    canGoBack: false, canGoForward: false, error: undefined, sandboxEnabled: undefined })
+  const loadUrl = vi.fn(), dispose = vi.fn(async () => {}), detach = vi.fn()
+  const provider: BrowserPageProvider = {
+    keepMounted: true,
+    createPage: vi.fn(() => ({
+      frame: { ...state, loadUrl, goBack: vi.fn(), goForward: vi.fn(), reload: vi.fn(), dispose },
+      presentation: { mount: () => detach },
+    })),
+  }
+  const h = await boot('macos', 'web', provider)
+  expect(pageFactoryVersion).toBe(1)
+  expect(h.tabs.get(BROWSER_KIND)?.keepMounted).toBe(true)
+  const injectFace = h.registered.find(entry => entry.name === 'sidebar.right.pane.tab')!.inject as
+    (sessionId: string, actions: Parameters<BrowserInjected['rebind']>[0]) => BrowserInjected
+  const store = createBrowserStore().create('public-carrier-provider')
+  const controller = injectFace('source-session', store.actions)
+  const signal = new AbortController()
+  controller.mount({ tabId: 'provider-tab' as TabId, signal: signal.signal, viewportId: 'owned-viewport',
+    applicationOrigin: 'https://app.example', initial: undefined, initialUrl: 'https://example.com/', openTab: vi.fn() })
+  expect(provider.createPage).toHaveBeenCalledExactlyOnceWith('source-session', expect.objectContaining({ persist: expect.any(Function), openRequested: expect.any(Function) }))
+  expect(loadUrl).toHaveBeenCalledExactlyOnceWith({ kind: 'https', url: 'https://example.com/', title: 'example.com' })
+  await h.fiber.dispose()
+  expect(dispose).toHaveBeenCalledOnce()
 })

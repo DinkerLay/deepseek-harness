@@ -14,9 +14,10 @@ describe('ui-chat Host settings', () => {
     const configuration = await liveConfig(ctx, { Config, apply })
     const { fiber } = configuration
 
-    expect(plainConfig(configuration.fiber.config)).toEqual({ performanceUsage: 'detailed', linkOpening: 'sidebar' })
+    const defaults = { performanceUsage: 'detailed', linkOpening: 'sidebar', quietActivity: false, inlineCompletedSummary: false }
+    expect(plainConfig(configuration.fiber.config)).toEqual(defaults)
     await configuration.update({ transcriptView: 'normal' })
-    expect(plainConfig(configuration.fiber.config)).toEqual({ transcriptView: 'normal', performanceUsage: 'detailed', linkOpening: 'sidebar' })
+    expect(plainConfig(configuration.fiber.config)).toEqual({ ...defaults, transcriptView: 'normal' })
     for (const mode of ['expanded', 'compact', 'standard', 'detailed', 'verbose']) {
       await configuration.update({ transcriptView: mode })
       expect(plainConfig(configuration.fiber.config)).toMatchObject({ transcriptView: mode })
@@ -31,6 +32,9 @@ describe('ui-chat Host settings', () => {
     await configuration.update({ linkOpening: 'new-tab' })
     expect(plainConfig(configuration.fiber.config)).toMatchObject({ linkOpening: 'new-tab' })
     await expect(configuration.update({ linkOpening: 'popup' })).rejects.toThrow()
+    await configuration.update({ quietActivity: true, inlineCompletedSummary: true })
+    expect(plainConfig(configuration.fiber.config)).toMatchObject({ quietActivity: true, inlineCompletedSummary: true })
+    await expect(configuration.update({ quietActivity: 'quiet' })).rejects.toThrow()
 
     await fiber.dispose()
   })

@@ -18,6 +18,8 @@ import type { BrowserPageFactory } from './browser/BrowserPage.ts'
 import { BROWSER_ID, browserDefinition } from './definition.tsx'
 import { en, zh } from './locales.ts'
 import { createBrowserStore } from './browser/store.ts'
+import type { BrowserPageOptions, BrowserPage } from './browser/BrowserPage.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 export type { BrowserBodyProps } from './view/BrowserBody.tsx'
 export type { BrowserControllerState, BrowserInjected, BrowserMountRequest } from './browser/BrowserController.ts'
@@ -28,6 +30,19 @@ export type { BrowserFailure, BrowserHistoryEntry, BrowserNavigationStatus, Brow
 export type { SidebarBrowserKey } from './locales.ts'
 export type { BrowserState } from './browser/store.ts'
 export type { BrowserAddressFailure, BrowserAddressResult, BrowserTarget } from './browser/url.ts'
+export { browserResourceAddress } from './browser/resource-address.ts'
+export type { BrowserResourceAddressResult } from './browser/resource-address.ts'
+
+/** Public carrier factory support; controllers, navigation and persistence remain native-owned. */
+export const pageFactoryVersion = 1 as const
+
+/** Caller-owned carrier used by every Browser tab in this plugin lifetime. */
+export interface BrowserPageProvider {
+  /** Preserve visited presentations through hidden tabs and Session changes when the carrier requires it. */
+  readonly keepMounted?: boolean
+  /** @param sessionId Source Session. @param options Native checkpoint and callbacks. @returns One idle carrier page. */
+  createPage(sessionId: SessionId, options: BrowserPageOptions): BrowserPage
+}
 
 declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
   interface SidebarRightTabParamsMap {
@@ -41,6 +56,19 @@ export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
 
 /** Register the Browser type, localized guide entry, body, and title. */
 export function apply(ctx: Context): void {
+  install(ctx)
+}
+
+/**
+ * Mount native Browser chrome and persistence over an explicit carrier factory.
+ * @param ctx Owning Client plugin context.
+ * @param provider Carrier construction and retention preference; pages dispose with their native tab occurrence.
+ */
+export function applyWithPageFactory(ctx: Context, provider: BrowserPageProvider): void {
+  install(ctx, provider)
+}
+
+function install(ctx: Context, provider?: BrowserPageProvider): void {
   const namespace = 'sidebarBrowser'
   const t = ctx.locale.bind(namespace)
   ctx.inject(['shortcuts'], (ctx) => {
@@ -71,7 +99,8 @@ export function apply(ctx: Context): void {
   }).dshDesktop
   const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-browser.copy')
-  ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
+  ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t),
+    keepMounted: provider?.keepMounted ?? desktop !== undefined }), 'ui-sidebar-browser.type')
   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
     const controllers = new Map<BrowserBodyProps['sessionId'], BrowserInjected>()
     scope.effect(() => async () => {
@@ -94,7 +123,8 @@ export function apply(ctx: Context): void {
       },
     }, BrowserBody)), 'ui-sidebar-browser.body')
   }
-  if (desktop === undefined) installFrames(ctx, () => createIframePage)
+  if (provider !== undefined) installFrames(ctx, sessionId => options => provider.createPage(sessionId, options))
+  else if (desktop === undefined) installFrames(ctx, () => createIframePage)
   else ctx.inject(['workspaces'], (scope) => {
     installFrames(scope, sessionId => options => createElectronPage(options, desktop,
       signal => browserWorkspace(scope.workspaces.list, sessionId, signal)))

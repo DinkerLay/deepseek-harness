@@ -14,7 +14,8 @@ import {
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { BrowserInjected } from '../browser/BrowserController.ts'
 import { emptyBrowserFrame } from '../browser/BrowserFrame.ts'
-import { currentBrowserTarget } from '../browser/BrowserPersistence.ts'
+import { browserAddressCheckpoint, currentBrowserTarget } from '../browser/BrowserPersistence.ts'
+import { browserResourceTarget } from '../browser/resource-address.ts'
 import type { BrowserStore } from '../browser/store.ts'
 import css from './Browser.module.css'
 
@@ -49,8 +50,10 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
   const { tab } = useTabInfo()
   useEffect(() => tab.actions.bindCommands({ refresh: () => { reload(tab.id) } }), [tab.actions, tab.id, reload])
   const saved = useStore(state => state.byTab[tab.id])
-  const initial = useRef(saved)
-  const initialUrl = useRef(tab.navigation.params?.url)
+  const resource = browserResourceTarget(tab.navigation.address, window.location.origin)
+  const initial = useRef(saved ?? (resource.ok ? browserAddressCheckpoint(resource.target, 0) : undefined))
+  const initialUrl = useRef(tab.navigation.params?.url
+    ?? (tab.navigation.revision > 0 && resource.ok ? resource.target.url : undefined))
   const viewportId = useId()
   const [mountEpoch, setMountEpoch] = useState(0)
   const state = useBrowserState(tab.id)
@@ -78,6 +81,9 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
 
   return (
     <div className={css.root}>
+      {!resource.ok && tab.navigation.address.startsWith('dsh-resource://')
+        && initialUrl.current === undefined && target === undefined
+        ? <p className={css.placeholder} role="status">{t('restore.unavailable')}</p> : null}
       <form className={css.toolbar} onSubmit={submit}>
         <button type="button" className={css.tool} aria-label={t('back')} title={t('back')} disabled={!frame.canGoBack} onClick={() => { goBack(tab.id) }}><IconChevronLeftOutlineRegular /></button>
         <button type="button" className={css.tool} aria-label={t('forward')} title={t('forward')} disabled={!frame.canGoForward} onClick={() => { goForward(tab.id) }}><IconChevronRightOutlineRegular /></button>

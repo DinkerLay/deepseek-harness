@@ -52,6 +52,42 @@
   font-variant-numeric: tabular-nums;
 }
 
+.inlineRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  min-height: calc(33px + var(--dsh-content-font-delta, 0px));
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.root.inlineControl {
+  flex: none;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border-bottom: none;
+}
+
+.summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.summaryCaption {
+  overflow-wrap: anywhere;
+}
+
+.groupTarget {
+  display: contents;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .root,
   .chevron {

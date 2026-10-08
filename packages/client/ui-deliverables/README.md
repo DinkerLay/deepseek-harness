@@ -7,6 +7,9 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+
+The public Client `uiChangesSummary` service (version 1) supplies read-only per-coordinate sources, cache-backed loading and native review addresses. Consumers borrow the same summaries as the native card; connection replacement resets them and plugin disposal releases their owner. `missing` means the Host no longer serves the record or the read failed, allowing a consumer to keep its own durable-history fallback.
+
 ## Summary
 
 This package renders the changed-files card a finished turn ends with — the files the turn changed, with the Host's line counts, each opening the turn's review tab on that file — plus cards for explicitly delivered files, and links matching inline-code references in the closing prose so a mentioned file opens in the right Sidebar. Listed and linked paths come from the recorded summary, successful mutations, and explicit deliveries, never from the prose. Only the shipped Web patch loads this package; removing its cordis.yml entry removes the guidance, cards, and prose links together.

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-09-native-sidebar-session-factory.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-09-native-sidebar-session-factory.md
+/agent-note-native-sidebar-session-factory-ownership:
+  en: 52940b97ef46dec9
+  zh: 85acebd2dffccec5
+/agent-note-native-sidebar-session-factory-ownership/problem:
+  en: 783569ee62f25b4e
+  zh: 84d948bea959ad82
+/agent-note-native-sidebar-session-factory-ownership/decision:
+  en: ac905860eff9faa8
+  zh: 0bf5165361f88384
+/agent-note-native-sidebar-session-factory-ownership/alternatives-considered:
+  en: bf596ef1d7be6cd5
+  zh: 894b63d8bf575b77
+/agent-note-native-sidebar-session-factory-ownership/consequences:
+  en: ea7d168b6dbc9c9d
+  zh: f6c472d0cd947cae

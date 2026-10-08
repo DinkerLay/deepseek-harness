@@ -13,6 +13,7 @@
   "references": [
     { "path": "../../../vendor/cordis" },
     { "path": "../../api/workspace-controller/tsconfig.client.json" },
+    { "path": "../../core/session" },
     { "path": "../../util/brand" },
     { "path": "../locale/tsconfig.client.json" },
     { "path": "../shortcuts/tsconfig.client.json" },

@@ -48,6 +48,11 @@ An open tab in any connected window retains its terminal, including hidden tabs 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+Deployments can supply `ctx.terminalSpawnPolicy(agent, request, spec)` to prepare a workspace, constrain the launch or retain external resources. It returns the provider handle and actual working directory; native identities, transport and cleanup stay unchanged. `requireSpawnPolicy` defaults to `false`; setting it to `true` refuses allocation while the policy is unavailable. The policy owns any wrapper cleanup and must retain external leases until provider cleanup succeeds. The default user-shell permissions apply when no policy is required or supplied.
+
+Client surfaces use `retainTabsFor(surface, tabs)` to contribute independent window holds and `releaseView(sessionId, key)` to release a view without closing its process. The existing `retainTabs` method owns the native Sidebar's contribution.
+
+
 <details>
 <summary>Implementation internals — click to expand</summary>
 

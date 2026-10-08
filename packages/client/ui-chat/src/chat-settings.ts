@@ -48,6 +48,10 @@ export const DEFAULT_LINK_OPENING: LinkOpening = 'sidebar'
 
 /** Durable Chat section shared by the Host schema and browser scope. */
 export interface ChatSettings {
+  /** Static running labels without decorative glyphs or animated Chat titles. */
+  quietActivity?: boolean
+  /** Place completed process summaries beside the native status and duration. */
+  inlineCompletedSummary?: boolean
   /** Work-details preference; absence uses the client default, and legacy saved values remain accepted. */
   transcriptView?: TranscriptViewMode | typeof LEGACY_TRANSCRIPT_VIEW_MODE | typeof LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE | null
   /** Detail level for composer statistics and completed-Turn usage. */
@@ -58,6 +62,8 @@ export interface ChatSettings {
 
 /** Durable Chat schema; also the wire envelope the browser scope validates against. */
 export const ChatSettingsFields = {
+  quietActivity: z.boolean().default(false),
+  inlineCompletedSummary: z.boolean().default(false),
   linkOpening: z.union(['sidebar', 'new-tab']).default(DEFAULT_LINK_OPENING),
   performanceUsage: z.union([...PERFORMANCE_USAGE_MODES]).default(DEFAULT_PERFORMANCE_USAGE),
   // Missing and unrecognized modes defer to the client's default.

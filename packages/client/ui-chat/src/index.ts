@@ -16,6 +16,10 @@ export {
 
 /** Runtime preferences projected to the browser. */
 export interface Config {
+  /** Static running text and clocks without animated Chat activity presentation. */
+  quietActivity: Volatile<boolean>
+  /** Show completed process summaries on the native status line. */
+  inlineCompletedSummary: Volatile<boolean>
   /** Completed turn transcript presentation. */
   transcriptView: Volatile<ChatSettings['transcriptView']>
   /** Performance and usage detail level. */
@@ -26,6 +30,8 @@ export interface Config {
 
 /** Live preferences projected to the browser. */
 export const Config = z.object({
+  quietActivity: ChatSettingsFields.quietActivity.volatile(),
+  inlineCompletedSummary: ChatSettingsFields.inlineCompletedSummary.volatile(),
   [TRANSCRIPT_VIEW_FIELD]: ChatSettingsFields[TRANSCRIPT_VIEW_FIELD].volatile(),
   performanceUsage: ChatSettingsFields['performanceUsage'].volatile(),
   linkOpening: ChatSettingsFields.linkOpening.volatile(),

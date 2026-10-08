@@ -735,3 +735,24 @@ it('keeps new terminals with colliding layout-local tab ids independent across s
   expect(restored.id).toBe(b.id)
   expect(h.remote.create).toHaveBeenCalledTimes(2)
 })
+
+
+it('keeps independent surface holds and releases view occurrences without closing their processes', async () => {
+  storage()
+  const h = fixture()
+  const { service } = await h.service()
+  const first = service.view(sessionId, 'first-view', 'first-content')
+  const second = service.view(sessionId, 'second-view', 'second-content')
+  service.retainTabs([{ sessionId, tabId: 'first-view', contentId: 'first-content' }])
+  service.retainTabsFor('bottom', [{ sessionId, tabId: 'second-view', contentId: 'second-content' }])
+  await Promise.all([first.refresh(), second.refresh()])
+  await expect.poll(() => h.remote.retain).toHaveBeenCalledTimes(2)
+  const firstSignal = vi.mocked(h.remote.retain).mock.calls.find(call => call[1] === first.id)?.[2]
+  const secondSignal = vi.mocked(h.remote.retain).mock.calls.find(call => call[1] === second.id)?.[2]
+  service.retainTabsFor('bottom', [])
+  await expect.poll(() => secondSignal?.aborted).toBe(true)
+  expect(firstSignal?.aborted).toBe(false)
+  await service.releaseView(sessionId, 'first-view')
+  expect(h.remote.close).not.toHaveBeenCalled()
+  expect(service.view(sessionId, 'first-view', 'first-content', first.id)).not.toBe(first)
+})

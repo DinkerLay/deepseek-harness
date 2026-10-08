@@ -12,6 +12,10 @@ Public browser libraries load without activating their default plugins. Conversa
 
 Chat exposes a decorative running glyph Slot while retaining native activity timing, labels, layout and status announcements. Transcript grouping and rendering remain owned by the native Chat plugin.
 
+Native Chat also supports quiet activity and inline completed-group summaries through its public presentation policy. Failed and stopped Turns retain recorded elapsed time. Sidebar Session factories and Browser page-factory adapters let deployments retain native presentation, state and lifetimes while providing their own Session boundary, carrier and placement. A read-only changes-summary service shares the native card and review cache.
+
+Interactive terminals retain native identities, VT screen recovery, input attachments and cleanup. Deployments can require an effect-owned spawn policy to prepare their workspace and confinement, and independent Client surfaces contribute a union of process holds. The official default remains a system-user terminal.
+
 Subagent Sidebar registration declares all nested resource dependencies and its public Client entry exposes the readonly resource type plus the associated Slot, protocol and retention-source declarations. Downstream presentation reuses native retention, restore and disposal.
 
 The PiAi bridge carries additive developer Tool changes through pi-ai transcript system messages. Route capability is explicit and bound to the prepared model snapshot; unsupported routes use the native DSH compatibility projection. Provider-specific protocol support requires real transport evidence before enablement.

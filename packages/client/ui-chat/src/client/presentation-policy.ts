@@ -9,6 +9,10 @@ import type { TranscriptViewMode } from '../chat-settings.ts'
 
 /** Presentation capabilities that one work-details mode enables. */
 export interface ChatPresentationPolicy {
+  /** Static running presentation; absence retains native animated activity. */
+  readonly quietActivity?: boolean
+  /** Completed group headers share the Turn status line; absence retains separate headers. */
+  readonly inlineCompletedSummary?: boolean
   /** Mode this policy was derived from; for diagnostics, never for branching in renderers. */
   readonly mode: TranscriptViewMode
   /** Whether a normally completed Turn folds its process rows behind the whole-Turn control. */
@@ -20,6 +24,14 @@ export interface ChatPresentationPolicy {
   /** Whether a settled reasoning row previews its first line beside the Think title. */
   readonly settledReasoningPreview: boolean
 }
+
+/** Deployment preferences independent of the reader's work-details mode. */
+export interface ChatPresentationOptions {
+  readonly quietActivity?: boolean
+  readonly inlineCompletedSummary?: boolean
+}
+
+const configuredPolicies = new Map<string, ChatPresentationPolicy>()
 
 const POLICIES: Readonly<Record<TranscriptViewMode, ChatPresentationPolicy>> = {
   compact: {
@@ -56,23 +68,39 @@ const POLICIES: Readonly<Record<TranscriptViewMode, ChatPresentationPolicy>> = {
  * Resolve the policy constant for one mode. The same mode always yields the
  * same object, so selectors over a policy see stable identities.
  * @param mode - persisted work-details mode.
+ * @param options - deployment presentation independent from the work-details mode.
  * @returns the mode's presentation policy.
  */
-export function presentationPolicyFor(mode: TranscriptViewMode): ChatPresentationPolicy {
-  return POLICIES[mode]
+export function presentationPolicyFor(mode: TranscriptViewMode, options: ChatPresentationOptions = {}): ChatPresentationPolicy {
+  const quietActivity = options.quietActivity === true
+  const inlineCompletedSummary = options.inlineCompletedSummary === true
+  if (!quietActivity && !inlineCompletedSummary) return POLICIES[mode]
+  const key = `${mode}:${String(quietActivity)}:${String(inlineCompletedSummary)}`
+  let policy = configuredPolicies.get(key)
+  if (policy === undefined) {
+    policy = { ...POLICIES[mode], quietActivity, inlineCompletedSummary }
+    configuredPolicies.set(key, policy)
+  }
+  return policy
 }
 
 /**
  * Derive a policy observable from the mode observable without a subscription of
  * its own: reads are a table lookup and change notifications are the mode's.
  * @param mode - live work-details mode.
+ * @param options - optional live deployment preferences; unsubscribed with the mode source.
  * @returns observable policy that changes exactly when the mode changes.
  */
 export function derivePresentationPolicy(
   mode: ObservableSnapshot<TranscriptViewMode>,
+  options?: ObservableSnapshot<ChatPresentationOptions>,
 ): ObservableSnapshot<ChatPresentationPolicy> {
   return {
-    getSnapshot: () => POLICIES[mode.getSnapshot()],
-    subscribe: listener => mode.subscribe(listener),
+    getSnapshot: () => presentationPolicyFor(mode.getSnapshot(), options?.getSnapshot()),
+    subscribe: (listener) => {
+      const removeMode = mode.subscribe(listener)
+      const removeOptions = options?.subscribe(listener)
+      return () => { removeMode(); removeOptions?.() }
+    },
   }
 }

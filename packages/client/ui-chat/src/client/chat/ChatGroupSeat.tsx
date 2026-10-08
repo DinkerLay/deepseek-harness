@@ -1,5 +1,6 @@
 /** Stable process container; display policy changes visibility, never member parents. */
 import { memo, useCallback, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   IconAgentPresetOutlineRegular, IconApiOutlineRegular, IconBrowseOutlineRegular, IconChevronDownOutlineRegular,
   IconChevronUpOutlineRegular, IconCodeOutlineRegular, IconEditOutlineRegular, IconGlobeOutlineRegular,
@@ -17,6 +18,7 @@ import { processTitle } from './step-process.ts'
 import { useSearchableHidden } from './searchable-hidden.ts'
 import { useDisclosure } from './use-disclosure.ts'
 import { useProcessScroll } from './use-process-scroll.ts'
+import { useProcessHeaderPlacement, type ProcessHeaderPlacement } from './ProcessHeaderTargets.tsx'
 import css from './ChatGroupSeat.module.css'
 
 type SeatProps = Omit<ComponentProps<typeof ChatNodeSeat>, 'nodeKey' | 'groupPart'>
@@ -88,7 +90,9 @@ const GroupMembers = memo(function GroupMembers({ members, ...props }: SeatProps
     {...member.groupPart === undefined ? {} : { groupPart: member.groupPart }} />)
 })
 
-const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatGroup, usePresentation, t, open, bodyId, toggle }: {
+const ProcessGroupHeader = memo(function ProcessGroupHeader({
+  groupKey, useChatGroup, usePresentation, t, open, bodyId, toggle, placement, expandable = true,
+}: {
   readonly groupKey: GroupKey
   readonly useChatGroup: ChatViewSlotProps['useChatGroup']
   readonly usePresentation: ChatViewSlotProps['usePresentation']
@@ -96,9 +100,12 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
   readonly open: boolean
   readonly bodyId: string
   readonly toggle: () => void
+  readonly placement?: ProcessHeaderPlacement | undefined
+  readonly expandable?: boolean
 }) {
   const data = useChatGroup(groupKey, group => group?.data)
   const detailed = usePresentation(policy => data?.closed === false && policy.liveProcessDetail)
+  const quiet = usePresentation(policy => policy.quietActivity === true)
   const live = useStableLiveProcessTitle({
     activity: data?.summary.running ?? 'thinking',
     detail: data?.summary.runningDetail ?? '',
@@ -112,7 +119,11 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
   const title = detail === '' ? label : `${label}${t('message.turnProcess.separator')}${detail}`
   const activity = data.closed ? data.summary.counts[0]?.kind ?? 'thinking' : live.activity
   return (
-    <button type="button" className={css.title} aria-expanded={open} aria-controls={bodyId}
+    <button type="button" className={`${css.title}${placement?.compact ? ` ${css.compactTitle}` : ''}`}
+      aria-expanded={expandable ? open : undefined} aria-controls={expandable ? bodyId : undefined}
+      disabled={!expandable} data-quiet={quiet || undefined}
+      aria-label={placement?.compact ? t('message.stepProcess.groupDetails', { index: placement.ordinal, title }) : undefined}
+      title={placement?.compact ? title : undefined}
       data-process-activity={activity} onClick={(event) => { event.currentTarget.focus(); toggle() }}>
       <span className={css.leading} aria-hidden="true">
         <span className={css.activityIcon} data-step-process-icon>{PROCESS_ICONS[activity]}</span>
@@ -120,9 +131,10 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
           {open ? <IconChevronUpOutlineRegular /> : <IconChevronDownOutlineRegular />}
         </span>
       </span>
-      <TextShimmer active={!data.closed}>
-        <TextShimmer className={css.label}>{title}</TextShimmer>
-      </TextShimmer>
+      {!placement?.compact && (quiet ? <span className={css.label}>{title}</span>
+        : <TextShimmer active={!data.closed}>
+          <TextShimmer className={css.label}>{title}</TextShimmer>
+        </TextShimmer>)}
     </button>
   )
 })
@@ -132,6 +144,8 @@ export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGrou
   const members = useChatGroup(groupKey, group => group?.members)
   const turn = useChatGroup(groupKey, group => group?.data.turn)
   const closed = useChatGroup(groupKey, group => group?.data.closed)
+  const placement = useProcessHeaderPlacement(groupKey)
+  const inline = props.usePresentation(policy => policy.inlineCompletedSummary === true) && closed === true
   const foldCompleted = props.usePresentation(policy => policy.foldCompletedTurns)
   const { expanded: open, setExpanded: setOpen } = useDisclosure()
   const firstKey = members?.[0]?.key ?? ''
@@ -170,15 +184,18 @@ export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGrou
   if (members === undefined) return null
   const classes = [css.body, !grouped ? css.expandedBody : '',
     grouped && edges.canScrollUp ? css.fadeTop : '', grouped && edges.canScrollDown ? css.fadeBottom : '']
+  const headerInline = inline && placement !== undefined
+  const header = <ProcessGroupHeader groupKey={groupKey} useChatGroup={useChatGroup}
+    usePresentation={props.usePresentation} t={props.t} open={headerInline && !grouped || open} bodyId={bodyId}
+    toggle={() => { if (headerInline) revealOuter(); toggle() }}
+    placement={headerInline ? placement : undefined} expandable={!headerInline || grouped} />
   return (
     <div ref={rootRef} className={css.root} data-chat-group-key={groupKey}
       data-chat-flow-key={groupKey} data-chat-anchor-key={`group:${groupKey}`} data-chat-turn={turn}
       data-chat-paging-anchor={grouped && !open || undefined}
-      data-step-process data-group-expanded-mode={!grouped || undefined}>
-      <div hidden={!grouped}>
-        <ProcessGroupHeader groupKey={groupKey} useChatGroup={useChatGroup}
-          usePresentation={props.usePresentation} t={props.t} open={open} bodyId={bodyId} toggle={toggle} />
-      </div>
+      data-step-process data-group-expanded-mode={!grouped || undefined}
+      data-summary-inline={headerInline || undefined} data-group-open={headerInline && (open || !grouped) || undefined}>
+      {headerInline ? createPortal(header, placement.element) : <div hidden={!grouped}>{header}</div>}
       <div ref={bodyRef} id={bodyId} className={classes.join(' ')} data-step-process-body
         data-scroll-up={edges.canScrollUp || undefined} data-scroll-down={edges.canScrollDown || undefined}
         {...events}>

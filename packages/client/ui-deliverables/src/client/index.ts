@@ -24,6 +24,10 @@ import { ChangesSummaryStore } from './changes-summary.ts'
 import { PresentedOpenController } from './present-open.ts'
 import { PresentRow } from './PresentRow.tsx'
 import { DeliverablesTail, type DeliverablesInjected } from './Deliverables.tsx'
+import { changesSummaryService } from './changes-service.ts'
+export type { UiChangesSummary } from './changes-service.ts'
+export type { ChangesSummaryState } from './changes-summary.ts'
+export type { ChangesSummary } from '../changes.ts'
 import { ReviewTab, type ReviewInjected } from './ReviewTab.tsx'
 import { CHANGES_REVIEW_ID, changesReviewDefinition } from './review-definition.ts'
 import { createReviewStore } from './review-store.ts'
@@ -49,6 +53,7 @@ export const inject = ['slots', 'locale', 'uiConversation', 'remote', 'remote.se
 export function apply(ctx: ClientContext): void {
   const opener = new PresentedOpenController()
   const summaries = new ChangesSummaryStore()
+  ctx.effect(() => ctx.reflect.provide('uiChangesSummary', changesSummaryService(summaries)), 'ui-deliverables: shared summaries')
   const diffs = new ChangesDiffStore()
   ctx.effect(() => () => Promise.all([opener.dispose(), summaries.dispose(), diffs.dispose()]))
   ctx.on('connection/reset', () => {

@@ -52,9 +52,7 @@
       "name": "@deepseek-ai/dsh-agent-preset",
       "path": "packages/preset/agent-preset",
       "purpose": "Published public configuration and service contracts for downstream composition",
-      "source": [
-        "skills/cordis-composition-reference/references/packages.md"
-      ]
+      "source": []
     },
     {
       "name": "@deepseek-ai/dsh-api-gateway",
@@ -92,8 +90,9 @@
     {
       "name": "@deepseek-ai/dsh-api-terminal-controller",
       "path": "packages/api/terminal-controller",
-      "purpose": "Native V4 public capability integration for downstream Product consumers",
+      "purpose": "Effective execution cwd, deployment terminal spawn policy and independent Client surface retention",
       "source": [
+        "src/client/index.ts",
         "src/index.ts"
       ]
     },
@@ -152,17 +151,29 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-chat",
       "path": "packages/client/ui-chat",
-      "purpose": "Keep presentation-excluded Turns out of navigation and logical counts; replace running glyphs independently",
+      "purpose": "Native quiet activity, truthful settled elapsed time, inline group summaries and excluded-Turn presentation",
       "source": [
+        "src/chat-settings.ts",
         "src/client/apply.ts",
+        "src/client/chat/ChatGroupSeat.module.css",
+        "src/client/chat/ChatGroupSeat.tsx",
         "src/client/chat/ChatView.tsx",
+        "src/client/chat/ProcessHeaderTargets.tsx",
+        "src/client/chat/ReasoningRow.tsx",
         "src/client/chat/RunningStatus.tsx",
         "src/client/chat/StatsPills.tsx",
         "src/client/chat/TurnActivity.tsx",
         "src/client/chat/TurnNavigator.tsx",
+        "src/client/chat/TurnProcessNodeView.module.css",
+        "src/client/chat/TurnProcessNodeView.tsx",
+        "src/client/chat/register-node-renderers.ts",
         "src/client/chat/turn-rail-items.ts",
         "src/client/contract/slots.ts",
-        "src/client/contract/snapshot.ts"
+        "src/client/contract/snapshot.ts",
+        "src/client/index.ts",
+        "src/client/locale.ts",
+        "src/client/presentation-policy.ts",
+        "src/index.ts"
       ]
     },
     {
@@ -172,6 +183,15 @@
       "source": [
         "src/client/conversation/assembly.ts",
         "src/client/conversation/view-registry.ts",
+        "src/client/index.ts"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-ui-deliverables",
+      "path": "packages/client/ui-deliverables",
+      "purpose": "Public read-only native changes-summary cache and review addresses",
+      "source": [
+        "src/client/changes-service.ts",
         "src/client/index.ts"
       ]
     },
@@ -192,6 +212,30 @@
       "purpose": "Explicit caller-owned Markdown file-link navigation",
       "source": [
         "src/markdown/render.tsx"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-ui-sidebar-browser",
+      "path": "packages/client/ui-sidebar-browser",
+      "purpose": "Native Browser page factory adapters and validated resource navigation",
+      "source": [
+        "package.json",
+        "src/client/browser/resource-address.ts",
+        "src/client/definition.tsx",
+        "src/client/index.ts",
+        "src/client/locales.ts",
+        "src/client/view/BrowserBody.tsx",
+        "tsconfig.client.json"
+      ]
+    },
+    {
+      "name": "@deepseek-ai/dsh-client-ui-sidebar-right",
+      "path": "packages/client/ui-sidebar-right",
+      "purpose": "Native Session Sidebar factory assembly with deployment-owned boundaries and names",
+      "source": [
+        "src/client/index.ts",
+        "src/client/session-factory.tsx",
+        "src/client/shell/RightbarRoot.tsx"
       ]
     },
     {
@@ -589,8 +633,11 @@
     "@deepseek-ai/dsh-client-test-runtime",
     "@deepseek-ai/dsh-client-ui-chat",
     "@deepseek-ai/dsh-client-ui-conversation",
+    "@deepseek-ai/dsh-client-ui-deliverables",
     "@deepseek-ai/dsh-client-ui-plugin-manager",
     "@deepseek-ai/dsh-client-ui-primitives",
+    "@deepseek-ai/dsh-client-ui-sidebar-browser",
+    "@deepseek-ai/dsh-client-ui-sidebar-right",
     "@deepseek-ai/dsh-client-ui-subagent",
     "@deepseek-ai/dsh-cordis-client-runner",
     "@deepseek-ai/dsh-file-reference-local",

@@ -84,4 +84,19 @@ describe('RunningStatus', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('shows quiet running text and elapsed time without mounting an animated glyph or shimmer', () => {
+    const view = render(<RunningStatus startTime={1_000} t={t} quiet glyph={<span data-animated-glyph />} />)
+    const row = view.container.querySelector('[data-chat-running]')
+    const status = view.getByRole('status')
+    expect(row?.querySelector('[data-animated-glyph], svg, [data-shimmer]')).toBeNull()
+    expect(status.textContent).toBe('运行中')
+    expect(row?.textContent).toContain('运行中，用时 4秒')
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(row?.textContent).toContain('运行中，用时 6秒')
+    expect(view.getByRole('status')).toBe(status)
+    expect(vi.getTimerCount()).toBe(1)
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
 })

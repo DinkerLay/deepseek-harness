@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-08-terminal-launch-policy-and-surfaces.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-08-terminal-launch-policy-and-surfaces.md
+/agent-note-terminal-launch-policy-and-independent-surfaces:
+  en: a85dc380c1b84514
+  zh: d8a530ac4ca6f571
+/agent-note-terminal-launch-policy-and-independent-surfaces/problem:
+  en: 9d1a1dc80b130aa8
+  zh: 8214af0b1a1dce40
+/agent-note-terminal-launch-policy-and-independent-surfaces/decision:
+  en: 2dede929643a327c
+  zh: 9cc38d682fb47656
+/agent-note-terminal-launch-policy-and-independent-surfaces/alternatives-considered:
+  en: 56e652b68d08a3e0
+  zh: 7e592d8362e3f013
+/agent-note-terminal-launch-policy-and-independent-surfaces/consequences:
+  en: 94bb1536aaf6bff3
+  zh: 8dce5396fa9cbf05

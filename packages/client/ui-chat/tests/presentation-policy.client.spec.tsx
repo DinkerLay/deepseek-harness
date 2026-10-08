@@ -34,6 +34,24 @@ describe('Chat presentation policy', () => {
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
+  it('adopts quiet and inline preferences without changing native grouping or leaking subscriptions', () => {
+    const mode = createSnapshotStore<TranscriptViewMode>('standard')
+    const options = createSnapshotStore({ quietActivity: false, inlineCompletedSummary: false })
+    const policy = derivePresentationPolicy(mode, options)
+    const listener = vi.fn()
+    const release = policy.subscribe(listener)
+    expect(policy.getSnapshot()).toBe(presentationPolicyFor('standard'))
+    options.set({ quietActivity: true, inlineCompletedSummary: true })
+    const selected = policy.getSnapshot()
+    expect(selected).toMatchObject({ quietActivity: true, inlineCompletedSummary: true, stepGrouping: 'collapsed', foldCompletedTurns: true })
+    expect(policy.getSnapshot()).toBe(selected)
+    expect(presentationPolicyFor('standard', options.getSnapshot())).toBe(selected)
+    release()
+    options.set({ quietActivity: false, inlineCompletedSummary: false })
+    mode.set('verbose')
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
   it('renders only consumers whose selected field changes', () => {
     const mode = createSnapshotStore<TranscriptViewMode>('compact')
     const usePresentation = bindSnapshotSelector(derivePresentationPolicy(mode))

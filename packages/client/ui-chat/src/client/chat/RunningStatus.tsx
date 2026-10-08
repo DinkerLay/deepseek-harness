@@ -12,6 +12,8 @@ interface RunningStatusProps {
   readonly t: ChatViewSlotProps['t']
   /** Decorative glyph from the running activity slot; omitted callers retain the native whale. */
   readonly glyph?: ReactNode
+  /** Static native label and clock, without decorative glyphs or shimmer. */
+  readonly quiet?: boolean
 }
 
 /**
@@ -19,7 +21,9 @@ interface RunningStatusProps {
  * @param props - Current Turn start time and localized copy.
  * @returns the blue running indicator; mount only while the Session is running.
  */
-export const RunningStatus = memo(function RunningStatus({ startTime, t, glyph = <RunningWhaleTail /> }: RunningStatusProps) {
+export const RunningStatus = memo(function RunningStatus({
+  startTime, t, quiet = false, glyph = <RunningWhaleTail />,
+}: RunningStatusProps) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (startTime === undefined) return
@@ -27,16 +31,18 @@ export const RunningStatus = memo(function RunningStatus({ startTime, t, glyph =
     const timer = setInterval(() => { setNow(Date.now()) }, LIVE_RUN_CLOCK_INTERVAL_MS)
     return () => { clearInterval(timer) }
   }, [startTime])
-  const label = startTime === undefined ? t('chat.deepDiving') : t('chat.deepDivingFor', {
+  const status = quiet ? t('chat.running') : t('chat.deepDiving')
+  const label = startTime === undefined ? status : t(quiet ? 'chat.runningFor' : 'chat.deepDivingFor', {
     duration: formatRunDuration(Math.max(1000, now - startTime), t).map(part => part.text).join(''),
   })
   return (
     <div className={css.running} data-chat-running>
-      <span className={a11yCss.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{t('chat.deepDiving')}</span>
+      <span className={a11yCss.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{status}</span>
       <span className={css.runningDivider} aria-hidden="true" />
       <span className={css.runningContent}>
-        {glyph}
-        <TextShimmer active className={css.runningText}>{label}</TextShimmer>
+        {!quiet && glyph}
+        {quiet ? <span className={css.runningText}>{label}</span>
+          : <TextShimmer active className={css.runningText}>{label}</TextShimmer>}
       </span>
     </div>
   )

@@ -55,6 +55,7 @@ export const ReasoningRow = memo(function ReasoningRow({ text, running, usePrese
   const labels = useMemo(() => markdownLabels(t), [t])
   const summaryText = running ? latestCompletedParagraphFirstLine(text) : firstLine(text)
   const summary = useMemo(() => summaryText.replaceAll('**', ''), [summaryText])
+  const quiet = usePresentation(policy => policy.quietActivity === true)
   const preview = usePresentation(policy => !expanded && summary !== ''
     && (running || policy.settledReasoningPreview))
   const collapsedContent = useMemo(() => (
@@ -62,11 +63,11 @@ export const ReasoningRow = memo(function ReasoningRow({ text, running, usePrese
       <span className={css.separator} data-shimmer-decoration aria-hidden />
       <span className={css.summary} data-streaming={running || undefined}>
         <span className={css.summaryText}>
-          <TextShimmer>{summary}</TextShimmer>
+          {quiet ? summary : <TextShimmer>{summary}</TextShimmer>}
         </span>
       </span>
     </>
-  ), [running, summary])
+  ), [running, summary, quiet])
   const content = useMemo(() => expanded ? (
     <div className={css.thinkBody}>
       <MarkdownText text={text} streaming={running} labels={labels} variant="compact" />
@@ -88,7 +89,7 @@ export const ReasoningRow = memo(function ReasoningRow({ text, running, usePrese
         titleClassName={css.title}
         icon={THINK_ICON}
         title={t('message.think')}
-        running={running}
+        running={running && !quiet}
         open={expanded}
         expandable
         expandOnRowClick

@@ -78,6 +78,8 @@ store 将每个 Session 的布局、标签身份、选中项、分栏比例、�
 <a id="extension-seats"></a>
 ## 扩展席位
 
+公开 Client 入口提供 `sidebarSessionFactoryVersion: 1` 及 `applyWithSessionFactory(ctx, options)`。它通过可复用 Session 工厂装配同一套原生控制器、保持中的 Session 根和 Store。`options.factoryName` 默认为 `sidebar.right.session`，部署可使用自己的已声明工厂名。必传的 `options.sessionProvider(renderFactorySlot)` 使用根组件公开的工厂渲染器，提供该 frame 经过授权的 Session 边界。返回的 `factoryName` 与 `store` 指向实际挂载的工厂和共享原生 handle。普通 `apply` 保留随包 Slot 装配。[原生侧栏工厂归属](../../../.agents/notes/implemented/architecture/2026-10-09-native-sidebar-session-factory.zh.md)记录这条边界。
+
 tab 类型分两阶段注册，随包发布的引导类型走的正是别的包的类型走的同一条公开路径（`ui-sidebar-documentpreview` 是活的证明）。两个阶段都在类型自己的 `ctx.effect` 里，因此注册与创建它的插件同生共死。
 
 1. **类型**——`ctx.sidebarRightTabs.register({ id, kind, patterns?, priority?, canOpen?, title, guide?, keepMounted? })`，一份没有运行时钩子的静态声明，返回 disposer。`id` 是这个实现在 tab 系统里的身份，在全部注册中唯一（包名是天然取值；随包引导页是 `@deepseek-ai/dsh-client-ui-sidebar-right/guide`）：一旦 extension 可以接管 builtin 的 kind，kind 就不再唯一，所以实现要自己命名，同一 `id` 的第二次注册会 throw。资源类型给出 `patterns`，即作用于 `dsh-resource://` 地址的 glob：含 `:` 的匹配整个地址（`dsh-resource://file/**`）；不含的匹配 URI 路径的任意深度且忽略大小写（`*.md`），不是 URI 的地址不匹配任何这类模式。页类型——引导页、文件树——不给出模式，按 kind 打开。`canOpen(address)` 否决一次命中。`title(address)` 是 tab chip 的文字，在 tab 打开时捕获。`guide` 列出引导页的入口框；选中一个即把贡献它的类型作为页打开。一个 `kind` 最多承载一份 `builtin` 与一份 `extension` 注册（extension 生效；它离开后 builtin 恢复）；kind 上的其它任何撞名都 throw。`id` 同时也是该类型正文与标题注册时用的 key，因此 extension 与它接管的 builtin 各占一个格位，席位渲染生效的那个。

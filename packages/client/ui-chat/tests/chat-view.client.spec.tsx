@@ -308,6 +308,7 @@ function makeHarness(
   // Rows and the harness must observe the same chat-store instance.
   const chat = createChatStore().create()
   const transcriptView = createSnapshotStore<TranscriptViewMode>('compact')
+  const presentationOptions = createSnapshotStore({ quietActivity: false, inlineCompletedSummary: false })
   const performanceUsage = createSnapshotStore<'compact' | 'detailed'>('detailed')
   const t = makeTranslate(zh, commonZh)
   const toolOwners: Array<{
@@ -328,7 +329,8 @@ function makeHarness(
   }) => {
     if (nodeSlotOverride !== undefined) return nodeSlotOverride(key as never, owner as never, opts as never)
     if (key === 'conversation.chat.activity') {
-      return <RunningStatus startTime={(owner as { startTime: number | null }).startTime ?? undefined} t={t} />
+      return <RunningStatus startTime={(owner as { startTime: number | null }).startTime ?? undefined} t={t}
+        quiet={presentationOptions.getSnapshot().quietActivity} />
     }
     if (key !== 'conversation.chat.node') return opts?.fallback ?? null
     const nodeOwner = owner as RoutedChatNodeOwner
@@ -442,7 +444,7 @@ function makeHarness(
     },
     useStore: bindSnapshotSelector(chat),
     actions: chat.actions,
-    usePresentation: bindSnapshotSelector(derivePresentationPolicy(transcriptView)),
+    usePresentation: bindSnapshotSelector(derivePresentationPolicy(transcriptView, presentationOptions)),
     renderSlot,
     SessionProvider: SessionProviderStub,
     inspectCall: (callId: string) => { openView('trajectory', callId) },
@@ -490,6 +492,9 @@ function makeHarness(
       conversation.set({ ...conversation.getSnapshot() })
     },
     setTranscriptView: (mode: TranscriptViewMode) => { transcriptView.set(mode) },
+    setPresentation: (value: Partial<{ quietActivity: boolean; inlineCompletedSummary: boolean }>) => {
+      presentationOptions.set({ ...presentationOptions.getSnapshot(), ...value })
+    },
     setNodeRenderer: (renderer: React.ComponentProps<typeof ChatNodeSeat>['renderSlot']) => {
       nodeSlotOverride = renderer
     },
@@ -624,6 +629,93 @@ describe('Chat node rendering', () => {
     fireEvent.click(mention)
     // The vocabulary was built from the closing message's own owner currency.
     expect(h.openFile).toHaveBeenCalledWith('for-seq-4/site/report.html')
+  })
+
+  it('places native group controls beside completion and reveals the original collapsed Turn before expanding them', () => {
+    const nodes = [userInTurn(1, 'question', 1), reasoningAssistant(2, 'first analysis'),
+      toolResult(4, 'search', 'web_search'), assistant(5, 'progress update', 1, 2),
+      toolResult(6, 'command', 'bash'), assistant(7, 'final answer', 1, 3)]
+    const builder = new ChatSnapshotBuilder()
+    const groups = new ConversationGroupStore<ProcessGroupData>()
+    const state = new ProcessState()
+    const project = (items: readonly ConversationNode[]) => installGroupedSnapshot(builder, state, groups, chatSnapshotFixture({
+      nodes: items, turnTimings: new Map([[1, { startTime: 1_000, endTime: 10_000 }]]), turnEnds: new Map([[1, 8]]),
+    }))
+    const h = makeHarness({ chat: project(nodes) })
+    h.setGrouped(groups)
+    h.setPresentation({ quietActivity: true, inlineCompletedSummary: true })
+    const view = render(<h.ChatView {...h.props} />)
+    const row = view.container.querySelector('[data-turn-process-row="1"]')!
+    const control = turnProcessControl(view.container)!
+    const headers = [...row.querySelectorAll<HTMLButtonElement>('[data-process-activity]')]
+    const bodies = [...view.container.querySelectorAll<HTMLElement>('[data-step-process] > div[id]')]
+    expect(headers).toHaveLength(2)
+    expect(bodies).toHaveLength(2)
+    expect(row.textContent).toContain('已完成，用时 9秒')
+    expect(row.textContent).toContain('已搜索网页并执行了命令')
+    expect(control.getAttribute('aria-expanded')).toBe('false')
+    expect(view.container.querySelectorAll('[data-step-process] [data-process-activity]')).toHaveLength(0)
+    fireEvent.click(headers[0]!)
+    expect(control.getAttribute('aria-expanded')).toBe('true')
+    expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(headers[1]?.getAttribute('aria-expanded')).toBe('false')
+    const source = groups.groupSource(groups.entries.find(entry => entry.kind === 'group')!.key)
+    const member = view.getByText('web_search:search')
+    act(() => {
+      h.set({ chat: project([...nodes.slice(0, 2), toolResult(3, 'earlier-read', 'read'), ...nodes.slice(2)]) })
+      h.setGrouped(groups)
+    })
+    expect([...row.querySelectorAll('[data-process-activity]')]).toEqual(headers)
+    expect(groups.groupSource(groups.entries.find(entry => entry.kind === 'group')!.key)).toBe(source)
+    expect(view.getByText('web_search:search')).toBe(member)
+    expect(view.getByText('first analysis')).toBeTruthy()
+    expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect([...view.container.querySelectorAll('[data-step-process] > div[id]')]).toEqual(bodies)
+    act(() => { h.setTranscriptView('verbose') })
+    expect(headers[0]?.disabled).toBe(true)
+    expect([...row.querySelectorAll('[data-process-activity]')]).toEqual(headers)
+    act(() => { h.setTranscriptView('standard') })
+    expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(view.getByText('web_search:search')).toBe(member)
+  })
+
+  it.each(['error', 'aborted'] as const)('keeps real elapsed time for a %s ending', (kind) => {
+    const original = chatSnapshotFixture({ nodes: [userInTurn(1, 'question', 1), assistant(2, 'partial answer')],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_650 }]]), turnEnds: new Map([[1, 3]]) })
+    const turn = original.timeline.turns.get(1)
+    if (turn?.end === undefined) throw new Error('fixture requires a recorded Turn end')
+    const reason = kind === 'error' ? { kind, error: { code: 'AUTH', message: 'invalid' } } : { kind }
+    const ended: TurnLocation = { ...turn, end: { ...turn.end, data: { turn: 1, reason } } }
+    const nodes = original.nodes.values().map(node => node.location.kind === 'turn' || node.location.kind === 'step'
+      ? { ...node, location: { ...node.location, turn: ended } } : node)
+    const builder = new ChatSnapshotBuilder()
+    const snapshot = builder.replace({ nodes, timeline: { ...original.timeline, turns: new Map([[1, ended]]) } })
+    builder.publish()
+    const h = makeHarness({ chat: snapshot })
+    const view = render(<h.ChatView {...h.props} />)
+    const control = turnProcessControl(view.container)!
+    expect(control.textContent).toBe(`${kind === 'error' ? '处理失败' : '已停止'}，用时 4秒`)
+    expect(control.disabled).toBe(true)
+    expect(view.getByRole('status').textContent).toBe(kind === 'error' ? '处理失败' : '已停止')
+  })
+
+  it('omits elapsed time when loaded failure history has no recorded Turn start', () => {
+    const original = chatSnapshotFixture({ nodes: [assistant(2, 'partial answer')], turnEnds: new Map([[1, 3]]) })
+    const turn = original.timeline.turns.get(1)
+    if (turn?.end === undefined) throw new Error('fixture requires a recorded Turn end')
+    const { start: _start, ...partial } = turn
+    const ended: TurnLocation = { ...partial, end: { ...turn.end,
+      data: { turn: 1, reason: { kind: 'error', error: { code: 'AUTH', message: 'invalid' } } },
+    } }
+    const nodes = original.nodes.values().map(node => node.location.kind === 'turn' || node.location.kind === 'step'
+      ? { ...node, location: { ...node.location, turn: ended } } : node)
+    const builder = new ChatSnapshotBuilder()
+    const snapshot = builder.replace({ nodes, timeline: { ...original.timeline, turns: new Map([[1, ended]]) } })
+    builder.publish()
+    const h = makeHarness({ chat: snapshot })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(turnProcessControl(view.container)?.textContent).toBe('处理失败')
+    expect(turnProcessControl(view.container)?.textContent).not.toContain('0秒')
   })
 
   it('formatRunDuration localizes units and floors partial seconds', () => {

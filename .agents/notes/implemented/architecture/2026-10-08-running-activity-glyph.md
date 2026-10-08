@@ -23,3 +23,5 @@ The native activity retains its label, interval, layout and accessible status. T
 ## Consequences
 
 A deployment can use native timeline rendering and retain its own icon. The slot is decorative: localized running status and elapsed-time ownership remain native. Registry replacement and disposal tests retain the same mounted status row, while clock tests cover glyph changes and interval cleanup.
+
+The separate [quiet Turn presentation](2026-10-09-native-chat-turn-presentation.md) can omit this glyph Slot and place native group controls beside completion. The icon replacement contract remains available for deployments retaining animated activity.

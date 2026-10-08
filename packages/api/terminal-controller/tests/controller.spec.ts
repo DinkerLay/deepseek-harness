@@ -630,3 +630,29 @@ it('classifies missing and closing terminal identities for localized recovery ac
     .toThrow(expect.objectContaining({ code: 'terminal/unavailable' }))
   await expect(h.controller.create(h.agent, request, signal())).rejects.toMatchObject({ code: 'terminal/unavailable' })
 })
+
+
+it('uses the deployment spawn boundary once and keeps native idempotency and cleanup', async () => {
+  const { ctx, controller, agent, handle, subprocess } = fixture({ requireSpawnPolicy: true })
+  const policy = vi.fn<NonNullable<Context['terminalSpawnPolicy']>>(async (_agent, _request, spec) => {
+    expect(spec.argv).toEqual(['/bin/bash', '--noprofile', '--norc', '-i'])
+    return { handle, cwd: '/isolated/worktree' }
+  })
+  ctx.provide('terminalSpawnPolicy', policy)
+  expect(await controller.create(agent, request, signal())).toMatchObject({ cwd: '/isolated/worktree' })
+  await controller.create(agent, request, signal())
+  expect(policy).toHaveBeenCalledTimes(1)
+  expect(subprocess.spawnTerminal).not.toHaveBeenCalled()
+  await controller.close(agent, id)
+  expect(handle.terminate).toHaveBeenCalledOnce()
+})
+
+it('fails closed when the required launch policy is absent and permits a later configured retry', async () => {
+  const { ctx, controller, agent, handle, subprocess } = fixture({ requireSpawnPolicy: true })
+  await expect(controller.create(agent, request, signal())).rejects.toThrow('launch policy')
+  expect(controller.list(agent.id)).toEqual([])
+  expect(subprocess.spawnTerminal).not.toHaveBeenCalled()
+  ctx.provide('terminalSpawnPolicy', async () => ({ handle, cwd: '/workspace' }))
+  await controller.create(agent, request, signal())
+  await controller.close(agent, id)
+})

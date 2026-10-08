@@ -42,6 +42,10 @@ Browser 在 Web profile 中默认禁用，在 Desktop 中默认启用。Web 用�
 
 Client 插件可以调用 `ctx.sidebarRight.openTab('browser', { params: { url } })` 打开 tab。可选 URL 会在导航前接受与地址栏输入相同的校验。
 
+`browserResourceAddress(url, applicationOrigin)` 在原生协议、凭据、来源与长度检查后，将 URL 规范化为 `dsh-resource://webpage/<encoded URL>`。通过 `sidebarRight.openResourceIn` 打开该地址以按 URL 去重。再次打开会揭示已有标签并保留当前导航，不重置已导航到别处的页面。已恢复资源没有 Browser 检查点时，也会提供解码 URL 供明确恢复。错误或已退役地址不能提供 URL，会显示重新打开提示。
+
+`pageFactoryVersion: 1` 与 `applyWithPageFactory(ctx, provider)` 在调用方拥有的 `BrowserPage` 载体上挂载相同的原生控件和持久化存储。provider 接收来源 Session 与原生持久化／弹出窗口回调，可请求 `keepMounted`；页面 dispose 仍由标签控制器负责。直接调用 `apply` 保留随附的 iframe／Electron 选择。载体 provider 使用公共 `BrowserFrame` 与 `BrowserPresentation` 类型，不拥有独立的标签或导航存储。
+
 命令 `browser.new` 在焦点停靠分栏打开独立浏览器页，替换开始页并保留已有内容页。从聊天区或浮动内容页触发时，使用活动停靠分栏。桌面默认键在 macOS 上为 Cmd+T，在 Windows 上为 Ctrl+T；Windows 和 macOS Web 使用[快捷键服务的平台默认值](../shortcuts/README.zh.md)；Linux Web 默认不绑定此命令。开始页按钮使用蓝色地球图标，并在按钮内显示有效快捷键，不额外弹出重复提示。
 
 工具栏提供后退、前进、刷新、前往和在系统浏览器中打开。Web 还提供逐 tab sandbox 开关；关闭它是临时选择，并会显示灰字、琥珀色底的警告。Desktop 显示观察到的页面标题。重启后，Browser 展示保存的标题和 URL；只有点击恢复或刷新才打开该地址。

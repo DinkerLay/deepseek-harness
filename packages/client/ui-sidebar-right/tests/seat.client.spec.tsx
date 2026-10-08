@@ -7,12 +7,13 @@ import { SlotTestRuntime, type SlotView } from '@deepseek-ai/dsh-client-test-run
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { FactoryComponentPropsOf, PropsRuntime, SessionAreaProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PaneId, SplitId, TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { dockPaneIds, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { apply, inject } from '../src/client/index.ts'
+import { apply, applyWithSessionFactory, inject } from '../src/client/index.ts'
+import type { SidebarRightSessionMount } from '../src/client/index.ts'
 import { intentsFor } from '../src/client/shell/SidebarRight.tsx'
 import { registerSidebarShortcuts } from '../src/client/shortcuts.ts'
 import { ShortcutRegistry } from '@deepseek-ai/dsh-client-shortcuts/src/client/registry.ts'
@@ -29,6 +30,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** A Conversation-column stand-in rendered before the seat, opening a resource as soon as a seat is mounted. */
     'sidebar-right.test.opener': { kind: 'single'; scope: 'session'; owner: { armed: boolean } }
+    'sidebar-right.test.area.child': { kind: 'single'; scope: 'session'; owner: Record<never, never> }
+  }
+  interface SlotFactoryMap {
+    'sidebar-right.test.area': {
+      scope: 'root'
+      props: SessionAreaProps
+      children: { 'sidebar-right.test.area.child': { kind: 'single'; scope: 'session' } }
+    }
   }
 }
 
@@ -68,7 +77,7 @@ function transition(property = 'transform') {
   }
 }
 
-async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, opener = false, keepMounted = false) {
+async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, opener = false, keepMounted = false, factory = false) {
   const runtime = await SlotTestRuntime.create()
   runtimes.push(runtime)
   const frame = { openRightbar: vi.fn(), closeRightbar: vi.fn(), panelInfo: runtime.panelInfo }
@@ -87,7 +96,22 @@ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, o
   })
   await runtime.sessions.add({ id: SESSION })
   let reference = runtime.sessions.retainFor(runtime.ctx, SESSION, { source: 'mainView' })
-  const feature = await runtime.mount({ inject: [...inject], apply })
+  let mount: SidebarRightSessionMount | undefined
+  let boundaries = 0
+  if (factory) runtime.slots.registerFactory({
+    name: 'sidebar-right.test.area', scope: 'root',
+    children: { 'sidebar-right.test.area.child': { kind: 'single', scope: 'session' } },
+  }, ({ session, children, SessionProvider }: FactoryComponentPropsOf<'sidebar-right.test.area'>) => {
+    boundaries++
+    return <SessionProvider session={session}>{children}</SessionProvider>
+  })
+  const feature = await runtime.mount({ inject: [...inject], apply: factory ? (ctx) => {
+    mount = applyWithSessionFactory(ctx, {
+      factoryName: 'sidebar-right.test.native',
+      sessionProvider: renderFactorySlot => area => renderFactorySlot('sidebar-right.test.area', area),
+    })
+  } : apply })
+  const create = mount === undefined ? undefined : vi.spyOn(mount.store, 'create')
   // The frame mounts the Conversation column before the right column, so a
   // Conversation component's mount effect runs before the seat's. The opener
   // stands in for one that opens a resource as soon as a seat is mounted — it
@@ -149,7 +173,9 @@ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, o
     runtime.ctx.sidebarRightTabs.register({ id: `test/${kind}`, kind, multiple, title: () => kind })
     runtime.slots.register({ name: 'sidebar.right.pane.tab', key: `test/${kind}` }, Body)
   }
-  const instance = runtime.storeOf('rightbar.session', reference) as ReturnType<ReturnType<typeof createSidebarRightStore>['create']>
+  const instance = factory ? create?.mock.results.find(result => result.type === 'return')?.value
+    : runtime.storeOf('rightbar.session', reference) as ReturnType<ReturnType<typeof createSidebarRightStore>['create']>
+  if (instance === undefined) throw new Error('Native Sidebar did not create its Session store')
   const controller = runtime.ctx.sidebarRight
   const layout = () => instance.getSnapshot().bySession[SESSION]!.layout
   const open = (name = 'a.txt', options?: Parameters<typeof controller.openResource>[1]) => {
@@ -164,7 +190,7 @@ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, o
   return {
     runtime, feature, controller, instance, actions: instance.actions, layout,
     open, selectSession, frame, pin, bodies, titles, hooks, view, arm, opened, registerPage, catalog,
-    openerView: () => openerView!,
+    openerView: () => openerView!, mount, boundaries: () => boundaries,
   }
 }
 
@@ -175,6 +201,25 @@ function element(container: HTMLElement, selector: string): HTMLElement {
 }
 
 describe('RightbarSeat presentation', () => {
+  it('mounts the public Session factory through the deployment boundary and uses the same native store', async () => {
+    const h = await mountSeat(1440, true, 0, false, true, true)
+    expect(h.mount?.factoryName).toBe('sidebar-right.test.native')
+    expect(h.boundaries()).toBeGreaterThan(0)
+    const tab = h.open('factory.txt')
+    expect(h.layout().tabs[tab.id]?.contentId).toBe('dsh-resource://file/session/s-test/factory.txt')
+    expect(h.controller.tabsIn(SESSION).find(record => record.id === tab.id)).toBe(h.layout().tabs[tab.id])
+    const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
+    await act(async () => { await h.runtime.sessions.add({ id: OTHER }) })
+    act(() => { h.selectSession(OTHER) })
+    expect(body.isConnected).toBe(true)
+    act(() => { h.selectSession(SESSION) })
+    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
+    expect(h.controller.active()?.id).toBe(tab.id)
+    act(() => { h.controller.close(tab.id) })
+    expect(h.controller.tabsIn(SESSION).some(record => record.id === tab.id)).toBe(false)
+    expect(body.isConnected).toBe(false)
+  })
+
   it('keeps a background retained body through standard-source registration and removal', async () => {
     const h = await mountSeat(1440, true, 0, false, true)
     const tab = h.open('retained.txt')
