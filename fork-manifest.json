@@ -208,8 +208,12 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-primitives",
       "path": "packages/client/ui-primitives",
-      "purpose": "Explicit caller-owned Markdown file-link navigation",
+      "purpose": "Caller-owned Markdown navigation and isolated single-dollar math preferences",
       "source": [
+        "src/index.ts",
+        "src/markdown/MarkdownMath.tsx",
+        "src/markdown/MarkdownText.tsx",
+        "src/markdown/parse.ts",
         "src/markdown/render.tsx"
       ]
     },

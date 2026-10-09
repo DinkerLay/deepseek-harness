@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-09-scoped-markdown-math-delimiters.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-09-scoped-markdown-math-delimiters.md
+/agent-note-scoped-markdown-math-delimiters:
+  en: 7724d67676dc51ae
+  zh: 382ffe07f793ce77
+/agent-note-scoped-markdown-math-delimiters/problem:
+  en: 39b48107e1da15bc
+  zh: 08b2ceb8d75aac9c
+/agent-note-scoped-markdown-math-delimiters/decision:
+  en: dbc2877694deff5f
+  zh: 4891d30688675c80
+/agent-note-scoped-markdown-math-delimiters/alternatives-considered:
+  en: 223a527f9c39400f
+  zh: 2054696a3a9ff9d3
+/agent-note-scoped-markdown-math-delimiters/consequences:
+  en: 298d7916fe5c23f5
+  zh: 013ad7476361318d

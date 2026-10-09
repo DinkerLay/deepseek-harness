@@ -66,7 +66,7 @@ kind: "package-library"
 | `SettingsForm`、`SettingsValueField`、`SettingsSecretField` | 插件设置页的框架与控件：框架以 `labels` 接收文案，只在按钮点击时保存，卸载即丢弃；值字段显示暂存文本以及已覆盖标签和重置；密文字段每次为空，请求浏览器不要自动填入已保存的密码，只报告是否已配置。 |
 | `SettingsFormModel`、`settingsNumberField`、`settingsTextField` | 这类页面背后基于设置 scope 的暂存编辑模型：草稿先暂存、保存时写入，字段是否被覆盖看用户层是否含有它，未落地的保存保留草稿。 |
 | `JsonTree`、`JsonBlock` | 只读 JSON 查看。 |
-| `MarkdownText`、`MarkdownDelegateProvider`、`CodeBlock` | 不可信 GFM 与 TeX 数学、owner 委托的 HTTP(S) 导航，以及高亮代码。`CodeBlock` 可通过 `lineNumbers` 开启行号；复制的源码不含行号栏，`contentRef` 则向需要把稳定源码包装节点用作滚动区的 owner 提供该节点。调用方提供自己的语言与复制工具栏时，设置 `showHeader={false}`。 |
+| `MarkdownText`、`MarkdownDelegateProvider`、`MarkdownMathProvider`、`CodeBlock` | 不可信 GFM 与 TeX 数学、owner 委托的 HTTP(S) 导航，以及高亮代码。`CodeBlock` 可通过 `lineNumbers` 开启行号；复制的源码不含行号栏，`contentRef` 则向需要把稳定源码包装节点用作滚动区的 owner 提供该节点。调用方提供自己的语言与复制工具栏时，设置 `showHeader={false}`。 |
 | `TerminalBlock`、`ReadBlock`、`DiffBlock`、`SearchBlock`、`WebBlock` | 与各类工具结果意图对应的 agent 输出卡片。 |
 | `icons/*`、`FishLogo`、`BrandWordmark`、`ReferenceIconRegular`/`ReferenceIconMedium`、`LinkIconRegular`/`LinkIconMedium` | 字形与品牌标识。思考图标的轨道在 16px 视口内保留内边距。`LinkIconMedium` 用于 14px 的可点击链接分类及已知站点标记。 |
 | `PermissionIconReadOnlyRegular`/`Medium`、`PermissionIconWorkspaceWriteRegular`/`Medium`、`PermissionIconFullAccessRegular`/`Medium` | 只读、工作区写入与完全访问选项使用的权限模式图形。 |
@@ -95,6 +95,8 @@ kind: "package-library"
 最近的 `MarkdownDelegateProvider` 提供可选的 `openExternalLink` 和 `openFile` 导航回调。嵌套 Provider 替换外层能力，回调变化无需重新构建 Markdown 即可到达已渲染链接。其 `openFile` 使本地 Markdown 链接在落定后可点击。绝对路径和工作区相对路径支持百分号转义以及 `#L24` / `#L24-L30` 片段；范围定位到起始行。文件名中的字面 `?` 和 `#` 必须百分号编码。悬停提示使用解码后的路径，并在标签为空时提供可访问名称。回调接收解码后的路径和可选行号，渲染器保留标签并显示文件图标。不传回调时，本地链接仍为文本。URL 协议、查询串、不支持的片段及格式错误的目标不会传给文件打开器。
 
 `MarkdownText` 渲染不可信的 GFM 与 TeX 公式、阻止不安全的链接与图片，并可把已解析的文件提及转换为显式控件。外层 `MarkdownDelegateProvider` 会接收普通点击产生的已净化 HTTP(S) URL；带修饰键的点击和 Provider 外的链接保留原生外部 anchor 行为。当 owner 传入 `pathImages` 词表时，本地媒体路径的图片目标只在落定渲染阶段重写为可展示 URL（与 file mentions 相同的流式门）；不传词表时本地目标保持惰性 alt 文本。重写后的图片支持 HTTP(S)、data、blob 及桌面端 `dsh-app://app/api/file` 路由；正文直接书写的桌面端 URL 仍保持惰性。加载或解码失败后，图片替换为作者的 alt 文本；alt 为空时显示原始目标路径；`fileImages` 还提供本地化的失败提示前缀。图片源变化后可重新加载。回复流式输出时，它冻结已完成的块、按已完成行推进顶层未闭合 fence，并从保存的 Shiki grammar state 为该 fence 增量高亮。已完成的 token 行进入固定大小的 React 分组，后续分片只 reconcile 正在增长的分组；最终全量解析解决跨文档语法时，未变化的 fence 会保留该 DOM。`TerminalBlock`、`ReadBlock`、`DiffBlock`、`SearchBlock` 与 `WebBlock` 把对应的工具结果意图渲染为带复制控件、溢出处理及适用时 ANSI 处理的卡片。`JsonTree` 与 `JsonBlock` 以只读方式检查 JSON 值；`projectUserText` 把已发送的用户文本投影为行内普通文本段与引用 chip，供消息气泡和排队行使用。引用名称继承调用方的换行规则：长名称在气泡内换行，排队预览保持单行布局。传入 `UserTextReferences` 时，文件和 skill 引用成为支持键盘操作的预览按钮，复用正文文件链接的悬停和聚焦样式；第一次指针点击可以打开预览，后续点击和已有选区保留原生选择行为。键盘激活在存在选区时仍可打开预览。
+
+`MarkdownMathProvider` 控制单美元定界符（如 `$x$`）是否表示行内 TeX。金额正文可设置 `singleDollarTextMath={false}`；`$230.48`、`$5.55T` 等金额保留为 Markdown 文字，不再跨越加粗或普通文本配对。Provider 外保留原生单美元支持；嵌套 Provider 以最近一层为准，各视图独立。反斜线定界符 `\(...\)` 与 `\[...\]`、双美元公式及 `math` 围栏继续启用。偏好变化会重新解析已落定文字，包括未改变的源字符串；流式渲染保留 GFM 语法及冻结块缓存。公开入口声明 `markdownMathOptionsVersion: 1`。[作用域数学定界符](../../../.agents/notes/implemented/architecture/2026-10-09-scoped-markdown-math-delimiters.zh.md)拥有这项策略。
 
 `MarkdownText` 默认为 `variant="body"`。次级内容使用 `variant="compact"`：其 13px 字号与 20px 行高跟随内容字号设置，各级标题保持同一字号并使用 600 字重，段落与列表采用更紧凑的间距。正文、链接和代码均保持 tertiary 颜色，以点状下划线区分链接。代码标题栏随代码块滚动。表格和公式仍然启用，使用周围文字的字号，并在可用宽度内横向滚动。两个变体共享解析器与流式缓存。
 

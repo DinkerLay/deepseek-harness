@@ -35,11 +35,12 @@ export function parseGfm(text: string): Root {
  * Parse GFM markdown plus TeX math with the compatibility delimiters
  * (the settled arm's grammar).
  * @param text - Markdown source.
+ * @param singleDollarTextMath - Whether single-dollar delimiters denote inline TeX; explicit delimiters remain enabled.
  * @returns The mdast root.
  */
-export function parseGfmWithMath(text: string): Root {
+export function parseGfmWithMath(text: string, singleDollarTextMath = true): Root {
   return recoverLocalImages(fromMarkdown(text, {
-    extensions: [gfm(), cjkFriendlyStrong(), mathCompatibility(), math()],
+    extensions: [gfm(), cjkFriendlyStrong(), mathCompatibility(), math({ singleDollarTextMath })],
     mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
   }), text)
 }

@@ -16,6 +16,7 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import { IncrementalMarkdownParser } from './incremental.ts'
 import { parseGfm, parseGfmWithMath } from './parse.ts'
+import { useSingleDollarTextMath } from './MarkdownMath.tsx'
 import {
   collectReferenceTargets, createReferenceTargets, renderBlocks, renderFootnoteSection,
   wrapBlockChildren,
@@ -32,8 +33,9 @@ function renderSettled(
   labels: MarkdownLabels,
   fileMentions: MarkdownFileMentions | undefined,
   pathImages: MarkdownPathImages | undefined,
+  singleDollarTextMath: boolean,
 ): ReactNode[] {
-  const root = parseGfmWithMath(text)
+  const root = parseGfmWithMath(text, singleDollarTextMath)
   const targets = createReferenceTargets()
   collectReferenceTargets(root.children, targets)
   const context: MarkdownRenderContext = {
@@ -167,6 +169,8 @@ class StreamingRenderer {
  * `body` variant uses the full document typography.
  * The provider's `openFile` enables local Markdown links in settled messages,
  * including `#L24` and `#L24-L30` destinations (ranges open at their first line).
+ * `MarkdownMathProvider` can disable single-dollar inline TeX while preserving explicit
+ * math delimiters; changing that preference reparses settled text without replacing streaming caches.
  * @returns A GFM document with TeX math rendered through KaTeX; raw HTML and
  * unsafe protocols are disabled. Local links without an opener remain text;
  * absolute HTTP(S) images render directly.
@@ -181,19 +185,20 @@ export const MarkdownText = memo(function MarkdownText({
   pathImages?: MarkdownPathImages | undefined
   variant?: 'body' | 'compact'
 }) {
+  const singleDollarTextMath = useSingleDollarTextMath()
   const streamRef = useRef<StreamingRenderer | null>(null)
   const streamLabelsRef = useRef<MarkdownLabels>(labels)
   const children = useMemo(() => {
     if (!streaming) {
       streamRef.current = null
-      return renderSettled(text, labels, fileMentions, pathImages)
+      return renderSettled(text, labels, fileMentions, pathImages, singleDollarTextMath)
     }
     if (streamRef.current === null || streamLabelsRef.current !== labels) {
       streamRef.current = new StreamingRenderer(labels)
       streamLabelsRef.current = labels
     }
     return streamRef.current.render(text)
-  }, [text, streaming, labels, fileMentions, pathImages])
+  }, [text, streaming, labels, fileMentions, pathImages, singleDollarTextMath])
   return <div className={clsx(css.markdown, variant === 'compact' && css.compact)}
     data-markdown-variant={variant === 'compact' ? variant : undefined}>{children}</div>
 })
