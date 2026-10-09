@@ -620,6 +620,16 @@
       ]
     }
   ],
+  "rebuiltPackages": [
+    {
+      "name": "@deepseek-ai/dsh-web-frontend",
+      "path": "apps/web",
+      "purpose": "Rebuild the static browser shell with forked UI primitives",
+      "inputs": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  ],
   "runtimePatchPackages": [
     "@deepseek-ai/dsh-agent",
     "@deepseek-ai/dsh-agent-instructions",
@@ -683,6 +693,7 @@
     "@deepseek-ai/dsh-tool-pwsh-persistent",
     "@deepseek-ai/dsh-tool-skill",
     "@deepseek-ai/dsh-web-fetch-http",
+    "@deepseek-ai/dsh-web-frontend",
     "@deepseek-ai/dsh-workspace",
     "@deepseek-ai/dsh-workspace-changes"
   ]

@@ -2,7 +2,7 @@
 
 [English](FORK.md) | 中文
 
-本 fork 使用官方 [`dsh-v0.2.0-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2)。Runtime 包版本仍为 `0.2.0-rc.2`；fork 提交和内容寻址产物标识修改后的字节。[fork-manifest.json](fork-manifest.json)拥有精确的基础提交，以及新增和修改的 Runtime 包清单。
+本 fork 使用官方 [`dsh-v0.2.0-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2)。Runtime 包版本仍为 `0.2.0-rc.2`；fork 提交和内容寻址产物标识修改后的字节。[fork-manifest.json](fork-manifest.json)拥有精确的基础提交，以及新增、修改和重建的 Runtime 包清单。
 
 ## 能力归属
 
@@ -33,6 +33,8 @@ Profile 插件管理提供序列化的组合包／运行快照，以及部署拥
 ## 开发与绑定
 
 在独立 fork 检出中修改和测试。保留官方基线祖先关系，导出完整 Runtime 差异，再发布已审阅 fork 提交供下游采用。下游以只读 Submodule 绑定该提交，安装官方包与对应 fork tarball，并原子更新依赖 family、UI 组合与声明快照。保持哪些行为不由包数量目标决定。
+
+`addedPackages` 与 `modifiedPackages` 记录实际源码修改。可选的 `rebuiltPackages` 记录声明输入包含 fork 修改的生成产物，不声称其自身源码发生变化。`runtimePatchPackages` 是三份清单按名称排序后的并集。静态浏览器壳，即 `apps/web` 的 `@deepseek-ai/dsh-web-frontend`，需要先使用 fork UI primitives 执行 `build:web`，再打包其 `dist`；单独安装 primitives tarball 不会替换壳中预加载的 namespace。[数学归属决策](.agents/notes/implemented/architecture/2026-10-09-scoped-markdown-math-delimiters.zh.md)要求 Provider 与 Markdown 渲染器共享这一单一实例。
 
 ## 验证
 

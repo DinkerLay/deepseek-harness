@@ -2,7 +2,7 @@
 
 English | [中文](FORK.zh.md)
 
-This fork uses official [`dsh-v0.2.0-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2). Runtime package versions remain `0.2.0-rc.2`; the fork commit and content-addressed artifacts identify the modified bytes. [fork-manifest.json](fork-manifest.json) owns the exact base commit and the added and modified Runtime package inventory.
+This fork uses official [`dsh-v0.2.0-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.0-rc.2). Runtime package versions remain `0.2.0-rc.2`; the fork commit and content-addressed artifacts identify the modified bytes. [fork-manifest.json](fork-manifest.json) owns the exact base commit and the added, modified and rebuilt Runtime package inventory.
 
 ## Capability ownership
 
@@ -33,6 +33,8 @@ The downstream release starts a separate V4 Session generation and excludes pre-
 ## Development and binding
 
 Edit and test in a standalone fork checkout. Preserve the official base ancestry, derive the complete Runtime delta, and publish a reviewed fork commit before downstream adopts it. Downstream binds that commit as a read-only Submodule, installs official packages plus matching fork tarballs, and updates its dependency family, UI composition and declaration snapshots atomically. A package-count target does not determine which behavior to preserve.
+
+`addedPackages` and `modifiedPackages` record actual source changes. The optional `rebuiltPackages` records generated artifacts whose declared inputs contain fork changes, without claiming changes to their own source. `runtimePatchPackages` is the sorted union of all three lists. The static browser shell, `@deepseek-ai/dsh-web-frontend` at `apps/web`, requires `build:web` with the fork’s UI primitives before packing its `dist`; installing a separate primitives tarball does not replace the shell’s preloaded namespace. The [math ownership decision](.agents/notes/implemented/architecture/2026-10-09-scoped-markdown-math-delimiters.md) requires the Provider and Markdown renderer to share that single instance.
 
 ## Verification
 

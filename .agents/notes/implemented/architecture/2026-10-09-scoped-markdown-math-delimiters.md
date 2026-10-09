@@ -14,6 +14,8 @@ Single-dollar TeX can consume currency-bearing prose between two dollar signs, i
 
 Settled Markdown passes the preference to the existing micromark math extension. False leaves single-dollar sequences as ordinary Markdown while retaining backslash delimiters, double-dollar math and math fences. A changed preference invalidates the settled render for the same source text. Streaming keeps its existing GFM parser and frozen-block cache; formulas still render only after settlement.
 
+The browser shell statically seeds the UI-primitives namespace. The [fork ledger](../../../../fork-manifest.json) therefore records `@deepseek-ai/dsh-web-frontend` as a rebuilt artifact at `apps/web`, with UI primitives as its input. Packing runs `build:web` before collecting the frontend `dist`. Source changes and generated-artifact dependencies remain separate, and the Provider shares the exact instance used by the native Markdown renderer.
+
 ## Alternatives considered
 
 **Disable single-dollar math globally.** This changes mathematical documents whose authors rely on the native default.
@@ -22,6 +24,8 @@ Settled Markdown passes the preference to the existing micromark math extension.
 
 **Escape dollar signs in stored messages.** This changes source content and replay-visible text to implement a presentation preference.
 
+**Load a second primitives library at runtime.** Its React Context would not control a Markdown renderer using the shell's preloaded instance. Rebuilding the static shell preserves one shared namespace.
+
 ## Consequences
 
-Currency-oriented owners choose false and use explicit TeX delimiters for formulas. The provider does not rewrite Session text, change typography or navigation, or enable trusted TeX commands. Focused tests cover exact monetary text, emphasis, explicit math, provider isolation, same-text changes, frozen streaming blocks and settlement.
+Currency-oriented owners choose false and use explicit TeX delimiters for formulas. The provider does not rewrite Session text, change typography or navigation, or enable trusted TeX commands. Focused tests cover exact monetary text, emphasis, explicit math, provider isolation, same-text changes, frozen streaming blocks and settlement. Installed-browser acceptance also checks the public version and actual currency rendering; source tests alone do not establish that the browser received the rebuilt namespace.

@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write FORK.md
 /maintaining-the-supercode-kernel-fork:
-  en: 9b94fce841637c1b
-  zh: 9245507e501090ff
+  en: 920f52ada43fc2ac
+  zh: fa79e31d35aeabbb
 /maintaining-the-supercode-kernel-fork/capability-ownership:
   en: 008b9cc64e6b3675
   zh: 6c35f5212c5bb657
@@ -12,8 +12,8 @@
   en: e32bbb8786638111
   zh: 9c94dfac5d416813
 /maintaining-the-supercode-kernel-fork/development-and-binding:
-  en: 4deb3acc735adfa5
-  zh: f2d731e002102c2a
+  en: b599514438c52e5b
+  zh: ab3a2db1d158586f
 /maintaining-the-supercode-kernel-fork/verification:
   en: 5be3e89cb16dd465
   zh: ed996b082a49a849
