@@ -52,40 +52,24 @@
   font-variant-numeric: tabular-nums;
 }
 
-.inlineRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  min-width: 0;
-  min-height: calc(33px + var(--dsh-content-font-delta, 0px));
-  padding-bottom: 8px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
-}
-
-.root.inlineControl {
+.inlineSummary .label {
   flex: none;
-  width: auto;
-  height: auto;
-  padding: 0;
-  border-bottom: none;
+  overflow: visible;
 }
 
-.summary {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
+.inlineSummary .durationNumber {
+  font-family: inherit;
 }
 
 .summaryCaption {
-  overflow-wrap: anywhere;
-}
-
-.groupTarget {
-  display: contents;
+  flex: 1;
+  min-width: 0;
+  margin-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
 }
 
 @media (prefers-reduced-motion: reduce) {

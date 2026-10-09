@@ -1,12 +1,39 @@
-import { memo } from 'react'
+import { memo, useCallback } from 'react'
 import { IconChevronDownOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ConversationSnapshot } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ChatNodeViewProps, PresentationInjected } from '../contract/slots.ts'
+import type { ProcessActivity } from '../contract/process-groups.ts'
 import { turnProcessAlwaysOpen } from '../contract/turn-process.ts'
 import { formatRunDuration } from './message-chrome.ts'
 import a11yCss from './accessibility.module.css'
 import css from './TurnProcessNodeView.module.css'
-import { TurnProcessHeaderOutlet } from './ProcessHeaderTargets.tsx'
+import { processTitle } from './step-process.ts'
+
+function processSummary(
+  snapshot: ConversationSnapshot, turn: number, t: ChatNodeViewProps<'turn-process'>['t'],
+): string | undefined {
+  const view = snapshot.views.grouped('chat')
+  const counts = new Map<ProcessActivity, number>()
+  let hasGroups = false
+  for (const entry of view?.entries ?? []) {
+    if (entry.kind !== 'group') continue
+    const group = view?.groupSource(entry.key).getSnapshot()
+    if (group?.data.turn !== turn) continue
+    hasGroups = true
+    for (const item of group.data.summary.counts) counts.set(item.kind, (counts.get(item.kind) ?? 0) + item.count)
+  }
+  return hasGroups ? processTitle({ counts: [...counts].map(([kind, count]) => ({ kind, count })),
+    running: undefined, runningDetail: '' }, t) : undefined
+}
+
+function TurnProcessSummary({ turn, useConversation, t }: {
+  turn: number
+} & Pick<ChatNodeViewProps<'turn-process'>, 'useConversation' | 't'>) {
+  const caption = useConversation(useCallback(snapshot => processSummary(snapshot, turn, t), [turn, t]))
+  return caption === undefined ? null
+    : <span className={css.summaryCaption} data-turn-process-summary={turn} title={caption}>{caption}</span>
+}
 
 /** Settled Turn duration and process disclosure above its content. */
 export const TurnProcessNodeView = memo(function TurnProcessNodeView({
@@ -31,10 +58,11 @@ export const TurnProcessNodeView = memo(function TurnProcessNodeView({
   const announcement = reason === 'aborted' ? t('message.stopped')
     : reason === 'error' ? t('message.turnProcess.failed')
       : t('message.turnProcess.worked')
-  const control = (
+  return <>
+    <span className={a11yCss.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     <button
       type="button"
-      className={`${css.root}${inline ? ` ${css.inlineControl}` : ''}`}
+      className={`${css.root}${inline ? ` ${css.inlineSummary}` : ''}`}
       data-open={open || undefined}
       data-turn-process={node.data.turn}
       data-turn-process-messages={node.data.messageCount}
@@ -54,13 +82,7 @@ export const TurnProcessNodeView = memo(function TurnProcessNodeView({
         ))}
       </span>
       {canCollapse && <IconChevronDownOutlineRegular className={css.chevron} />}
+      {inline && <TurnProcessSummary turn={turn.turn} useConversation={useConversation} t={t} />}
     </button>
-  )
-  return <>
-    <span className={a11yCss.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
-    {inline ? <div className={css.inlineRow} data-turn-process-row={turn.turn}>
-      {control}
-      <TurnProcessHeaderOutlet turn={turn.turn} useConversation={useConversation} t={t} />
-    </div> : control}
   </>
 })

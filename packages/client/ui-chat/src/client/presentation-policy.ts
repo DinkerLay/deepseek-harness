@@ -11,7 +11,7 @@ import type { TranscriptViewMode } from '../chat-settings.ts'
 export interface ChatPresentationPolicy {
   /** Static running presentation; absence retains native animated activity. */
   readonly quietActivity?: boolean
-  /** Completed group headers share the Turn status line; absence retains separate headers. */
+  /** A static completed-work summary shares the Turn toggle; group controls retain their original positions. */
   readonly inlineCompletedSummary?: boolean
   /** Mode this policy was derived from; for diagnostics, never for branching in renderers. */
   readonly mode: TranscriptViewMode

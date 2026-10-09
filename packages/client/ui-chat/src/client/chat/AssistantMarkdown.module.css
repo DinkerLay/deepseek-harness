@@ -20,6 +20,37 @@
   gap: 16px;
 }
 
+.prose {
+  min-width: 0;
+}
+
+/* Completed process narration is secondary; Markdown code and table roots keep their own tokens. */
+:global([data-completed-process-assistant]) .body {
+  gap: 8px;
+}
+
+:global([data-completed-process-assistant]) .prose :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote):not(:is(table, pre) *) {
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  color: var(--dsw-alias-label-secondary);
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+:global([data-completed-process-assistant]) .prose :is(h1, h2, h3, h4, h5, h6):not(:is(table, pre) *) {
+  font-weight: 600;
+}
+
+:global([data-completed-process-assistant]) .prose li:not(:first-child):not(:is(table, pre) *) {
+  margin-top: 2px;
+}
+
+/* Inline code keeps the primary prose size even inside a smaller narration paragraph. */
+:global([data-completed-process-assistant]) .prose :not(pre) > code:not(:is(table, pre) *) {
+  font-size: calc(var(--dsh-content-font-size, 14px) * 0.875) !important;
+  color: var(--dsw-alias-label-primary);
+}
+
 /* Wide markdown tables (the renderer's ≥4-column md-table-wide hook) span
    the whole transcript width instead of clipping at the 748px message
    column, while the table content keeps starting at its normal x (the lead

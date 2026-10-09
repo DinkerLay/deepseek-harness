@@ -76,7 +76,11 @@
   --dsh-chat-flow-gap: 12px;
 }
 
-.column > [data-chat-group-part="response"]:not([hidden]):not(:empty)
+.flowItem[data-completed-process-assistant] {
+  --dsh-chat-flow-gap: 6px;
+}
+
+.column > [data-chat-group-part="response"]:not([data-completed-process-assistant]):not([hidden]):not(:empty)
   + :not([hidden]):not(.flowItem:is(:empty, :has(> [data-slot="conversation.chat.node"]:empty))):not(.running) {
   --dsh-chat-flow-gap: 12px;
 }

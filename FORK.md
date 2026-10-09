@@ -12,7 +12,7 @@ Public browser libraries load without activating their default plugins. Conversa
 
 Chat exposes a decorative running glyph Slot while retaining native activity timing, labels, layout and status announcements. Transcript grouping and rendering remain owned by the native Chat plugin.
 
-Native Chat also supports quiet activity and inline completed-group summaries through its public presentation policy. Failed and stopped Turns retain recorded elapsed time. Sidebar Session factories and Browser page-factory adapters let deployments retain native presentation, state and lifetimes while providing their own Session boundary, carrier and placement. A read-only changes-summary service shares the native card and review cache.
+Native Chat also supports quiet activity and a static summary on the native Turn toggle through its public presentation policy. Group controls retain their original chronological positions. Failed and stopped Turns retain recorded elapsed time. Sidebar Session factories and Browser page-factory adapters let deployments retain native presentation, state and lifetimes while providing their own Session boundary, carrier and placement. A read-only changes-summary service shares the native card and review cache.
 
 Interactive terminals retain native identities, VT screen recovery, input attachments and cleanup. Deployments can require an effect-owned spawn policy to prepare their workspace and confinement, and independent Client surfaces contribute a union of process holds. The official default remains a system-user terminal.
 

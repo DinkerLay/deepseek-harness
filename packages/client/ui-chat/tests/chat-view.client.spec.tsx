@@ -631,30 +631,47 @@ describe('Chat node rendering', () => {
     expect(h.openFile).toHaveBeenCalledWith('for-seq-4/site/report.html')
   })
 
-  it('places native group controls beside completion and reveals the original collapsed Turn before expanding them', () => {
+  it('keeps one Turn toggle and restores six full group headers beside their original process bodies', () => {
     const nodes = [userInTurn(1, 'question', 1), reasoningAssistant(2, 'first analysis'),
       toolResult(4, 'search', 'web_search'), assistant(5, 'progress update', 1, 2),
-      toolResult(6, 'command', 'bash'), assistant(7, 'final answer', 1, 3)]
+      toolResult(6, 'command', 'bash'), assistant(7, 'second progress', 1, 3),
+      toolResult(8, 'read', 'read'), assistant(9, 'third progress', 1, 4),
+      toolResult(10, 'visit', 'web_fetch'), assistant(11, 'fourth progress', 1, 5),
+      toolResult(12, 'edit', 'edit'), assistant(13, 'fifth progress', 1, 6),
+      toolResult(14, 'last-command', 'bash'), assistant(15, 'final answer', 1, 7)]
     const builder = new ChatSnapshotBuilder()
     const groups = new ConversationGroupStore<ProcessGroupData>()
     const state = new ProcessState()
     const project = (items: readonly ConversationNode[]) => installGroupedSnapshot(builder, state, groups, chatSnapshotFixture({
-      nodes: items, turnTimings: new Map([[1, { startTime: 1_000, endTime: 10_000 }]]), turnEnds: new Map([[1, 8]]),
+      nodes: items, turnTimings: new Map([[1, { startTime: 1_000, endTime: 270_000 }]]), turnEnds: new Map([[1, 16]]),
     }))
     const h = makeHarness({ chat: project(nodes) })
     h.setGrouped(groups)
     h.setPresentation({ quietActivity: true, inlineCompletedSummary: true })
     const view = render(<h.ChatView {...h.props} />)
-    const row = view.container.querySelector('[data-turn-process-row="1"]')!
     const control = turnProcessControl(view.container)!
-    const headers = [...row.querySelectorAll<HTMLButtonElement>('[data-process-activity]')]
+    const headers = [...view.container.querySelectorAll<HTMLButtonElement>('[data-chat-group-key] [data-process-activity]')]
     const bodies = [...view.container.querySelectorAll<HTMLElement>('[data-step-process] > div[id]')]
-    expect(headers).toHaveLength(2)
-    expect(bodies).toHaveLength(2)
-    expect(row.textContent).toContain('已完成，用时 9秒')
-    expect(row.textContent).toContain('已搜索网页并执行了命令')
+    const roots = headers.map(header => header.closest<HTMLElement>('[data-chat-group-key]')!)
+    expect(headers).toHaveLength(6)
+    expect(bodies).toHaveLength(6)
+    expect(control.textContent).toContain('已完成，用时 4分29秒')
+    const caption = control.querySelector<HTMLElement>('[data-turn-process-summary="1"]')!
+    expect(caption.textContent).toContain('已搜索网页')
+    expect(caption.title).toBe(caption.textContent)
+    expect(control.querySelectorAll('button, [data-process-activity]')).toHaveLength(0)
+    expect(view.container.querySelectorAll('[data-turn-process-summary="1"]')).toHaveLength(1)
+    expect(headers.every(header => header.textContent !== '')).toBe(true)
     expect(control.getAttribute('aria-expanded')).toBe('false')
-    expect(view.container.querySelectorAll('[data-step-process] [data-process-activity]')).toHaveLength(0)
+    expect(roots.every(root => root.hasAttribute('hidden'))).toBe(true)
+    expect(view.getByText('final answer')).toBeTruthy()
+    expect(view.queryByRole('button', { name: '已搜索网页' })).toBeNull()
+    fireEvent.click(control)
+    expect(control.getAttribute('aria-expanded')).toBe('true')
+    expect(roots.every(root => !root.hasAttribute('hidden'))).toBe(true)
+    expect(bodies.every(body => body.hasAttribute('hidden'))).toBe(true)
+    expect(view.getByText('progress update')).toBeTruthy()
+    expect(view.getByText('fifth progress')).toBeTruthy()
     fireEvent.click(headers[0]!)
     expect(control.getAttribute('aria-expanded')).toBe('true')
     expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
@@ -665,18 +682,28 @@ describe('Chat node rendering', () => {
       h.set({ chat: project([...nodes.slice(0, 2), toolResult(3, 'earlier-read', 'read'), ...nodes.slice(2)]) })
       h.setGrouped(groups)
     })
-    expect([...row.querySelectorAll('[data-process-activity]')]).toEqual(headers)
+    expect([...view.container.querySelectorAll('[data-chat-group-key] [data-process-activity]')]).toEqual(headers)
     expect(groups.groupSource(groups.entries.find(entry => entry.kind === 'group')!.key)).toBe(source)
     expect(view.getByText('web_search:search')).toBe(member)
     expect(view.getByText('first analysis')).toBeTruthy()
     expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
     expect([...view.container.querySelectorAll('[data-step-process] > div[id]')]).toEqual(bodies)
     act(() => { h.setTranscriptView('verbose') })
-    expect(headers[0]?.disabled).toBe(true)
-    expect([...row.querySelectorAll('[data-process-activity]')]).toEqual(headers)
+    expect(control.disabled).toBe(true)
+    expect(headers.every(header => header.closest('[hidden]') !== null)).toBe(true)
+    expect([...view.container.querySelectorAll('[data-chat-group-key] [data-process-activity]')]).toEqual(headers)
     act(() => { h.setTranscriptView('standard') })
     expect(headers[0]?.getAttribute('aria-expanded')).toBe('true')
     expect(view.getByText('web_search:search')).toBe(member)
+    fireEvent.click(headers[1]!)
+    expect(headers.slice(0, 2).every(header => header.getAttribute('aria-expanded') === 'true')).toBe(true)
+    expect(headers.slice(2).every(header => header.getAttribute('aria-expanded') === 'false')).toBe(true)
+    fireEvent.click(control)
+    expect(control.getAttribute('aria-expanded')).toBe('false')
+    expect(headers.every(header => header.getAttribute('aria-expanded') === 'false')).toBe(true)
+    fireEvent.click(control)
+    expect(bodies.every(body => body.hasAttribute('hidden'))).toBe(true)
+    expect(view.getByText('final answer')).toBeTruthy()
   })
 
   it.each(['error', 'aborted'] as const)('keeps real elapsed time for a %s ending', (kind) => {
@@ -693,11 +720,32 @@ describe('Chat node rendering', () => {
     const snapshot = builder.replace({ nodes, timeline: { ...original.timeline, turns: new Map([[1, ended]]) } })
     builder.publish()
     const h = makeHarness({ chat: snapshot })
+    h.setPresentation({ quietActivity: true, inlineCompletedSummary: true })
     const view = render(<h.ChatView {...h.props} />)
     const control = turnProcessControl(view.container)!
     expect(control.textContent).toBe(`${kind === 'error' ? '处理失败' : '已停止'}，用时 4秒`)
     expect(control.disabled).toBe(true)
     expect(view.getByRole('status').textContent).toBe(kind === 'error' ? '处理失败' : '已停止')
+    expect(control.querySelector('[data-turn-process-summary]')).toBeNull()
+  })
+
+  it('omits the inline work caption for a completed final-only Turn', () => {
+    const builder = new ChatSnapshotBuilder()
+    const groups = new ConversationGroupStore<ProcessGroupData>()
+    const state = new ProcessState()
+    const snapshot = installGroupedSnapshot(builder, state, groups, chatSnapshotFixture({
+      nodes: [userInTurn(1, 'question', 1), assistant(2, 'final answer')],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }]]), turnEnds: new Map([[1, 3]]),
+    }))
+    const h = makeHarness({ chat: snapshot })
+    h.setGrouped(groups)
+    h.setPresentation({ quietActivity: true, inlineCompletedSummary: true })
+    const view = render(<h.ChatView {...h.props} />)
+    const control = turnProcessControl(view.container)!
+    expect(control.textContent).toBe('已完成，用时 4秒')
+    expect(control.disabled).toBe(true)
+    expect(control.querySelector('[data-turn-process-summary]')).toBeNull()
+    expect(view.getByText('final answer')).toBeTruthy()
   })
 
   it('omits elapsed time when loaded failure history has no recorded Turn start', () => {

@@ -79,14 +79,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     switch (block.kind) {
       case 'text':
         rendered.push(
-          <MarkdownText
-            key={i}
-            text={block.text}
-            streaming={streaming}
-            labels={labels}
-            fileMentions={mentions}
-            pathImages={pathImages}
-          />,
+          <div key={i} className={css.prose} data-chat-assistant-prose>
+            <MarkdownText
+              text={block.text}
+              streaming={streaming}
+              labels={labels}
+              fileMentions={mentions}
+              pathImages={pathImages}
+            />
+          </div>,
         )
         break
       case 'reasoning':

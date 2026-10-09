@@ -15,7 +15,6 @@ import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { PendingSteeringBubble, PendingSubmissionBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
 import { ChatGroupSeat } from './ChatGroupSeat.tsx'
-import { ProcessHeaderProvider } from './ProcessHeaderTargets.tsx'
 import { chatRenderKey } from './render-entry.ts'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { TurnNavigator } from './TurnNavigator.tsx'
@@ -91,7 +90,7 @@ const ChatNodeList = memo(function ChatNodeList({ entries, useChatGroup, pending
     const index = pendingInputs.findIndex(item => 'requestId' in item && item.placement === 'transcript')
     if (index !== -1) rows.splice(rows.length - 1, 0, ...pendingRows.splice(index, 1))
   }
-  return <ProcessHeaderProvider>{[...rows, ...pendingRows]}</ProcessHeaderProvider>
+  return [...rows, ...pendingRows]
 })
 
 /**

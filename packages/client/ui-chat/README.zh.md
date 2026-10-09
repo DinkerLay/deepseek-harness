@@ -89,7 +89,9 @@ Chat 末尾为进行中的 Turn 控制行，且该轮尚无可见输入时，第
 
 嵌套的 `conversation.chat.activity.icon` Slot 可替换装饰图标，同时保留原生文字、时钟、布局和状态播报。其 Session 作用域 owner 接收 `startTime`；轮次时钟尚未知时为 null。移除更高优先级贡献会恢复原生鲸鱼图标。[图标归属决策](../../../.agents/notes/implemented/architecture/2026-10-08-running-activity-glyph.zh.md)将这项扩展与 transcript 和过程分组渲染分开。
 
-`quietActivity` 默认为 false。启用后，原生活动显示静态本地化文字及已用时间，不调用装饰图标 Slot；分组及 Think 标题省略 shimmer。`inlineCompletedSummary` 同样默认为 false，将已关闭分组的原有控件放到轮次状态和耗时旁。多个分组共享一份类别摘要，仍按原生顺序保留各自可访问的展开控件。打开分组前先展开其外层轮次。窄框中状态、耗时和摘要可换行。公开 Client 入口声明 `turnPresentationVersion: 1`；部署可通过公开注入策略固定这些展示标志。[静态轮次展示](../../../.agents/notes/implemented/architecture/2026-10-09-native-chat-turn-presentation.zh.md)拥有这些选择。
+`quietActivity` 默认为 false。启用后，原生活动显示静态本地化文字及已用时间，不调用装饰图标 Slot；分组及 Think 标题省略 shimmer。`inlineCompletedSummary` 同样默认为 false，在原生已结束轮次开关中加入静态类别摘要。分组完整标题及独立控件按原生顺序保留在各自过程正文旁。状态、耗时和摘要共用内容字号设置；耗时数字沿用 UI 字体并使用等宽数字。窄框中的长摘要省略，状态与时间保持可见，悬停可查看摘要全文。公开 Client 入口声明 `turnPresentationVersion: 1`；部署可通过公开注入策略固定这些展示标志。[静态轮次展示](../../../.agents/notes/implemented/architecture/2026-10-09-native-chat-turn-presentation.zh.md)拥有这些选择。
+
+启用同行摘要时，已结束轮次中的中间 Assistant 回复采用随字号设置变化的次级正文样式。最终答复保留原生 Markdown 字体层级。运行中回复、推理开合、代码和表格保持原有展示。
 
 完成、失败和停止控件都使用已记录的轮次结束时间减去开始时间。边界缺失时省略耗时，已加载的失败历史不会伪造时钟。整轮及分组展开、推理、消息、工具和排序仍由原生组件拥有，历史加载及工作详情模式变化也保留这些归属。
 

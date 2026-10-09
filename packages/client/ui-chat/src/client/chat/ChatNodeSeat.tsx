@@ -87,6 +87,13 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     && groupPart !== 'reasoning'
     && routedNode.kind === 'assistant-step'
     && routedNode.data.step === processSpec.answerStep
+  const inlineCompletedSummary = usePresentation(policy => policy.inlineCompletedSummary === true)
+  const secondaryAssistant = inlineCompletedSummary
+    && processMember
+    && processPresentation.turnClosed
+    && routedNode.kind === 'assistant-step'
+    && routedNode.data.status === 'settled'
+    && groupPart !== 'reasoning'
   const ownsDisclosure = routedNode?.kind === 'turn-process' || processAnswer
   const foldable = processWindowReady
     && (liveProcess || processMember || ownsDisclosure)
@@ -157,6 +164,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-turn-process-member={processMember || undefined}
       data-turn-process-hidden={processHidden || undefined}
       data-turn-process-answer={compactAnswer || undefined}
+      data-completed-process-assistant={secondaryAssistant || undefined}
     >
       {renderSlot('conversation.chat.node', routedOwner, {
         entryKey: routedNode.kind,
