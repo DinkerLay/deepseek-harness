@@ -49,13 +49,15 @@ Host 将网络失败或超时归因于 GitHub 地址，且提供 npmmirror 时�
 
 ### 切换一个组合包
 
-组合包页面在标题下方显示完整包名，也就是在别处安装它所需的 spec。组合包开关改变其层选择。启用了 HMR 的 profile 在操作完成前重组；没有 HMR 的 profile，以及被更高层覆盖的组合包，会以 toast 说明。Host 读不了的组合包带异常标签，其页面给出原因，且不能打开；提供管理组件的组合包保持锁定。Host 以错误码作答，由页面字典措辞；pnpm 与 Loader 自己的诊断原样显示。页面从卡片与数量中排除内置 profile 组合包，即使 profile 将它们列为依赖或 Host 报告了异常。Host 清单仍保留完整数据；设置中「插件」分区的「插件列表」标签页负责查看它们的插件。
+组合包页面在标题下方显示完整包名，也就是在别处安装它所需的 spec。组合包开关改变其层选择。启用了 HMR 的 profile 在操作完成前重组；没有 HMR 的 profile，以及被更高层覆盖的组合包，会以 toast 说明。Host 读不了的组合包带异常标签，其页面给出原因，且不能打开；提供管理组件的组合包保持锁定。Host 以错误码作答，由页面字典措辞；pnpm 与 Loader 自己的诊断原样显示。页面从卡片与数量中排除未受控的内置 profile 组合包，即使 profile 将它们列为依赖或 Host 报告了异常。Host 清单仍保留完整数据；设置中「插件」分区的「插件列表」标签页负责查看它们的插件。
 
 ### 切换组合包里的一行
 
 组合包页面上行的开关调用 `pluginManager.setPluginEnabled`，往 profile 的 `cordis.patch.yml` 写入该行的 `disabled` 覆盖。启用了 HMR 的 profile 的树随即重组，该行的宿主半区卸下或挂上，组合包其余部分照常运行，页面无需重载即跟随客户端模块图。行使用共享状态标记表示 Host fiber 阶段：pending 与 disabled 为 idle，loading 与 unloading 为 ongoing，active 为 done，failed 为 error。开关只出现在已打开的组合包上；没有存活条目的行，以及 Host 不通过 profile patch 寻址的行，带着 Host 的原因锁定。超过十行的列表带一个按本地化标题、描述、行 id 和模块名筛选的输入框。
 
 受部署管理的行分别显示所需状态、替代模块，以及观测到的启用状态和运行阶段。相反的开关操作不可用，Host 同样拒绝直接调用；无关的可选组合包保留控件。打开详情不会启用插件。[快照与策略决策](../../../.agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.zh.md)维护这些规则。
+
+`managedBundles` 指定的包显示在部署组件分组，包括显式指定的基础 Bundle。卡片以本地化部署标题为主，技术包名保留在详情中。卡片汇总实际运行行阶段，不提供包级启用或卸载动作，受部署管理的行也不提供竞争的生命周期开关；未受控行保留普通控制。保存的选择与部署策略不一致时，只提供应用部署配置。受控行的实际启用状态与所需状态不一致时，若 Host 确认它可定位，也提供同样的单向修复。功能开关保留在各自设置页，并可通过现有详情贡献跳转。未受控的内置 Profile Bundle 仍不出现在卡片中。参见[组件归属决策](../../../.agents/notes/implemented/architecture/2026-10-09-deployment-component-ownership.zh.md)。
 
 ### 配置页
 

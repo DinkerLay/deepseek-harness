@@ -22,11 +22,12 @@ import { mathCompatibility } from './mathCompatibility.ts'
  * Parse GFM markdown (the streaming arm's grammar: no math, so incomplete
  * TeX never flashes KaTeX errors mid-stream).
  * @param text - Markdown source.
+ * @param singleTildeStrikethrough - Whether single tildes denote deletion; double-tilde deletion remains enabled.
  * @returns The mdast root.
  */
-export function parseGfm(text: string): Root {
+export function parseGfm(text: string, singleTildeStrikethrough = true): Root {
   return recoverLocalImages(fromMarkdown(text, {
-    extensions: [gfm(), cjkFriendlyStrong()],
+    extensions: [gfm({ singleTilde: singleTildeStrikethrough }), cjkFriendlyStrong()],
     mdastExtensions: [gfmFromMarkdown()],
   }), text)
 }
@@ -36,11 +37,13 @@ export function parseGfm(text: string): Root {
  * (the settled arm's grammar).
  * @param text - Markdown source.
  * @param singleDollarTextMath - Whether single-dollar delimiters denote inline TeX; explicit delimiters remain enabled.
+ * @param singleTildeStrikethrough - Whether single tildes denote deletion; double-tilde deletion remains enabled.
  * @returns The mdast root.
  */
-export function parseGfmWithMath(text: string, singleDollarTextMath = true): Root {
+export function parseGfmWithMath(text: string, singleDollarTextMath = true, singleTildeStrikethrough = true): Root {
   return recoverLocalImages(fromMarkdown(text, {
-    extensions: [gfm(), cjkFriendlyStrong(), mathCompatibility(), math({ singleDollarTextMath })],
+    extensions: [gfm({ singleTilde: singleTildeStrikethrough }), cjkFriendlyStrong(), mathCompatibility(),
+      math({ singleDollarTextMath })],
     mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
   }), text)
 }

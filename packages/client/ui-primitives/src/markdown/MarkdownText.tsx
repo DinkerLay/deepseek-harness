@@ -16,7 +16,7 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import { IncrementalMarkdownParser } from './incremental.ts'
 import { parseGfm, parseGfmWithMath } from './parse.ts'
-import { useSingleDollarTextMath } from './MarkdownMath.tsx'
+import { useMarkdownSyntax } from './MarkdownSyntax.tsx'
 import {
   collectReferenceTargets, createReferenceTargets, renderBlocks, renderFootnoteSection,
   wrapBlockChildren,
@@ -34,8 +34,9 @@ function renderSettled(
   fileMentions: MarkdownFileMentions | undefined,
   pathImages: MarkdownPathImages | undefined,
   singleDollarTextMath: boolean,
+  singleTildeStrikethrough: boolean,
 ): ReactNode[] {
-  const root = parseGfmWithMath(text, singleDollarTextMath)
+  const root = parseGfmWithMath(text, singleDollarTextMath, singleTildeStrikethrough)
   const targets = createReferenceTargets()
   collectReferenceTargets(root.children, targets)
   const context: MarkdownRenderContext = {
@@ -66,7 +67,7 @@ function renderSettled(
  * final, so the tail continues from a copy of it each frame).
  */
 class StreamingRenderer {
-  private readonly parser = new IncrementalMarkdownParser(parseGfm)
+  private readonly parser: IncrementalMarkdownParser
   private generation = -1
   private frozenCount = 0
   private frozenElements: ReactNode[] = []
@@ -76,8 +77,13 @@ class StreamingRenderer {
   private lastText: string | null = null
   private lastRendered: ReactNode[] = []
 
-  /** @param labels - Localized Markdown chrome baked into cached elements; the owner replaces the renderer when it changes. */
-  constructor(private readonly labels: MarkdownLabels) {}
+  /**
+   * @param labels - Localized chrome baked into cached elements.
+   * @param singleTildeStrikethrough - Grammar for frozen blocks; changing it requires a new renderer.
+   */
+  constructor(private readonly labels: MarkdownLabels, readonly singleTildeStrikethrough: boolean) {
+    this.parser = new IncrementalMarkdownParser(text => parseGfm(text, singleTildeStrikethrough))
+  }
 
   /**
    * Render the current accumulated text. Idempotent per text value, so React
@@ -169,8 +175,9 @@ class StreamingRenderer {
  * `body` variant uses the full document typography.
  * The provider's `openFile` enables local Markdown links in settled messages,
  * including `#L24` and `#L24-L30` destinations (ranges open at their first line).
- * `MarkdownMathProvider` can disable single-dollar inline TeX while preserving explicit
- * math delimiters; changing that preference reparses settled text without replacing streaming caches.
+ * `MarkdownSyntaxProvider` can disable single-dollar math and single-tilde deletion.
+ * Explicit math and double-tilde deletion remain enabled. Tilde changes reset the streaming
+ * grammar cache; dollar changes affect only settled parsing. `MarkdownMathProvider` selects only math.
  * @returns A GFM document with TeX math rendered through KaTeX; raw HTML and
  * unsafe protocols are disabled. Local links without an opener remain text;
  * absolute HTTP(S) images render directly.
@@ -185,20 +192,21 @@ export const MarkdownText = memo(function MarkdownText({
   pathImages?: MarkdownPathImages | undefined
   variant?: 'body' | 'compact'
 }) {
-  const singleDollarTextMath = useSingleDollarTextMath()
+  const { singleDollarTextMath, singleTildeStrikethrough } = useMarkdownSyntax()
   const streamRef = useRef<StreamingRenderer | null>(null)
   const streamLabelsRef = useRef<MarkdownLabels>(labels)
   const children = useMemo(() => {
     if (!streaming) {
       streamRef.current = null
-      return renderSettled(text, labels, fileMentions, pathImages, singleDollarTextMath)
+      return renderSettled(text, labels, fileMentions, pathImages, singleDollarTextMath, singleTildeStrikethrough)
     }
-    if (streamRef.current === null || streamLabelsRef.current !== labels) {
-      streamRef.current = new StreamingRenderer(labels)
+    if (streamRef.current === null || streamLabelsRef.current !== labels
+      || streamRef.current.singleTildeStrikethrough !== singleTildeStrikethrough) {
+      streamRef.current = new StreamingRenderer(labels, singleTildeStrikethrough)
       streamLabelsRef.current = labels
     }
     return streamRef.current.render(text)
-  }, [text, streaming, labels, fileMentions, pathImages, singleDollarTextMath])
+  }, [text, streaming, labels, fileMentions, pathImages, singleDollarTextMath, singleTildeStrikethrough])
   return <div className={clsx(css.markdown, variant === 'compact' && css.compact)}
     data-markdown-variant={variant === 'compact' ? variant : undefined}>{children}</div>
 })

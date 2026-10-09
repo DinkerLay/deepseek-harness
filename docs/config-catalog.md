@@ -2299,6 +2299,7 @@ export interface PlanModeConfig {
 ## `@deepseek-ai/dsh-plugin-manager`
 
 - `inject`: `loader` · `profileContext`
+- `refs`: [`LocalizedText`](../packages/util/package-manifest/src/index.ts)
 - `source`: [`packages/boot/plugin-manager/src/index.ts:40`](../packages/boot/plugin-manager/src/index.ts)
 
 ```ts config-catalog
@@ -2306,6 +2307,8 @@ export interface PlanModeConfig {
 export interface Config {
   /** Exact composition rows whose desired state and replacement are owned by this deployment. */
   managedRows?: Record<string, PluginDeploymentPolicy>
+  /** Exact bundle packages whose independent selection and installation are owned by the deployment. */
+  managedBundles?: Record<string, BundleDeploymentPolicy>
   /** The pnpm executable name or path; resolved through `PATH` like the `dsh plugin` command. */
   pnpmCommand?: string
   /** Maximum retained package-operation diagnostic bytes. */
@@ -2336,6 +2339,16 @@ export interface PluginDeploymentPolicy {
   enabled: boolean
   /** Technical module identity supplying the replacement when this row must stay disabled. */
   replacementModule?: string
+}
+
+/** Deployment-owned package selection; independent feature controls remain with their settings owner. */
+export interface BundleDeploymentPolicy {
+  /** Required selection of this package as an independent profile layer. */
+  enabled: boolean
+  /** Human-readable deployment component title; the technical package name remains available. */
+  title?: LocalizedText
+  /** Selected deployment bundle which already contributes this component. */
+  ownerBundle?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-plugin-manager -->

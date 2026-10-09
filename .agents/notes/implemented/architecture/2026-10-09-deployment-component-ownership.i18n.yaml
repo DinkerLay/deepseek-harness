@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-09-deployment-component-ownership.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-09-deployment-component-ownership.md
+/agent-note-deployment-component-ownership:
+  en: 5da6877f561755aa
+  zh: abf3286b90c56145
+/agent-note-deployment-component-ownership/problem:
+  en: db2aa7e6ff76b26e
+  zh: 09a9bf93e82dd74e
+/agent-note-deployment-component-ownership/decision:
+  en: 6099f5f9c7a4a5ae
+  zh: 4e3000ccc5bd58a7
+/agent-note-deployment-component-ownership/alternatives-considered:
+  en: 804c79a1bacb6a13
+  zh: afe6a89ed261a891
+/agent-note-deployment-component-ownership/consequences:
+  en: 01471272ff5457b9
+  zh: 4aa81b69e8298ad0
+/agent-note-deployment-component-ownership/verification:
+  en: 0be12948a999dfdc
+  zh: f83ff6086b03fee4

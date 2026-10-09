@@ -2,18 +2,18 @@
 # section, a hash of its English and Chinese blocks outside code blocks and generated regions.
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-09-scoped-markdown-math-delimiters.md
-/agent-note-scoped-markdown-math-delimiters:
-  en: 7724d67676dc51ae
-  zh: 382ffe07f793ce77
-/agent-note-scoped-markdown-math-delimiters/problem:
-  en: 39b48107e1da15bc
-  zh: 08b2ceb8d75aac9c
-/agent-note-scoped-markdown-math-delimiters/decision:
-  en: 71165beb50d822b5
-  zh: bbe3f894a7d3d749
-/agent-note-scoped-markdown-math-delimiters/alternatives-considered:
-  en: eaa7516133b9c3c7
-  zh: 4a6e5d42686cf9ad
-/agent-note-scoped-markdown-math-delimiters/consequences:
-  en: 8add3d75ea28a35e
-  zh: f8a5645b73b0a18a
+/agent-note-scoped-markdown-syntax-preferences:
+  en: 79f7c2156539b17e
+  zh: 515aabf5b51d46d9
+/agent-note-scoped-markdown-syntax-preferences/problem:
+  en: c2441d4d3ea07ef7
+  zh: d04035c61cfcfedb
+/agent-note-scoped-markdown-syntax-preferences/decision:
+  en: 3de9e15c461b570f
+  zh: 3d1aa3ad7317d6d7
+/agent-note-scoped-markdown-syntax-preferences/alternatives-considered:
+  en: 630e93ff8ef6d5fb
+  zh: e3f04d948613fae9
+/agent-note-scoped-markdown-syntax-preferences/consequences:
+  en: 0423fd21992b8811
+  zh: 7011303fc1228a4f

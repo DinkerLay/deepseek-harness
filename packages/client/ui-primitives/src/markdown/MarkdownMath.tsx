@@ -1,7 +1,6 @@
 /** React-scoped TeX delimiter preferences, independent from navigation and presentation. */
-import { createContext, useContext, type ReactNode } from 'react'
-
-const SingleDollarMathContext = createContext(true)
+import type { ReactNode } from 'react'
+import { MarkdownSyntaxProvider, useMarkdownSyntax } from './MarkdownSyntax.tsx'
 
 /** Public support for scoped single-dollar TeX preferences. */
 export const markdownMathOptionsVersion = 1
@@ -15,16 +14,19 @@ export interface MarkdownMathProviderProps {
 
 /**
  * Select single-dollar inline math for descendant Markdown renderers.
- * The nearest provider wins; renderers outside a provider retain native single-dollar support.
+ * The enclosing tilde preference is preserved; this provider changes only inline-math syntax.
+ * Renderers outside a provider retain native single-dollar support.
  * Backslash delimiters, double-dollar math and math fences remain enabled.
  * @param props - Explicit single-dollar preference and the scoped child tree.
  * @returns the child tree with an isolated Markdown math preference.
  */
 export function MarkdownMathProvider({ children, singleDollarTextMath }: MarkdownMathProviderProps): ReactNode {
-  return <SingleDollarMathContext.Provider value={singleDollarTextMath}>{children}</SingleDollarMathContext.Provider>
+  const { singleTildeStrikethrough } = useMarkdownSyntax()
+  return <MarkdownSyntaxProvider singleDollarTextMath={singleDollarTextMath}
+    singleTildeStrikethrough={singleTildeStrikethrough}>{children}</MarkdownSyntaxProvider>
 }
 
 /** @returns the nearest single-dollar preference, defaulting to native inline-math support. */
 export function useSingleDollarTextMath(): boolean {
-  return useContext(SingleDollarMathContext)
+  return useMarkdownSyntax().singleDollarTextMath
 }

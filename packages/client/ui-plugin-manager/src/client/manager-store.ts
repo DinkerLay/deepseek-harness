@@ -94,6 +94,8 @@ export interface PackageView {
   readonly enabled: boolean
   /** Why the Host refuses to switch the bundle off or remove it, when it does. */
   readonly readOnlyReason?: ReadOnlyReason
+  /** Deployment package ownership, independent of runtime row state. */
+  readonly deploymentPolicy?: BundleInfo['deploymentPolicy']
   /** Why the Host cannot read the bundle, when it cannot. */
   readonly error?: ManagementError
   readonly rows: readonly PackageRow[]
@@ -433,6 +435,7 @@ export function packageView(bundle: BundleInfo, plugins: readonly PluginInfo[]):
     ...bundle.description === undefined ? {} : { description: bundle.description },
     ...bundle.meta === undefined ? {} : { meta: bundle.meta },
     ...bundle.readOnlyReason === undefined ? {} : { readOnlyReason: bundle.readOnlyReason },
+    ...bundle.deploymentPolicy === undefined ? {} : { deploymentPolicy: bundle.deploymentPolicy },
     ...bundle.error === undefined ? {} : { error: bundle.error },
   }
 }

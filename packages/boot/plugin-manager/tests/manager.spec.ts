@@ -85,6 +85,100 @@ async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, pre
   return { ctx, dir, manager: ctx.pluginManager, bundle, profile, stopHmr, overlays, connection }
 }
 
+async function embeddedFixture(staleSelection = false) {
+  return fixture('live', false, undefined, dir => ({
+    managedBundles: { core: { enabled: true, title: 'Application' }, extra: { enabled: false, title: 'Memory', ownerBundle: 'core' } },
+    managedRows: { managed: { moduleName: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href, enabled: true } },
+  }), undefined, (dir) => {
+    const path = join(dir, 'node_modules/core/cordis.patch.yml')
+    const patches = JSON.parse(readFileSync(path, 'utf8')) as { insert: unknown[] }[]
+    patches[0]!.insert.push({ id: 'managed', name: pathToFileURL(join(dir, 'node_modules/extra/plugin.mjs')).href })
+    writeFileSync(path, JSON.stringify(patches))
+    const manifest = readProfileManifest('test', dir)
+    manifest.dsh!.profile!.bundles = staleSelection ? ['core', 'extra'] : ['core']
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+  })
+}
+
+it('reports an embedded component as mounted without selecting its standalone bundle', async () => {
+  const { manager, dir } = await embeddedFixture()
+  const snapshot = await manager.snapshot()
+  const extra = snapshot.bundles.find(bundle => bundle.name === 'extra')!
+  expect(extra).toMatchObject({ enabled: false, readOnlyReason: 'deployment-managed', removable: false,
+    deploymentPolicy: { enabled: false, title: 'Memory', ownerBundle: 'core' } })
+  expect(snapshot.plugins.find(plugin => plugin.entryId === extra.rows[0]?.entryId)).toMatchObject({ enabled: true, fiberPhase: 'active' })
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  expect(await manager.setBundleEnabled('extra', true)).toMatchObject({ changed: false, application: 'failed', error: { code: 'deployment-managed' } })
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+})
+
+it('restores a disabled embedded carrier without changing independent feature preference bytes', async () => {
+  const { manager, dir, profile, ctx } = await embeddedFixture()
+  const featureStore = join(dir, 'independent-memory-controls.json')
+  const preference = '{"enabled":false,"generation":4}\n'
+  writeFileSync(featureStore, preference)
+  writeFileSync(profile.patchPath, '- id: managed\n  disabled: true\n')
+  await reconcileProfilePatches(ctx, readProfilePatches('test', profile), 'test')
+  const row = (await manager.listPlugins()).find(plugin => plugin.entryId === 'include:managed')!
+  expect(row).toMatchObject({ enabled: false, readOnlyReason: 'deployment-managed', deploymentPolicy: { enabled: true } })
+  expect((await manager.listBundles()).find(bundle => bundle.name === 'extra')?.enabled).toBe(false)
+  expect(await manager.setPluginEnabled(row.entryId, true)).toMatchObject({ application: 'applied' })
+  expect((await manager.listPlugins()).find(plugin => plugin.entryId === row.entryId)).toMatchObject({ enabled: true, fiberPhase: 'active' })
+  expect(readFileSync(featureStore, 'utf8')).toBe(preference)
+})
+
+it('rejects removal and known package replacement of a managed carrier before invoking pnpm', async () => {
+  const { manager, dir } = await embeddedFixture()
+  const run = vi.spyOn(operations, 'runProfilePnpm')
+  onTestFinished(() => { run.mockRestore() })
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  for (const spec of ['extra@2.0.0', join(dir, 'node_modules/extra')]) {
+    expect(await manager.installBundle(spec, { enabled: false })).toMatchObject({ changed: false, application: 'failed', error: { code: 'deployment-managed' } })
+  }
+  expect(await manager.removeBundle('extra')).toMatchObject({ changed: false, application: 'failed', error: { code: 'deployment-managed' } })
+  expect(run).not.toHaveBeenCalled()
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+})
+
+it('keeps unrelated extensions manageable during selection drift and repairs only the duplicate layer', async () => {
+  const { manager, dir, ctx, bundle } = await embeddedFixture(true)
+  bundle('optional', [])
+  expect(await manager.setBundleEnabled('optional', true)).toMatchObject({ application: 'applied' })
+  expect((await manager.listBundles()).find(bundle => bundle.name === 'extra')).toMatchObject({ enabled: true, deploymentPolicy: { enabled: false } })
+  expect(await manager.setBundleEnabled('extra', false)).toMatchObject({ application: 'applied' })
+  expect(readProfileManifest('test', dir).dsh?.profile?.bundles).toEqual(['core', 'optional'])
+  expect(ctx.get('managedProbe')).toBe(true)
+  expect((await manager.listPlugins()).find(plugin => plugin.entryId === 'include:managed')).toMatchObject({ enabled: true, fiberPhase: 'active' })
+})
+
+it('rejects a candidate bundle which erases deployment package ownership without writing files', async () => {
+  const { manager, dir, bundle } = await embeddedFixture()
+  bundle('erase-policy', [])
+  writeFileSync(join(dir, 'node_modules/erase-policy/cordis.patch.yml'), JSON.stringify([{ id: 'manager', config: { managedBundles: {} } }]))
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  expect(await manager.setBundleEnabled('erase-policy', true)).toMatchObject({ changed: false, application: 'failed', error: { code: 'deployment-managed' } })
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+})
+
+it('retains tarball installation while rejecting its resolved managed name and restoring profile files', async () => {
+  const { manager, dir, bundle } = await embeddedFixture()
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  const run = vi.spyOn(operations, 'runProfilePnpm').mockImplementation(async (_context, args) => {
+    const managed = args.includes('https://extensions.test/managed.tgz')
+    const name = managed ? 'extra' : 'new-extension'
+    if (!managed) bundle(name, [])
+    const manifest = readProfileManifest('test', dir)
+    manifest.dependencies = { ...manifest.dependencies, [name]: '2.0.0' }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    return { exitCode: 0, output: 'installed', truncated: false, logPath: join(dir, 'pnpm.log') }
+  })
+  onTestFinished(() => { run.mockRestore() })
+  expect(await manager.installBundle('https://extensions.test/managed.tgz', { enabled: false })).toMatchObject({ application: 'failed', error: { code: 'deployment-managed' } })
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+  expect(await manager.installBundle('https://extensions.test/new.tgz')).toMatchObject({ application: 'applied', bundle: 'new-extension' })
+  expect((await manager.listBundles()).find(bundle => bundle.name === 'new-extension')?.enabled).toBe(true)
+})
+
 it('captures bundle rows and live entries after an in-flight profile write commits', async () => {
   const { manager, dir } = await fixture()
   const filename = join(dir, 'package.json')

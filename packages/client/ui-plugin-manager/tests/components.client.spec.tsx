@@ -191,7 +191,56 @@ function renderTab(
 }
 
 describe('PluginManagerPage', () => {
-  it('labels deployment-owned state and replacement without changing the actual row switch', () => {
+  it('shows embedded carriers under deployment components without competing package or row toggles', () => {
+    const managed = pkg({ name: '@product/memory', enabled: false, deploymentPolicy: { enabled: false, title: 'Local memory', ownerBundle: '@product/app' },
+      readOnlyReason: 'deployment-managed', rows: [row({ readOnlyReason: 'deployment-managed',
+        deploymentPolicy: { moduleName: 'dsh-better-sidebar', enabled: true } })] })
+    const ordinary = pkg({ name: '@user/extension' })
+    const { actions } = renderTab({ packages: [managed, ordinary] })
+    const container = document.body
+    const group = container.querySelector('[data-plugin-group="components"]')!
+    expect(within(group as HTMLElement).getByRole('button', { name: 'View Local memory' })).toBeTruthy()
+    expect(within(group as HTMLElement).queryByRole('switch')).toBeNull()
+    expect(container.querySelector('[data-plugin-group="bundles"] [data-plugin-package="@user/extension"]')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'View Local memory' }))
+    const detail = container.querySelector('[data-plugin-detail="@product/memory"]')!
+    expect(within(detail as HTMLElement).queryByRole('switch')).toBeNull()
+    expect(within(detail as HTMLElement).queryByRole('button', { name: /Uninstall/ })).toBeNull()
+    expect(actions.setEnabled).not.toHaveBeenCalled()
+    expect(actions.setRowEnabled).not.toHaveBeenCalled()
+  })
+
+  it('repairs a disabled embedded carrier independently of its already-correct standalone selection', () => {
+    const managed = pkg({ name: '@product/memory', enabled: false,
+      deploymentPolicy: { enabled: false, title: 'Local memory', ownerBundle: '@product/app' },
+      rows: [row({ enabled: false, phase: null, readOnlyReason: 'deployment-managed', deploymentPolicy: { moduleName: 'dsh-better-sidebar', enabled: true } })] })
+    const { actions } = renderTab({ packages: [managed] })
+    fireEvent.click(screen.getByRole('button', { name: 'View Local memory' }))
+    expect(screen.queryByRole('switch')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply deployment configuration for dsh-better-sidebar' }))
+    expect(actions.setRowEnabled).toHaveBeenCalledExactlyOnceWith('include:sidebar', true)
+    expect(actions.setEnabled).not.toHaveBeenCalled()
+  })
+
+  it('retains unmanaged row controls inside a deployment-owned bundle', () => {
+    const unmanaged = row({ entryId: 'include:optional-row' as PluginEntryId, rowId: 'optional-row', moduleName: '@user/optional' })
+    const { actions } = renderTab({ packages: [pkg({ name: '@product/core', deploymentPolicy: { enabled: true, title: 'Core runtime' }, rows: [unmanaged] })] })
+    fireEvent.click(screen.getByRole('button', { name: 'View Core runtime' }))
+    const toggle = screen.getByRole('switch', { name: en.partToggle.replace('{name}', '@user/optional') })
+    fireEvent.click(toggle)
+    expect(actions.setRowEnabled).toHaveBeenCalledExactlyOnceWith('include:optional-row', false)
+    expect(actions.setEnabled).not.toHaveBeenCalled()
+  })
+
+  it('offers a one-way deployment repair for stale package selection', () => {
+    const managed = pkg({ name: '@product/memory', enabled: true, deploymentPolicy: { enabled: false, title: 'Local memory', ownerBundle: '@product/app' } })
+    const { actions } = renderTab({ packages: [managed] })
+    expect(screen.queryByRole('switch')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.applyDeployment }))
+    expect(actions.setEnabled).toHaveBeenCalledExactlyOnceWith('@product/memory', false)
+  })
+
+  it('labels deployment-owned state and replacement without a competing row toggle', () => {
     const required = row({ enabled: false, phase: null, readOnlyReason: 'deployment-managed',
       deploymentPolicy: { moduleName: 'dsh-better-sidebar', enabled: true } })
     const replaced = row({ rowId: 'legacy', moduleName: '@acme/legacy-ui', enabled: false, phase: null,
@@ -202,9 +251,8 @@ describe('PluginManagerPage', () => {
     expect(screen.getByText(en.deploymentRequired)).toBeTruthy()
     const replacement = screen.getByText(en.deploymentDisabled, { exact: false })
     expect(replacement.textContent).toContain(en.deploymentReplacement.replace('{module}', '@acme/new-ui'))
-    const toggle = screen.getByRole('switch', { name: en.partToggle.replace('{name}', 'dsh-better-sidebar') })
-    expect(toggle).toHaveProperty('disabled', true)
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByRole('switch', { name: en.partToggle.replace('{name}', 'dsh-better-sidebar') })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Apply deployment configuration for dsh-better-sidebar' })).toBeTruthy()
     b.setLanguage(zh)
     expect(screen.getByText(zh.deploymentRequired)).toBeTruthy()
     expect(screen.getByText(zh.deploymentDisabled, { exact: false }).textContent)

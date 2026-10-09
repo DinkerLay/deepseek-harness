@@ -1,6 +1,6 @@
 /** Public plugin management records shared with clients. */
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { PluginLocalizedMeta } from '@deepseek-ai/dsh-package-manifest'
+import type { PluginLocalizedMeta, LocalizedText } from '@deepseek-ai/dsh-package-manifest'
 import type { PluginInventoryEntry } from '@deepseek-ai/dsh-host-plugin-inventory/types'
 export type { PluginEntryId } from '@deepseek-ai/dsh-host-plugin-inventory/types'
 import type { PluginEntryId } from '@deepseek-ai/dsh-host-plugin-inventory/types'
@@ -16,6 +16,16 @@ export interface PluginDeploymentPolicy {
   enabled: boolean
   /** Technical module identity supplying the replacement when this row must stay disabled. */
   replacementModule?: string
+}
+
+/** Deployment-owned package selection; independent feature controls remain with their settings owner. */
+export interface BundleDeploymentPolicy {
+  /** Required selection of this package as an independent profile layer. */
+  enabled: boolean
+  /** Human-readable deployment component title; the technical package name remains available. */
+  title?: LocalizedText
+  /** Selected deployment bundle which already contributes this component. */
+  ownerBundle?: string
 }
 
 /** A package whose declared DSH peers reject the running DSH version, without an exemption for the exact pair. */
@@ -74,6 +84,8 @@ export interface BundleInfo {
   optional: boolean
   removable: boolean
   readOnlyReason?: ReadOnlyReason
+  /** Deployment selection ownership, separate from actual rows and their runtime phases. */
+  deploymentPolicy?: BundleDeploymentPolicy
   error?: ManagementError
   /** The rows the bundle's patch inserts, in declaration order; empty when the patch cannot be read. */
   rows: BundleRowInfo[]

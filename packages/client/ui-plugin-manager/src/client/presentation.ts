@@ -115,10 +115,11 @@ export function shortName(name: string): string {
  * @returns localized copy with a technical-name fallback and the independent beta status.
  */
 export function packageText(
-  pkg: Pick<PackageView, 'name' | 'meta'>, resolveText: PluginManagerFace['resolveText'],
+  pkg: Pick<PackageView, 'name' | 'meta' | 'deploymentPolicy'>, resolveText: PluginManagerFace['resolveText'],
 ): { title: string; description: string | undefined; beta: boolean } {
   return {
-    title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
+    title: pkg.deploymentPolicy?.title !== undefined ? resolveText(pkg.deploymentPolicy.title)
+      : pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
     description: pkg.meta?.description === undefined ? undefined : resolveText(pkg.meta.description) || undefined,
     beta: pkg.name.startsWith('@deepseek-ai/dsh-experimental-'),
   }

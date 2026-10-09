@@ -43,6 +43,8 @@ kind: "package-reference"
 
 部署按组合行 id 配置 `managedRows`（默认 `{}`）。每条规则提供精确的 `moduleName`、所需 `enabled` 值及可选的 `replacementModule`。匹配行单独报告 `deploymentPolicy`，不替换实际启用状态或阶段。管理器拒绝相反的启停请求；修复到所需状态仍要求唯一且可定位的行。管理后端保护不能降级，明确支持的管理 UI 替代则可保持禁用。规则不安装模块，也不选择可选组合包。
 
+`managedBundles`（默认 `{}`）声明部署拥有的 Bundle 包。每条规则声明所需独立 `enabled` 选择、可选本地化 `title` 及已提供组件的可选 `ownerBundle`。选择状态与功能使用和运行行阶段分开。相反的选择、移除及已知包名的重新安装被拒绝；候选层不能擦除任一管理器策略。既存选择偏差允许无关扩展变更及向所需状态修复。可定位的受控行也可将陈旧启用状态恢复到所需状态。Git/压缩包安装保留现有解析包名检查及文件回滚限制。参见[组件归属决策](../../../.agents/notes/implemented/architecture/2026-10-09-deployment-component-ownership.zh.md)。
+
 组合包变更在保存前检查候选组合，包括用户、home 与调用覆盖层。违背受管理行或改变当前管理器策略声明的修改以 `deployment-managed` 失败；禁用祖先 group 也视为禁用其受管理子行。无关的可选组合包仍可选择。策略不改写操作者的直接配置。
 
 `snapshot()` 在 profile manifest 锁与 HMR 队列内读取组合包声明和运行条目，包括异步清单工作。需要同一配置代次视图的消费方使用它；独立列表方法仍可用。运行阶段保持为观测值。参见[快照与策略决策](../../../.agents/notes/implemented/architecture/2026-10-08-profile-plugin-snapshot-and-deployment-policy.zh.md)。

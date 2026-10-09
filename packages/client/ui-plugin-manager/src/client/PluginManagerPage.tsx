@@ -200,11 +200,25 @@ function DeploymentState({ row, t }: { readonly row: PackageRow; readonly t: Tra
   </p>
 }
 
-function RowsSection({ rows, t, resolveText, toggle, configure }: {
+/** Restore an addressable row to deployment state without exposing an independent lifecycle toggle. */
+function RowDeploymentRepair({ row, t, title, repair }: {
+  readonly row: PackageRow
+  readonly t: Translate
+  readonly title: string
+  readonly repair: RowToggles
+}): ReactNode {
+  const policy = row.deploymentPolicy
+  if (row.entryId === undefined || row.readOnlyReason !== 'deployment-managed' || policy === undefined || row.enabled === policy.enabled) return null
+  return <Button size="sm" variant="outline" disabled={repair.busy(row)} aria-label={t('applyDeploymentRow', { name: title })}
+    onClick={() => { repair.onSetEnabled(row, policy.enabled) }}>{t('applyDeployment')}</Button>
+}
+
+function RowsSection({ rows, t, resolveText, toggle, repair, configure }: {
   readonly rows: readonly PackageRow[]
   readonly t: Translate
   readonly resolveText: ResolveText
   readonly toggle?: RowToggles | undefined
+  readonly repair?: RowToggles | undefined
   readonly configure?: RowConfigure | undefined
 }): ReactNode {
   const [filter, setFilter] = useState('')
@@ -263,7 +277,8 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
                     <StateDot state={rowDotState(row)} />
                     {rowStateText(row, t)}
                   </span>
-                  {toggle === undefined
+                  {repair === undefined ? null : <RowDeploymentRepair row={row} title={title} t={t} repair={repair} />}
+                  {toggle === undefined || row.deploymentPolicy !== undefined
                     ? null
                     : <RowSwitch
                       row={row} title={title} t={t} busy={toggle.busy(row)}
@@ -301,9 +316,29 @@ function EnableSwitch({ pkg, title, t, busy, onSetEnabled }: {
   )
 }
 
+/** Managed packages expose only a repair toward the deployment selection, never an independent feature toggle. */
+function DeploymentControl({ pkg, t, busy, onSetEnabled }: {
+  readonly pkg: PackageView
+  readonly t: Translate
+  readonly busy: boolean
+  readonly onSetEnabled: (enabled: boolean) => void
+}): ReactNode {
+  const policy = pkg.deploymentPolicy
+  if (policy === undefined) return null
+  return <>
+    <Tag className={css.statusTag} tone="neutral">{t('deploymentComponent')}</Tag>
+    {pkg.enabled === policy.enabled ? null : <Button size="sm" variant="outline" disabled={busy}
+      onClick={() => { onSetEnabled(policy.enabled) }}>{t('applyDeployment')}</Button>}
+  </>
+}
+
 /** The status one card carries: running, off, or a problem the Host reported. */
 function packageStatus(pkg: PackageView): 'running' | 'disabled' | 'problem' {
   if (pkg.error !== undefined) return 'problem'
+  if (pkg.deploymentPolicy !== undefined) {
+    if (pkg.rows.some(row => row.phase === 'failed')) return 'problem'
+    return pkg.rows.some(row => row.phase === 'active') ? 'running' : 'disabled'
+  }
   return pkg.enabled ? 'running' : 'disabled'
 }
 
@@ -405,6 +440,7 @@ function PackageCard({ pkg, t, resolveText, busy, highlighted, onOpen, onSetEnab
       className={`${css.card} ${css.cardLink}`}
       data-plugin-package={pkg.name}
       data-plugin-status={status}
+      data-plugin-deployment-component={pkg.deploymentPolicy === undefined ? undefined : ''}
       {...highlighted ? { 'data-plugin-highlight': '' } : {}}
     >
       <CardHead
@@ -414,12 +450,15 @@ function PackageCard({ pkg, t, resolveText, busy, highlighted, onOpen, onSetEnab
         icon={<PackageArtwork key={pkg.meta?.icon} src={pkg.meta?.icon} />}
         tags={(
           <>
+            {pkg.deploymentPolicy === undefined ? null : <DeploymentControl pkg={pkg} t={t} busy={busy} onSetEnabled={onSetEnabled} />}
             {beta ? <Tag className={css.statusTag} tone="info">{t('statusBeta')}</Tag> : null}
             {status === 'problem' ? <Tag className={css.statusTag} tone="danger">{t('statusProblem')}</Tag> : null}
           </>
         )}
         description={description}
-        end={<EnableSwitch pkg={pkg} title={title} t={t} busy={busy} onSetEnabled={onSetEnabled} />}
+        end={pkg.deploymentPolicy === undefined
+          ? <EnableSwitch pkg={pkg} title={title} t={t} busy={busy} onSetEnabled={onSetEnabled} />
+          : <span className={css.cardDesc}>{partsSummary(pkg.rows, t)}</span>}
       />
       <MetadataError error={pkg.meta?.error} t={t} />
     </li>
@@ -552,10 +591,11 @@ function RowDetail({ pkg, row, t, resolveText, onBack, renderSlot, form }: {
  * itself; and its rows with their switches and configure controls.
  */
 function PackageDetail({
-  pkg, t, resolveText, busy, rowBusy, configured, configure, renderSlot,
+  pkg, t, resolveText, busy, rowBusy, configured, configure, renderSlot, ownerTitle,
   onBack, onSetEnabled, onUninstall, onSetRowEnabled,
 }: {
   readonly pkg: PackageView
+  readonly ownerTitle?: string | undefined
   readonly t: Translate
   readonly resolveText: ResolveText
   readonly busy: boolean
@@ -583,7 +623,7 @@ function PackageDetail({
         actions={(
           <div className={css.detailActions}>
             {renderSlot('plugins.detail.actions', { subject })}
-            {pkg.installed
+            {pkg.installed && pkg.deploymentPolicy === undefined
               ? (
                 <Button
                   variant="outline"
@@ -598,7 +638,9 @@ function PackageDetail({
                 </Button>
               )
               : null}
-            <EnableSwitch pkg={pkg} title={title} t={t} busy={busy} onSetEnabled={onSetEnabled} />
+            {pkg.deploymentPolicy === undefined
+              ? <EnableSwitch pkg={pkg} title={title} t={t} busy={busy} onSetEnabled={onSetEnabled} />
+              : <DeploymentControl pkg={pkg} t={t} busy={busy} onSetEnabled={onSetEnabled} />}
           </div>
         )}
       />
@@ -614,6 +656,8 @@ function PackageDetail({
         {description === undefined ? null : <p className={css.detailDesc}>{description}</p>}
       </div>
       <MetadataError error={pkg.meta?.error} t={t} />
+      {pkg.deploymentPolicy === undefined ? null : <p className={css.reason}>{t(pkg.deploymentPolicy.ownerBundle === undefined
+        ? 'componentSelection' : 'componentOwnedBy', { name: ownerTitle ?? pkg.deploymentPolicy.ownerBundle ?? '' })}</p>}
       {pkg.error === undefined ? null : <p className={css.reason} role="status">{t('reasonLabel')}: {managementText(pkg.error, t)}</p>}
       {pkg.readOnlyReason === undefined ? null : <p className={css.reason} role="status">{managementText({ code: pkg.readOnlyReason }, t)}</p>}
       <div className={css.detailSections}>
@@ -628,8 +672,10 @@ function PackageDetail({
           rows={pkg.rows}
           t={t}
           resolveText={resolveText}
-          toggle={pkg.enabled ? { busy: row => busy || rowBusy(row), onSetEnabled: onSetRowEnabled } : undefined}
+          toggle={pkg.enabled || pkg.deploymentPolicy !== undefined
+            ? { busy: row => busy || rowBusy(row), onSetEnabled: onSetRowEnabled } : undefined}
           configure={configure}
+          repair={{ busy: row => busy || rowBusy(row), onSetEnabled: onSetRowEnabled }}
         />
         {renderSlot('plugins.detail.section', { subject })}
       </div>
@@ -1288,10 +1334,11 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
   // The page manages what the person installed, what the installation ships for them to switch on, and a
   // selected name the Host cannot read; the installation's other bundles are inspected in the Settings
   // Plugins section's Plugin list tab.
-  const listed = state.packages.filter(pkg => !BUILTIN_PROFILE_BUNDLES.has(pkg.name)
-    && (pkg.installed || pkg.optional || pkg.error !== undefined))
-  const mine = listed.filter(pkg => pkg.installed || !pkg.optional)
-  const official = listed.filter(pkg => pkg.optional && !pkg.installed)
+  const listed = state.packages.filter(pkg => pkg.deploymentPolicy !== undefined || (!BUILTIN_PROFILE_BUNDLES.has(pkg.name)
+    && (pkg.installed || pkg.optional || pkg.error !== undefined)))
+  const components = listed.filter(pkg => pkg.deploymentPolicy !== undefined)
+  const mine = listed.filter(pkg => pkg.deploymentPolicy === undefined && (pkg.installed || !pkg.optional))
+  const official = listed.filter(pkg => pkg.deploymentPolicy === undefined && pkg.optional && !pkg.installed)
   const loaded = state.status === 'ready' || state.status === 'error'
   const refreshing = state.refreshStatus === 'refreshing'
   const openPkg = view.kind === 'package' || view.kind === 'row' ? listed.find(pkg => pkg.name === view.name) : undefined
@@ -1327,7 +1374,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
     )),
   ]
   // One group of cards under its heading and count; the Official group comes first, and a group with nothing in it takes no room.
-  const renderGroup = (id: 'official' | 'bundles', heading: string, cards: readonly ReactNode[]): ReactNode => cards.length === 0
+  const renderGroup = (id: 'official' | 'bundles' | 'components', heading: string, cards: readonly ReactNode[]): ReactNode => cards.length === 0
     ? null
     : (
       <section className={css.group} data-plugin-scope="global" data-plugin-group={id}>
@@ -1414,6 +1461,10 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
         ? (
           <PackageDetail
             pkg={openPkg}
+            ownerTitle={(() => {
+              const owner = state.packages.find(pkg => pkg.name === openPkg.deploymentPolicy?.ownerBundle)
+              return owner === undefined ? undefined : packageText(owner, resolveText).title
+            })()}
             t={t}
             resolveText={resolveText}
             busy={state.busy.includes(openPkg.name)}
@@ -1432,10 +1483,11 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
         ? <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot} onBack={() => { setView({ kind: 'list' }) }} />
         : null}
       {loaded && showsCards
-        ? officialCards.length === 0 && mine.length === 0 && state.status !== 'error'
+        ? officialCards.length === 0 && mine.length === 0 && components.length === 0 && state.status !== 'error'
           ? <p className={css.empty}>{t('empty')}</p>
           : (
             <>
+              {renderGroup('components', t('componentsTitle'), components.map(packageCard))}
               {renderGroup('official', t('officialTitle'), officialCards)}
               {renderGroup('bundles', t('bundlesTitle'), mine.map(packageCard))}
               {/* A failed package read trails the groups it left incomplete: right under Official on a

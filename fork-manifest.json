@@ -197,7 +197,7 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-plugin-manager",
       "path": "packages/client/ui-plugin-manager",
-      "purpose": "Consume coherent profile snapshots, fence invalidated reads, retain mutation busy state through refresh, and display deployment-required replacements",
+      "purpose": "Coherent profile snapshots with deployment-owned components, runtime status and independent user extension controls",
       "source": [
         "src/client/PluginManagerPage.tsx",
         "src/client/locales.ts",
@@ -208,10 +208,11 @@
     {
       "name": "@deepseek-ai/dsh-client-ui-primitives",
       "path": "packages/client/ui-primitives",
-      "purpose": "Caller-owned Markdown navigation and isolated single-dollar math preferences",
+      "purpose": "Caller-owned Markdown navigation and scoped dollar and tilde syntax preferences",
       "source": [
         "src/index.ts",
         "src/markdown/MarkdownMath.tsx",
+        "src/markdown/MarkdownSyntax.tsx",
         "src/markdown/MarkdownText.tsx",
         "src/markdown/parse.ts",
         "src/markdown/render.tsx"
@@ -306,7 +307,7 @@
     {
       "name": "@deepseek-ai/dsh-plugin-manager",
       "path": "packages/boot/plugin-manager",
-      "purpose": "Serialized profile bundle/runtime snapshots and deployment-owned exact-row mutation protection",
+      "purpose": "Serialized profile snapshots and deployment-owned exact-row and Bundle mutation protection",
       "source": [
         "src/index.ts",
         "src/types.ts"
