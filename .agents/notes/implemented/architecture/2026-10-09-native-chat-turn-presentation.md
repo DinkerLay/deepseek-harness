@@ -14,7 +14,7 @@ Deployments need quiet running status and compact completion summaries without l
 
 The Turn toggle reveals or hides its eligible process range. Full group titles and independent controls remain beside their original bodies, retaining native order and disclosure state. Intermediate narration stays between the same groups, and the final answer remains visible independently of the process. History updates and work-details mode changes retain existing seats. No DOM outlets or additional disclosure store are required.
 
-Status, duration and aggregate caption use the content font-size setting. The inline duration keeps the UI family and tabular numerals; a long caption truncates while the elapsed label remains visible. Settled intermediate Assistant prose uses the secondary font-size axis and color. Native process membership identifies that prose; language and list position do not. Final-answer Markdown, running replies, code and tables keep their original typography.
+Status, duration and aggregate caption use the content font-size setting. The inline duration keeps the UI family and tabular numerals; a long caption truncates while the elapsed label remains visible. Intermediate and final Assistant replies retain the same native Markdown typography and response spacing. Process membership controls disclosure without changing text styling.
 
 Every settled status uses recorded start and end boundaries. Missing boundaries omit time; no current-clock estimate replaces incomplete history. Running clock ticks keep one stable status announcement.
 
