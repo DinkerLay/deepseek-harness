@@ -112,6 +112,23 @@ it('reports an embedded component as mounted without selecting its standalone bu
   expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
 })
 
+it('preserves expression-owned deployment policy when selecting another bundle', async () => {
+  const config = { managedBundles: { core: { enabled: true } } }
+  const { manager, dir, bundle } = await fixture('live', false, undefined, config, undefined, (dir) => {
+    writeFileSync(join(dir, 'node_modules/core/cordis.patch.yml'),
+      `- insert:\n    - id: manager\n      name: cordis:manager\n      config: !!js ${JSON.stringify(`(${JSON.stringify(config)})`)}\n`)
+  })
+  bundle('optional', [])
+  expect(await manager.setBundleEnabled('optional', true)).toMatchObject({ application: 'applied' })
+  bundle('erase-policy', [])
+  writeFileSync(join(dir, 'node_modules/erase-policy/cordis.patch.yml'), '- id: manager\n  config: !!js "({})"\n')
+  const before = readFileSync(join(dir, 'package.json'), 'utf8')
+  expect(await manager.setBundleEnabled('erase-policy', true)).toMatchObject({
+    changed: false, application: 'failed', error: { code: 'deployment-managed' },
+  })
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+})
+
 it('restores a disabled embedded carrier without changing independent feature preference bytes', async () => {
   const { manager, dir, profile, ctx } = await embeddedFixture()
   const featureStore = join(dir, 'independent-memory-controls.json')

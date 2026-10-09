@@ -878,7 +878,7 @@ export class PluginManager extends TypertRemoteService {
     const afterOwner = flatten(afterEntries).find(entry => entry.id === ownerId)
     const policyConfiguration = (entry: EntryOptions | undefined): unknown => {
       const config: unknown = entry?.config
-      if (config !== null && typeof config === 'object') {
+      if (config !== null && typeof config === 'object' && ('managedRows' in config || 'managedBundles' in config)) {
         return { rows: 'managedRows' in config ? config.managedRows : undefined,
           bundles: 'managedBundles' in config ? config.managedBundles : undefined }
       }
