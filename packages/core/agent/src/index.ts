@@ -11,7 +11,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { isPromise } from 'node:util/types'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
-import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import type { InterruptedToolOutcome, PendingToolCall, SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { installTurnArchiveAdmission } from './archive-admission.ts'
 import type { Agent } from './types.ts'
 import type { AgentOptions, SessionStartSource } from './runtime-types.ts'
@@ -244,6 +244,27 @@ interface FactorySlot {
   readonly target: AgentFactory
 }
 
+/** One unanswered started call an owner is asked about, with the Session being resumed. */
+export interface InterruptedToolQuery {
+  readonly sessionId: SessionId
+  readonly events: readonly SessionEvent[]
+  readonly call: PendingToolCall
+}
+
+/**
+ * Owner of tools whose effects it records durably: before crash repair closes an interrupted call of one of
+ * these tools, the owner reports whether that exact call left a recorded effect.
+ */
+export interface InterruptedToolOwner {
+  readonly tools: readonly string[]
+  /**
+   * @param query - the Session being resumed, its persisted events and the unanswered started call.
+   * @param signal - resume cancellation.
+   * @returns the outcome; a thrown error keeps the unknown-outcome result.
+   */
+  readonly resolve: (query: InterruptedToolQuery, signal: AbortSignal) => Promise<InterruptedToolOutcome>
+}
+
 /**
  * Agent service (`ctx.agents`): tracks live agents and carries the initiating
  * Agent through one process-local asynchronous driver chain. Agent *creation*
@@ -258,6 +279,7 @@ interface FactorySlot {
  */
 export class AgentRegistry extends Service {
   private readonly inputControl: AgentInputControls
+  private readonly interruptedOwners = new Map<string, InterruptedToolOwner>()
   private store = new Map<SessionId, AgentEntry>()
   private factory: FactorySlot | undefined
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
@@ -303,6 +325,44 @@ export class AgentRegistry extends Service {
     // Archive admission: the Workspace registry asks what still runs for a
     // Session before hiding it; a running turn answers here, for every Agent.
     installTurnArchiveAdmission(ctx, sessionId => this.get(sessionId))
+  }
+
+  /**
+   * Register the owner of tools whose interrupted calls it can account for.
+   * @param owner - tool names and the outcome resolver.
+   * @returns the disposer; a tool name another owner already claims fails loudly.
+   */
+  registerInterruptedToolOwner(owner: InterruptedToolOwner): () => void {
+    const claimed = owner.tools.filter(tool => this.interruptedOwners.has(tool))
+    if (claimed.length > 0) throw new Error(`interrupted tool outcome already owned: ${claimed.join(', ')}`)
+    for (const tool of owner.tools) this.interruptedOwners.set(tool, owner)
+    return () => {
+      for (const tool of owner.tools) if (this.interruptedOwners.get(tool) === owner) this.interruptedOwners.delete(tool)
+    }
+  }
+
+  /**
+   * Ask owners about started calls an interrupted tail turn left without results.
+   * @param sessionId - Session being resumed.
+   * @param events - its persisted events.
+   * @param calls - unanswered requests of the open tail turn.
+   * @param signal - resume cancellation; it propagates so nothing is written.
+   * @returns reported outcomes by call id; calls without an owner or whose owner failed are absent from the map.
+   */
+  async interruptedToolOutcomes(sessionId: SessionId, events: readonly SessionEvent[], calls: readonly PendingToolCall[],
+    signal: AbortSignal): Promise<Map<PendingToolCall['callId'], InterruptedToolOutcome>> {
+    const outcomes = new Map<PendingToolCall['callId'], InterruptedToolOutcome>()
+    for (const call of calls) {
+      const owner = call.started ? this.interruptedOwners.get(call.name) : undefined
+      if (owner === undefined) continue
+      try {
+        outcomes.set(call.callId, await owner.resolve({ sessionId, events, call }, signal))
+      } catch (error: unknown) {
+        signal.throwIfAborted()
+        this.ctx.logger.warn('interrupted tool %s outcome stays unknown: %s', call.name, error instanceof Error ? error.message : String(error))
+      }
+    }
+    return outcomes
   }
 
   /** Register an optional provider and its exclusive preload capability.

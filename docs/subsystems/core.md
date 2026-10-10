@@ -610,6 +610,23 @@ Agent service (`ctx.agents`): tracks live agents and carries the initiating Agen
 Initiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.
 
 ```ts cordis-catalog
+/**
+ * Register the owner of tools whose interrupted calls it can account for.
+ * @param owner - tool names and the outcome resolver.
+ * @returns the disposer; a tool name another owner already claims fails loudly.
+ */
+registerInterruptedToolOwner(owner: InterruptedToolOwner): () => void
+
+/**
+ * Ask owners about started calls an interrupted tail turn left without results.
+ * @param sessionId - Session being resumed.
+ * @param events - its persisted events.
+ * @param calls - unanswered requests of the open tail turn.
+ * @param signal - resume cancellation; it propagates so nothing is written.
+ * @returns reported outcomes by call id; calls without an owner or whose owner failed are absent from the map.
+ */
+async interruptedToolOutcomes(sessionId: SessionId, events: readonly SessionEvent[], calls: readonly PendingToolCall[], signal: AbortSignal): Promise<Map<PendingToolCall['callId'], InterruptedToolOutcome>>
+
 /** Register an optional provider and its exclusive preload capability.
  * @param id - durable provider identity.
  * @param policy - input, execution and preparation policy.
@@ -863,7 +880,7 @@ list(): Agent[]
 roots(): Agent[]
 ```
 
-Types: [Session](session.md)
+Types: [InterruptedToolOutcome](persistence.md) · [InterruptedToolOwner](persistence.md) · [PendingToolCall](persistence.md) · [Session](session.md) · [SessionEvent](session.md)
 
 Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
 

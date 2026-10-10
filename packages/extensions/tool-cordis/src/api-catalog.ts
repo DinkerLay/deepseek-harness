@@ -233,6 +233,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Agent service (`ctx.agents`): tracks live agents and carries the initiating Agent through one process-local asynchronous driver chain. Agent *creation* is provided by whichever plugin implements the AgentFactory (`@deepseek-ai/dsh-agent-loop`), registered via setFactory.\n\nInitiator methods provide same-process causal attribution only. Ambient presence is neither liveness proof nor authorization; subjects and owners remain explicit, as does identity at worker, process, persistence, and wire boundaries. Returned Promise boundaries drain during teardown, except a nested lineage that starts an owning-fiber unload is excluded from its own drain.',
     methods: [
       {
+        signature: 'registerInterruptedToolOwner(owner: InterruptedToolOwner): () => void',
+        description: 'Register the owner of tools whose interrupted calls it can account for.',
+        parameters: [{ name: 'owner', description: 'tool names and the outcome resolver.' }],
+        returns: 'the disposer; a tool name another owner already claims fails loudly.',
+      },
+      {
+        signature: 'async interruptedToolOutcomes(sessionId: SessionId, events: readonly SessionEvent[], calls: readonly PendingToolCall[], signal: AbortSignal): Promise<Map<PendingToolCall[\'callId\'], InterruptedToolOutcome>>',
+        description: 'Ask owners about started calls an interrupted tail turn left without results.',
+        parameters: [{ name: 'sessionId', description: 'Session being resumed.' }, { name: 'events', description: 'its persisted events.' }, { name: 'calls', description: 'unanswered requests of the open tail turn.' }, { name: 'signal', description: 'resume cancellation; it propagates so nothing is written.' }],
+        returns: 'reported outcomes by call id; calls without an owner or whose owner failed are absent from the map.',
+      },
+      {
         signature: 'registerInputController(id: InputControllerId, policy: AgentInputController): InputControllerHandle',
         description: 'Register an optional provider and its exclusive preload capability.',
         parameters: [{ name: 'id', description: 'durable provider identity.' }, { name: 'policy', description: 'input, execution and preparation policy.' }],
@@ -6192,6 +6204,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface InternalScheduleError {\n    readonly code: \'internal_error\';\n    readonly message: string;\n}',
   },
   {
+    name: 'InterruptedToolOutcome',
+    declaration: 'export type InterruptedToolOutcome = {\n    readonly kind: \'recorded\';\n    readonly text: string;\n} | {\n    readonly kind: \'absent\';\n} | {\n    readonly kind: \'unknown\';\n};',
+  },
+  {
+    name: 'InterruptedToolOwner',
+    declaration: 'export interface InterruptedToolOwner {\n    readonly tools: readonly string[];\n    readonly resolve: (query: InterruptedToolQuery, signal: AbortSignal) => Promise<InterruptedToolOutcome>;\n}',
+  },
+  {
+    name: 'InterruptedToolQuery',
+    declaration: 'export interface InterruptedToolQuery {\n    readonly sessionId: SessionId;\n    readonly events: readonly SessionEvent[];\n    readonly call: PendingToolCall;\n}',
+  },
+  {
     name: 'InvalidPromptError',
     declaration: 'export interface InvalidPromptError {\n    readonly code: \'invalid_prompt\';\n    readonly message: string;\n}',
   },
@@ -6734,6 +6758,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PendingApprovalRequest',
     declaration: 'export interface PendingApprovalRequest {\n    readonly id: ApprovalRequestId;\n    readonly originSessionId: SessionId;\n    readonly answererSessionId: SessionId;\n    readonly askedSeq: SessionSeq;\n    readonly toolName: string;\n    readonly callId?: ToolCallId;\n    readonly routeId?: ApprovalAnswererRouteId;\n}',
+  },
+  {
+    name: 'PendingToolCall',
+    declaration: 'export interface PendingToolCall {\n    readonly callId: ToolCallId;\n    readonly name: string;\n    readonly arguments: string;\n    readonly started: boolean;\n}',
   },
   {
     name: 'PermissionCatalog',

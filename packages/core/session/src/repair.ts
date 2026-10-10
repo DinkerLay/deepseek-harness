@@ -17,6 +17,31 @@ export const TOOL_NOT_STARTED = 'TOOL_NOT_STARTED'
 /** Recovery code for a recorded tool call whose completed outcome was not durably recorded. */
 export const TOOL_OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN'
 
+/** Recovery code for a recorded tool call whose owner confirmed that no effect was durably recorded. */
+export const TOOL_NOT_APPLIED = 'TOOL_NOT_APPLIED'
+
+/**
+ * What the tool's owner reports about one interrupted call:
+ * `recorded` returns the durably recorded result, `absent` confirms the call changed nothing,
+ * `unknown` keeps the conservative unknown-outcome result.
+ */
+export type InterruptedToolOutcome =
+  | { readonly kind: 'recorded'; readonly text: string }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unknown' }
+
+/** One assistant tool request an interrupted tail turn left without a result. */
+export interface PendingToolCall {
+  readonly callId: ToolCallId
+  readonly name: string
+  readonly arguments: string
+  /** Whether the Harness recorded the call as started. */
+  readonly started: boolean
+}
+
+const RECOVERED_PREFIX = 'Recovered after an interruption: this call\'s effect was durably recorded before the interruption. Its result follows; do not repeat the call.'
+const NOT_APPLIED_TEXT = 'The tool call was interrupted, and its owner confirmed that no effect was recorded; nothing changed. Retry it if it is still needed.'
+
 /**
  * Why an open tail turn is closed with synthetic events: `interrupted` is
  * crash recovery over a persisted log; `forked` is a fork seed cut inside the
@@ -48,9 +73,12 @@ const CLOSER_TEXT = {
  *
  * @param events - the loaded durable log to scan (a valid committed prefix, possibly with a crash tail).
  * @param cause - the owning close operation: selects result wording and the turn-ending reason.
+ * @param outcomes - owner reports for started calls, applied only to an `interrupted` cause; a missing entry keeps the
+ *   unknown-outcome result.
  * @returns the synthetic closer events to append after `events`, in order; empty when the log is already balanced.
  */
-export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurnCloseCause): SessionEvent[] {
+export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurnCloseCause,
+  outcomes?: ReadonlyMap<ToolCallId, InterruptedToolOutcome>): SessionEvent[] {
   let openTurn: number | null = null
   let openStep: number | null = null
   const recovery = new ToolCallRecovery(cause)
@@ -85,7 +113,7 @@ export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurn
   // The last real event supplies the seq base and the timestamp for the
   // synthetic closers (reusing the last timestamp keeps them deterministic and
   // never invents a "future" time).
-  const closers: SessionEvent[] = recovery.results()
+  const closers: SessionEvent[] = recovery.results(cause.kind === 'interrupted' ? outcomes : undefined)
   let seq = last.seq + closers.length + 1
   const time = last.time
 
@@ -103,7 +131,13 @@ export function openTurnClosers(events: readonly SessionEvent[], cause: OpenTurn
  * its step closes. This state retains pending identities, not event history.
  */
 export class ToolCallRecovery {
-  private readonly pendingCalls = new Map<ToolCallId, { turn: number; step: number; callSeq?: SessionSeqType }>()
+  private readonly pendingCalls = new Map<ToolCallId, {
+    turn: number
+    step: number
+    name: string
+    arguments: string
+    callSeq?: SessionSeqType
+  }>()
   private last: Pick<SessionEvent, 'seq' | 'time'> | undefined
 
   /** @param cause - defaults to interrupted live/crash recovery; fork-seed construction supplies its own cause. */
@@ -124,7 +158,7 @@ export class ToolCallRecovery {
       case 'assistant/message':
         for (const block of event.data.message.content) {
           if (block.type === 'tool-call') {
-            this.pendingCalls.set(block.id, { turn: event.data.turn, step: event.data.step })
+            this.pendingCalls.set(block.id, { turn: event.data.turn, step: event.data.step, name: block.name, arguments: block.arguments })
           }
         }
         break
@@ -149,12 +183,22 @@ export class ToolCallRecovery {
   }
 
   /**
+   * List the requests still unanswered, with whether each was recorded as started.
+   * @returns the unanswered requests, in assistant order.
+   */
+  pending(): PendingToolCall[] {
+    return [...this.pendingCalls].map(([callId, entry]) => ({ callId, name: entry.name, arguments: entry.arguments,
+      started: entry.callSeq !== undefined }))
+  }
+
+  /**
    * Build conservative error results in assistant order without changing tracked state.
    * Sequences follow the latest observed event and timestamps reuse its time.
    * Callers commit the results and observe those commits before recovering again.
+   * @param outcomes - owner reports for started calls; a missing entry keeps the unknown-outcome result.
    * @returns pending tool-result events, empty when no request remains unanswered.
    */
-  results(): SessionEvent<'tool/result'>[] {
+  results(outcomes?: ReadonlyMap<ToolCallId, InterruptedToolOutcome>): SessionEvent<'tool/result'>[] {
     if (this.last === undefined) return []
     let seq = this.last.seq + 1
     const time = this.last.time
@@ -165,15 +209,17 @@ export class ToolCallRecovery {
     // and Map insertion order preserves their transcript order.
     for (const [callId, { turn, step, callSeq }] of this.pendingCalls) {
       const started = callSeq !== undefined
+      const outcome = started ? outcomes?.get(callId) : undefined
+      const absent = outcome?.kind === 'absent'
       const message: ToolResultMessage = deepFreeze({
         id: brandString<MessageId>(`${this.cause.kind}-tool-result-${callId}-${seq}`),
         role: 'tool',
         toolCallId: callId,
-        isError: true,
+        isError: outcome?.kind !== 'recorded',
         source: { kind: 'tool', callId },
-        content: [{
+        content: outcome?.kind === 'recorded' ? [{ type: 'text', text: RECOVERED_PREFIX }, { type: 'text', text: outcome.text }] : [{
           type: 'text',
-          text: started ? text.started : text.notStarted,
+          text: absent ? NOT_APPLIED_TEXT : started ? text.started : text.notStarted,
         }],
       })
       results.push({
@@ -184,9 +230,9 @@ export class ToolCallRecovery {
           turn,
           step,
           message,
-          error: started
-            ? { name: 'ToolOutcomeUnknownError', code: TOOL_OUTCOME_UNKNOWN }
-            : { name: 'ToolNotStartedError', code: TOOL_NOT_STARTED },
+          ...outcome?.kind === 'recorded' ? {} : { error: absent ? { name: 'ToolNotAppliedError', code: TOOL_NOT_APPLIED }
+            : started ? { name: 'ToolOutcomeUnknownError', code: TOOL_OUTCOME_UNKNOWN }
+              : { name: 'ToolNotStartedError', code: TOOL_NOT_STARTED } },
         },
         surfaceOp: 'append',
         ...started ? { sourceEventSeqs: [callSeq] } : {},
@@ -204,8 +250,21 @@ export class ToolCallRecovery {
  * `./fork.ts`.
  *
  * @param events - the persisted log to scan, possibly ending inside an open turn.
+ * @param outcomes - owner reports for started calls; a missing entry keeps the unknown-outcome result.
  * @returns the synthetic `interrupted` closer events to append after `events`; empty when the log is already balanced.
  */
-export function interruptedTurnClosers(events: readonly SessionEvent[]): SessionEvent[] {
-  return openTurnClosers(events, { kind: 'interrupted' })
+export function interruptedTurnClosers(events: readonly SessionEvent[],
+  outcomes?: ReadonlyMap<ToolCallId, InterruptedToolOutcome>): SessionEvent[] {
+  return openTurnClosers(events, { kind: 'interrupted' }, outcomes)
+}
+
+/**
+ * Tool requests an interrupted tail turn left without results, for owners to report on before repair.
+ * @param events - the persisted log to scan.
+ * @returns unanswered requests of the open tail turn, in assistant order; empty when the log is balanced.
+ */
+export function pendingToolCalls(events: readonly SessionEvent[]): PendingToolCall[] {
+  const recovery = new ToolCallRecovery()
+  for (const event of events) recovery.observe(event)
+  return recovery.pending()
 }

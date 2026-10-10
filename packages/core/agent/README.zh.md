@@ -122,6 +122,8 @@ await handle.agent.whenIdle()
 
 注册表还为它发布的每个 Agent 回答 Workspace 注册表的归档准入（[接缝](../../workspace/workspace/README.zh.md)）：`workspace/session-activity` 在会话的 Agent 运行时报告 `turn` 族（等待审批或回答的回合也算），`workspace/session-stop` 以用户自己的停止方式取消该回合——`agent.cancel({ kind: 'user' })`，但不带停止按钮的 `keepInbox`，因此排队输入被丢弃并记录一次收件箱拼接，而不会在之后唤醒已归档会话。任何一步都不等待收敛；没有活 Agent 的会话没有可运行的回合。`turn` 键从 [`src/types.ts`](src/types.ts) 合并进 `SessionActivityKindMap`，渲染各族的 Client 为此导入 `@deepseek-ai/dsh-agent/types`。
 
+持久记录自身效果的工具拥有方可以用 `registerInterruptedToolOwner({ tools, resolve })` 注册。resume 发现这些工具中已启动却没有结果的调用时，会在写入收尾事件之前通过 `interruptedToolOutcomes()` 询问拥有方：拥有方返回已记录的结果、确认没有生效，或保持结果未知。每个工具名只有一个拥有方，第二次认领会直接失败；返回的处置函数只移除该拥有方的工具名。拥有方报告失败时结果保持未知，resume 的取消会向上传播。
+
 ### 发起方作用域
 
 每个驱动器在 `ctx.agents.withInitiator(agent, ...)` 内运行其完整生命周期，因此继承的异步链会观察到该 agent；`withoutInitiator()` 为共享定时器等无关的进程本地工作隐藏它。该边界只是进程本地归因——环境中的身份既不是存活证明，也不是授权，显式身份在 worker、进程、持久化与 wire 边界保持权威。Teardown 拒绝新边界，让返回 Promise 的边界排空，然后禁用底层存储。[发起方作用域决策](../../../.agents/notes/implemented/architecture/2026-07-15-agent-initiator-scope.zh.md) 拥有详细约定。
