@@ -12,7 +12,7 @@ import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { foldContinuablePreset, foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import { maintainExecution, prepareControlledClaim } from './execution-maintenance.ts'
+import { maintainExecution, prepareControlledClaim, resumeConfirmedStarts, wakeAdmittedInput } from './execution-maintenance.ts'
 import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 import type { TeamJournal } from './journal.ts'
 import { TeamError } from './error.ts'
@@ -199,6 +199,7 @@ export class TeamMemberExecutions {
   private directoryOwner: { readonly resolve: NonNullable<TeamMemberExecutionProvider['resolveExecutionDirectory']>
     readonly lifetime: AbortSignal } | undefined
   private readonly maintenanceJobs = new Set<Promise<unknown>>()
+  private resumeConfirmed: (() => void) | undefined
 
   /** @param ctx - runtime services owned by native Team.
    * @param journal - sole Team journal and transaction order.
@@ -214,6 +215,7 @@ export class TeamMemberExecutions {
     private readonly workPolicyAvailable: (anchor: Agent) => boolean) {
     ctx.on('agent-team/confirmed', (anchor) => {
       for (const member of journal.state(anchor).members) this.unconfirmed.delete(member.id)
+      this.resumeConfirmed?.()
     })
   }
 
@@ -375,10 +377,7 @@ export class TeamMemberExecutions {
         if (occupation.count === 0) this.occupations.delete(target.memberId)
         const execution = this.ctx.agents.get(target.executionId)
         if (completed && !lifetime.aborted && identity() && execution !== undefined && this.admitted(anchor, target.memberId)) {
-          const pending = [...execution.inbox.nextStep, ...execution.inbox.nextTurn]
-          if (this.ctx.agents.inputControlState(execution.session).records.some(record => record.location === 'inbox'
-            && record.input.wakeup && this.workAdmitted(anchor, target.memberId, record.input)
-            && pending.some(message => message.id === record.input.message.id))) execution.wakePending?.()
+          wakeAdmittedInput(this.ctx, execution, material => this.workAdmitted(anchor, target.memberId, material))
         }
       }
     })()
@@ -431,13 +430,28 @@ export class TeamMemberExecutions {
       })
       return directory
     }
-    const canRun = (agent: Agent): boolean => {
-      if (lifetime.signal.aborted) return false
+    const seated = (agent: Agent) => {
+      if (lifetime.signal.aborted) return
       const owner = sessionOwner(agent.session)
-      if (owner === undefined || !this.admitted(owner.anchor, owner.memberId) || !this.workPolicyAvailable(owner.anchor)) return false
+      if (owner === undefined || !this.admitted(owner.anchor, owner.memberId)) return
       const member = owner.member
-      return member.phase === 'active' && currentMemberExecution(owner.state, member).executionId === agent.id
+      return member.phase === 'active' && currentMemberExecution(owner.state, member).executionId === agent.id ? owner : undefined
     }
+    const canRun = (agent: Agent): boolean => {
+      const owner = seated(agent)
+      return owner !== undefined && this.workPolicyAvailable(owner.anchor)
+    }
+    // Current executions refused a start or claim while a Team write was being confirmed; that confirmation resumes them.
+    const refused = new Set<Agent>()
+    // Claim preparation passed its checks on a confirmed Team cut; a write appended after them does not refuse that claim.
+    const prepared = new WeakSet<Agent>()
+    const runnable = (agent: Agent) => {
+      const owner = seated(agent)
+      if (owner === undefined) return
+      if (this.workPolicyAvailable(owner.anchor)) return (material: AgentInput) => this.workAdmitted(owner.anchor, owner.memberId, material)
+      if (!this.journal.recordsConfirmed(owner.anchor)) refused.add(agent)
+    }
+    const gate = (agent: Agent): boolean => runnable(agent) !== undefined
     const input = this.ctx.agents.registerInputController(InputControllerId(`${ownerId}/input`), {
       initialize: (session) => { if (sessionOwner(session) !== undefined) input.bind(session) },
       prepare: async (session) => {
@@ -466,9 +480,13 @@ export class TeamMemberExecutions {
         }
         return { kind: 'hold' }
       },
-      canStart: canRun,
-      canClaim: canRun,
+      canStart: gate,
+      canClaim: (agent) => {
+        const owner = prepared.has(agent) ? seated(agent) : undefined
+        return owner !== undefined && !this.journal.recordsConfirmed(owner.anchor) || gate(agent)
+      },
       prepareClaim: async (agent, signal) => {
+        prepared.delete(agent)
         const owner = sessionOwner(agent.session)
         if (owner !== undefined && canRun(agent)) {
           const directory = await prepareDirectory(agent.session, owner, signal)
@@ -477,10 +495,12 @@ export class TeamMemberExecutions {
             material => this.workAdmitted(owner.anchor, owner.memberId, material), signal, () => {
               this.assertDirectory(agent.session.header, directory)
               if (!canRun(agent)) throw new TeamError('member changed before input claim', 'TEAM_MEMBER_OPERATION_STALE')
-            }, action => this.journal.transact(owner.anchor.id, action))
+            }, action => this.journal.transactConfirmed(owner.anchor, action))
+          prepared.add(agent)
         }
       },
     })
+    this.resumeConfirmed = () => { resumeConfirmedStarts(this.ctx, refused, runnable) }
     this.input = input
     this.maintenanceLifetime = lifetime.signal
     this.directoryOwner = provider.resolveExecutionDirectory === undefined ? undefined
@@ -967,7 +987,7 @@ export class TeamMemberExecutions {
         await Promise.allSettled([...this.maintenanceJobs])
         await input.dispose()
         // Registration remains exclusive until this memoized close finishes.
-        this.input = undefined; this.maintenanceLifetime = undefined
+        this.input = undefined; this.maintenanceLifetime = undefined; this.resumeConfirmed = undefined
         // A closed directory contributor cannot turn never-created queued work into inherited-directory work.
         if (provider.resolveExecutionDirectory === undefined) {
           this.directoryOwner = undefined

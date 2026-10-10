@@ -14,7 +14,7 @@ import type { Config, TeamLeadContext, TeamLeadDeliveryReceipt, TeamMessageId } 
 import { TeamId } from './types.ts'
 import type { TeamLeadBinding, TeamLeadSeat } from './lead-seat.ts'
 import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordination.ts'
-import { maintainExecution, prepareControlledClaim } from './execution-maintenance.ts'
+import { maintainExecution, prepareControlledClaim, resumeConfirmedStarts, wakeAdmittedInput } from './execution-maintenance.ts'
 import type { TeamExecutionMaintenanceRequest, TeamExecutionMaintenanceScope } from './execution-maintenance-types.ts'
 
 /** A caller-owned candidate creation request, not a seat change. */
@@ -191,10 +191,7 @@ export class TeamLeadExecutions {
         this.occupations.delete(target.executionId)
         const execution = this.ctx.agents.get(target.executionId)
         if (completed && !lifetime.aborted && identity() && execution !== undefined) {
-          const pending = [...execution.inbox.nextStep, ...execution.inbox.nextTurn]
-          if (this.ctx.agents.inputControlState(execution.session).records.some(record => record.location === 'inbox'
-            && record.input.wakeup && this.workAdmitted(anchor, record.input)
-            && pending.some(message => message.id === record.input.message.id))) execution.wakePending?.()
+          wakeAdmittedInput(this.ctx, execution, material => this.workAdmitted(anchor, material))
         }
       }
     })()
@@ -269,6 +266,19 @@ export class TeamLeadExecutions {
       this.checkRevision(lease.revision, identity.revision)
       assertActive(signal)
     }, signal)
+    // Current Lead executions refused a start or claim while a Team write was being confirmed; that confirmation resumes them.
+    const refused = new Set<Agent>()
+    // Claim preparation passed its checks on a confirmed Team cut; a write appended after them does not refuse that claim.
+    const prepared = new WeakSet<Agent>()
+    const awaitsConfirmation = (agent: Agent, anchor: Agent): boolean =>
+      this.isReady(anchor) && !this.occupations.has(agent.id) && !this.journal.recordsConfirmed(anchor)
+    const runnable = (agent: Agent) => {
+      const anchor = this.liveAnchor(agent)
+      if (!this.isCurrent(agent, anchor)) return
+      if (this.canReceive(anchor)) return (material: AgentInput) => this.workAdmitted(anchor, material)
+      if (awaitsConfirmation(agent, anchor)) refused.add(agent)
+    }
+    const gate = (agent: Agent): boolean => runnable(agent) !== undefined
     const input = owner.agents.registerInputController(controllerId, {
       admit: (agent, material) => {
         const anchor = this.liveAnchor(agent)
@@ -283,14 +293,19 @@ export class TeamLeadExecutions {
         }
         return { kind: 'reject', reason: 'Lead execution is not bound and ready' }
       },
-      canStart: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.canReceive(anchor) },
-      canClaim: (agent) => { const anchor = this.liveAnchor(agent); return this.isCurrent(agent, anchor) && this.canReceive(anchor) },
+      canStart: gate,
+      canClaim: (agent) => {
+        const anchor = this.liveAnchor(agent)
+        return prepared.has(agent) && this.isCurrent(agent, anchor) && awaitsConfirmation(agent, anchor) || gate(agent)
+      },
       prepareClaim: async (agent, signal) => {
+        prepared.delete(agent)
         const anchor = this.liveAnchor(agent)
         if (this.isCurrent(agent, anchor) && this.canReceive(anchor) && this.hasWorkPolicy()) {
           await prepareControlledClaim(this.ctx, input, agent, material => this.workAdmitted(anchor, material), signal, () => {
             if (!this.isCurrent(agent, anchor) || !this.canReceive(anchor)) throw new TeamError('Lead changed before input claim', 'TEAM_LEAD_STALE_TERM')
-          }, action => this.journal.transact(anchor.id, action))
+          }, action => this.journal.transactConfirmed(anchor, action))
+          prepared.add(agent)
         }
       },
       initialize: (session, source) => {
@@ -328,6 +343,7 @@ export class TeamLeadExecutions {
     mail.bind(input)
     const dispose = owner.effect(() => async () => {
       active = false
+      refused.clear()
       registrationAbort.abort(new TeamError('Lead execution provider has closed', 'TEAM_LEAD_PROVIDER_CLOSED'))
       try {
         await input.dispose()
@@ -465,6 +481,7 @@ export class TeamLeadExecutions {
     owner.on('agent/created', ({ agent }) => { forward(agent) })
     owner.on('agent-team/confirmed', () => {
       for (const agent of owner.agents.list()) forward(agent)
+      resumeConfirmedStarts(this.ctx, refused, runnable)
     })
     for (const agent of owner.agents.list()) forward(agent)
     return handle

@@ -26,14 +26,15 @@ export interface ExecutionMaintenanceOwner {
  * @param admitted - shared work/coordination classification.
  * @param signal - current driver cancellation.
  * @param assertCurrent - synchronous current receiver and native readiness check.
- * @param transact - existing Team serialization for controlled source writes only.
+ * @param transact - Team serialization on a confirmed journal cut; readiness is checked only inside it, so a Team
+ *   write still being confirmed is waited for instead of being reported as a changed receiver.
  */
 export async function prepareControlledClaim(ctx: Context, input: InputControllerHandle, agent: Agent,
   admitted: (input: AgentInput) => boolean, signal: AbortSignal, assertCurrent: () => void,
   transact: <R>(action: () => Promise<R>) => Promise<R>): Promise<void> {
   const check = () => { signal.throwIfAborted(); assertCurrent() }
   for (const record of ctx.agents.inputControlState(agent.session).records) {
-    check()
+    signal.throwIfAborted()
     if (record.location === 'held') await transact(async () => {
       check()
       if (admitted(record.input)) await input.preload(agent, record.input)
@@ -41,22 +42,45 @@ export async function prepareControlledClaim(ctx: Context, input: InputControlle
       check()
     })
   }
-  const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
-  const state = ctx.agents.inputControlState(agent.session)
-  const obsolete = pending.flatMap((message) => {
-    const record = state.records.find(record => record.input.message.id === message.id)
-    return record !== undefined && !admitted(record.input) ? [message.id] : []
-  })
-  if (obsolete.length > 0) {
-    await transact(async () => {
-      check()
-      const current = ctx.agents.inputControlState(agent.session)
-      const exact = obsolete.filter(id => current.records.some(record => record.input.message.id === id && !admitted(record.input)))
-      await input.holdPending(agent, exact)
-      for (const id of exact) { check(); await input.release(agent, id) }
+  await transact(async () => {
+    check()
+    const state = ctx.agents.inputControlState(agent.session)
+    const obsolete = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].flatMap((message) => {
+      const record = state.records.find(record => record.input.message.id === message.id)
+      return record !== undefined && !admitted(record.input) ? [message.id] : []
     })
+    if (obsolete.length > 0) {
+      await input.holdPending(agent, obsolete)
+      for (const id of obsolete) { check(); await input.release(agent, id) }
+    }
+    check()
+  })
+}
+
+/** Wake an execution only for pending waking input that its seat still admits.
+ * @param ctx - native controller owner.
+ * @param execution - exact live execution.
+ * @param admitted - shared work/coordination classification.
+ */
+export function wakeAdmittedInput(ctx: Context, execution: Agent, admitted: (input: AgentInput) => boolean): void {
+  const pending = [...execution.inbox.nextStep, ...execution.inbox.nextTurn]
+  if (ctx.agents.inputControlState(execution.session).records.some(record => record.location === 'inbox'
+    && record.input.wakeup && admitted(record.input)
+    && pending.some(message => message.id === record.input.message.id))) execution.wakePending?.()
+}
+
+/** Wake live executions whose start or claim was refused while a Team write was being confirmed.
+ * @param ctx - native controller owner.
+ * @param waiting - refused executions; each is removed, and a seat still refused for confirmation adds it again.
+ * @param runnable - the seat's start gate, returning its admission classification when the execution can run now.
+ */
+export function resumeConfirmedStarts(ctx: Context, waiting: Set<Agent>,
+  runnable: (agent: Agent) => ((input: AgentInput) => boolean) | undefined): void {
+  for (const agent of [...waiting]) {
+    waiting.delete(agent)
+    const admitted = ctx.agents.get(agent.id) === agent ? runnable(agent) : undefined
+    if (admitted !== undefined) wakeAdmittedInput(ctx, agent, admitted)
   }
-  check()
 }
 
 /** Stop only the preview's running turn, then retain source custody until callback and handback settle.

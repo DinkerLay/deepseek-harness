@@ -146,6 +146,17 @@ export class TeamJournal {
   }
 
   /**
+   * Serialize an operation that reads Team admission facts after every earlier write has been confirmed.
+   * A write still being confirmed is waited for; a failed checkpoint rejects before the operation runs.
+   * @param root - exact live journal owner.
+   * @param operation - read-check-append operation under the Team lock.
+   * @returns the operation result.
+   */
+  async transactConfirmed<T>(root: Agent, operation: () => Promise<T>): Promise<T> {
+    return await this.transact(root.id, async () => { await this.confirmPending(root); return await operation() })
+  }
+
+  /**
    * Append and checkpoint one root-owned Team event before publication.
    * @param root - exact live Lead whose Session owns the event.
    * @param type - Team event discriminant.

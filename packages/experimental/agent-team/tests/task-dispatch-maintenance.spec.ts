@@ -17,7 +17,7 @@ const text = (value: string) => [{ type: 'text' as const, text: value }]
 const gate = () => Promise.withResolvers<undefined>()
 
 async function setup(script: NonNullable<Parameters<typeof nativeFacadeHarness>[0]>['script'] = [],
-  maxTaskExtensionBytes?: number) {
+  maxTaskExtensionBytes?: number, resolveExecutionDirectory?: () => Promise<undefined>) {
   let leadOwner: LeadExecutionHandle | undefined
   let removeMemberPreset: (() => Promise<void>) | undefined
   const test = await nativeFacadeHarness({ config: { controlledMode: facadeControlledMode, messageRetryDelayMs: 5,
@@ -48,7 +48,8 @@ async function setup(script: NonNullable<Parameters<typeof nativeFacadeHarness>[
       return { ...association, current: association.current && obsolete !== true }
     } }
   let writer = test.ctx.agentTeams.installTaskExtension(extension)
-  const memberOwner = test.ctx.agentTeams.installMemberExecutions({ id: 'task-maintenance-member-owner' })
+  const memberOwner = test.ctx.agentTeams.installMemberExecutions({ id: 'task-maintenance-member-owner',
+    ...resolveExecutionDirectory === undefined ? {} : { resolveExecutionDirectory } })
   const member = (await test.ctx.agentTeams.spawnTeammate(test.lead, { name: 'shared-worker', context: 'fresh',
     provider: 'spawn', presetId: 'task-maintenance-preset', prompt: text('Registration is not work'), signal })).member
   const tasks: TeamTaskSnapshot[] = [1, 2].map(number => ({ id: TeamTaskId(`task-${number}`), revision: 1,
@@ -288,6 +289,130 @@ describe('native Task dispatch maintenance', () => {
     expect(test.adapter.requests).toHaveLength(0)
     expect(test.ctx.agents.inputControlState(execution.session).records.find(record =>
       record.input.message.id === second.message.id)?.location).toBe('held')
+  })
+
+  it('lets a member claim wait for an unrelated Lead write that is still being confirmed', async () => {
+    const stalled = gate(), resolving = gate(), flushing = gate()
+    let stall = false
+    const test = await setup([textResponse('claimed on a confirmed cut')], undefined, async () => {
+      if (stall) { stall = false; stalled.resolve(undefined); await resolving.promise }
+      return undefined
+    })
+    const execution = await test.resident()
+    const original = test.ctx.sessions.flush.bind(test.ctx.sessions)
+    let holdLead = false
+    vi.spyOn(test.ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === test.lead.session && holdLead) { holdLead = false; await flushing.promise }
+      return await original(session)
+    })
+    stall = true
+    await test.ctx.agents.receiveInput(execution, test.ordinary('member-claim-wake', 'next-turn', true))
+    // The member's claim is resolving its directory, outside the Team lock, when the Lead write appends.
+    await stalled.promise
+    holdLead = true
+    const unrelated = test.writer.commitRecord(test.lead, () => ({ recordId: 'unrelated-lead-write', dataJson: '{}' }))
+    await vi.waitFor(() => { expect(test.writer.recordsConfirmed(test.lead)).toBe(false) })
+    resolving.resolve(undefined)
+    flushing.resolve(undefined)
+    await unrelated
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    await execution.whenIdle()
+    expect(execution.session.snapshotEvents().flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : []))
+      .not.toContain('error')
+  })
+
+  it.each(['lead', 'member'] as const)('claims %s work admitted on a confirmed cut although a Team write appends right after that check', async (kind) => {
+    const test = await setup([textResponse('claimed in the first turn')])
+    const execution = kind === 'lead' ? test.lead : await test.resident()
+    const journal = Reflect.get(test.ctx.agentTeams, 'journal') as TeamJournal
+    const transactConfirmed = journal.transactConfirmed.bind(journal)
+    let later: Promise<unknown> | undefined
+    vi.spyOn(journal, 'transactConfirmed').mockImplementation(async <T>(root: import('@deepseek-ai/dsh-agent').Agent,
+      action: () => Promise<T>) => await transactConfirmed(root, async () => {
+      const result = await action()
+      // Queued behind the claim check, this write appends as soon as the Team lock is released.
+      later ??= test.writer.commitRecord(test.lead, () => ({ recordId: `later-${kind}-write`, dataJson: '{}' }))
+      return result
+    }))
+    const before = execution.session.snapshotEvents().length
+    await test.ctx.agents.receiveInput(execution, test.ordinary(`${kind}-first-turn-wake`, 'next-turn', true))
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    await later
+    await execution.whenIdle()
+    expect(later).toBeDefined()
+    expect(execution.session.snapshotEvents().slice(before)
+      .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['completed'])
+  })
+
+  it.each(['lead', 'member'] as const)('starts %s work whose start was refused only while a Team write was being confirmed', async (kind) => {
+    const test = await setup([textResponse('started after confirmation')])
+    const execution = kind === 'lead' ? test.lead : await test.resident()
+    const wake = test.ordinary(`${kind}-accepted-wake`, 'next-turn', true)
+    // Accepted on a confirmed cut but not started yet; a Team write begins before the driver starts its turn.
+    const original = test.ctx.sessions.flush.bind(test.ctx.sessions), flushing = gate()
+    let unrelated: Promise<unknown> | undefined
+    vi.spyOn(test.ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === execution.session && unrelated === undefined
+        && execution.inbox.nextTurn.some(message => message.id === wake.message.id)) {
+        unrelated = test.writer.commitRecord(test.lead, () => ({ recordId: `unrelated-${kind}-write`, dataJson: '{}' }))
+        const result = await original(session)
+        await vi.waitFor(() => { expect(test.writer.recordsConfirmed(test.lead)).toBe(false) })
+        return result
+      }
+      if (session === test.lead.session && unrelated !== undefined && !test.writer.recordsConfirmed(test.lead)) {
+        await flushing.promise
+      }
+      return await original(session)
+    })
+    expect(await test.ctx.agents.receiveInput(execution, wake)).toMatchObject({ location: 'inbox' })
+    expect(test.ctx.agents.canStartInput(execution)).toBe(false)
+    expect(test.adapter.requests).toHaveLength(0)
+    flushing.resolve(undefined)
+    await unrelated
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) })
+    expect(JSON.stringify(test.adapter.requests)).toContain(`${kind}-accepted-wake`)
+  })
+
+  it.each(['unloaded', 'unclassified'] as const)('does not resume a refused member start that is %s when the Team write is confirmed', async (change) => {
+    const test = await setup([textResponse('must not start')])
+    if (change === 'unclassified') await test.setBlocked()
+    const execution = await test.resident()
+    const wake = test.ordinary(`refused-${change}-wake`, 'next-turn', true)
+    const original = test.ctx.sessions.flush.bind(test.ctx.sessions), flushing = gate(), writer = test.writer
+    let unrelated: Promise<unknown> | undefined, held = false
+    vi.spyOn(test.ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === execution.session && unrelated === undefined
+        && execution.inbox.nextTurn.some(message => message.id === wake.message.id)) {
+        // The writer may leave before its own acknowledgement; only the journal confirmation matters here.
+        unrelated = writer.commitRecord(test.lead, () => ({ recordId: `unrelated-${change}-write`, dataJson: '{}' }))
+          .catch((error: unknown) => error)
+        const result = await original(session)
+        await vi.waitFor(() => { expect(writer.recordsConfirmed(test.lead)).toBe(false) })
+        return result
+      }
+      if (session === test.lead.session && unrelated !== undefined && !held) {
+        held = true
+        await flushing.promise
+      }
+      return await original(session)
+    })
+    await test.ctx.agents.receiveInput(execution, wake)
+    expect(test.ctx.agents.canStartInput(execution)).toBe(false)
+    // Unloading removes the live execution; without the Task writer a pause fact can no longer be interpreted.
+    if (change === 'unloaded') {
+      const closing = test.closeResident()
+      await vi.waitFor(() => { expect(test.ctx.agents.get(execution.id)).toBeUndefined() })
+      flushing.resolve(undefined)
+      await closing
+      await unrelated
+    } else {
+      writer.dispose()
+      flushing.resolve(undefined)
+      await unrelated
+      await execution.whenIdle()
+      expect(execution.inbox.nextTurn.map(message => message.id)).toEqual([wake.message.id])
+    }
+    expect(test.adapter.requests).toHaveLength(0)
   })
 
   it.each(['lead', 'member'] as const)('honors late coordination wake intent after short %s occupation without changing original input ids', async (kind) => {
