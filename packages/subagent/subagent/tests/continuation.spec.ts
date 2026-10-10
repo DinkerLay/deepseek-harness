@@ -4426,3 +4426,250 @@ describe('SubagentRuntime.interrupt', () => {
     await drained
   })
 })
+
+describe('resident continuable children', () => {
+  /** Settlement notices the parent received, in delivery order. */
+  function settlementNotices(parent: Agent): string[] {
+    return parent.session.snapshotEvents().flatMap(event => event.type === 'agent/inbox/spliced'
+      ? event.data.inserted.filter(item => item.source.kind === 'subagent-settled').map(item => String(item.id)) : [])
+  }
+
+  it('settles each run with a parent notice and an end edge but keeps the child resident when idle release is off', async () => {
+    const { ctx, parent } = await setup([textResponse('first answer'), textResponse('second answer')])
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false })
+    parkParent(ctx, parent)
+    const starts: SubagentRunInfo[] = []
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/start', info => void starts.push(info))
+    ctx.on('subagent/end', info => void ends.push(info))
+    try {
+      const started = await ctx.subagents.startContinuable(startSpec(parent))
+      await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+      expect(ends[0]!.lastAssistantMessage).toEqual([{ type: 'text', text: 'first answer' }])
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+      const child = ctx.agents.get(started.childId)
+      expect(child).toBeDefined()
+
+      await queuePrompt(ctx, parent, started.childId, message('again'))
+      await vi.waitFor(() => { expect(ends).toHaveLength(2) })
+      expect(ends[1]!.lastAssistantMessage).toEqual([{ type: 'text', text: 'second answer' }])
+      expect(starts).toHaveLength(2)
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(2) })
+      // The same live Agent ran both turns: no cold resume between them.
+      expect(ctx.agents.get(started.childId)).toBe(child)
+      await passSettlementCheck(ctx, started.childId)
+      expect(ends).toHaveLength(2)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  /** Hold the first settlement-notice policy evaluation: the window in which the parent is still being told about a run. */
+  function holdFirstNotice(ctx: Context) {
+    const entered = Promise.withResolvers<undefined>()
+    const gate = Promise.withResolvers<undefined>()
+    let calls = 0
+    const remove = ctx.subagents.registerSettlementNoticePolicy(async () => {
+      calls += 1
+      if (calls === 1) {
+        entered.resolve(undefined)
+        await gate.promise
+      }
+      return undefined
+    })
+    return { entered: entered.promise, open: () => { gate.resolve(undefined) }, calls: () => calls, remove }
+  }
+
+  it('reports a run whose input arrives while the parent is still being told about the previous run', async () => {
+    const { ctx, parent } = await setup([textResponse('first answer'), textResponse('second answer')])
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false, settlementNoticePolicyTimeoutMs: 60_000 })
+    parkParent(ctx, parent)
+    const starts: SubagentRunInfo[] = []
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/start', info => void starts.push(info))
+    ctx.on('subagent/end', info => void ends.push(info))
+    const hold = holdFirstNotice(ctx)
+    try {
+      const started = await ctx.subagents.startContinuable(startSpec(parent))
+      await hold.entered
+      await queuePrompt(ctx, parent, started.childId, message('again'))
+      await vi.waitFor(() => { expect(starts).toHaveLength(2) })
+      hold.open()
+      await vi.waitFor(() => { expect(ends).toHaveLength(2) })
+      expect(ends.map(end => end.lastAssistantMessage)).toEqual([
+        [{ type: 'text', text: 'first answer' }], [{ type: 'text', text: 'second answer' }]])
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(2) })
+      expect(hold.calls()).toBe(2)
+    } finally {
+      hold.remove()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('accounts once for a run whose child is released while the parent is still being told about it', async () => {
+    const { ctx, parent } = await setup([textResponse('only answer')])
+    await ctx.plugin(InvariantRegistry)
+    await ctx.plugin(SubagentInvariant)
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false, settlementNoticePolicyTimeoutMs: 60_000 })
+    parkParent(ctx, parent)
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', info => void ends.push(info))
+    const hold = holdFirstNotice(ctx)
+    try {
+      const started = await ctx.subagents.startContinuable(startSpec(parent))
+      await hold.entered
+      await ctx.subagents.drainContinuableChildren(parent, [started.childId])
+      expect(ctx.agents.get(started.childId)).toBeUndefined()
+      // The release found no open run, so the account already in flight stays the only one.
+      expect(hold.calls()).toBe(1)
+      expect(ends).toHaveLength(0)
+      hold.open()
+      await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+      expect(ends[0]!.lastAssistantMessage).toEqual([{ type: 'text', text: 'only answer' }])
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+      expect(hold.calls()).toBe(1)
+    } finally {
+      hold.remove()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('frees a slot by releasing the least recently used idle resident child, without a second settlement notice', async () => {
+    const { ctx, parent } = await setup([textResponse('first child'), textResponse('second child'), textResponse('first again')])
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false, maxActiveSubagents: 1 })
+    parkParent(ctx, parent)
+    try {
+      const first = await ctx.subagents.startContinuable(startSpec(parent))
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+      expect(ctx.agents.get(first.childId)).toBeDefined()
+      const second = await ctx.subagents.startContinuable(startSpec(parent))
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(2) })
+      expect(ctx.agents.get(first.childId)).toBeUndefined()
+      expect(ctx.agents.get(second.childId)).toBeDefined()
+      // The released child cold-resumes on its next input, freeing the slot of the other idle child in turn.
+      await queuePrompt(ctx, parent, first.childId, message('again'))
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(3) })
+      expect(ctx.agents.get(second.childId)).toBeUndefined()
+      expect(ctx.agents.get(first.childId)).toBeDefined()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('releases the least recently settled of several idle resident children', async () => {
+    const { ctx, parent } = await setup([textResponse('first child'), textResponse('second child'), textResponse('third child')])
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false, maxActiveSubagents: 2 })
+    parkParent(ctx, parent)
+    try {
+      const children = []
+      for (const count of [1, 2, 3]) {
+        children.push(await ctx.subagents.startContinuable(startSpec(parent)))
+        await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(count) })
+      }
+      expect(children.map(child => ctx.agents.get(child.childId) !== undefined)).toEqual([false, true, true])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('never releases an idle resident child that still owns a running or stopping background job', async () => {
+    const { ctx, parent } = await setup([textResponse('first child'), textResponse('second child'), textResponse('third child'),
+      textResponse('fourth child')])
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false, maxActiveSubagents: 3 })
+    const jobsByOwner = new Map<string, readonly { readonly status: string }[]>()
+    ctx.provide('jobs', { list: (owner: string) => jobsByOwner.get(owner) ?? [] })
+    parkParent(ctx, parent)
+    try {
+      const children = []
+      for (const count of [1, 2, 3]) {
+        children.push(await ctx.subagents.startContinuable(startSpec(parent)))
+        await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(count) })
+      }
+      jobsByOwner.set(children[0]!.childId, [{ status: 'completed' }, { status: 'stopping' }])
+      jobsByOwner.set(children[2]!.childId, [{ status: 'running' }])
+      children.push(await ctx.subagents.startContinuable(startSpec(parent)))
+      await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(4) })
+      expect(children.map(child => ctx.agents.get(child.childId) !== undefined)).toEqual([true, false, true, true])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('releases a resident child whose parent closed while it was running, once its run ends', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('answer'), gate: releaseChild.promise }])
+    const { ctx } = await setupWith(adapter)
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false })
+    const host = await ctx.agents.create({
+      sessionId: SessionId('resident-running-parent'),
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', (info) => { ends.push(info) })
+    try {
+      const started = await ctx.subagents.startContinuable(startSpec(host.agent))
+      await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+      await host.dispose()
+      expect(ctx.agents.get(started.childId)).toBeDefined()
+      releaseChild.resolve(undefined)
+      await waitNoActivation(ctx, started.childId)
+      await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+    } finally {
+      releaseChild.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  for (const failRelease of [false, true]) {
+    it(`releases an idle resident child when its parent closes${failRelease ? ', logging a failed release' : ''}`, async () => {
+      const { ctx } = await setup([textResponse('answer')])
+      await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false })
+      const warnings: string[] = []
+      ctx.logger.warn = (text: string) => { warnings.push(text) }
+      const host = await ctx.agents.create({
+        sessionId: SessionId('resident-idle-parent'),
+        agentOptions: { provider: 'mock', model: 'mock' },
+      })
+      const ends: SubagentRunEndInfo[] = []
+      ctx.on('subagent/end', (info) => { ends.push(info) })
+      try {
+        const started = await ctx.subagents.startContinuable(startSpec(host.agent))
+        await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+        await ctx.agents.get(started.childId)?.whenIdle()
+        const activation = continuationActivations(ctx).get(started.childId)!
+        if (failRelease) {
+          const realDispose = activation.handle.dispose.bind(activation.handle)
+          activation.handle.dispose = async () => {
+            await realDispose()
+            throw new Error('resident cleanup failed')
+          }
+        }
+        await host.dispose()
+        await waitNoActivation(ctx, started.childId)
+        expect(ends).toHaveLength(1)
+        if (failRelease) {
+          await vi.waitFor(() => { expect(warnings.some(warning => warning.includes('release after its parent closed failed'))).toBe(true) })
+        }
+      } finally {
+        await ctx.fiber.dispose()
+      }
+    })
+  }
+
+  it('still reports the limit when no idle resident child can be released', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('busy'), gate: release.promise }])
+    const { ctx, parent } = await setupWith(adapter, { maxActiveSubagents: 1 })
+    await subagentConfigs.get(ctx)!.update({ releaseIdleChildren: false })
+    parkParent(ctx, parent)
+    try {
+      const busy = await ctx.subagents.startContinuable(startSpec(parent))
+      await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+      await expect(ctx.subagents.startContinuable(startSpec(parent))).rejects.toMatchObject({ code: 'ACTIVATION_LIMIT_REACHED' })
+      expect(ctx.agents.get(busy.childId)).toBeDefined()
+    } finally {
+      release.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+})

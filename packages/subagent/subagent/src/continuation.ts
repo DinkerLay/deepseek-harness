@@ -103,12 +103,14 @@ export class SubagentContinuationManager {
     private readonly ctx: Context,
     private readonly host: ContinuationHost,
     maxActiveSubagents: () => number,
+    releaseIdleChildren: () => boolean,
   ) {
     this.activations = new ContinuableActivationRegistry(
       ctx,
       (provider, childId, parent) => host.observeActivation(provider, childId, parent),
       maxActiveSubagents,
       facts => host.sendSettlementNotice(facts),
+      releaseIdleChildren,
     )
   }
 

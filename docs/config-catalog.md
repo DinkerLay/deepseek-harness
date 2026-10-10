@@ -3179,6 +3179,12 @@ export interface Config {
   maxDepth: Volatile<number>
   /** Bound one optional settlement-notice policy evaluation; defaults to one second. */
   settlementNoticePolicyTimeoutMs: Volatile<number>
+  /**
+   * Whether an idle continuable child is released after its run settles; defaults to true. When false, the run still
+   * settles (parent notice and lifecycle edge) but the child stays resident, keeping its slot, background jobs and
+   * runtime until it is stopped, its parent releases it or closes, or the runtime is disposed.
+   */
+  releaseIdleChildren: Volatile<boolean>
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent -->

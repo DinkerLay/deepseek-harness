@@ -269,6 +269,20 @@ export class TeamMemberExecutions {
     } finally { this.maintenanceJobs.delete(job) }
   }
 
+  /**
+   * Release resident executions a member renewal superseded. Their inputs already moved to the current execution, and a
+   * resident child is otherwise released only at retirement or runtime disposal, so it would keep its slot and jobs.
+   * @param anchor - exact live Team anchor, the direct parent of every member execution.
+   * @param memberId - stable member identity; its first execution uses the same id.
+   * @param current - execution bound by the committed renewal.
+   */
+  private async releaseSuperseded(anchor: Agent, memberId: SessionId, current: SessionId): Promise<void> {
+    const executions = this.journal.state(anchor).memberExecutions ?? []
+    const superseded = [memberId, ...executions.filter(item => item.memberId === memberId).map(item => item.executionId)]
+      .filter(id => id !== current)
+    if (superseded.length > 0) await this.ctx.subagents.drainContinuableChildren(anchor, superseded)
+  }
+
   /** Header cwd remains the sole durable execution-directory value. */
   private assertDirectory(header: SessionHeader, directory: TeamExecutionDirectory | undefined): void {
     directory?.assertCurrent?.()
@@ -942,7 +956,10 @@ export class TeamMemberExecutions {
           await confirm(anchor, memberId)
           return true
         })
-        if (alreadyReleased) return
+        if (alreadyReleased) {
+          await this.releaseSuperseded(anchor, memberId, snapshot(anchor, memberId).execution.executionId)
+          return
+        }
         const current = snapshot(anchor, memberId).control
         if (current?.operationId !== operationId || current.ownerId !== ownerId) {
           throw new TeamError('member release does not own admission', 'TEAM_MEMBER_OPERATION_STALE')
@@ -979,6 +996,8 @@ export class TeamMemberExecutions {
             ...slotTransfer === undefined ? {} : { slotTransfer } }, true)
           this.unconfirmed.delete(memberId)
         }))
+        // The operation is complete; outside its maintenance, release executions a renewal superseded.
+        await this.releaseSuperseded(anchor, memberId, snapshot(anchor, memberId).execution.executionId)
       }),
       dispose: () => closing ??= (async () => {
         lifetime.abort(new TeamError('member execution owner closed', 'TEAM_MEMBER_OWNER_CLOSED'))

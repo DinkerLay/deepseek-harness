@@ -45,6 +45,9 @@ import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } f
 class ActivationPool {
   private readonly slots = new Set<symbol>()
 
+  /** Slots currently reserved. */
+  get size(): number { return this.slots.size }
+
   /** Reserve before reconstruction; the returned release also tolerates unpublished rollback. */
   reserve(capacity: number): () => void {
     if (this.slots.size >= capacity) {
@@ -97,10 +100,12 @@ export interface Activation {
    * another runtime-incarnation reference. Non-empty blocks settlement.
    */
   readonly ownedChildren: Set<SessionId>
-  /** The lifecycle observer that emits this epoch's start and terminal edges. */
-  readonly observer: ActivationObserver
+  /** The lifecycle observer that emits the current run's start and terminal edges; replaced when a resident child settles a run. */
+  observer: ActivationObserver
   /** Whether this epoch has admitted executable input and published its run edge. */
   lifecycleStarted: boolean
+  /** When a resident child's last run settled; undefined while a run is open or the child is not resident. */
+  idleSince: number | undefined
   /** Silent Host maintenance owns this epoch until ordinary delivery enables settlement. */
   preparation: boolean
   /**
@@ -175,6 +180,13 @@ type SettlementState = 'closed' | 'retry' | 'wait' | 'ready'
 type SettlementAttempt =
   | Exclude<SettlementState, 'ready'>
   | { readonly done: Promise<void> }
+  | { readonly closed: ClosedRun }
+
+/** A resident child's run closed under its lock; its parent account and terminal edge are still owed. */
+interface ClosedRun {
+  readonly observer: ActivationObserver
+  readonly terminal: ActivationTerminal
+}
 
 /** Serialize each durable child's delivery, release, and disposal. */
 export class ChildLock {
@@ -237,6 +249,7 @@ export class ContinuableActivationRegistry {
     private readonly maxActiveSubagents: () => number,
     private readonly sendSettlementNotice: (facts: SubagentSettlementNoticeFacts) =>
     Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>,
+    private readonly releaseIdleChildren: () => boolean,
   ) {
     // Ordinary Cordis owner effects unwind in reverse registration order, which
     // cannot express the dynamic child graph. Register the private scope's
@@ -248,6 +261,14 @@ export class ContinuableActivationRegistry {
     this.ownerCtx = scope.ctx
     ctx.on('agent/disposed', ({ agent }) => {
       this.closingScopes.delete(agent)
+      // A resident child outlives its runs, not its parent: release the idle ones now; a running one is released when
+      // its run ends, because its parent is gone.
+      for (const activation of this.resident.values()) {
+        if (activation.parentSession !== agent.id || activation.idleSince === undefined) continue
+        this.dispose(activation).catch((error: unknown) => {
+          this.ctx.logger.warn(`subagent "${activation.childId}" release after its parent closed failed: ${errorChain(error)}`)
+        })
+      }
     })
     ctx.effect(function* (this: ContinuableActivationRegistry) {
       yield scope.dispose
@@ -566,7 +587,14 @@ export class ContinuableActivationRegistry {
     }
     const lineage = this.liveLineage(inputs.parent)
     const pool = this.resident.get(inputs.parent.id)?.pool ?? this.rootPool(inputs.parent)
-    const releaseSlot = pool.reserve(this.maxActiveSubagents())
+    const capacity = this.maxActiveSubagents()
+    if (pool.size >= capacity) {
+      // Free a slot by releasing the least recently used idle resident child; its Session persists and
+      // cold-resumes on its next input. With no such child the reservation below reports the limit.
+      const idle = this.idleResident(pool, lineage)
+      if (idle !== undefined) return this.dispose(idle).then(() => this.materialize(inputs))
+    }
+    const releaseSlot = pool.reserve(capacity)
     const settled = Promise.withResolvers<void>()
     const materialization: Materialization = {
       childId: inputs.childId,
@@ -722,6 +750,26 @@ export class ContinuableActivationRegistry {
     return undefined
   }
 
+  /**
+   * The least recently settled idle resident child of one pool that can be released without losing work.
+   * A child with pending input, owned children, a background job still running, or a place in the requesting
+   * lineage is never chosen.
+   * @param pool - pool that needs a slot.
+   * @param lineage - live Agents of the requesting parent chain.
+   * @returns the child to release, or undefined when none qualifies.
+   */
+  private idleResident(pool: ActivationPool, lineage: readonly Agent[]): Activation | undefined {
+    const jobs = this.ctx.get('jobs')
+    const candidates = [...this.resident.values()].flatMap(activation => activation.pool === pool
+      && activation.idleSince !== undefined && !activation.lifecycleStarted
+      && !activation.preparation && activation.inbox.closing === undefined && !activation.inbox.hasPending
+      && activation.ownedChildren.size === 0 && activation.handle.agent.status === 'idle'
+      && !lineage.includes(activation.handle.agent)
+      && !(jobs?.list(activation.childId).some(job => job.status === 'running' || job.status === 'stopping') ?? false)
+      ? [{ activation, idleSince: activation.idleSince }] : [])
+    return candidates.sort((left, right) => left.idleSince - right.idleSince)[0]?.activation
+  }
+
   /** Resolve a root's pool once; descendants inherit their resident parent's pool directly. */
   private rootPool(parent: Agent): ActivationPool {
     let pool = this.rootPools.get(parent)
@@ -797,6 +845,7 @@ export class ContinuableActivationRegistry {
       ownedChildren: new Set(),
       observer,
       lifecycleStarted: false,
+      idleSince: undefined,
       preparation: inputs.preparation === true,
       announced: false,
       poke: Promise.withResolvers<void>(),
@@ -816,8 +865,9 @@ export class ContinuableActivationRegistry {
       handle.agent.ctx.on('session/event', (session, event) => {
         if (session !== handle.agent.session || activation.preparation || activation.lifecycleStarted
           || event.type !== 'agent/inbox/spliced' || event.data.inserted.length === 0) return
-        observer.start(handle.agent, event.seq)
+        activation.observer.start(handle.agent, event.seq)
         activation.lifecycleStarted = true
+        activation.idleSince = undefined
       })
     } catch (error: unknown) {
       /* v8 ignore next -- rollback failure must not mask the admission failure
@@ -885,6 +935,12 @@ export class ContinuableActivationRegistry {
           continue
         }
 
+        const resident = !this.releaseIdleChildren()
+        // A resident child settles each run without releasing its runtime; the next delivery starts a new run.
+        if (resident && !activation.lifecycleStarted) {
+          await idleObservation.promise
+          continue
+        }
         const finalSeq = activation.handle.agent.session.seq
         await this.flushFinalState(activation)
         const attempt = await this.locks.run<SettlementAttempt>(activation.childId, () => {
@@ -893,24 +949,31 @@ export class ContinuableActivationRegistry {
           if (activation.handle.agent.session.seq !== finalSeq) {
             return Promise.resolve('retry')
           }
-          // The task starts synchronously, so idle ownership and Inbox closure share one turn.
-          let done!: Promise<void>
+          // The task starts synchronously, so idle ownership and either the resident run's close or Inbox closure share
+          // one turn. A resident child whose parent is gone is released like any other.
+          let outcome!: Exclude<SettlementAttempt, string>
           try {
             void activation.handle.agent.runMaintenance(() => {
-              done = this.dispose(activation, true)
+              const closed = resident ? this.closeResidentRun(activation) : undefined
+              outcome = closed === undefined ? { done: this.dispose(activation, true) } : { closed }
               return Promise.resolve()
             })
           } catch {
             // Another activity won the idle phase after the preceding observation.
             return Promise.resolve('retry')
           }
-          return Promise.resolve({ done })
+          return Promise.resolve(outcome)
         })
 
         if (attempt === 'closed') return
         if (attempt === 'retry') continue
         if (attempt === 'wait') {
           await idleObservation.promise
+          continue
+        }
+        if ('closed' in attempt) {
+          await this.notifySettlement(activation, attempt.closed.terminal)
+          attempt.closed.observer.settle(undefined)
           continue
         }
         try {
@@ -923,6 +986,25 @@ export class ContinuableActivationRegistry {
         return
       }
     })()
+  }
+
+  /**
+   * Close a resident child's finished run inside its child lock: capture the run, arm the next observer and mark the
+   * child idle in one step. Input admitted while the parent is being told then opens a new observed run, and a
+   * concurrent disposal finds no open run to account for again.
+   * @param activation - idle resident child with a started run.
+   * @returns the closed run whose parent notice and terminal edge the caller still owes, or undefined when the parent
+   *   is gone and the caller releases the child as an ordinary settlement.
+   */
+  private closeResidentRun(activation: Activation): ClosedRun | undefined {
+    const parent = this.ctx.agents.get(activation.parentSession)
+    if (parent === undefined) return undefined
+    const observer = activation.observer
+    observer.capture(activation.handle.agent)
+    activation.observer = this.observeActivation(activation.provider, activation.childId, parent)
+    activation.lifecycleStarted = false
+    activation.idleSince = Date.now()
+    return { observer, terminal: observer.terminal(undefined) }
   }
 
   /** Classify one Inbox and owned-child observation without reading Agent execution state. */
@@ -1008,7 +1090,8 @@ export class ContinuableActivationRegistry {
     }
     this.resident.delete(childId)
     activation.releaseSlot()
-    await this.notifySettlement(activation, activation.observer.terminal(failure))
+    // A resident child whose last run was already closed owes its parent no second account; the watcher sends that one.
+    if (activation.idleSince === undefined) await this.notifySettlement(activation, activation.observer.terminal(failure))
     this.releaseOwnership(childId)
     if (activation.lifecycleStarted) activation.observer.settle(failure)
     if (failure !== undefined) throw failure

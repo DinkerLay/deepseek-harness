@@ -235,6 +235,12 @@ export interface Config {
   maxDepth: Volatile<number>
   /** Bound one optional settlement-notice policy evaluation; defaults to one second. */
   settlementNoticePolicyTimeoutMs: Volatile<number>
+  /**
+   * Whether an idle continuable child is released after its run settles; defaults to true. When false, the run still
+   * settles (parent notice and lifecycle edge) but the child stays resident, keeping its slot, background jobs and
+   * runtime until it is stopped, its parent releases it or closes, or the runtime is disposed.
+   */
+  releaseIdleChildren: Volatile<boolean>
 }
 
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
@@ -243,6 +249,7 @@ export class SubagentRuntime extends TypertRemoteService {
     maxDepth: z.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(1).volatile(),
     maxActiveSubagents: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(8).volatile(),
     settlementNoticePolicyTimeoutMs: z.number().step(1).min(1).max(60_000).default(1_000).volatile(),
+    releaseIdleChildren: z.boolean().default(true).volatile(),
   })
   private providers = new Map<string, SubagentProvider>()
   private readonly settlementNoticePolicies = new Map<symbol, {
@@ -266,7 +273,7 @@ export class SubagentRuntime extends TypertRemoteService {
         prepareContinuable: (name, request) => this.prepareProviderContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
         sendSettlementNotice: facts => this.sendSettlementNotice(facts),
-      }, () => this.config.maxActiveSubagents.get())
+      }, () => this.config.maxActiveSubagents.get(), () => this.config.releaseIdleChildren.get())
       this.continuations = manager
       childCtx.effect(() => () => {
         /* v8 ignore else -- one injected binding owns the slot until its fiber disposes. */
