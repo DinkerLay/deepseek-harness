@@ -570,10 +570,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the committed next task revision.',
       },
       {
-        signature: 'async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal): Promise<TeamWaitResult>',
+        signature: 'async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult>',
         description: 'Wait for the next Team-domain or member-status change.',
-        parameters: [{ name: 'caller', description: 'exact live Team member waiting for activity.' }, { name: 'timeoutMs', description: 'bounded wait duration from ten seconds through one hour.' }, { name: 'signal', description: 'caller cancellation for the wait only.' }],
-        returns: 'one observed change or a timeout result.',
+        parameters: [{ name: 'caller', description: 'exact live Team member waiting for activity.' }, { name: 'timeoutMs', description: 'bounded wait duration from ten seconds through one hour.' }, { name: 'signal', description: 'caller cancellation for the wait only.' }, { name: 'options', description: '`userInput` also ends the wait for a user message already pending in, or entering, the caller\'s own inbox; a Lead coordination that has frozen the Team ignores user input, which belongs to the next Lead.' }],
+        returns: 'one observed change, the inbox list of the user message that ended the wait, or a timeout result.',
       },
       {
         signature: 'interrupt(caller: Agent, targetName: string): { previousStatus: \'running\' | \'inactive\' }',
@@ -8588,8 +8588,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly resultUnavailable?: true;\n    readonly dispatchBlocked?: true;\n    readonly writeScopeWarnings: string[];\n}',
   },
   {
+    name: 'TeamWaitOptions',
+    declaration: 'export interface TeamWaitOptions {\n    readonly userInput?: boolean | undefined;\n}',
+  },
+  {
     name: 'TeamWaitResult',
-    declaration: 'export interface TeamWaitResult {\n    readonly timedOut: boolean;\n}',
+    declaration: 'export interface TeamWaitResult {\n    readonly timedOut: boolean;\n    readonly userInput?: InboxTarget | undefined;\n}',
   },
   {
     name: 'TerminalAttachmentId',

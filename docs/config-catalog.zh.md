@@ -1248,6 +1248,8 @@ export interface Config {
    * tools are withheld and the native controlled prompts keep only recruiting, messages and waiting.
    */
   readonly productTaskTools?: boolean
+  /** End `wait_agent` when a user message reaches the waiting member, unless a Lead handoff has frozen the Team. */
+  readonly waitEndsOnUserMessage?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-tool-agent-team -->

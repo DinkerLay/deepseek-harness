@@ -13,7 +13,7 @@ import { TeamLeadExecutions } from './lead-runtime.ts'
 import type { LeadExecutionProvider, LeadExecutionHandle } from './lead-runtime.ts'
 import { TeamLeadCoordinators } from './lead-coordinator.ts'
 import type { TeamLeadCoordinator, TeamLeadCoordinatorHandle } from './lead-coordinator.ts'
-import { leadCoordinationActive } from './lead-coordination.ts'
+import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordination.ts'
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
@@ -40,6 +40,7 @@ import type {
   TeamMemberView,
   TeamMessageId,
   TeamTaskView,
+  TeamWaitOptions,
   TeamWaitResult,
   UpdateTeamTaskRequest,
 } from './types.ts'
@@ -91,6 +92,11 @@ function positiveLimit(name: string, value: number): number {
   }
   return value
 }
+
+/** Interval of the claim recheck after a user message enters a waiting member's controlled inbox. */
+const USER_INPUT_RECHECK_MS = 10
+/** Longest wait for a controlled input receipt before a user message ends the wait regardless. */
+const USER_INPUT_CONFIRM_MS = 1_000
 
 /** Agent Teams service backed by the exact live Lead Session log. */
 export class TeamService extends Service {
@@ -568,11 +574,50 @@ export class TeamService extends Service {
    * @param caller - exact live Team member waiting for activity.
    * @param timeoutMs - bounded wait duration from ten seconds through one hour.
    * @param signal - caller cancellation for the wait only.
-   * @returns one observed change or a timeout result.
+   * @param options - `userInput` also ends the wait for a user message already pending in, or entering, the caller's own
+   *   inbox; a Lead coordination that has frozen the Team ignores user input, which belongs to the next Lead.
+   * @returns one observed change, the inbox list of the user message that ended the wait, or a timeout result.
    */
-  async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal): Promise<TeamWaitResult> {
+  async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult> {
     const membership = this.roster.membership(caller)
-    return await this.activity.wait(membership.id, timeoutMs, signal)
+    if (options.userInput !== true) return await this.activity.wait(membership.id, timeoutMs, signal)
+    const pendingUserInput = (): TeamWaitResult['userInput'] => {
+      if (leadCoordinationFrozen(this.ctx.sessionProjections.stateOf(membership.root.session, 'agentTeam')?.leadCoordination)) return undefined
+      if (caller.inbox.nextStep.some(message => message.source.kind === 'user')) return 'next-step'
+      return caller.inbox.nextTurn.some(message => message.source.kind === 'user') ? 'next-turn' : undefined
+    }
+    const observed: { userInput?: TeamWaitResult['userInput'] } = {}
+    const result = await this.activity.wait(membership.id, timeoutMs, signal, (wake) => {
+      const confirming: { timer?: ReturnType<typeof setTimeout> | undefined; deadline: number } = { deadline: 0 }
+      // Controlled input is claimable only once its receipt is durable; waking earlier would refuse the next step's claim.
+      // The check repeats briefly while the receipt is confirmed, then wakes in any case so the message is never left behind.
+      const check = (): void => {
+        confirming.timer = undefined
+        const userInput = pendingUserInput()
+        if (userInput === undefined) return
+        if (!this.ctx.agents.canClaimInput(caller) && Date.now() < confirming.deadline) {
+          confirming.timer = setTimeout(check, USER_INPUT_RECHECK_MS)
+          return
+        }
+        observed.userInput = userInput
+        wake()
+      }
+      const start = (): void => {
+        if (confirming.timer !== undefined) return
+        confirming.deadline = Date.now() + USER_INPUT_CONFIRM_MS
+        check()
+      }
+      // The listener registers before the pending read, so no user message falls between them.
+      const dispose = this.ctx.on('agent/inbox/inserted', ({ agent, message }) => {
+        if (agent === caller && message.source.kind === 'user') start()
+      })
+      start()
+      return () => {
+        dispose()
+        clearTimeout(confirming.timer)
+      }
+    })
+    return observed.userInput === undefined ? result : { timedOut: false, userInput: observed.userInput }
   }
 
   /**

@@ -3,7 +3,7 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
-import type { Agent, AgentInput } from '@deepseek-ai/dsh-agent/types'
+import type { Agent, AgentInput, InboxTarget } from '@deepseek-ai/dsh-agent/types'
 import type { TeamLeadSeat } from './lead-seat.ts'
 
 /** One execution generation, with the immutable roster address kept separate. */
@@ -555,9 +555,20 @@ export interface UpdateTeamTaskRequest {
   readonly owner?: string
 }
 
+/** Optional wait conditions beyond Team activity. */
+export interface TeamWaitOptions {
+  /**
+   * Also end the wait for a user message pending in, or entering, the caller's own inbox, unless a Lead coordination has
+   * frozen the Team.
+   */
+  readonly userInput?: boolean | undefined
+}
+
 /** Result of waiting for Team activity. */
 export interface TeamWaitResult {
   readonly timedOut: boolean
+  /** Inbox list holding the user message that ended a wait requested with `userInput`. */
+  readonly userInput?: InboxTarget | undefined
 }
 
 declare module '@deepseek-ai/dsh-session/types' {

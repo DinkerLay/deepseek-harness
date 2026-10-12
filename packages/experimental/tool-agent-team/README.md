@@ -51,6 +51,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 | `controlledTasks` | `false` | Withhold Team tools from unmarked Teams in a controlled product composition; durable mode selects controlled tools and guidance |
 | `autonomousDelegation` | `false` | Let the Lead recruit when delegation helps without an explicit Team request; independent of controlled mode |
 | `productTaskTools` | `false` | In a controlled Team, leave every Task tool and Task rule to the product Task extension: native Task tools are withheld and the controlled prompts keep only recruiting, messages and waiting |
+| `waitEndsOnUserMessage` | `false` | A user message reaching the waiting member ends `wait_agent`, unless a Lead handoff has frozen the Team; the result says whether the message follows at once or when the current turn ends |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -76,7 +77,7 @@ Releasing a Task cancels its Attempt but does not interrupt an executing member 
 
 Roster tools return only their declared model-facing fields. The native runtime's startup/navigation flag remains available to the Client and does not enter creation or listing tool results.
 
-Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. A Lead that takes over the Team does not count its own running turn as another member. Task edits based on an outdated revision are rejected rather than overwriting newer work.
+Sending a message succeeds as soon as it is safely stored: the result is `accepted` (delivered now) or `queued` (waiting), and a queued message must not be resent. `wait_agent` returns `noProgress` right away when no other member is running or provisioning, telling the caller to wake a teammate first; otherwise it waits for the next change and the caller re-reads state afterward. With `waitEndsOnUserMessage`, a user message also ends the wait: a steering message follows the result at once, and a queued message reaches the caller when its turn ends, so the result asks it to report briefly and end the turn. A Lead that takes over the Team does not count its own running turn as another member. Task edits based on an outdated revision are rejected rather than overwriting newer work.
 
 -----
 

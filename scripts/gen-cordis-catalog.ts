@@ -774,6 +774,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   TeamTaskExtensionHandle: 'agent-team.md',
   TeamProjection: 'agent-team.md',
   TeamMemberProjection: 'agent-team.md',
+  TeamWaitOptions: 'agent-team.md',
   TeamWaitResult: 'agent-team.md',
   UpdateTeamTaskRequest: 'agent-team.md',
   TokenMeasurement: 'token-meter.md',

@@ -221,7 +221,7 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 ### 等待与中断
 
-`waitForChange()` 等待注册之后发生的下一条 roster、task、mailbox 或实时状态边，时长从 10 秒到 1 小时，并且只报告是否超时；运行时 dispose 会释放当前等待。取消会保留 Error reason；非 Error reason 则通过 `TEAM_WAIT_ABORTED` 报告。`interrupt()` 先验证实际现任 Lead 执行及其 Team 写权限，再以稳定锚点作为 teammate 的原始父会话寻址。continuable-subagent 的 interrupt 路径以 `keepInbox` 只取消 live teammate 的当前 turn；它既不释放任务 owner，也不删除持久 mail。
+`waitForChange()` 等待注册之后发生的下一条 roster、task、mailbox 或实时状态边，时长从 10 秒到 1 小时，并报告是否超时；运行时 dispose 会释放当前等待。带 `userInput` 时，调用方自己 inbox 里已在等待或新进入的用户消息也会结束等待：调用方能领取这条输入时立即结束（受控接收方要先确认这条输入的回执，最多等一秒，之后无论如何结束），结果写明它在哪个 inbox 列表；Lead 协调冻结 Team 期间，用户输入属于下一任 Lead，不结束等待。取消会保留 Error reason；非 Error reason 则通过 `TEAM_WAIT_ABORTED` 报告。`interrupt()` 先验证实际现任 Lead 执行及其 Team 写权限，再以稳定锚点作为 teammate 的原始父会话寻址。continuable-subagent 的 interrupt 路径以 `keepInbox` 只取消 live teammate 的当前 turn；它既不释放任务 owner，也不删除持久 mail。
 
 ### 持久性模型
 

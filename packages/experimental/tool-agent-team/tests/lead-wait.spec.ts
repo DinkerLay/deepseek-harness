@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { toolCallResponse, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { leadCoordinatorHarness } from '../../agent-team/tests/lead-coordinator-harness.ts'
 import * as toolTeam from '../src/index.ts'
 
 const signal = new AbortController().signal
 
-async function setup(term: number, activePeer = false) {
+async function setup(term: number, activePeer = false, waitEndsOnUserMessage = false) {
   const test = await leadCoordinatorHarness({}, [
     ...activePeer ? ['hang' as const] : [],
     toolCallResponse('lead-wait-call', 'wait_agent', { timeout_ms: 600_000 }),
     textResponse('Lead wait finished'),
+    ...waitEndsOnUserMessage ? [textResponse('Answering the user')] : [],
   ])
   test.writer.dispose()
   test.ctx.agentTeams.installTaskExtension({ id: 'facade-writer',
@@ -20,7 +22,7 @@ async function setup(term: number, activePeer = false) {
     update: async () => { throw new Error('Wait fixture does not update Tasks') },
   })
   test.ctx.loader.builtins['lead-wait-tools'] = toolTeam
-  await test.ctx.loader.create({ name: 'cordis:lead-wait-tools', config: { controlledTasks: true } })
+  await test.ctx.loader.create({ name: 'cordis:lead-wait-tools', config: { controlledTasks: true, waitEndsOnUserMessage } })
   await test.ctx.loader.await()
   const worker = await test.ctx.agentTeams.spawnTeammate(test.lead, { name: 'wait-worker', group: 'waiters', presetId: 'reviewer',
     provider: 'spawn', context: 'fresh', prompt: [], signal })
@@ -118,5 +120,54 @@ describe('waiting from a replaced native Lead', () => {
       await test.current.whenIdle()
       waiter.mockRestore()
     }
+  })
+})
+
+describe('a user message while the Lead waits', () => {
+  it('ends the wait and tells the Lead to end its turn to read a queued message', async () => {
+    const test = await setup(2, true, true)
+    const declaration = test.ctx.tools.schemas(test.current).find(tool => tool.name === 'wait_agent')
+    expect(declaration?.description).toContain('A user message also ends the wait.')
+    const entered = Promise.withResolvers<undefined>()
+    const original = test.ctx.agentTeams.waitForChange.bind(test.ctx.agentTeams)
+    const waiter = vi.spyOn(test.ctx.agentTeams, 'waitForChange').mockImplementation((caller, timeout, abort, options) => {
+      const pending = original(caller, timeout, abort, options)
+      entered.resolve(undefined)
+      return pending
+    })
+    try {
+      await test.begin()
+      await entered.promise
+      expect(waiter).toHaveBeenCalledWith(test.current, 600_000, expect.any(AbortSignal), { userInput: true })
+      await test.ctx.agents.receiveInput(test.current, { message: createUserMessage({ source: { kind: 'user' },
+        content: [{ type: 'text', text: 'How far along are we?' }] }), target: 'next-turn', wakeup: true })
+      await test.finished.promise
+      const ended = test.result() as { readonly timedOut: boolean; readonly userMessage?: { readonly message: string } }
+      expect(ended.timedOut).toBe(false)
+      expect(ended.userMessage?.message).toContain('end your turn to read it')
+      expect(Object.keys(ended).sort()).toEqual(['timedOut', 'userMessage'])
+      // The Lead finishes this turn on the wait result, and the queued message starts its next turn.
+      await vi.waitFor(() => {
+        expect(test.current.session.snapshotEvents().filter(event => event.type === 'turn/end').map(event => event.data.reason))
+          .toEqual([{ kind: 'completed' }, { kind: 'completed' }])
+      })
+      const asked = test.current.session.snapshotEvents().findLast(event => event.type === 'agent/inbox/spliced'
+        && event.data.target === 'next-turn' && event.data.inserted.length === 1)
+      expect(asked?.type === 'agent/inbox/spliced' ? asked.data.inserted[0]?.content : undefined)
+        .toEqual([{ type: 'text', text: 'How far along are we?' }])
+    } finally {
+      test.current.cancel({ kind: 'user' }, { keepInbox: true })
+      await test.current.whenIdle()
+      waiter.mockRestore()
+    }
+  })
+
+  it('keeps the official wait unchanged without the option', async () => {
+    const test = await setup(2, true)
+    expect(test.ctx.tools.schemas(test.current).find(tool => tool.name === 'wait_agent')?.description)
+      .not.toContain('user message')
+    expect(JSON.stringify(test.ctx.tools.get('wait_agent', scopeOf(test.current.ctx))?.output.schema)).not.toContain('userMessage')
+    test.current.cancel({ kind: 'user' }, { keepInbox: true })
+    await test.current.whenIdle()
   })
 })

@@ -30,6 +30,8 @@ export interface Config {
    * tools are withheld and the native controlled prompts keep only recruiting, messages and waiting.
    */
   readonly productTaskTools?: boolean
+  /** End `wait_agent` when a user message reaches the waiting member, unless a Lead handoff has frozen the Team. */
+  readonly waitEndsOnUserMessage?: boolean
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
@@ -40,6 +42,7 @@ export const Config: z<Config> = z.object({
   controlledTasks: z.boolean().default(false),
   autonomousDelegation: z.boolean().default(false),
   productTaskTools: z.boolean().default(false),
+  waitEndsOnUserMessage: z.boolean().default(false),
 })
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
@@ -188,6 +191,27 @@ const WAIT_VALUE_SCHEMA = {
   },
 } as const
 
+/** `wait_agent` value when a user message can end the wait (`waitEndsOnUserMessage`). */
+const WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA = {
+  ...WAIT_VALUE_SCHEMA,
+  properties: {
+    ...WAIT_VALUE_SCHEMA.properties,
+    userMessage: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        message: { type: 'string', required: true },
+      },
+    },
+  },
+} as const
+
+/** What a waiting member does about the user message that ended its wait, by when the message reaches it. */
+const USER_MESSAGE_ENDED_WAIT = {
+  'next-step': 'The user sent a message. It reaches you right after this result; respond to it before waiting again.',
+  'next-turn': 'The user sent a message. It reaches you when this turn ends: briefly report where the work stands and end your turn to read it. Teammates keep working meanwhile.',
+} as const
+
 const INTERRUPT_VALUE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -331,21 +355,22 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     if (!controlledMember) {
       register(registerTeamTool(defineTool({
         name: 'wait_agent',
-        description: 'Wait for the next teammate status, mailbox, or shared-task change after this call starts. This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.',
+        description: `Wait for the next teammate status, mailbox, or shared-task change after this call starts.${config.waitEndsOnUserMessage ? ' A user message also ends the wait.' : ''} This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.`,
         parameters: {
           timeout_ms: {
             type: 'integer',
             description: 'Wait duration in milliseconds, from 10000 through 3600000. Defaults to 30000.',
           },
         },
-        output: jsonOutput(WAIT_VALUE_SCHEMA),
+        output: jsonOutput(config.waitEndsOnUserMessage ? WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA : WAIT_VALUE_SCHEMA),
         async execute(args, exec) {
           const caller = callingAgent(exec.agent, 'wait_agent')
           const timeoutMs = args.timeout_ms ?? 30_000
           // Preserve TeamService's authoritative timeout validation before the
           // model-only no-progress shortcut.
+          const options = config.waitEndsOnUserMessage ? { userInput: true } : {}
           if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 3_600_000) {
-            return await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal)
+            await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
           }
           // The active-peer read and waiter registration must remain one synchronous
           // span; awaiting between them can lose the only peer-status edge.
@@ -361,7 +386,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
               },
             }
           }
-          return await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal)
+          const result = await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
+          return { timedOut: result.timedOut,
+            ...result.userInput === undefined ? {} : { userMessage: { message: USER_MESSAGE_ENDED_WAIT[result.userInput] } } }
         },
       })))
     }
@@ -537,6 +564,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     controlledTasks: config.controlledTasks ?? false,
     autonomousDelegation: config.autonomousDelegation ?? false,
     productTaskTools: config.productTaskTools ?? false,
+    waitEndsOnUserMessage: config.waitEndsOnUserMessage ?? false,
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
