@@ -36,7 +36,7 @@ export class TeamJournal {
   state(root: Agent): TeamState {
     const projection = this.ctx.sessionProjections.stateOf(root.session, 'agentTeam')
     if (projection === undefined) throw new Error('Agent Teams projection is not registered')
-    if (projection.failure !== undefined) throw new Error(projection.failure)
+    if (projection.failure !== undefined) throw new TeamError(`Team state cannot be read: ${projection.failure}`, 'TEAM_STATE_FAILED')
     return projection
   }
 

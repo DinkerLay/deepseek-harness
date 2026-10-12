@@ -117,7 +117,7 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 ### 成功与失败的表现
 
-成功的表现是：teammate 出现在 roster 中、消息报告 `accepted` 或 `queued`、任务 revision 随每次变更递增。可能的失败会以具体错误报告，而不会悄悄破坏状态：发给不存在的成员名字、claim 尚未就绪的任务、用过期 revision 编辑、或超出成员上限创建 teammate。
+成功的表现是：teammate 出现在 roster 中、消息报告 `accepted` 或 `queued`、任务 revision 随每次变更递增。可能的失败会以具体错误报告，而不会悄悄破坏状态：发给不存在的成员名字、claim 尚未就绪的任务、用过期 revision 编辑、或超出成员上限创建 teammate。持久状态无法读取的 Team，其操作和席位读取以 `TEAM_STATE_FAILED` 和记录的失败原因报错，而不是报成不是成员。
 
 -----
 
@@ -197,7 +197,7 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 受控成员重试只归还该 mailbox 条目尚未确认投递的 admission-held 输入。在 Team 锁内重新核对现任绑定、已确认的根日志事实和精确排队身份。短期 Subagent 输入 custody 保留真实 live driver 或独占原 cold writer，不加载其 Preset；它不停止模型，也不提供模型安全点。已捕获或已释放的输入绝不通过此路径归还。来源恢复须确认 flush 成功，普通同 ID 投递才能确认或唤醒同一原始消息。
 
-由 Lead 授权的取消操作会排在 target 本地投递之后，并用一条 `team/message/cancelled` 事件记录剩余消息 id。恢复排除已取消的 id；已送达的 id 之后不能取消，已取消的 id 也不能再确认送达。
+由 Lead 授权的取消操作会排在 target 本地投递之后，并用一条 `team/message/cancelled` 事件记录剩余消息 id。恢复排除已取消的 id；已送达的 id 之后不能取消，已取消的 id 也不能再确认送达。target 的送达确认在 target 本地投递之外写入，可能与过时工作的取消同时发生：先提交的一方结算该消息，另一方发现已结算，不再写入。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
 

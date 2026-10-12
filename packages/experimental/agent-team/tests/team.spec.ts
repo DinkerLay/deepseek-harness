@@ -643,7 +643,12 @@ describe('Team identity and provisioning', () => {
     stateOfSpy.mockImplementation((session, key) => key === 'agentTeam'
       ? { ...teamProjectionDefinition.init(session.header), failure: 'failed Team projection' }
       : stateOf(session, key))
-    expect(() => journal.state(first.lead)).toThrow('failed Team projection')
+    expect(() => journal.state(first.lead)).toThrow(expect.objectContaining({ code: 'TEAM_STATE_FAILED',
+      message: 'Team state cannot be read: failed Team projection' }))
+    // An unreadable Team is reported as such, not as a missing membership.
+    expect(() => first.ctx.agentTeams.membership(first.lead)).toThrow(expect.objectContaining({ code: 'TEAM_STATE_FAILED' }))
+    expect(() => first.ctx.agentTeams.leadSeat(first.lead)).toThrow(expect.objectContaining({ code: 'TEAM_STATE_FAILED' }))
+    expect(first.ctx.agentTeams.tryMembership(first.lead)).toBeUndefined()
     stateOfSpy.mockRestore()
   })
 

@@ -364,7 +364,8 @@ export class TeamService extends Service {
    * @returns detached native seat identity; no activation or write occurs.
    */
   leadSeat(agent: Agent): import('./lead-seat.ts').TeamLeadSeat {
-    const membership = this.roster.tryMembership(agent)
+    // An unreadable Team state is reported as such, not as a missing identity.
+    const membership = this.roster.resolveMembership(agent)
     if (membership === undefined) throw new TeamError('Agent has no current Team identity', 'TEAM_NOT_MEMBER')
     return { ...this.leadExecutions.seat(membership.root) }
   }

@@ -25,7 +25,8 @@ export interface LeadMailOperations {
   serial<T>(targetId: SessionId, operation: () => Promise<T>): Promise<T>
   dispatch(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean>
   frame(message: TeamMessageSnapshot, state: TeamState): { content: TeamMessageSnapshot['content']; source: TeamMessageSource }
-  cancelObsolete(anchor: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean>
+  /** `cancelled` when this call cancelled obsolete work; `settled` when a receipt or another writer settled it first. */
+  cancelObsolete(anchor: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<'cancelled' | 'settled' | undefined>
   admitted(anchor: Agent, input: AgentInput): boolean
 }
 
@@ -134,7 +135,8 @@ export class TeamLeadMail {
     expectedSeat?: Pick<TeamLeadSeat, 'executionId' | 'term'>, signal = this.lifecycle.signal): Promise<TeamLeadDeliveryReceipt | undefined> {
     let wake: Agent | undefined
     signal.throwIfAborted()
-    if (await this.operations.cancelObsolete(anchor, message, signal)) return
+    // A message settled first still returns its confirmed receipt below.
+    if (await this.operations.cancelObsolete(anchor, message, signal) === 'cancelled') return
     if (!this.journal.messageConfirmed(anchor, message.id)) return
     if (input === undefined && !this.operations.canDeliver(anchor)) return
     const resolved = this.receipt(this.journal.state(anchor), message.id) === undefined

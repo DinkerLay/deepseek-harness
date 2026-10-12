@@ -37,7 +37,7 @@ function receiver(test: Harness, overrides: Partial<LeadMailOperations> = {}, ma
       return source
     },
     serial: async (_id, operation) => await operation(), dispatch: async () => false,
-    cancelObsolete: async () => false,
+    cancelObsolete: async () => undefined,
     admitted: () => true,
     frame: (message, state) => ({ content: teamMessageDeliveryContent(message, state),
       source: { kind: 'team-message', teamId: TeamId(test.lead.id), messageId: message.id,

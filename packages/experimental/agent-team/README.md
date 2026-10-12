@@ -117,7 +117,7 @@ The Lead can stop a teammate's current turn without deleting its queued messages
 
 ### What success and failure look like
 
-Success looks like a teammate appearing in the roster, a message reporting `accepted` or `queued`, and task revisions advancing with each change. Likely failures are reported as specific errors instead of silently corrupting state: sending to a name that is not a member, claiming a task that is not ready, editing with an outdated revision, or creating a teammate beyond the member limit.
+Success looks like a teammate appearing in the roster, a message reporting `accepted` or `queued`, and task revisions advancing with each change. Likely failures are reported as specific errors instead of silently corrupting state: sending to a name that is not a member, claiming a task that is not ready, editing with an outdated revision, or creating a teammate beyond the member limit. A Team whose durable state cannot be read fails its operations and seat reads with `TEAM_STATE_FAILED` and the stored failure, not as a missing membership.
 
 -----
 
@@ -197,7 +197,7 @@ Owned acknowledgements require an explicit successful flush, including retries o
 
 A controlled member retry can return only that mailbox item's unacknowledged admission-held input. It rechecks the current binding, confirmed root facts and exact queued identity under the Team lock. Short Subagent input custody retains the real live driver or exclusive original cold writer without loading its Preset; it does not stop the model or provide a model safe point. Captured or released input never returns through this path. Source restoration must confirm its flush before the normal identified delivery can acknowledge or wake the same original message.
 
-Lead-authorized cancellation waits behind target-local dispatch and records the remaining message ids in one `team/message/cancelled` event. Recovery excludes cancelled ids; a delivered id cannot later be cancelled, and a cancelled id cannot be acknowledged as delivered.
+Lead-authorized cancellation waits behind target-local dispatch and records the remaining message ids in one `team/message/cancelled` event. Recovery excludes cancelled ids; a delivered id cannot later be cancelled, and a cancelled id cannot be acknowledged as delivered. A target's acknowledgement records delivery outside target-local dispatch, so it can race the cancellation of obsolete work: whichever commits first settles the message, and the other finds it settled and writes nothing.
 
 Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation.
 

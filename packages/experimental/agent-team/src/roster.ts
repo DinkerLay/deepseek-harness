@@ -110,7 +110,8 @@ export class TeamRoster {
    * @returns its root, Team identity, role, and model-facing name.
    */
   membership(agent: Agent): TeamMembership {
-    const membership = this.tryMembership(agent)
+    // An unreadable Team state is reported as such, not as a missing membership.
+    const membership = this.resolveMembership(agent)
     if (membership === undefined || membership.role === 'host') {
       throw new TeamError(`agent "${agent.id}" is not a member of an active Agent Team`, 'TEAM_NOT_MEMBER')
     }
@@ -123,51 +124,61 @@ export class TeamRoster {
    * @returns Team membership, or undefined for non-Team subagents and stale identities.
    */
   tryMembership(agent: Agent): TeamMembership | undefined {
-    if (this.ctx.agents.get(agent.id) !== agent) return undefined
     try {
-      const execution = this.ctx.sessionProjections.stateOf(agent.session, 'teamLeadExecutionRecord')
-      if (execution === undefined || execution.failure !== undefined) return undefined
-      if (execution.identity !== null) {
-        const root = this.ctx.agents.get(brandString<SessionId>(execution.identity.teamId))
-        if (root === undefined) return undefined
-        const seat = this.journal.state(root).lead
-        const marker = execution.identity
-        if (seat === undefined || seat.executionId !== agent.id || seat.term !== marker.term
-          || seat.presetId !== marker.presetId || seat.revision !== marker.revision || !this.ready(root)) return undefined
-        return { root, id: TeamId(root.id), role: 'lead', name: 'lead', term: seat.term }
-      }
-      const parentId = agent.session.header.parentSession
-      if (parentId !== undefined) {
-        const root = this.ctx.agents.get(parentId)
-        if (root !== undefined) {
-          const state = this.journal.state(root)
-          const owner = memberExecutionOwner(state, agent.id)
-          const member = owner?.member
-          if (member?.phase === 'active' || member?.phase === 'provisioning') {
-            const binding = currentMemberExecution(state, member)
-            if (binding.executionId !== agent.id) return undefined
-            return { root, id: TeamId(root.id), role: 'teammate', name: member.name,
-              memberId: member.id, generation: binding.generation }
-          }
-          // A direct child outside the durable roster is not a teammate. Ordinary
-          // host forks are independent roots; subagent descriptors distinguish
-          // provider-owned workers that must not receive a nested Team identity.
-          if (this.subagentDescriptor(agent)) return undefined
-          return this.implicitMembership(agent)
-        }
-      }
-      // A continuation can briefly outlive its parent during child-first teardown.
-      // Do not reinterpret that durable child as a new implicit root Team. A host-
-      // resumed ordinary fork has no descriptor in its own suffix and remains a
-      // valid new root whose inherited Team records stay outside its projected Team state.
-      if (this.subagentDescriptor(agent)) return undefined
-      return this.implicitMembership(agent)
+      return this.resolveMembership(agent)
     } catch {
       // This method is used by lifecycle observers and teardown discovery. A
       // malformed durable stream is surfaced by authoritative Team operations;
       // the non-throwing probe must not veto unrelated Agent lifecycle edges.
       return undefined
     }
+  }
+
+  /**
+   * Resolve a caller's Team role for an authoritative read.
+   * @param agent - candidate exact live Agent.
+   * @returns Team membership, or undefined for non-Team subagents and stale identities.
+   * @throws TEAM_STATE_FAILED when the caller's Team state cannot be read.
+   */
+  resolveMembership(agent: Agent): TeamMembership | undefined {
+    if (this.ctx.agents.get(agent.id) !== agent) return undefined
+    const execution = this.ctx.sessionProjections.stateOf(agent.session, 'teamLeadExecutionRecord')
+    if (execution === undefined || execution.failure !== undefined) return undefined
+    if (execution.identity !== null) {
+      const root = this.ctx.agents.get(brandString<SessionId>(execution.identity.teamId))
+      if (root === undefined) return undefined
+      const seat = this.journal.state(root).lead
+      const marker = execution.identity
+      if (seat === undefined || seat.executionId !== agent.id || seat.term !== marker.term
+        || seat.presetId !== marker.presetId || seat.revision !== marker.revision || !this.ready(root)) return undefined
+      return { root, id: TeamId(root.id), role: 'lead', name: 'lead', term: seat.term }
+    }
+    const parentId = agent.session.header.parentSession
+    if (parentId !== undefined) {
+      const root = this.ctx.agents.get(parentId)
+      if (root !== undefined) {
+        const state = this.journal.state(root)
+        const owner = memberExecutionOwner(state, agent.id)
+        const member = owner?.member
+        if (member?.phase === 'active' || member?.phase === 'provisioning') {
+          const binding = currentMemberExecution(state, member)
+          if (binding.executionId !== agent.id) return undefined
+          return { root, id: TeamId(root.id), role: 'teammate', name: member.name,
+            memberId: member.id, generation: binding.generation }
+        }
+        // A direct child outside the durable roster is not a teammate. Ordinary
+        // host forks are independent roots; subagent descriptors distinguish
+        // provider-owned workers that must not receive a nested Team identity.
+        if (this.subagentDescriptor(agent)) return undefined
+        return this.implicitMembership(agent)
+      }
+    }
+    // A continuation can briefly outlive its parent during child-first teardown.
+    // Do not reinterpret that durable child as a new implicit root Team. A host-
+    // resumed ordinary fork has no descriptor in its own suffix and remains a
+    // valid new root whose inherited Team records stay outside its projected Team state.
+    if (this.subagentDescriptor(agent)) return undefined
+    return this.implicitMembership(agent)
   }
 
   /** Independent roots keep their own Team; dormant or frozen anchors confer no operation authority. */

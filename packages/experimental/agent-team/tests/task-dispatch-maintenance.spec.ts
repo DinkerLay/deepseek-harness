@@ -1,5 +1,5 @@
 /** Task dispatchability over the actual native controllers, Loader, driver and JSONL. */
-import type { AgentInput, AgentHandle, InputControllerHandle } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentInput, AgentHandle, InputControllerHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import SessionQuery from '@deepseek-ai/dsh-session-query'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -10,6 +10,8 @@ import { TeamId, TeamTaskId, TeamMessageId, TeamLeadOperationId } from '../src/i
 import { nativeFacadeHarness, facadeControlledMode } from './native-facade-harness.ts'
 import { textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import type { TeamJournal } from '../src/journal.ts'
+import type { TeamMailbox } from '../src/mailbox.ts'
+import type { TeamMessageSnapshot } from '../src/types.ts'
 import { maintainExecution } from '../src/execution-maintenance.ts'
 
 const signal = new AbortController().signal
@@ -920,5 +922,106 @@ describe('native Task dispatch maintenance', () => {
     expect(execution.inbox.nextStep).toEqual([note.message])
     expect(test.ctx.agents.canStartInput(execution)).toBe(true)
     expect(test.memberOwner.read(test.lead, test.member.id).control).toBeUndefined()
+  })
+})
+
+describe('Team message settlement', () => {
+  /** The live mailbox and its private settlement writers, reached the way other suites reach private owners. */
+  function settlement(test: Awaited<ReturnType<typeof setup>>) {
+    const mailbox = Reflect.get(test.ctx.agentTeams, 'mailbox') as TeamMailbox
+    const markDelivered = (Reflect.get(mailbox, 'markDelivered') as (root: Agent, messageId: MailId, targetId: SessionId) => Promise<void>).bind(mailbox)
+    const admitted = Reflect.get(mailbox, 'workAdmitted') as (anchor: Agent, targetId: SessionId, input: AgentInput) => boolean
+    const state = () => {
+      const current = test.ctx.sessionProjections.stateOf(test.lead.session, 'agentTeam')
+      if (current === undefined) throw new Error('fixture Team projection is absent')
+      return current
+    }
+    const queue = async (input: AgentInput) => {
+      await test.writer.commitRecord(test.lead, () => ({ recordId: `queue-${input.message.id}`, dataJson: '{}', notices: [
+        { id: TeamMessageId(input.message.id), targetId: test.member.id, senderId: test.lead.id, senderName: 'lead', content: [...input.message.content] },
+      ] }))
+    }
+    /** Run `between` once, after the dispatcher found the work obsolete and before its cancellation transaction. */
+    const interpose = (input: AgentInput, between: () => void) => {
+      let ran = false
+      Reflect.set(mailbox, 'workAdmitted', (anchor: Agent, targetId: SessionId, candidate: AgentInput) => {
+        const result = admitted(anchor, targetId, candidate)
+        if (!result && !ran && candidate.message.id === input.message.id) { ran = true; between() }
+        return result
+      })
+    }
+    // The stream invariant rejects a second settlement before it is stored, so count every attempted cancellation.
+    const appends = vi.spyOn(Reflect.get(mailbox, 'journal') as TeamJournal, 'appendAndFlush')
+    const cancellations = (id: MailId) => appends.mock.calls.filter(([, type, data]) => type === 'team/message/cancelled'
+      && JSON.stringify(data).includes(id)).length
+    return { mailbox, markDelivered, state, queue, interpose, cancellations }
+  }
+
+  it('keeps one settlement when the target acknowledgement commits before obsolete work is cancelled', async () => {
+    const test = await setup()
+    const { markDelivered, state, queue, interpose, cancellations } = settlement(test)
+    const old = test.work('race-acknowledged-A'), id = TeamMessageId(old.message.id)
+    await test.setBlocked()
+    let acknowledged: Promise<void> | undefined
+    interpose(old, () => { acknowledged = markDelivered(test.lead, id, test.member.id) })
+    await queue(old)
+    await vi.waitFor(() => { expect(acknowledged).toBeDefined() })
+    await acknowledged
+    await vi.waitFor(() => { expect(state().delivered).toContain(id) })
+    await test.writer.commitRecord(test.lead, () => ({ recordId: 'after-acknowledged-race', dataJson: '{}' }))
+    expect(state().failure).toBeUndefined()
+    expect(state().cancelled.map(item => item.messageId)).not.toContain(id)
+    expect(cancellations(id)).toBe(0)
+    expect(test.ctx.agentTeams.membership(test.lead).role).toBe('lead')
+  })
+
+  it('keeps one settlement when another writer cancels the same obsolete work first', async () => {
+    const test = await setup()
+    const { mailbox, state, queue, interpose, cancellations } = settlement(test)
+    const cancel = (Reflect.get(mailbox, 'cancelObsoleteWork') as (root: Agent, message: TeamMessageSnapshot, signal: AbortSignal) => Promise<string | undefined>).bind(mailbox)
+    const old = test.work('race-cancelled-twice-A'), id = TeamMessageId(old.message.id)
+    await test.setBlocked()
+    let first: Promise<string | undefined> | undefined
+    interpose(old, () => {
+      const message = state().messages.find(candidate => candidate.id === id)
+      if (message !== undefined) first = cancel(test.lead, message, signal)
+    })
+    await queue(old)
+    await vi.waitFor(() => { expect(first).toBeDefined() })
+    expect(await first).toBe('cancelled')
+    await test.writer.commitRecord(test.lead, () => ({ recordId: 'after-cancel-race', dataJson: '{}' }))
+    expect(state().failure).toBeUndefined()
+    expect(state().cancelled.filter(item => item.messageId === id)).toHaveLength(1)
+    expect(cancellations(id)).toBe(1)
+  })
+
+  it('ignores a target acknowledgement that arrives after obsolete work was cancelled', async () => {
+    const test = await setup()
+    const { markDelivered, state, queue } = settlement(test)
+    const old = test.work('race-cancelled-A'), id = TeamMessageId(old.message.id)
+    await test.setBlocked()
+    await queue(old)
+    await vi.waitFor(() => { expect(state().cancelled.map(item => item.messageId)).toContain(id) })
+    await markDelivered(test.lead, id, test.member.id)
+    expect(state().failure).toBeUndefined()
+    expect(state().delivered).not.toContain(id)
+  })
+
+  it('contains a failed retry that was requested while the first dispatch was in flight', async () => {
+    const test = await setup()
+    const { mailbox } = settlement(test)
+    const warnings = vi.spyOn(test.ctx.logger, 'warn')
+    const release = gate()
+    Reflect.set(mailbox, 'tryDispatchAdmitted', async () => { await release.promise; return false })
+    const dispatch = Reflect.get(mailbox, 'tryDispatch') as (root: Agent, message: TeamMessageSnapshot, signal: AbortSignal) => Promise<boolean>
+    const message: TeamMessageSnapshot = { id: TeamMessageId('retry-after-flight'), targetId: test.member.id,
+      senderId: test.lead.id, senderName: 'lead', content: text('retry after flight') }
+    const first = dispatch.call(mailbox, test.lead, message, signal)
+    expect(await dispatch.call(mailbox, test.lead, message, signal)).toBe(false)
+    const journal = Reflect.get(mailbox, 'journal') as TeamJournal
+    vi.spyOn(journal, 'state').mockImplementationOnce(() => { throw new Error('Team state cannot be read: fixture') })
+    release.resolve(undefined)
+    expect(await first).toBe(false)
+    await vi.waitFor(() => { expect(warnings).toHaveBeenCalledWith('Team message "retry-after-flight" retry failed: Team state cannot be read: fixture') })
   })
 })

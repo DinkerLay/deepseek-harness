@@ -358,14 +358,18 @@ export class TeamMailbox {
     )
     const forget = (): void => {
       this.inFlightMessages.delete(message.id)
-      if (this.retryAfterFlight.delete(message.id)) queueMicrotask(() => {
+      if (!this.retryAfterFlight.delete(message.id)) return
+      // The retry requested while this dispatch was in flight is tracked and contained like every other dispatch.
+      void this.trackDispatch(Promise.resolve().then(() => {
         if (this.lifecycle.disposed || this.ctx.agents.get(root.id) !== root) return
         const state = this.journal.state(root)
         if (!state.delivered.includes(message.id)
           && !state.cancelled.some(item => item.messageId === message.id)) {
           void this.tryDispatch(root, message, this.lifecycle.signal)
         }
-      })
+      }).catch((error: unknown) => {
+        this.ctx.logger.warn(`Team message "${message.id}" retry failed: ${errorMessage(error)}`)
+      }))
     }
     void operation.then(forget, forget)
     return operation
@@ -434,26 +438,32 @@ export class TeamMailbox {
     return requestedAccepted
   }
 
-  /** Dispose only writer-associated obsolete work; ordinary or unclassifiable mail remains intact. */
-  private async cancelObsoleteWork(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
-    if (!this.workPolicyAvailable(root)) return false
+  /**
+   * Dispose only writer-associated obsolete work; ordinary or unclassifiable mail remains intact.
+   * @returns `cancelled` when this call cancelled it, `settled` when its target's acknowledgement or another writer settled
+   *   it first, and undefined when it stays deliverable.
+   */
+  private async cancelObsoleteWork(root: Agent, message: TeamMessageSnapshot,
+    signal: AbortSignal): Promise<'cancelled' | 'settled' | undefined> {
+    if (!this.workPolicyAvailable(root)) return undefined
     const material = (state: TeamState): AgentInput => message.transfer?.input ?? {
       message: Object.freeze({ ...createUserMessage({ content: teamMessageDeliveryContent(message, state),
         source: teamMessageSource(TeamId(root.id), message, state) }), id: brandString<MessageId>(message.id) }),
       target: 'next-step', wakeup: true,
     }
-    if (this.workAdmitted(root, message.targetId, material(this.journal.state(root)))) return false
+    if (this.workAdmitted(root, message.targetId, material(this.journal.state(root)))) return undefined
     return await this.journal.transact(root.id, async () => {
       signal.throwIfAborted()
-      if (this.ctx.agents.get(root.id) !== root || !this.workPolicyAvailable(root)) return false
+      if (this.ctx.agents.get(root.id) !== root || !this.workPolicyAvailable(root)) return undefined
       const state = this.journal.state(root)
-      // Target serialization and the message's in-flight reservation own its only settlement writer.
-      if (this.workAdmitted(root, message.targetId, material(state))) return false
+      // The target's acknowledgement records delivery outside target serialization, so it can commit first.
+      if (state.delivered.includes(message.id) || state.cancelled.some(item => item.messageId === message.id)) return 'settled'
+      if (this.workAdmitted(root, message.targetId, material(state))) return undefined
       await this.journal.appendAndFlush(root, 'team/message/cancelled', {
         version: 3, teamId: TeamId(root.id), targetId: message.targetId, messageIds: [message.id],
         reason: 'Task work input is no longer schedulable',
       }, true)
-      return true
+      return 'cancelled'
     })
   }
 
@@ -461,7 +471,9 @@ export class TeamMailbox {
   private async dispatchOnce(root: Agent, message: TeamMessageSnapshot, signal: AbortSignal): Promise<boolean> {
     try {
       if (!this.workPolicyAvailable(root)) return false
-      if (await this.cancelObsoleteWork(root, message, signal)) return false
+      const obsolete = await this.cancelObsoleteWork(root, message, signal)
+      if (obsolete === 'cancelled') return false
+      if (obsolete === 'settled') return this.journal.state(root).delivered.includes(message.id)
       const state = this.journal.state(root)
       if (message.targetId === root.id && state.mode !== undefined
         && (state.lead !== undefined || this.ownsLeadInput(root))) {
