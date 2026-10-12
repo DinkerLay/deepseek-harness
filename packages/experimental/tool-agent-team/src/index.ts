@@ -25,6 +25,11 @@ export interface Config {
   readonly controlledTasks?: boolean
   /** Let the Lead recruit teammates when task complexity warrants it, without an explicit Team request. */
   readonly autonomousDelegation?: boolean
+  /**
+   * In a controlled Team, the product Task extension registers every Task tool and states the Task rules: native Task
+   * tools are withheld and the native controlled prompts keep only recruiting, messages and waiting.
+   */
+  readonly productTaskTools?: boolean
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
@@ -34,6 +39,7 @@ export const Config: z<Config> = z.object({
   reviewedTasks: z.boolean().default(false),
   controlledTasks: z.boolean().default(false),
   autonomousDelegation: z.boolean().default(false),
+  productTaskTools: z.boolean().default(false),
 })
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
@@ -58,6 +64,12 @@ Recruiting a controlled member only registers it; its first Task, message, broad
 Messages clarify, remind, correct or authorize existing work; they do not replace a Task assignment. Write changed deliverables back into the Task. If urgent, interrupt the member before messaging it. When Auto blocks a member operation, decide whether it is needed. If so, write the exact action, target and scope in your own words; do not copy a member's request or result as authorization. Member-authored requirements need your actual rewrite or a separate explicit authorization. A member run-completion notice is not Task completion: inspect its unsubmitted Attempts before waiting or closing the work.`
 const CONTROLLED_MEMBER_POLICY = 'You are a controlled Agent Team teammate. Registration does not start work: your first input is the actual Team delivery, with a system identity reminder. Work only on a running Task assigned to you. A claim broadcast allows an application, not work; wait for Lead approval and an assignment. Without a running Attempt do not research, run commands, or edit files. Use Team read-only queries, a message to lead, an allowed comment response, or a broadcast application.\n\nThe Task requirements provide your division of work, user conditions and acceptance criteria. Read accepted results from direct or transitive DAG upstream Tasks through the Task Board; unrelated results remain forbidden. Submit formal work for Lead acceptance, never through messages, comments or broadcasts. If a required input has no prerequisite path, report it to lead and do not submit that Attempt; lead must stop and repair or replace it.\n\nMessage only lead for blockers and clarification. If authorized and an extra input is needed, dispatch a Task yourself; otherwise propose one for Lead review. You may comment on a related executing Task, apply to a claim broadcast while busy, or release your running Task. Do not edit, delete, reassign or complete Tasks directly. A Lead message clarifies or authorizes existing work and does not assign a new Task. When Auto blocks an operation, do not repeatedly retry it unchanged: report the operation and reason to lead, and wait for explicit authorization or another approach. Member run completion is not Task completion.'
 
+/** Controlled prompts when the product Task extension owns the Task tools and rules. */
+const PRODUCT_LEAD_POLICY = `Agent Team is available by default. You are lead. Members may message only lead, not one another. Do not use subagent, workflow, or another delegation path outside Agent Team.
+
+Recruiting a controlled member only registers it; its first Task or message delivery starts it. Messages clarify, remind or correct work; they never replace a Task assignment or a Task result. If urgent, interrupt the member before messaging it. When Auto blocks a member operation, decide whether it is needed. If so, write the exact action, target and scope in your own words; do not copy a member's request or result as authorization. Member-authored requirements need your actual rewrite or a separate explicit authorization.`
+const PRODUCT_MEMBER_POLICY = 'You are a controlled Agent Team teammate. Registration does not start work: your first input is the actual Team delivery, with a system identity reminder. Message only lead for blockers and clarification. A Lead message clarifies or authorizes existing work and does not assign new work. When Auto blocks an operation, do not repeatedly retry it unchanged: report the operation and reason to lead, and wait for explicit authorization or another approach.'
+
 const RECRUITMENT_POLICY = (autonomousDelegation: boolean): string => autonomousDelegation
   ? 'Handle simple work yourself rather than recruiting unnecessarily. This decides who executes, not whether a deliverable needs a Task: follow the product Task policy for your own work too. When delegation would materially help, use agent_find to identify a suitable Preset and recruit teammates without waiting for the user to mention Agent Team.'
   : 'Create teammates only when the user explicitly asks for Team collaboration or teammates.'
@@ -68,6 +80,7 @@ const CONTROLLED_MEMBER_TASK_ACTIONS = ['release'] as const
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
+const PRODUCT_NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents, then use send_message to wake each required inactive teammate before waiting again.'
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the
@@ -222,6 +235,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
   const membership = ctx.agentTeams.membership(agent)
   const controlledLead = config.controlledTasks && membership.role === 'lead'
   const controlledMember = config.controlledTasks && membership.role === 'teammate'
+  // The product Task extension registers the Task tools of a controlled Team and states its Task rules.
+  const productTasks = config.controlledTasks && config.productTaskTools
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
   const registerTeamTool = (tool: ToolDefinition): () => void => scoped.tools.register(tool)
@@ -229,8 +244,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
-      text: controlledLead ? `${RECRUITMENT_POLICY(config.autonomousDelegation)}\n\n${CONTROLLED_LEAD_POLICY}`
-        : controlledMember ? CONTROLLED_MEMBER_POLICY : POLICY(config.reviewedTasks, config.autonomousDelegation),
+      text: controlledLead ? `${RECRUITMENT_POLICY(config.autonomousDelegation)}\n\n${productTasks ? PRODUCT_LEAD_POLICY : CONTROLLED_LEAD_POLICY}`
+        : controlledMember ? productTasks ? PRODUCT_MEMBER_POLICY : CONTROLLED_MEMBER_POLICY
+          : POLICY(config.reviewedTasks, config.autonomousDelegation),
     }))
 
     if (!controlledMember) {
@@ -341,7 +357,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
               timedOut: false,
               noProgress: {
                 reason: 'no-active-peer' as const,
-                message: NO_ACTIVE_PEER_MESSAGE,
+                message: productTasks ? PRODUCT_NO_ACTIVE_PEER_MESSAGE : NO_ACTIVE_PEER_MESSAGE,
               },
             }
           }
@@ -393,7 +409,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       })))
     }
 
-    if (!controlledMember) {
+    if (!productTasks && !controlledMember) {
       register(registerTeamTool(defineTool({
         name: 'team_task_create',
         description: 'Create one unowned pending task on the shared Team task board.',
@@ -419,7 +435,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       })))
     }
 
-    register(registerTeamTool(defineTool({
+    if (!productTasks) register(registerTeamTool(defineTool({
       name: 'team_task_list',
       description: 'List shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
       parameters: {
@@ -451,7 +467,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(registerTeamTool(defineTool({
+    if (!productTasks) register(registerTeamTool(defineTool({
       name: 'team_task_get',
       description: 'Read the complete latest value of one shared task before changing or executing it.',
       parameters: {
@@ -466,7 +482,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(registerTeamTool(defineTool({
+    if (!productTasks) register(registerTeamTool(defineTool({
       name: 'team_task_update',
       description: config.reviewedTasks
         ? 'Compare-and-set a shared Task action. Submit results with team_task_submit_result; only the Lead accepts them.'
@@ -520,6 +536,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     reviewedTasks: config.reviewedTasks ?? false,
     controlledTasks: config.controlledTasks ?? false,
     autonomousDelegation: config.autonomousDelegation ?? false,
+    productTaskTools: config.productTaskTools ?? false,
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {

@@ -1241,6 +1241,11 @@ export interface Config {
   readonly controlledTasks?: boolean
   /** Let the Lead recruit teammates when task complexity warrants it, without an explicit Team request. */
   readonly autonomousDelegation?: boolean
+  /**
+   * In a controlled Team, the product Task extension registers every Task tool and states the Task rules: native Task
+   * tools are withheld and the native controlled prompts keep only recruiting, messages and waiting.
+   */
+  readonly productTaskTools?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-tool-agent-team -->

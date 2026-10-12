@@ -50,6 +50,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 | `reviewedTasks` | `false` | Guide Task submission and Lead acceptance instead of native completion |
 | `controlledTasks` | `false` | Withhold Team tools from unmarked Teams in a controlled product composition; durable mode selects controlled tools and guidance |
 | `autonomousDelegation` | `false` | Let the Lead recruit when delegation helps without an explicit Team request; independent of controlled mode |
+| `productTaskTools` | `false` | In a controlled Team, leave every Task tool and Task rule to the product Task extension: native Task tools are withheld and the controlled prompts keep only recruiting, messages and waiting |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 

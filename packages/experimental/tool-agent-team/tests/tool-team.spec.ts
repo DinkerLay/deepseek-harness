@@ -206,6 +206,41 @@ describe('dsh-tool-team', () => {
   })
 
 
+  it('leaves Task tools and Task rules of a controlled Team to the product extension when it owns them', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
+    const { ctx, lead } = await setup([], false,
+      { controlledTasks: true, reviewedTasks: true, productTaskTools: true }, [], { controlledMode: mode })
+    const leadTools = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
+    expect(leadTools).toEqual(expect.arrayContaining(['spawn_teammate', 'send_message', 'list_agents', 'wait_agent',
+      'interrupt_agent', 'retire_teammate', 'team_message_cancel']))
+    expect(leadTools.filter(tool => tool.startsWith('team_task_'))).toEqual([])
+    const leadPrompt = renderPrompt(await assembly(ctx, lead))
+    expect(leadPrompt).toContain('Agent Team is available by default')
+    expect(leadPrompt).toContain('they never replace a Task assignment or a Task result')
+    expect(leadPrompt).not.toContain('Task Board')
+    expect(leadPrompt).not.toContain('team_task_assign')
+    expect(leadPrompt).not.toContain('personal todo')
+    const noProgress = await execute(ctx, lead, 'wait_agent', { timeout_ms: 10_000 })
+    const progress = JSON.parse(text(noProgress)) as { readonly noProgress: { readonly reason: string; readonly message: string } }
+    expect(progress.noProgress.reason).toBe('no-active-peer')
+    expect(progress.noProgress.message).not.toContain('team_task_list')
+    const memberId = SessionId('product-member')
+    const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id),
+      member: { ...member, phase: 'active' } })
+    await ctx.sessions.flush(lead.session)
+    const child = await ctx.agents.create({ sessionId: memberId, meta: { parentSession: lead.id }, agentOptions: {} })
+    expect(ctx.tools.schemas(scopeOf(child.agent.ctx)).map(schema => schema.name).sort()).toEqual(['list_agents', 'send_message'])
+    const memberPrompt = renderPrompt(await assembly(ctx, child.agent))
+    expect(memberPrompt).toContain('Registration does not start work')
+    expect(memberPrompt).not.toContain('DAG upstream')
+    expect(memberPrompt).not.toContain('claim broadcast')
+    await child.dispose()
+  })
+
   it('selects controlled tools and guidance from the durable Team mode after config changes', async () => {
     const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
       permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }

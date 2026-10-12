@@ -50,6 +50,7 @@ kind: "package-reference"
 | `reviewedTasks` | `false` | 使用成员提交与 Lead 验收，而非原生完成流程 |
 | `controlledTasks` | `false` | 让受控产品组合中的无模式记录 Team 不获得工具；持久模式决定受控工具和指引 |
 | `autonomousDelegation` | `false` | Lead 可在委派有帮助时自主招募，无须明确提出 Team；与受控模式独立 |
+| `productTaskTools` | `false` | 受控 Team 的全部 Task 工具和 Task 规则交给产品 Task 扩展：不注册原生 Task 工具，受控提示只保留招募、消息和等待 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-tool-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
