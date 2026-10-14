@@ -229,7 +229,7 @@
     },
     {
       "name": "list_agents",
-      "description": "List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.",
+      "description": "List the Lead and the teammates in post, plus failed teammates still to settle, with an addressable target and current availability; retired teammates are only counted. inactive means no turn is executing, not a task result. provisioning and failed describe member creation. quotas.inPost counts teammates in post against their limit and quotas.identities every teammate ever created, retired ones included.",
       "parameters": {
         "type": "object",
         "properties": {}

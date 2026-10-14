@@ -170,6 +170,8 @@ export interface TeamTaskTransactionSnapshot {
   readonly members: readonly TeamMemberSnapshot[]
   readonly composition?: TeamCompositionState
   readonly nextTaskNumber: number
+  /** Controlled start quota at this cut, when configured; a start for an uncounted member needs a free place. */
+  readonly startQuota?: TeamStartQuota
 }
 
 /** Opaque extension record, independent of any Task mutation. */
@@ -312,6 +314,32 @@ export interface TeamCompositionSnapshot {
   readonly tasks: readonly TeamTaskSnapshot[]
   readonly maxMembers: number
   readonly maxActiveMembers: number
+  /** Controlled start quota at this cut, when configured. */
+  readonly startQuota?: TeamStartQuota
+}
+
+/** One quota's use at one cut. */
+export interface TeamQuotaUse {
+  readonly used: number
+  readonly limit: number
+}
+
+/** Member quotas of one Team at one cut. */
+export interface TeamMemberQuotas {
+  /** Teammates in post (provisioning, active, retiring) against `maxActiveMembers`. */
+  readonly inPost: TeamQuotaUse
+  /** Every teammate identity ever created against `maxMembers`. */
+  readonly identities: TeamQuotaUse
+  /** Controlled Teams with `maxStartedMembers`: the counted members against it, and those that could retire at once. */
+  readonly started?: TeamQuotaUse & { readonly memberIds: readonly SessionId[]; readonly retirable: readonly SessionId[] }
+}
+
+/** Members counted against a controlled Team's start quota (`maxStartedMembers`) at one cut. */
+export interface TeamStartQuota {
+  readonly limit: number
+  readonly counted: readonly SessionId[]
+  /** Counted members that could retire at once: the composition admits it and they hold no work or waiting input. */
+  readonly retirable: readonly SessionId[]
 }
 
 /** Client-safe portion of native composition policy. */
@@ -473,8 +501,19 @@ export interface Config {
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
   readonly maxActiveMembers?: number
-  /** Maximum non-deleted tasks retained by one Team. */
+  /** Maximum non-deleted tasks retained by one Team; only a write that adds one is refused at the limit. */
   readonly maxTasks?: number
+  /**
+   * Maximum unfinished (pending or in-progress) Tasks in a Team whose persisted mode is controlled; official Teams ignore
+   * it. Only a write that raises the count past it is refused. Unset applies no limit.
+   */
+  readonly maxOpenTasks?: number
+  /**
+   * Maximum started members in a Team whose persisted mode is controlled; official Teams ignore it. It counts every member
+   * that has received Team input and has not retired, a retired member still held by its change operation, and active
+   * members whose Team input is still waiting. Only a write that starts members past it is refused. Unset applies no limit.
+   */
+  readonly maxStartedMembers?: number
   /** Maximum queued messages without delivery or cancellation for one target member. */
   readonly maxPendingMessagesPerMember?: number
   /** Maximum UTF-8 bytes in one extension-owned Task transaction payload. */

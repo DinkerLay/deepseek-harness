@@ -657,6 +657,8 @@ describe('Team identity and provisioning', () => {
       'maxMembers',
       'maxActiveMembers',
       'maxTasks',
+      'maxOpenTasks',
+      'maxStartedMembers',
       'maxPendingMessagesPerMember',
       'maxMessageBytes',
       'maxTaskExtensionBytes',

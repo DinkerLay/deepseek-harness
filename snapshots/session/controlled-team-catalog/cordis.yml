@@ -18,6 +18,7 @@
           permissionTableId: snapshot-permissions
           permissionRevision: snapshot-revision
           maxOrdinaryMessageBytes: 4096
+        maxStartedMembers: 8
     - id: tool-agent-team
       name: '@deepseek-ai/dsh-experimental-tool-agent-team'
       config:

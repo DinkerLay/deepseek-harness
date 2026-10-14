@@ -831,7 +831,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:459`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:487`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -852,8 +852,19 @@ export interface Config {
   readonly maxMembers?: number
   /** Maximum provisioning, active, or retiring teammates in one Team. */
   readonly maxActiveMembers?: number
-  /** Maximum non-deleted tasks retained by one Team. */
+  /** Maximum non-deleted tasks retained by one Team; only a write that adds one is refused at the limit. */
   readonly maxTasks?: number
+  /**
+   * Maximum unfinished (pending or in-progress) Tasks in a Team whose persisted mode is controlled; official Teams ignore
+   * it. Only a write that raises the count past it is refused. Unset applies no limit.
+   */
+  readonly maxOpenTasks?: number
+  /**
+   * Maximum started members in a Team whose persisted mode is controlled; official Teams ignore it. It counts every member
+   * that has received Team input and has not retired, a retired member still held by its change operation, and active
+   * members whose Team input is still waiting. Only a write that starts members past it is refused. Unset applies no limit.
+   */
+  readonly maxStartedMembers?: number
   /** Maximum queued messages without delivery or cancellation for one target member. */
   readonly maxPendingMessagesPerMember?: number
   /** Maximum UTF-8 bytes in one extension-owned Task transaction payload. */

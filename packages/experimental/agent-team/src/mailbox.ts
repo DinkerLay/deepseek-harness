@@ -17,6 +17,7 @@ import { readPersistedSession } from './persisted.ts'
 import type { TeamRoster } from './roster.ts'
 import type { TeamState } from './projection.ts'
 import { currentMemberExecution, memberExecutionOwner, memberExecutionStarted } from './member-execution.ts'
+import { assertStartQuota } from './start-quota.ts'
 import type { TeamExecutionDirectory } from './member-runtime.ts'
 import type { TeamMemberExecution } from './types.ts'
 import { resolveActiveMember } from './roster.ts'
@@ -114,6 +115,7 @@ export class TeamMailbox {
       signal: AbortSignal, directory?: TeamExecutionDirectory) => Promise<void>,
     private readonly resolveMemberDirectory: (anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal) =>
     Promise<TeamExecutionDirectory | undefined>,
+    private readonly maxStartedMembers?: number,
   ) {
     this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
       context: leadContext,
@@ -326,6 +328,7 @@ export class TeamMailbox {
       if (teamMessageDeliveryBytes(queued, state) > this.maxMessageBytes) {
         throw new TeamError(`team message exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
+      if (queued.targetId !== root.id) assertStartQuota(state, [queued.targetId], this.maxStartedMembers)
       await this.journal.appendAndFlush(root, 'team/message/queued', {
         version: 2,
         teamId: TeamId(root.id),

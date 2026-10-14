@@ -66,6 +66,11 @@ describe('control detail adapters', () => {
     const agents = details('list_agents', 'a1 [running] — Build\na2 [ready] parent=a1 depth=1 — Review', { scope: 'descendants' })
     expect(agents?.summary).toBe('2 agents')
     expect(details('list_agents', '(no subagents)')?.empty).toBe('No results')
+    const controlled = details('list_agents', JSON.stringify({ members: [{ target: 'lead', role: 'lead', status: 'inactive', diagnostics: [] },
+      { target: 'writer', role: 'teammate', status: 'running', diagnostics: [], started: true }], retired: 1,
+    quotas: { inPost: { used: 1, limit: 32 }, identities: { used: 2, limit: 256 }, started: { used: 1, limit: 8 } } }))
+    expect(controlled?.summary).toBe('2 agents')
+    expect(controlled?.items).toHaveLength(2)
     expect(details('job_list', 'j1 [bash] running — Build')?.items[0]?.fields).toContainEqual({ label: 'Type', value: 'bash' })
     expect(details('job_list', '(no background jobs)')?.empty).toBe('No results')
     expect(details('terminal_list', renderList([], 1000))?.empty).toBe('No results')

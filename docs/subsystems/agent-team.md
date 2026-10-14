@@ -293,6 +293,8 @@ interface TeamTaskTransactionSnapshot {
   readonly members: readonly TeamMemberSnapshot[]
   readonly composition?: TeamCompositionState
   readonly nextTaskNumber: number
+  /** Controlled start quota at this cut, when configured; a start for an uncounted member needs a free place. */
+  readonly startQuota?: TeamStartQuota
 }
 ```
 

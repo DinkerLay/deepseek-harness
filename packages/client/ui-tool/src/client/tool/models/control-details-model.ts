@@ -21,6 +21,10 @@ function receipt(title: string, badge: NonNullable<DetailItem['badge']>, t: Deta
 
 function agentList(text: string, json: unknown, t: DetailTranslate): ToolDetailsModel | null {
   if (Array.isArray(json)) return detailList(inspectionItems(json, t), t('detail.agents.count', { count: json.length }), t)
+  // A controlled Team lists its members with counts beside them.
+  if (detailRecord(json) && Array.isArray(json.members)) {
+    return detailList(inspectionItems(json.members, t), t('detail.agents.count', { count: json.members.length }), t)
+  }
   if (text === '(no subagents)') return detailList([], t('detail.agents.count', { count: 0 }), t)
   const items: DetailItem[] = []
   for (const line of text.split('\n')) {

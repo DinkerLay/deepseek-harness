@@ -64,6 +64,15 @@ export function resolveActiveMember(
   return { id: member.id, name }
 }
 
+/**
+ * Whether a teammate is in post: being created, active or retiring. Retired and failed teammates keep their identity only.
+ * @param member - roster identity.
+ * @returns true for provisioning, active and retiring members.
+ */
+export function memberInPost(member: TeamMemberSnapshot): boolean {
+  return member.phase === 'provisioning' || member.phase === 'active' || member.phase === 'retiring'
+}
+
 function assertRosterChange(state: TeamState, applicationId: string | undefined, retiringId?: SessionId): void {
   const composition = compositionOf(state.composition)
   if (composition.phase === 'fixed') {
@@ -472,8 +481,7 @@ export class TeamRoster {
       if (state.members.length >= this.maxMembers) {
         throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
       }
-      const activeCount = state.members.filter(candidate => candidate.phase === 'provisioning'
-        || candidate.phase === 'active' || candidate.phase === 'retiring').length
+      const activeCount = state.members.filter(memberInPost).length
       if (activeCount >= this.maxActiveMembers) {
         throw new TeamError(`active Team member limit ${this.maxActiveMembers} reached`, 'TEAM_ACTIVE_MEMBER_LIMIT')
       }

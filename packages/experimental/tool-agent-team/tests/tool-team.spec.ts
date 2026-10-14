@@ -385,6 +385,37 @@ describe('dsh-tool-team', () => {
     expect(ctx.agentTeams.listMembers(lead)[1]).toHaveProperty('executionStarted', executionStarted)
   })
 
+  it('lists a controlled Team in post with started flags and quotas, counting retired teammates only (D68)', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
+    const { ctx, lead } = await setup([], false, { controlledTasks: true, reviewedTasks: true, productTaskTools: true }, [],
+      { controlledMode: mode, maxStartedMembers: 8 })
+    expect(ctx.tools.get('list_agents', scopeOf(lead.ctx))?.description).toContain('quotas.started counts started teammates against the start quota')
+    const row = (id: string, name: string, status: 'inactive' | 'failed' | 'retired', diagnostics: string[] = []) =>
+      ({ id: SessionId(id), name, role: 'teammate' as const, status, diagnostics })
+    vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValue([{ id: lead.id, name: 'lead', role: 'lead', status: 'inactive',
+      diagnostics: [] }, row('started-member', 'writer', 'inactive'), row('standby-member', 'checker', 'inactive'),
+    row('failed-member', 'broken', 'failed', ['Preset unavailable']), row('retired-member', 'former', 'retired')])
+    vi.spyOn(ctx.agentTeams, 'memberQuotas').mockReturnValue({ inPost: { used: 2, limit: 32 }, identities: { used: 4, limit: 256 },
+      started: { used: 1, limit: 8, memberIds: [SessionId('started-member')], retirable: [] } })
+    const result = await execute(ctx, lead, 'list_agents', {})
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(text(result))).toEqual({
+      members: [{ target: 'lead', role: 'lead', status: 'inactive', diagnostics: [] },
+        { target: 'writer', role: 'teammate', status: 'inactive', diagnostics: [], started: true },
+        { target: 'checker', role: 'teammate', status: 'inactive', diagnostics: [], started: false },
+        { target: 'broken', role: 'teammate', status: 'failed', diagnostics: ['Preset unavailable'], started: false }],
+      retired: 1,
+      quotas: { inPost: { used: 2, limit: 32 }, identities: { used: 4, limit: 256 }, started: { used: 1, limit: 8 } },
+    })
+    expect(ctx.tools.get('list_agents', scopeOf(lead.ctx))?.description).toContain('retired teammates are only counted')
+    vi.spyOn(ctx.agentTeams, 'memberQuotas').mockReturnValue({ inPost: { used: 2, limit: 32 }, identities: { used: 4, limit: 256 } })
+    // Without a start quota the rows carry no started flag.
+    const unlimited = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as { members: object[]; quotas: object }
+    expect(unlimited.members.some(member => 'started' in member)).toBe(false)
+    expect(unlimited.quotas).toEqual({ inPost: { used: 2, limit: 32 }, identities: { used: 4, limit: 256 } })
+  })
+
   it('passes a selected Preset to native roster creation and exposes its binding', async () => {
     const { ctx, lead } = await setup([])
     const preset = { id: 'reviewer', revision: 'a'.repeat(64) }

@@ -157,6 +157,20 @@ const SPAWN_VALUE_SCHEMA = {
 
 const MEMBER_LIST_VALUE_SCHEMA = { type: 'array', items: MEMBER_VIEW_SCHEMA } as const
 
+const QUOTA_USE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
+  used: { type: 'integer', required: true }, limit: { type: 'integer', required: true },
+} } as const
+
+/** Controlled Teams list members in post and failed ones still to settle; retired ones are only counted. */
+const CONTROLLED_MEMBER_LIST_VALUE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
+  members: { type: 'array', required: true, items: { ...MEMBER_VIEW_SCHEMA, properties: { ...MEMBER_VIEW_SCHEMA.properties,
+    started: { type: 'boolean', description: 'Counts against the start quota: it has received work, or work for it is waiting.' } } } },
+  retired: { type: 'integer', required: true, description: 'Retired teammates, not listed.' },
+  quotas: { type: 'object', required: true, additionalProperties: false, properties: {
+    inPost: { ...QUOTA_USE_SCHEMA, required: true }, identities: { ...QUOTA_USE_SCHEMA, required: true }, started: QUOTA_USE_SCHEMA,
+  } },
+} } as const
+
 const SEND_VALUE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -342,15 +356,39 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       },
     })))
 
-    register(registerTeamTool(defineTool({
-      name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
-      parameters: {},
-      output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
-      },
-    })))
+    if (config.controlledTasks) {
+      register(registerTeamTool(defineTool({
+        name: 'list_agents',
+        description: 'List the Lead and the teammates in post, plus failed teammates still to settle, with an addressable target and current availability; retired teammates are only counted. inactive means no turn is executing, not a task result. provisioning and failed describe member creation. quotas.inPost counts teammates in post against their limit and quotas.identities every teammate ever created, retired ones included.'
+          + (ctx.agentTeams.memberQuotas(agent).started === undefined ? ''
+            : ' started tells whether a teammate has received work; a standby teammate starts when work reaches it, and quotas.started counts started teammates against the start quota, so work for a standby teammate needs a free place.'),
+        parameters: {},
+        output: jsonOutput(CONTROLLED_MEMBER_LIST_VALUE_SCHEMA),
+        execute(_args, exec) {
+          const agent = callingAgent(exec.agent, 'list_agents')
+          const rows = ctx.agentTeams.listMembers(agent)
+          const quotas = ctx.agentTeams.memberQuotas(agent)
+          const counted = new Set(quotas.started?.memberIds ?? [])
+          return Promise.resolve({
+            members: rows.filter(row => row.status !== 'retired').map(row => ({ ...modelMember(row),
+              ...row.role === 'teammate' && quotas.started !== undefined ? { started: counted.has(row.id) } : {} })),
+            retired: rows.filter(row => row.status === 'retired').length,
+            quotas: { inPost: quotas.inPost, identities: quotas.identities,
+              ...quotas.started === undefined ? {} : { started: { used: quotas.started.used, limit: quotas.started.limit } } },
+          })
+        },
+      })))
+    } else {
+      register(registerTeamTool(defineTool({
+        name: 'list_agents',
+        description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+        parameters: {},
+        output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
+        execute(_args, exec) {
+          return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
+        },
+      })))
+    }
 
     if (!controlledMember) {
       register(registerTeamTool(defineTool({

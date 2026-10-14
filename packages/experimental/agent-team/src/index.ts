@@ -17,12 +17,13 @@ import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordinat
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
-import { TeamRoster } from './roster.ts'
+import { memberInPost, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { currentMemberExecution, memberExecutionOwner } from './member-execution.ts'
 import type { TeamMemberExecution } from './member-execution.ts'
 import { TeamMemberExecutions } from './member-runtime.ts'
 import type { TeamMemberExecutionProvider, TeamMemberExecutionHandle } from './member-runtime.ts'
+import { startQuotaOf } from './start-quota.ts'
 import { TeamTaskBoard } from './task-board.ts'
 import type { TeamTaskExtension, TeamTaskExtensionHandle } from './task-extension.ts'
 import { TeamId, TeamTaskId } from './types.ts'
@@ -37,6 +38,7 @@ import type {
   SendTeamMessageResult,
   SpawnTeammateRequest,
   SpawnTeammateResult,
+  TeamMemberQuotas,
   TeamMemberView,
   TeamMessageId,
   TeamTaskView,
@@ -116,6 +118,8 @@ export class TeamService extends Service {
     maxMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxActiveMembers: z.number().step(1).min(1).default(DEFAULT_MAX_MEMBERS),
     maxTasks: z.number().step(1).min(1).default(DEFAULT_MAX_TASKS),
+    maxOpenTasks: z.number().step(1).min(1),
+    maxStartedMembers: z.number().step(1).min(1),
     maxPendingMessagesPerMember: z.number().step(1).min(1).default(DEFAULT_MAX_PENDING_MESSAGES),
     maxMessageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_BYTES),
     maxTaskExtensionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_TASK_EXTENSION_BYTES),
@@ -123,8 +127,8 @@ export class TeamService extends Service {
   })
 
   /** Validated deployment limits used by every Team operation. */
-  private readonly config: Required<Omit<Config, 'controlledMode' | 'defaultMemberPresetId'>>
-    & Pick<Config, 'controlledMode' | 'defaultMemberPresetId'>
+  private readonly config: Required<Omit<Config, 'controlledMode' | 'defaultMemberPresetId' | 'maxOpenTasks' | 'maxStartedMembers'>>
+    & Pick<Config, 'controlledMode' | 'defaultMemberPresetId' | 'maxOpenTasks' | 'maxStartedMembers'>
 
   private readonly activity: TeamActivity
   private readonly lifecycle: TeamRuntimeLifecycle
@@ -153,6 +157,9 @@ export class TeamService extends Service {
       maxMessageRetries: positiveLimit('maxMessageRetries', config.maxMessageRetries ?? 5),
       maxActiveMembers: positiveLimit('maxActiveMembers', config.maxActiveMembers ?? DEFAULT_MAX_MEMBERS),
       maxTasks: positiveLimit('maxTasks', config.maxTasks ?? DEFAULT_MAX_TASKS),
+      ...config.maxOpenTasks === undefined ? {} : { maxOpenTasks: positiveLimit('maxOpenTasks', config.maxOpenTasks) },
+      ...config.maxStartedMembers === undefined ? {} : {
+        maxStartedMembers: positiveLimit('maxStartedMembers', config.maxStartedMembers) },
       maxPendingMessagesPerMember: positiveLimit(
         'maxPendingMessagesPerMember',
         config.maxPendingMessagesPerMember ?? DEFAULT_MAX_PENDING_MESSAGES,
@@ -200,6 +207,7 @@ export class TeamService extends Service {
       (anchor, memberId, messageId, signal, directory) =>
         this.memberExecutions.restoreMailboxHeld(anchor, memberId, messageId, signal, directory),
       (anchor, binding, signal) => this.memberExecutions.resolveExecutionDirectory(anchor, binding, signal),
+      this.config.maxStartedMembers,
     )
     this.tasks = new TeamTaskBoard(
       this.journal, this.config.maxTasks, this.config.maxTaskExtensionBytes,
@@ -216,6 +224,8 @@ export class TeamService extends Service {
       (caller, request, signal, callback) => request.target.kind === 'member'
         ? this.memberExecutions.maintain(caller, request, AbortSignal.any([signal, this.lifecycle.signal]), callback)
         : this.leadExecutions.maintain(caller, request, AbortSignal.any([signal, this.lifecycle.signal]), callback),
+      { ...this.config.maxOpenTasks === undefined ? {} : { maxOpenTasks: this.config.maxOpenTasks },
+        ...this.config.maxStartedMembers === undefined ? {} : { maxStartedMembers: this.config.maxStartedMembers } },
     )
     this.leadCoordinators = new TeamLeadCoordinators(ctx, this.journal, this.leadExecutions, this.tasks, this.config)
     this.memberExecutions = new TeamMemberExecutions(ctx, this.journal,
@@ -445,7 +455,8 @@ export class TeamService extends Service {
     const state = this.journal.state(root)
     return { composition: structuredClone(compositionOf(state.composition)),
       members: structuredClone(state.members), tasks: structuredClone(state.tasks),
-      maxMembers: this.config.maxMembers, maxActiveMembers: this.config.maxActiveMembers }
+      maxMembers: this.config.maxMembers, maxActiveMembers: this.config.maxActiveMembers,
+      ...startQuotaOf(state, this.config.maxStartedMembers) }
   }
 
   /**
@@ -473,6 +484,23 @@ export class TeamService extends Service {
    */
   listMembers(agent: Agent): TeamMemberView[] {
     return this.roster.list(this.roster.membership(agent))
+  }
+
+  /**
+   * Member quotas of the caller's Team at the current cut.
+   * @param agent - exact live Team member.
+   * @returns members in post and identities against their limits, and in a controlled Team with a start quota the members
+   *   counted against it.
+   */
+  memberQuotas(agent: Agent): TeamMemberQuotas {
+    const state = this.journal.state(this.roster.membership(agent).root)
+    const quota = startQuotaOf(state, this.config.maxStartedMembers).startQuota
+    return {
+      inPost: { used: state.members.filter(memberInPost).length, limit: this.config.maxActiveMembers },
+      identities: { used: state.members.length, limit: this.config.maxMembers },
+      ...quota === undefined ? {} : { started: { used: quota.counted.length, limit: quota.limit, memberIds: [...quota.counted],
+        retirable: [...quota.retirable] } },
+    }
   }
 
   /**

@@ -28,6 +28,7 @@ import type {
 } from './types.ts'
 import { projectTaskView, taskReady } from './task-view.ts'
 import { requiredText, writeScope } from './validation.ts'
+import { assertStartQuota, startQuotaOf } from './start-quota.ts'
 
 const TASK_GRAPH_ERROR_CODES: Record<TeamTaskGraphViolation, string> = {
   missing: 'TEAM_TASK_NOT_FOUND',
@@ -48,6 +49,7 @@ export class TeamTaskBoard {
    * @param membershipOf - resolves the exact current caller inside each transaction.
    * @param isDisposed - Team runtime admission cutoff.
    * @param dispatchNotices - non-throwing post-commit mailbox wakeup.
+   * @param quotas - controlled-Team open Task and start quotas; an absent one applies no limit.
    */
   constructor(
     private readonly journal: TeamJournal,
@@ -62,6 +64,7 @@ export class TeamTaskBoard {
     private readonly memberAdmitted: (anchor: Agent, memberId: SessionId) => boolean,
     private readonly maintainExecution: <T>(caller: Agent, request: TeamExecutionMaintenanceRequest, signal: AbortSignal,
       callback: (scope: TeamExecutionMaintenanceScope) => Promise<T>) => Promise<T>,
+    private readonly quotas: { readonly maxOpenTasks?: number; readonly maxStartedMembers?: number } = {},
   ) {}
 
   /** A disposed capability never revives when the same writer object registers again. */
@@ -176,7 +179,36 @@ export class TeamTaskBoard {
   private snapshot(state: TeamState): import('./types.ts').TeamTaskTransactionSnapshot {
     return { tasks: structuredClone(state.tasks), members: structuredClone(state.members),
       ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
-      nextTaskNumber: state.nextTaskNumber }
+      nextTaskNumber: state.nextTaskNumber, ...startQuotaOf(state, this.quotas.maxStartedMembers) }
+  }
+
+  /**
+   * The refusal for a write that adds a Task past `maxTasks`, the same on every write path.
+   * @param kept - Tasks the Team keeps that are not deleted.
+   * @returns the refusal.
+   */
+  private taskLimitReached(kept: number): TeamError {
+    return new TeamError(`Team task limit ${this.maxTasks} reached: Tasks kept that are not deleted: ${kept}; existing Tasks can `
+      + 'still change, complete or be deleted', 'TEAM_TASK_LIMIT')
+  }
+
+  /**
+   * Refuse a transaction that raises a Task count past its limit. A write that keeps or lowers a count passes, also when a
+   * lowered limit is already exceeded, so accepting, cancelling or pausing work never fails on a quota.
+   * @param state - Team state before the transaction.
+   * @param before - Tasks before.
+   * @param after - Tasks after.
+   */
+  private assertTaskLimits(state: TeamState, before: readonly TeamTaskSnapshot[], after: readonly TeamTaskSnapshot[]): void {
+    const kept = (tasks: readonly TeamTaskSnapshot[]) => tasks.filter(task => task.status !== 'deleted').length
+    if (kept(after) > this.maxTasks && kept(after) > kept(before)) throw this.taskLimitReached(kept(before))
+    const limit = this.quotas.maxOpenTasks
+    if (limit === undefined || state.mode === undefined) return
+    const open = (tasks: readonly TeamTaskSnapshot[]) => tasks.filter(task => task.status === 'pending' || task.status === 'in_progress').length
+    if (open(after) > limit && open(after) > open(before)) {
+      throw new TeamError(`Team open task limit ${limit} reached: unfinished Tasks: ${open(before)}; finish or cancel some first`,
+        'TEAM_OPEN_TASK_LIMIT')
+    }
   }
 
   /** Apply the owning writer's association and native scheduling facts to one actual input.
@@ -300,7 +332,7 @@ export class TeamTaskBoard {
       }
       const active = state.tasks.filter(task => task.status !== 'deleted').length
       if (active >= this.maxTasks) {
-        throw new TeamError(`Team task limit ${this.maxTasks} reached`, 'TEAM_TASK_LIMIT')
+        throw this.taskLimitReached(active)
       }
       const id = TeamTaskId(`task-${state.nextTaskNumber}`)
       if (state.tasks.some(task => task.id === id)) {
@@ -498,12 +530,7 @@ export class TeamTaskBoard {
           throw new TeamError('Task writer changed during checkpoint confirmation', 'TEAM_TASK_EXTENSION_UNAVAILABLE')
         }
       }
-      const plan = build({
-        tasks: structuredClone(state.tasks),
-        members: structuredClone(state.members),
-        ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
-        nextTaskNumber: state.nextTaskNumber,
-      })
+      const plan = build(this.snapshot(state))
       if ('existingTaskIds' in plan) {
         if (plan.existingTaskIds.length === 0 || new Set(plan.existingTaskIds).size !== plan.existingTaskIds.length) {
           throw new TeamError('existing Task result needs distinct Task ids', 'TEAM_INVALID_ARGUMENT')
@@ -536,9 +563,7 @@ export class TeamTaskBoard {
         }
         throw error
       }
-      if (next.tasks.filter(task => task.status !== 'deleted').length > this.maxTasks) {
-        throw new TeamError(`Team task limit ${this.maxTasks} reached`, 'TEAM_TASK_LIMIT')
-      }
+      this.assertTaskLimits(state, state.tasks, next.tasks)
       for (const update of updates) {
         const prior = state.tasks.find(task => task.id === update.task.id)
         const owner = state.taskWriters.find(writer => writer.taskId === update.task.id)?.writerId
@@ -609,11 +634,7 @@ export class TeamTaskBoard {
       }
       const records = state.extensionRecords.filter(record => record.writerId === extensionId)
         .map(({ recordId, dataJson }) => ({ recordId, dataJson }))
-      const plan = build({
-        tasks: structuredClone(state.tasks), members: structuredClone(state.members),
-        ...state.composition === undefined ? {} : { composition: structuredClone(state.composition) },
-        nextTaskNumber: state.nextTaskNumber, records: structuredClone(records),
-      })
+      const plan = build({ ...this.snapshot(state), records: structuredClone(records) })
       if ('skip' in plan) return { recordId: '', committed: false, hasNotices: false }
       if ('existingRecordId' in plan) {
         if (!records.some(record => record.recordId === plan.existingRecordId)) {
@@ -695,6 +716,8 @@ export class TeamTaskBoard {
         throw new TeamError(`Task notice "${notice.id}" exceeds ${this.maxMessageBytes} bytes`, 'TEAM_MESSAGE_TOO_LARGE')
       }
     }
+    // Every notice for a member that has not started starts it on delivery; the whole write counts at once.
+    assertStartQuota(state, notices.flatMap(notice => notice.targetId === root.id ? [] : [notice.targetId]), this.quotas.maxStartedMembers)
     return notices
   }
 

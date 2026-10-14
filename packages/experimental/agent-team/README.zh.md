@@ -50,7 +50,9 @@ kind: "package-reference"
 |---|---|---|
 | `maxMembers` | `16` | 一支团队最多可创建的 teammate 数，包括失败的 |
 | `maxActiveMembers` | `16` | 同时处于 provisioning、active 或 retiring 的 teammate 上限 |
-| `maxTasks` | `256` | 任务板上最多的活动任务数 |
+| `maxTasks` | `256` | 任务板上未删除的任务上限；只有新增任务的写入在达到上限时被拒绝 |
+| `maxOpenTasks` | 未设置 | 持久模式为受控的 Team：未完成（pending 或 in-progress）任务的上限；只拒绝使计数超出上限的写入 |
+| `maxStartedMembers` | 未设置 | 持久模式为受控的 Team：已启动 teammate 的上限，即收到过 Team 输入且未退队的成员、仍被变更操作持有的已退队成员，以及输入正等待送达的 active 成员 |
 | `maxPendingMessagesPerMember` | `64` | 单个成员最多可排队且未结算的消息数 |
 | `maxTaskExtensionBytes` | `262,144` | 单次原子 Team 事件中扩展自有 JSON 的字节上限 |
 | `maxMessageBytes` | `65,536` | 单条发送消息的最大尺寸 |
@@ -80,6 +82,8 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 只有 Lead 可以创建 teammate 或中断它们。
 
 Lead 可在结算未完成任务和待投递消息后让 teammate 退队。退队会停止 live child，但保留其 Session、roster 行和已占用的名字。失败成员也可以退队。已退队成员不能接收新 Team 消息。`maxMembers` 仍统计全部历史创建；只有退队完成后才释放 `maxActiveMembers` 名额。
+
+受控 Team 中，`maxStartedMembers` 从 teammate 收到第一条 Team 输入起计入，直到它退队；重建后的 teammate 仍计入，变更操作仍持有的已退队原成员在操作放手前保留其名额。从未收到任何输入的待命 teammate 既不占这个名额，也不占常驻 Subagent 池。会让 teammate 启动并超出名额的 Team 输入整笔拒绝，并写明哪些成员已计入、谁可以立即退队；发给已计入成员的输入总能通过，名额调低后已超出时也一样。Task 写入方在快照的 `startQuota` 中读到同样的事实，`memberQuotas()` 报告在岗成员、成员身份和已启动成员相对各自上限的用量。受控 Team 的 `list_agents` 列出 Lead、在岗 teammate 和尚待处理的失败 teammate，附每名 teammate 是否已启动及名额用量；已退队的 teammate 只计数。
 
 可信 Host 可以把用户管理的团队组成与受控协作模式分开持久记录。新 Team 和官方 Team 没有组成事件时保持动态；固定团队拒绝模型增员和退队；应用中的团队只接纳携带当前应用 id 的成员变更。Host 在 Lead Session 保存不透明应用目标、待退队成员 id 与可选成员 `slotId`，并复用原生退队和创建流程。停止应用会保留已完成的成员变更；完成应用会记录 Profile 关联并固定团队。Host 也可以不应用 Profile，直接锁定或解锁。Task 扩展可在自身持久记录里标记权限表换绑，让原生关联显示“已修改”，而无需由 fork 解释表内容。
 
@@ -211,7 +215,7 @@ Host 协调器可以准备普通、无种子的 Lead 执行，不把它变成运
 
 ### 共享任务板
 
-任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
+任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。只有使计数超出上限的事务才因 `maxTasks`（`TEAM_TASK_LIMIT`）或受控 Team 的 `maxOpenTasks`（`TEAM_OPEN_TASK_LIMIT`）被拒绝，因此验收、取消或暂停工作从不因名额失败。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。
 
 `installTaskExtension()` 接收唯一写入方，并返回可释放的提交能力。注册期间，原生 `createTask()` 和 `updateTask()` 的每次调用都会交给这个写入方，包括官方模型工具的调用；不存在绕过它的第 2 版事件写入路径。提交构造器在 Team 事务锁内接收脱离原状态的任务与成员快照，必须同步返回。一条 `team/task/transaction` 事件保存完整 Task 更新、扩展 JSON 与可选 Team 通知；原生投影在发布前检查连续修订、顺序数字 id、mailbox 身份和最终无环图。flush 后待投递通知沿用原生 mailbox 投递与冷恢复路径。释放句柄后恢复默认写入方。Host 插件必须用自己的 Cordis effect 持有并释放句柄。 Host 规划器可以显式设置 `allowLeadSelfNotices`，在同一事务中给 Lead 自己排入事实通知；这类通知必须把全部内容标为资料，不能声明内容作者。该选项不持久保存；省略时仍拒绝发给自己的通知。
 
