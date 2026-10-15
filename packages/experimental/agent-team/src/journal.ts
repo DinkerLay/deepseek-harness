@@ -158,12 +158,14 @@ export class TeamJournal {
   }
 
   /**
-   * Wait under the Team lock until writes still being confirmed are confirmed, so a claim is not refused for that
-   * passing state. A failed confirmation leaves them unconfirmed, and the caller's own admission check refuses.
+   * Decide an admission on a confirmed cut: wait under the Team lock until writes still being confirmed are confirmed,
+   * then run the check there, so a write queued behind the wait cannot change the answer before it is read.
    * @param root - exact live journal owner.
+   * @param check - synchronous admission check.
+   * @returns the check's answer, or false when the earlier writes fail to confirm.
    */
-  async settle(root: Agent): Promise<void> {
-    try { await this.transactConfirmed(root, () => Promise.resolve()) } catch { /* still unconfirmed; the caller refuses */ }
+  async settle(root: Agent, check: () => boolean): Promise<boolean> {
+    try { return await this.transactConfirmed(root, () => Promise.resolve(check())) } catch { return false /* a write failed to confirm */ }
   }
 
   /**

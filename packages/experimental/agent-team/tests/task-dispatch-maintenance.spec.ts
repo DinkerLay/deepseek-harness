@@ -390,6 +390,50 @@ describe('native Task dispatch maintenance', () => {
       .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['completed'])
   })
 
+  it('continues a member turn when another Team write queues behind its wait for confirmation', async () => {
+    const test = await setup([toolCallResponse('queued-step', 'fixture_mid_turn_step', {}), textResponse('continued after both writes')])
+    const execution = await test.resident()
+    const fixture = midTurnFixture(test, 'queued')
+    const journal = Reflect.get(test.ctx.agentTeams, 'journal') as TeamJournal
+    const settle = journal.settle.bind(journal)
+    let second: Promise<unknown> | undefined
+    vi.spyOn(journal, 'settle').mockImplementation(async (root, check) => {
+      const waited = settle(root, check)
+      // Queued behind the wait, this write appends as soon as the earlier one is confirmed.
+      second ??= test.writer.commitRecord(test.lead, () => ({ recordId: 'queued-behind-wait', dataJson: '{}' }))
+      return await waited
+    })
+    const before = execution.session.snapshotEvents().length
+    await test.ctx.agents.receiveInput(execution, test.ordinary('queued-write-wake', 'next-turn', true))
+    await vi.waitFor(() => { expect(second).toBeDefined() })
+    fixture.flushing.resolve(undefined)
+    await fixture.unrelated()
+    await second
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(2) })
+    await execution.whenIdle()
+    expect(execution.session.snapshotEvents().slice(before)
+      .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['completed'])
+  })
+
+  it('ends a turn that waits for a Team write confirmation when the turn is cancelled', async () => {
+    const test = await setup([toolCallResponse('cancelled-step', 'fixture_mid_turn_step', {}), textResponse('must not continue')])
+    const execution = await test.resident()
+    const fixture = midTurnFixture(test, 'cancelled')
+    const journal = Reflect.get(test.ctx.agentTeams, 'journal') as TeamJournal
+    const waiting = vi.spyOn(journal, 'settle')
+    const before = execution.session.snapshotEvents().length
+    await test.ctx.agents.receiveInput(execution, test.ordinary('cancelled-wait-wake', 'next-turn', true))
+    await vi.waitFor(() => { expect(waiting).toHaveBeenCalled() })
+    execution.cancel({ kind: 'user' })
+    await execution.whenIdle()
+    expect(execution.session.snapshotEvents().slice(before)
+      .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['aborted'])
+    fixture.flushing.resolve(undefined)
+    await fixture.unrelated()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(test.adapter.requests).toHaveLength(1)
+  })
+
   it('still refuses a member\'s next step when the Team write it waited for fails to confirm', async () => {
     const test = await setup([toolCallResponse('failed-step', 'fixture_mid_turn_step', {}), textResponse('must not continue')])
     const execution = await test.resident()
