@@ -71,7 +71,7 @@ An optional `presetId` binds a teammate to a declared Agent Preset. The roster r
 A teammate may also carry an immutable `group` label without changing its name or member identity. In controlled mode the required Task extension validates the group before reservation; an absent extension refuses creation. The roster checks the Preset revision without inspecting tools, requires fresh context, and registers the member without an execution Session. Its first mailbox delivery starts that Session with an identity reminder and actual input. Durable input identity prevents duplicate delivery across retries and restart.
 
 
-The bound Task extension may account for completed runs using durable business notices. Remaining notices name the teammate in every roster phase and, when available, list processed but unsubmitted Task assignments. Registration produces no standby model turn. Official Teams retain immediate creation and native Subagent wording.
+The bound Task extension may account for completed runs using durable business notices. Remaining notices name the teammate in every roster phase and, when available, list processed but unsubmitted Task assignments. For a run that did not complete, the extension may also explain its failure or who stopped it; the notice adds that explanation, cut at 2048 UTF-8 bytes. Registration produces no standby model turn. Official Teams retain immediate creation and native Subagent wording.
 
 This package declares `@deepseek-ai/dsh-scope` as a peer dependency so its production bundle shares the Agent Loop's scope identity; the built-library test checks that boundary.
 

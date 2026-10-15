@@ -30,6 +30,25 @@ import { projectTaskView, taskReady } from './task-view.ts'
 import { requiredText, writeScope } from './validation.ts'
 import { assertStartQuota, startQuotaOf } from './start-quota.ts'
 
+/** Bound on a product writer's explanation of one member run that did not complete. */
+const MAX_SETTLEMENT_DETAIL_BYTES = 2048
+
+/**
+ * The longest prefix of `text` within `maxBytes` UTF-8 bytes, never splitting a code point.
+ * @param text - model-facing text. @param maxBytes - byte bound.
+ * @returns the bounded prefix.
+ */
+function utf8Prefix(text: string, maxBytes: number): string {
+  let bytes = 0
+  let end = 0
+  for (const char of text) {
+    bytes += Buffer.byteLength(char, 'utf8')
+    if (bytes > maxBytes) break
+    end += char.length
+  }
+  return text.slice(0, end)
+}
+
 const TASK_GRAPH_ERROR_CODES: Record<TeamTaskGraphViolation, string> = {
   missing: 'TEAM_TASK_NOT_FOUND',
   duplicate: 'TEAM_INVALID_ARGUMENT',
@@ -285,6 +304,20 @@ export class TeamTaskBoard {
     const extension = this.extension
     if (mode === undefined || extension?.writer.id !== mode.requiredTaskExtensionId) return undefined
     return await extension.writer.unsubmittedTaskIds?.(facts)
+  }
+
+  /**
+   * Read the bound product writer's explanation of one member run that did not complete.
+   * @param root - exact live Lead with the pinned Task extension.
+   * @param facts - one member Activation's durable identity and log interval.
+   * @returns the explanation within 2048 UTF-8 bytes, or undefined without an answering product writer.
+   */
+  async settlementDetail(root: Agent, facts: SubagentSettlementNoticeFacts): Promise<string | undefined> {
+    const mode = this.journal.state(root).mode
+    const extension = this.extension
+    if (mode === undefined || extension?.writer.id !== mode.requiredTaskExtensionId) return undefined
+    const detail = await extension.writer.settlementDetail?.(facts)
+    return detail === undefined ? undefined : utf8Prefix(detail, MAX_SETTLEMENT_DETAIL_BYTES)
   }
 
   /**

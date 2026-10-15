@@ -543,6 +543,43 @@ describe('controlled member settlement notices', () => {
       expect(result).toMatchObject({ action: 'send', subject: `Teammate worker-${phase}` })
     },
   )
+
+  it('adds the product explanation of a run that did not complete, bounded and after the unsubmitted Tasks', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+      permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } })
+    const childId = SessionId('settled-explained')
+    const member = { id: childId, name: 'worker-explained', description: 'Worker',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'active' } })
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const explain = vi.fn((facts: SubagentSettlementNoticeFacts) => facts.runId === SubagentRunId('run-quiet') ? ''
+      : `The run failed: ${'失败'.repeat(700)}`)
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer', validateMemberGroup: () => undefined,
+      unsubmittedTaskIds: () => [TeamTaskId('task-7')], settlementDetail: explain, create: unavailable, update: unavailable })
+    const decide = Reflect.get(ctx.subagents, 'sendSettlementNotice') as (
+      facts: SubagentSettlementNoticeFacts,
+    ) => Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>
+    const facts = (runId: string, stopReason: SubagentSettlementNoticeFacts['stopReason']) => ({
+      runId: SubagentRunId(runId), parentSessionId: lead.id, childSessionId: childId, stopReason,
+      startSeq: SessionLogOffset(0), endSeq: SessionLogOffset(0), parentStartSeq: SessionLogOffset(0), events: [],
+      firstInputOnly: false })
+    const failed = await decide.call(ctx.subagents, facts('run-failed', 'error'))
+    const detail = typeof failed === 'object' ? failed.detail ?? '' : ''
+    expect(detail.startsWith('Unsubmitted Tasks: task-7. The run failed: 失败')).toBe(true)
+    // The explanation is cut at 2048 UTF-8 bytes on a whole character.
+    const explained = detail.slice('Unsubmitted Tasks: task-7. '.length)
+    expect(Buffer.byteLength(explained, 'utf8')).toBeLessThanOrEqual(2048)
+    expect(Buffer.byteLength(explained, 'utf8')).toBeGreaterThan(2040)
+    expect(explained).not.toContain('\uFFFD')
+    expect(await decide.call(ctx.subagents, facts('run-quiet', 'aborted'))).toMatchObject({ detail: 'Unsubmitted Tasks: task-7.' })
+    // A completed run is never explained.
+    explain.mockClear()
+    await decide.call(ctx.subagents, facts('run-done', 'completed'))
+    expect(explain).not.toHaveBeenCalled()
+    writer.dispose()
+  })
 })
 
 describe('Team identity and provisioning', () => {

@@ -242,10 +242,11 @@ export class TeamService extends Service {
         ? memberExecutionOwner(state, facts.childSessionId)?.member : undefined
       if (member === undefined) return undefined
       const taskIds = await this.tasks.unsubmittedTaskIds(root, facts)
-      const notice = { action: 'send' as const, subject: `Teammate ${member.name}`,
-        ...taskIds === undefined || taskIds.length === 0 ? {} : {
-          detail: `Unsubmitted Tasks: ${taskIds.join(', ')}.`,
-        } }
+      // The product explains a run that did not complete, such as its failure or who stopped it.
+      const explained = facts.stopReason === 'completed' ? undefined : await this.tasks.settlementDetail(root, facts)
+      const detail = [...taskIds === undefined || taskIds.length === 0 ? [] : [`Unsubmitted Tasks: ${taskIds.join(', ')}.`],
+        ...explained === undefined || explained === '' ? [] : [explained]].join(' ')
+      const notice = { action: 'send' as const, subject: `Teammate ${member.name}`, ...detail === '' ? {} : { detail } }
       if (facts.stopReason !== 'completed' || member.phase !== 'provisioning'
         && member.phase !== 'active' || taskIds !== undefined && taskIds.length > 0) return notice
       return await this.tasks.assessSettlementNotice(root, facts) === 'suppress' ? 'suppress' : notice

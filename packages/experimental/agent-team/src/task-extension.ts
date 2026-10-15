@@ -109,6 +109,13 @@ export interface TeamTaskExtension {
    */
   unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>
   /**
+   * Explain why one controlled member Activation ended without completing, such as its failure or who stopped it, and
+   * what the Lead can do next. The native notice adds this text after any unsubmitted Task ids.
+   * @param facts - settled child identity and log interval of a run whose stop reason is not completed.
+   * @returns at most 2048 UTF-8 bytes of model-facing text, or undefined to add nothing.
+   */
+  settlementDetail?(facts: SubagentSettlementNoticeFacts): string | undefined | Promise<string | undefined>
+  /**
    * Handle native Task creation without writing a version-two Task event.
    * @param caller - exact live Team member.
    * @param request - native Task creation input.
