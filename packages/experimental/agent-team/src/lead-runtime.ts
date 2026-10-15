@@ -301,6 +301,8 @@ export class TeamLeadExecutions {
       prepareClaim: async (agent, signal) => {
         prepared.delete(agent)
         const anchor = this.liveAnchor(agent)
+        // A Team write being confirmed delays the current Lead's next step; refusing it would end the turn mid-way.
+        if (this.isCurrent(agent, anchor) && awaitsConfirmation(agent, anchor)) await cancellable(this.journal.settle(anchor), signal)
         if (this.isCurrent(agent, anchor) && this.canReceive(anchor) && this.hasWorkPolicy()) {
           await prepareControlledClaim(this.ctx, input, agent, material => this.workAdmitted(anchor, material), signal, () => {
             if (!this.isCurrent(agent, anchor) || !this.canReceive(anchor)) throw new TeamError('Lead changed before input claim', 'TEAM_LEAD_STALE_TERM')

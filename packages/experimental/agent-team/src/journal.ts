@@ -158,6 +158,15 @@ export class TeamJournal {
   }
 
   /**
+   * Wait under the Team lock until writes still being confirmed are confirmed, so a claim is not refused for that
+   * passing state. A failed confirmation leaves them unconfirmed, and the caller's own admission check refuses.
+   * @param root - exact live journal owner.
+   */
+  async settle(root: Agent): Promise<void> {
+    try { await this.transactConfirmed(root, () => Promise.resolve()) } catch { /* still unconfirmed; the caller refuses */ }
+  }
+
+  /**
    * Append and checkpoint one root-owned Team event before publication.
    * @param root - exact live Lead whose Session owns the event.
    * @param type - Team event discriminant.

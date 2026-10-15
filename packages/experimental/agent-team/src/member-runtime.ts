@@ -502,6 +502,10 @@ export class TeamMemberExecutions {
       prepareClaim: async (agent, signal) => {
         prepared.delete(agent)
         const owner = sessionOwner(agent.session)
+        // A Team write being confirmed delays the current execution's next step; refusing it would end the turn mid-way.
+        if (owner !== undefined && seated(agent) !== undefined && !this.journal.recordsConfirmed(owner.anchor)) {
+          await cancellable(this.journal.settle(owner.anchor), signal)
+        }
         if (owner !== undefined && canRun(agent)) {
           const directory = await prepareDirectory(agent.session, owner, signal)
           if (!this.hasWorkPolicy()) return

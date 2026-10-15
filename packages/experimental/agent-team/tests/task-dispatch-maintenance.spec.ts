@@ -8,7 +8,7 @@ import type { TeamExecutionMaintenanceScope, TeamTaskId as TaskId,
   TeamTaskSnapshot, LeadExecutionHandle, TeamMessageId as MailId } from '../src/index.ts'
 import { TeamId, TeamTaskId, TeamMessageId, TeamLeadOperationId } from '../src/index.ts'
 import { nativeFacadeHarness, facadeControlledMode } from './native-facade-harness.ts'
-import { textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import type { TeamJournal } from '../src/journal.ts'
 import type { TeamMailbox } from '../src/mailbox.ts'
 import type { TeamMessageSnapshot } from '../src/types.ts'
@@ -344,6 +344,65 @@ describe('native Task dispatch maintenance', () => {
     expect(later).toBeDefined()
     expect(execution.session.snapshotEvents().slice(before)
       .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['completed'])
+  })
+
+  /** A step tool that leaves another seat's Team write unconfirmed when its result returns; `fail` makes that write never confirm. */
+  function midTurnFixture(test: Awaited<ReturnType<typeof setup>>, kind: string, fail = false) {
+    const original = test.ctx.sessions.flush.bind(test.ctx.sessions), flushing = gate()
+    let unrelated: Promise<unknown> | undefined, hold = false
+    vi.spyOn(test.ctx.sessions, 'flush').mockImplementation(async (session) => {
+      if (session === test.lead.session && hold) {
+        if (fail) return false
+        hold = false
+        await flushing.promise
+      }
+      return await original(session)
+    })
+    test.ctx.tools.register({ name: 'fixture_mid_turn_step', description: 'Fixture step',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: { schema: { type: 'string' }, render: (_args, value: string) => [{ type: 'text', text: value }] },
+      execute: async () => {
+        hold = true
+        unrelated = test.writer.commitRecord(test.lead, () => ({ recordId: `mid-turn-${kind}-write`, dataJson: '{}' }))
+          .catch((error: unknown) => error)
+        await vi.waitFor(() => { expect(test.writer.recordsConfirmed(test.lead)).toBe(false) })
+        return 'stepped'
+      } })
+    return { flushing, unrelated: () => unrelated, confirm: () => { hold = false } }
+  }
+
+  it.each(['lead', 'member'] as const)('continues a %s turn whose next step comes while a Team write is being confirmed', async (kind) => {
+    const test = await setup([toolCallResponse('mid-turn-step', 'fixture_mid_turn_step', {}), textResponse('continued after confirmation')])
+    const execution = kind === 'lead' ? test.lead : await test.resident()
+    const fixture = midTurnFixture(test, kind)
+    const before = execution.session.snapshotEvents().length
+    await test.ctx.agents.receiveInput(execution, test.ordinary(`${kind}-mid-turn-wake`, 'next-turn', true))
+    await vi.waitFor(() => { expect(fixture.unrelated()).toBeDefined() })
+    // The next step waits for the confirmation instead of ending the turn.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(execution.session.snapshotEvents().slice(before).some(event => event.type === 'turn/end')).toBe(false)
+    expect(test.adapter.requests).toHaveLength(1)
+    fixture.flushing.resolve(undefined)
+    await fixture.unrelated()
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(2) })
+    await execution.whenIdle()
+    expect(execution.session.snapshotEvents().slice(before)
+      .flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : [])).toEqual(['completed'])
+  })
+
+  it('still refuses a member\'s next step when the Team write it waited for fails to confirm', async () => {
+    const test = await setup([toolCallResponse('failed-step', 'fixture_mid_turn_step', {}), textResponse('must not continue')])
+    const execution = await test.resident()
+    const fixture = midTurnFixture(test, 'failed', true)
+    const before = execution.session.snapshotEvents().length
+    await test.ctx.agents.receiveInput(execution, test.ordinary('failed-confirmation-wake', 'next-turn', true))
+    await vi.waitFor(() => {
+      expect(execution.session.snapshotEvents().slice(before).flatMap(event => event.type === 'turn/end' ? [event.data.reason.kind] : []))
+        .toEqual(['blocked'])
+    })
+    expect(test.adapter.requests).toHaveLength(1)
+    fixture.confirm()
+    await fixture.unrelated()
   })
 
   it.each(['lead', 'member'] as const)('starts %s work whose start was refused only while a Team write was being confirmed', async (kind) => {
