@@ -416,6 +416,21 @@ describe('dsh-tool-team', () => {
     expect(unlimited.quotas).toEqual({ inPost: { used: 2, limit: 32 }, identities: { used: 4, limit: 256 } })
   })
 
+  it('lets roster reads and waits run beside other safe calls, while Team writes stay exclusive', async () => {
+    const mode = { kind: 'controlled' as const, requiredTaskExtensionId: 'test-writer',
+      permissionTableId: 'test-policy', permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 }
+    const controlled = await setup([], false, { controlledTasks: true, reviewedTasks: true, productTaskTools: true }, [],
+      { controlledMode: mode })
+    const official = await setup([])
+    const modeOf = (ctx: Context, agent: Agent, name: string) => ctx.tools.executionMode({ signal: SIGNAL,
+      callId: ToolCallId(`mode-${name}`), name, arguments: {}, agent })
+    for (const { ctx, lead } of [controlled, official]) {
+      expect(modeOf(ctx, lead, 'list_agents')).toEqual({ kind: 'parallel' })
+      expect(modeOf(ctx, lead, 'wait_agent')).toEqual({ kind: 'parallel' })
+      expect(modeOf(ctx, lead, 'send_message')).toEqual({ kind: 'exclusive' })
+    }
+  })
+
   it('passes a selected Preset to native roster creation and exposes its binding', async () => {
     const { ctx, lead } = await setup([])
     const preset = { id: 'reviewer', revision: 'a'.repeat(64) }

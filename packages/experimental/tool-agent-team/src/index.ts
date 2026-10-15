@@ -364,6 +364,8 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
             : ' started tells whether a teammate has received work; a standby teammate starts when work reaches it, and quotas.started counts started teammates against the start quota, so work for a standby teammate needs a free place.'),
         parameters: {},
         output: jsonOutput(CONTROLLED_MEMBER_LIST_VALUE_SCHEMA),
+        // A roster read changes nothing, so a stop that interrupts it leaves no external effect to confirm.
+        isConcurrencySafe: () => true,
         execute(_args, exec) {
           const agent = callingAgent(exec.agent, 'list_agents')
           const rows = ctx.agentTeams.listMembers(agent)
@@ -384,6 +386,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
         parameters: {},
         output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
+        isConcurrencySafe: () => true,
         execute(_args, exec) {
           return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
         },
@@ -401,6 +404,8 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           },
         },
         output: jsonOutput(config.waitEndsOnUserMessage ? WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA : WAIT_VALUE_SCHEMA),
+        // Waiting only observes; an interrupted wait has no outcome to confirm.
+        isConcurrencySafe: () => true,
         async execute(args, exec) {
           const caller = callingAgent(exec.agent, 'wait_agent')
           const timeoutMs = args.timeout_ms ?? 30_000
