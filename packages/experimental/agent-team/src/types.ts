@@ -189,6 +189,11 @@ export interface TeamExtensionRecordSnapshot extends TeamTaskTransactionSnapshot
 export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {
   readonly notices?: readonly TeamExtensionNotice[]
   readonly affectsComposition?: true
+  /**
+   * An audit-only record: `wait_agent` and other Team waiters do not return for it. A record with notices wakes them
+   * regardless; omitted wakes them as every Team write does.
+   */
+  readonly quiet?: true
 }
 
 /** Return an earlier record without appending another event. */

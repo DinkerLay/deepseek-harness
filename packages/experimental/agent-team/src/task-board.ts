@@ -652,7 +652,7 @@ export class TeamTaskBoard {
         version: 1, teamId: TeamId(root.id), extension: { id: extensionId, recordId, dataJson: plan.dataJson },
         ...notices.length === 0 ? {} : { notices },
         ...plan.affectsComposition === true ? { affectsComposition: true as const } : {},
-      }, writer.requireDurableAcknowledgement)
+      }, writer.requireDurableAcknowledgement, false, plan.quiet !== true || notices.length > 0)
       return { recordId, committed: true, hasNotices: notices.length > 0 }
     })
     if (result.hasNotices) this.dispatchNotices(root)

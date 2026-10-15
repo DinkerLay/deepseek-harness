@@ -83,13 +83,14 @@ export class TeamJournal {
 
   /** Confirm an existing coordinator fact before acknowledging a recovered operation.
    * @param root - exact live journal owner.
+   * @param wake - whether Team waiters observe the confirmed write; an audit-only record leaves them waiting.
    */
-  async confirm(root: Agent): Promise<void> {
+  async confirm(root: Agent, wake = true): Promise<void> {
     if (!await this.ctx.sessions.flush(root.session)) {
       throw new TeamError('Lead coordination durability was not confirmed', 'TEAM_INPUT_DURABILITY')
     }
     const coordinated = this.unconfirmed.delete(root.id)
-    this.onCommit(root)
+    if (wake) this.onCommit(root)
     if (coordinated) void this.ctx.parallel('agent-team/confirmed', root).catch((error: unknown) => {
       this.ctx.logger.warn(`Team confirmation observer failed: ${String(error)}`)
     })
@@ -163,6 +164,8 @@ export class TeamJournal {
    * @param data - payload correlated with the event type.
    * @param requireDurability - whether a false checkpoint must reject the owned acknowledgement.
    * @param blockAdmission - whether this coordinated event opens execution and must retain its barrier until confirmation.
+   * @param wake - whether Team waiters observe this write. An earlier write still awaiting confirmation wakes them anyway,
+   * because its own commit never did.
    */
   async appendAndFlush<T extends MutableTeamEventType>(
     root: Agent,
@@ -170,6 +173,7 @@ export class TeamJournal {
     data: SessionEventMap[T],
     requireDurability = false,
     blockAdmission = false,
+    wake = true,
   ): Promise<void> {
     // Team events never enter the conversation surface. This narrower local
     // capability removes Session.append's conditional surface argument while
@@ -188,10 +192,10 @@ export class TeamJournal {
       else this.unconfirmed.set(root.id, previous)
       throw error
     }
-    if (requireDurability) await this.confirm(root)
+    if (requireDurability) await this.confirm(root, wake || previous !== undefined)
     else {
       await this.ctx.sessions.flush(root.session)
-      this.onCommit(root)
+      if (wake || previous !== undefined) this.onCommit(root)
     }
   }
 }
