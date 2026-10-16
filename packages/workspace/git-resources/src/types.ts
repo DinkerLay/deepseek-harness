@@ -166,6 +166,15 @@ export interface GitResourcePreserveRequest {
   /** Optional bounded original consumer JSON for cold correlation; never interpreted as authority. */
   readonly originalRequestJson?: string
 }
+/** Read-only files of one confirmed versioned seal, for reading without a work copy. */
+export interface GitResourceSnapshotRequest {
+  /** A confirmed versioned preserve operation whose version has no conflict stages. */
+  readonly preserveOperationId: GitOperationId
+  /** The consumer scope that owns that operation. */
+  readonly consumerScope: GitConsumerScope
+}
+/** A directory named by the sealed tree, holding exactly its regular files without write permission. */
+export interface GitResourceSnapshot { readonly path: string; readonly tree: string }
 /** Query result carries resource facts without performing confirmation or repair. */
 export interface GitResourceOperationView { readonly operation: GitResourceOperation; readonly resource: GitResourceRecord }
 /** A live write-use scope can be asserted synchronously inside another owner's CAS. */

@@ -45,6 +45,8 @@ kind: "package-reference"
 
 `preserve`先记录自身意图。默认`content: 'versioned'`将已跟踪和未忽略的新文件的工作字节封存在不可变私有ref下，保留已跟踪文件的删除。忽略文件与目录不读取、不hash：`unpreservedPaths`只记录其剩余名称，不证明它们可被删除。显式`content: 'all'`保全有界常规目录内容，仍拒绝受保护路径，不能作为代码成果封存。每条操作独立保留自身`effectContent`与剩余路径，不被后来资源版本替换。回执包含真实tree、commit、manifest hash与保全ref，不改变用户分支、index或文件。
 
+`snapshot`把一次已确认、没有冲突stage的versioned封存的文件写入拥有者home下的`snapshots/<tree>`，用于在没有工作副本的情况下读取这个确切版本。它核对调用方的`consumerScope`与该封存一致，并沿用同样的文件数和字节上限。文件和目录都没有写权限；该目录不是工作副本、ref或index，同一tree的所有请求共用它。重复请求直接返回已完成的目录，不再读取对象。写入先在临时目录进行，完成后才改名；中途被打断的临时目录在失败时或拥有者下次启动时删除。
+
 创建只从精确基线初始化受管副本自身的index；重试不重置未知index内容。后续合法detached提交可以保留：保全记录实际detached HEAD作为其提交的parent，不改不可变基线。attached分支明确诊断拒绝，不自动checkout或reset。
 
 ### 独立集成与精确解决确认
@@ -124,6 +126,7 @@ kind: "package-reference"
 
 - 符号链接、submodule tree、不安全仓库配置、外部对象库、非UTF-8路径、drive-qualified选择器及凭据形路径明确拒绝，不静默省略。POSIX上的drive-looking名称也拒绝，避免在Windows取得不同含义。远程仓库、sparse/index扩展与任意自定义过滤器不能替代可核验的本地基线。
 - 保全与集成不是业务结果验收。代码封存后仍有忽略内容，不代表可清理。all文件保全不备份未固定的独立index对象或空目录状态，因此这些情况明确拒绝清理。
+- 本拥有者从不删除快照，快照目录没有写权限：手工删除拥有者home前需先恢复写权限。快照只靠文件权限只读，不是沙箱。
 - 调用方必须在交还或保全前建立执行/后台静止事实。Host必须挂载与Node文件系统相同的本机subprocess提供者；不支持远程执行world。全盘权限下的外部进程仍可在本拥有者协调之外修改目录；观察到变化时拒绝，不证明全局隔离。
 
 <a id="dev-note"></a>

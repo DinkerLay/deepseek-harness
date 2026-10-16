@@ -1,7 +1,8 @@
 /** Host-owned local Git resources over Workspace identity, durable domains and a whole-home kernel lease. */
 import { lstatSync } from 'node:fs'
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -31,7 +32,8 @@ import type { RepositoryRecord } from './records.ts'
 import { byteHash, inspectConfiguration, inspectRepository, missing, pathIdentity, previewRepository, readRegularFile, selectedPath, treeEntries, versionedFiles } from './preview.ts'
 import type { GitOperationId, GitRepositoryId, GitResourceId, GitConsumerScope, GitResourceCreateRequest, GitResourceOperation,
   GitResourceOperationView, GitResourcePreserveRequest, GitResourcePreview, GitResourcePreviewRequest,
-  GitResourceRecord, GitResourceUseIdentity, GitResourceWriteScope, GitRepositoryIdentity, GitWorkCopyInspection } from './types.ts'
+  GitResourceRecord, GitResourceSnapshot, GitResourceSnapshotRequest, GitResourceUseIdentity, GitResourceWriteScope, GitRepositoryIdentity,
+  GitWorkCopyInspection } from './types.ts'
 
 export type * from './types.ts'
 export { GitResourceError } from './error.ts'
@@ -138,11 +140,15 @@ export class GitResources extends Service {
     this.root = (await pathIdentity(this.root)).path
     this.homeLease = await acquireFileLease(join(this.root, 'owner.lock'))
     try {
-      for (const name of ['workcopies', 'scratch', 'isolated']) {
+      for (const name of ['workcopies', 'scratch', 'isolated', 'snapshots']) {
         const path = join(this.root, name)
         await mkdir(path, { recursive: true, mode: 0o700 })
         if (!(await lstat(path)).isDirectory()) throw new GitResourceError('RESOURCE_HOME_INVALID', 'Managed resource directories must be local directories')
         this.managedDirectories.set(name, await pathIdentity(path))
+      }
+      // The owner lease is held, so no snapshot is being written: a temporary one was cut short and is removed.
+      for (const entry of await readdir(join(this.root, 'snapshots'))) {
+        if (entry.startsWith('.partial-')) await removeSnapshotDirectory(join(this.root, 'snapshots', entry))
       }
       this.isolation = join(this.root, 'isolated')
       try { await writeFile(join(this.isolation, 'empty-config'), '', { flag: 'wx', mode: 0o600 }) }
@@ -824,6 +830,58 @@ export class GitResources extends Service {
       await this.records().update(operation.repositoryId, current => ({ ...current, revision: current.revision + 1,
         operations: [...current.operations, operation] }))
       return this.finishPreserve(operation, signal)
+    }, signal))
+  }
+
+  /**
+   * Write the files of one confirmed versioned seal into a read-only directory outside every work copy. The directory is
+   * named by the sealed tree and shared by every request for that version; it is not a work copy, ref or index, and its
+   * files and directories have no write permission. A repeated request returns the complete directory; one cut short leaves
+   * only a temporary directory, removed at the owner's next start.
+   * @param request - confirmed versioned seal and the consumer scope that owns it.
+   * @param signal - caller cancellation.
+   * @returns the directory and the tree it holds.
+   */
+  async snapshot(request: GitResourceSnapshotRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceSnapshot> {
+    const operation = this.findOperation(request.preserveOperationId)?.operation
+    const tree = operation?.kind === 'preserve' && operation.consumerScope === request.consumerScope && operation.phase === 'confirmed'
+      && operation.effectContent === 'versioned' && operation.effectConflictStages !== undefined && operation.effectConflictStages.length === 0
+      ? operation.effectTree : undefined
+    if (operation === undefined || tree === undefined) {
+      throw new GitResourceError('SNAPSHOT_SOURCE_INVALID', 'A snapshot needs a confirmed versioned seal without conflict stages in the same consumer scope')
+    }
+    const identity = this.requireResource(operation.resourceId).repository.identity
+    return this.owned(() => this.lane(`snapshot:${tree}`, async () => {
+      await this.assertRepository(identity, signal)
+      await this.assertManagedDirectory('snapshots')
+      const path = join(this.root, 'snapshots', tree)
+      try {
+        // Only a completely written directory is ever renamed to this name.
+        if ((await lstat(path)).isDirectory()) { await chmod(path, 0o555); return { path, tree } }
+        throw new GitResourceError('RESOURCE_HOME_INVALID', 'A snapshot path holds something other than a directory')
+      } catch (error) { if (!missing(error)) throw error }
+      const entries = await treeEntries(this.runner(), identity, tree, signal, this.limits)
+      const partial = join(this.root, 'snapshots', `.partial-${randomUUID()}`), directories = new Set<string>()
+      await mkdir(partial, { mode: 0o700 })
+      try {
+        for (const entry of entries) {
+          signal.throwIfAborted()
+          const bytes = (await this.runner().run(['cat-file', 'blob', entry.objectId], identity.root.path, signal)).stdout
+          if (bytes.length !== entry.bytes) throw new GitResourceError('RESOURCE_CHANGED', 'Sealed blob bytes differ from the bounded tree listing')
+          const file = await selectedPath(partial, entry.path)
+          await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+          for (let directory = dirname(file); directory !== partial; directory = dirname(directory)) directories.add(directory)
+          await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+          await chmod(file, entry.mode === '100755' ? 0o555 : 0o444)
+        }
+        for (const directory of [...directories].sort((a, b) => b.length - a.length)) await chmod(directory, 0o555)
+        await rename(partial, path)
+      } catch (error) {
+        await removeSnapshotDirectory(partial)
+        throw error
+      }
+      await chmod(path, 0o555)
+      return { path, tree }
     }, signal))
   }
 
@@ -1718,3 +1776,15 @@ export class GitResources extends Service {
   }
 }
 export default GitResources
+
+/** Remove a temporary snapshot directory written by this owner, restoring write permission first. */
+async function removeSnapshotDirectory(path: string): Promise<void> {
+  const writable = async (directory: string): Promise<void> => {
+    await chmod(directory, 0o700)
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) await writable(join(directory, entry.name))
+    }
+  }
+  await writable(path)
+  await rm(path, { recursive: true, force: true })
+}

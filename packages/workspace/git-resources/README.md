@@ -45,6 +45,8 @@ Creation records its absent reserved path and intent before external effects. Ex
 
 `preserve` first records its own intent. Its default `content: 'versioned'` seals tracked and nonignored untracked working bytes under an immutable private ref; tracked deletions remain deletions. Ignored files and directories are not read or hashed: `unpreservedPaths` records their remaining names, not evidence that they may be deleted. Explicit `content: 'all'` preserves bounded regular directory content but still rejects protected paths; it is not a code-result seal. Each operation retains its own `effectContent` and remaining paths independently of later resource versions. The receipt carries the real tree, commit, manifest hash and preservation ref without changing the user's branch, index or files.
 
+`snapshot` writes the files of one confirmed versioned seal without conflict stages into `snapshots/<tree>` under the owner's home, for reading that exact version without a work copy. It checks the caller's `consumerScope` against the seal and applies the same file-count and byte limits. Files and directories have no write permission; the directory is not a work copy, ref or index, and it is shared by every request for the same tree. A repeated request returns the finished directory without reading objects again. Writing happens in a temporary directory that is renamed only when complete; one cut short is removed on failure or at the owner's next start.
+
 Creation initializes only the managed work copy's own index from its exact baseline. Unknown index content is never reset on retry. Later legitimate detached commits are allowed: preservation records the real detached HEAD as its commit's parent without rewriting the immutable baseline. An attached branch rejects with a diagnostic rather than being checked out or reset.
 
 ### Independent integration and exact resolution
@@ -124,6 +126,7 @@ This owner manages local regular-file work copies; it is not a sandbox or a univ
 
 - Symbolic links, submodule tree entries, unsafe repository configuration, external object stores, non-UTF-8 paths, drive-qualified selectors and protected credential-shaped paths reject rather than being silently omitted. Drive-looking names also refuse on POSIX instead of acquiring different Windows meanings. Remote repositories, sparse/index extensions and arbitrary custom filters are not accepted as substitutes for a verifiable local baseline.
 - Preservation and integration are not business-result acceptance. A versioned seal with remaining ignored content never authorizes cleanup. All-file preservation does not back up distinct unpinned index objects or empty directory state, so those cases explicitly refuse cleanup.
+- Snapshots are never removed by this owner, and their directories have no write permission: deleting the owner's home by hand needs write permission restored first. They are read-only by file mode, not a sandbox.
 - A caller must establish execution/background quiescence before handback or preservation. The Host must mount a local subprocess provider sharing Node's filesystem; remote execution worlds are unsupported. Full-host external processes can still mutate a directory outside this owner's coordination; observed changes reject instead of proving global confinement.
 
 <a id="dev-note"></a>
