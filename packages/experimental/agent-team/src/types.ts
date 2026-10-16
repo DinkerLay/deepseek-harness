@@ -216,6 +216,11 @@ export interface TeamTaskTransactionWritePlan {
   readonly notices?: readonly TeamExtensionNotice[]
   /** Host-only opt-in for factual notices to the Lead itself; omitted preserves normal self-message rejection. */
   readonly allowLeadSelfNotices?: boolean
+  /**
+   * A write the waiting Lead has nothing to act on yet: `wait_agent` and other Team waiters do not return for it. A write
+   * with notices wakes them regardless; omitted wakes them as every Team write does.
+   */
+  readonly quiet?: true
 }
 
 /** Return an earlier committed Task result without appending an event. */

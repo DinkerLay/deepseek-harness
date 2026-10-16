@@ -630,7 +630,7 @@ export class TeamTaskBoard {
         version: 1, teamId: TeamId(root.id), updates,
         extension: { id: extensionId, dataJson: plan.dataJson },
         ...notices.length === 0 ? {} : { notices },
-      }, writer.requireDurableAcknowledgement)
+      }, writer.requireDurableAcknowledgement, false, plan.quiet !== true || notices.length > 0)
       const committed = this.journal.state(root)
       return { views: updates.map(update => projectTaskView(committed, update.task)),
         hasNotices: notices.length > 0 || updates.some(update => update.task.dispatchBlocked === true) }

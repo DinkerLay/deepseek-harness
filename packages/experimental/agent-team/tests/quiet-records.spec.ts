@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TeamId, TeamMessageId } from '../src/index.ts'
+import { TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
 import { TeamJournal } from '../src/journal.ts'
 import { nativeHarness } from './native-lifecycle-harness.ts'
 
@@ -31,6 +31,25 @@ describe('audit-only extension records', () => {
     await test.writer!.commitRecord(test.lead, () => ({ recordId: 'read-with-notice', dataJson: '{}', quiet: true,
       notices: [{ id: TeamMessageId('quiet-notice'), senderId: test.lead.id, senderName: 'lead', targetId: test.lead.id,
         content: [{ type: 'text', text: 'notice' }] }] }))
+    await expect(second.wait).resolves.toEqual({ timedOut: false })
+  })
+
+  it('let a quiet Task transaction leave Team waiters waiting, unless it carries notices', async () => {
+    const test = await nativeHarness()
+    const task = (id: string, revision: number | null) => ({ previousRevision: revision,
+      task: { id: TeamTaskId(id), revision: (revision ?? 0) + 1, subject: id, description: 'quiet fixture', status: 'pending' as const,
+        blockedBy: [], writeScopes: [] } })
+    const first = watch(test)
+    await test.writer!.commit(test.lead, () => ({ dataJson: '{}', quiet: true, updates: [task('task-1', null)] }))
+    await Promise.resolve()
+    expect(first.state.settled).toBe(false)
+    await test.writer!.commit(test.lead, () => ({ dataJson: '{}', updates: [task('task-1', 1)] }))
+    await expect(first.wait).resolves.toEqual({ timedOut: false })
+
+    const second = watch(test)
+    await test.writer!.commit(test.lead, () => ({ dataJson: '{}', quiet: true, allowLeadSelfNotices: true, updates: [task('task-1', 2)],
+      notices: [{ id: TeamMessageId('quiet-task-notice'), senderId: test.lead.id, senderName: 'lead', targetId: test.lead.id,
+        content: [{ type: 'text', text: 'notice' }], contentParts: ['fact'], contentAuthors: [null] }] }))
     await expect(second.wait).resolves.toEqual({ timedOut: false })
   })
 
