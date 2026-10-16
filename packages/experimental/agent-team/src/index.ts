@@ -17,9 +17,10 @@ import { leadCoordinationActive, leadCoordinationFrozen } from './lead-coordinat
 import { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { TeamMailbox } from './mailbox.ts'
 import { teamProjectionDefinition } from './projection.ts'
+import type { TeamState } from './projection.ts'
 import { memberInPost, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
-import { currentMemberExecution, memberExecutionOwner } from './member-execution.ts'
+import { currentMemberExecution, memberExecutionControl, memberExecutionOwner } from './member-execution.ts'
 import type { TeamMemberExecution } from './member-execution.ts'
 import { TeamMemberExecutions } from './member-runtime.ts'
 import type { TeamMemberExecutionProvider, TeamMemberExecutionHandle } from './member-runtime.ts'
@@ -42,6 +43,7 @@ import type {
   TeamMemberView,
   TeamMessageId,
   TeamTaskView,
+  TeamWaitObserver,
   TeamWaitOptions,
   TeamWaitResult,
   UpdateTeamTaskRequest,
@@ -139,6 +141,7 @@ export class TeamService extends Service {
   private readonly leadExecutions: TeamLeadExecutions
   private readonly leadCoordinators: TeamLeadCoordinators
   private readonly memberExecutions: TeamMemberExecutions
+  private readonly waitObservers = new Set<TeamWaitObserver>()
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -610,7 +613,13 @@ export class TeamService extends Service {
    */
   async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult> {
     const membership = this.roster.membership(caller)
-    if (options.userInput !== true) return await this.activity.wait(membership.id, timeoutMs, signal)
+    // An observer wakes the wait when runtime work it reported ends without a Team change.
+    const watched = (wake: () => void): (() => void) => {
+      const disposers = [...this.waitObservers].flatMap(({ watch }) => watch === undefined ? []
+        : [this.observe('watch', () => watch(caller, wake), () => {})])
+      return () => { for (const dispose of disposers) this.observe('watch', dispose, undefined) }
+    }
+    if (options.userInput !== true) return await this.activity.wait(membership.id, timeoutMs, signal, watched)
     const pendingUserInput = (): TeamWaitResult['userInput'] => {
       if (leadCoordinationFrozen(this.ctx.sessionProjections.stateOf(membership.root.session, 'agentTeam')?.leadCoordination)) return undefined
       if (caller.inbox.nextStep.some(message => message.source.kind === 'user')) return 'next-step'
@@ -641,13 +650,83 @@ export class TeamService extends Service {
       const dispose = this.ctx.on('agent/inbox/inserted', ({ agent, message }) => {
         if (agent === caller && message.source.kind === 'user') start()
       })
+      const unwatch = watched(wake)
       start()
       return () => {
         dispose()
+        unwatch()
         clearTimeout(confirming.timer)
       }
     })
     return observed.userInput === undefined ? result : { timedOut: false, userInput: observed.userInput }
+  }
+
+  /**
+   * Install one product observer of Team waits.
+   * @param observer - runtime work it reports as under way, and the report it adds when a wait returns.
+   * @returns the disposer.
+   */
+  installWaitObserver(observer: TeamWaitObserver): () => void {
+    this.waitObservers.add(observer)
+    return () => { this.waitObservers.delete(observer) }
+  }
+
+  /**
+   * Whether a wait by this member can still observe a change: another member runs or is provisioning, a teammate's next
+   * run is starting ({@link teammateStarting}), or an installed observer reports runtime work under way for the Team.
+   * Synchronous, so a waiter registered right after it misses no change.
+   * @param caller - exact live Team member about to wait.
+   * @returns false when no member and no runtime work can produce a change.
+   */
+  waitCanProgress(caller: Agent): boolean {
+    const membership = this.roster.membership(caller)
+    const state = this.journal.state(membership.root)
+    return this.listMembers(caller).some(member => member.name !== membership.name && (member.status === 'running'
+      || member.status === 'provisioning' || this.startingIn(state, member)))
+      || [...this.waitObservers].some(({ progressing }) => progressing !== undefined
+        && this.observe('progress', () => progressing(caller), false))
+  }
+
+  /**
+   * Whether a teammate's next run is starting: it is not in a run, no member operation holds it, and Team mail to it is
+   * being delivered now or has another attempt scheduled. Mail whose retries ran out does not count.
+   * @param caller - exact live Team member reading the roster.
+   * @param memberId - the teammate's stable address.
+   * @returns false for the Lead, an unknown member, or one whose mail is not on its way.
+   */
+  teammateStarting(caller: Agent, memberId: import('@deepseek-ai/dsh-session').SessionId): boolean {
+    const member = this.listMembers(caller).find(view => view.id === memberId)
+    return member !== undefined && this.startingIn(this.journal.state(this.roster.membership(caller).root), member)
+  }
+
+  private startingIn(state: TeamState, member: TeamMemberView): boolean {
+    return member.role === 'teammate' && member.status === 'inactive' && memberExecutionControl(state, member.id) === undefined
+      && state.messages.some(message => message.targetId === member.id && !state.delivered.includes(message.id)
+        && !state.cancelled.some(item => item.messageId === message.id) && this.mailbox.delivering(message.id))
+  }
+
+  /**
+   * Start the installed observers' reports for one wait.
+   * @param caller - exact live Team member about to wait.
+   * @returns a function, called once when the wait returns, joining their reports; undefined when none has one.
+   */
+  beginWaitReport(caller: Agent): () => string | undefined {
+    const finishes = [...this.waitObservers].flatMap(({ begin }) => begin === undefined ? []
+      : [this.observe('report', () => begin(caller), () => undefined)])
+    return () => {
+      const reports = finishes.map(finish => this.observe('report', finish, undefined))
+        .filter((report): report is string => report !== undefined && report !== '')
+      return reports.length === 0 ? undefined : reports.join('\n')
+    }
+  }
+
+  /** Run one observer callback; a failure is logged and gives the fallback, so a product fault never breaks a wait. */
+  private observe<T>(callback: string, call: () => T, fallback: T): T {
+    try { return call() }
+    catch (error: unknown) {
+      this.ctx.logger.warn(`Team wait observer ${callback} failed: ${errorMessage(error)}`)
+      return fallback
+    }
   }
 
   /**

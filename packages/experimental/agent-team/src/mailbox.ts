@@ -221,6 +221,15 @@ export class TeamMailbox {
    * Return admitted dispatch and acknowledgement operations captured for disposal.
    * @returns detached snapshot ordered only by Set insertion.
    */
+  /**
+   * Whether this process is delivering a message now or has scheduled another attempt at it; mail whose retries ran out,
+   * or that waits for a later recovery, is neither.
+   * @param messageId - queued Team message.
+   */
+  delivering(messageId: TeamMessageId): boolean {
+    return this.inFlightMessages.has(messageId) || this.retries.get(messageId)?.timer !== undefined
+  }
+
   pendingDispatches(): readonly Promise<unknown>[] {
     return [...this.inFlightDispatches]
   }

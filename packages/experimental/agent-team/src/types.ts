@@ -613,6 +613,26 @@ export interface TeamWaitOptions {
   readonly userInput?: boolean | undefined
 }
 
+/**
+ * Product observer of Team waits, installed with `installWaitObserver`. The callbacks run synchronously inside the wait
+ * tool, so they read only facts already in memory; one that throws is logged and treated as reporting nothing.
+ */
+export interface TeamWaitObserver {
+  /** Whether runtime work the product owns is under way for the caller's Team, so a wait can still observe a change. */
+  readonly progressing?: ((caller: Agent) => boolean) | undefined
+  /**
+   * Start observing one wait.
+   * @returns a function called once when the wait returns, giving the text added to its result, or undefined for none.
+   */
+  readonly begin?: ((caller: Agent) => () => string | undefined) | undefined
+  /**
+   * Called when a wait registers; the product calls `wake` when runtime work it reported ends without a Team change, so
+   * the wait need not run to its timeout.
+   * @returns the disposer, called when the wait ends.
+   */
+  readonly watch?: ((caller: Agent, wake: () => void) => () => void) | undefined
+}
+
 /** Result of waiting for Team activity. */
 export interface TeamWaitResult {
   readonly timedOut: boolean

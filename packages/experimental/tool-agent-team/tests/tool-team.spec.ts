@@ -768,6 +768,22 @@ describe('dsh-tool-team', () => {
     await waitNoAgent(activeSetup.ctx, activeId)
   })
 
+  it('waits while an installed observer reports runtime work, and adds the observer report to the wait result', async () => {
+    const { ctx, lead } = await setup([textResponse('worker done')])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', { name: 'idle-worker', description: 'finish', prompt: 'finish' })
+    await waitNoAgent(ctx, spawnedChildId(ctx, lead, spawned))
+    let reports = 0
+    const remove = ctx.agentTeams.installWaitObserver({ progressing: () => true, begin: () => () => `report ${++reports}` })
+    const waiting = execute(ctx, lead, 'wait_agent', { timeout_ms: 10_000 })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await execute(ctx, lead, 'team_task_create', { subject: 'Wake the wait', description: 'Any Team change ends the wait.' })
+    expect(JSON.parse(text(await waiting))).toEqual({ timedOut: false, report: 'report 1' })
+    remove()
+    const idle = JSON.parse(text(await execute(ctx, lead, 'wait_agent', { timeout_ms: 10_000 }))) as Record<string, unknown>
+    expect(idle).toMatchObject({ timedOut: false, noProgress: { reason: 'no-active-peer' } })
+    expect(idle).not.toHaveProperty('report')
+  })
+
   it('adapts roster, mailbox, wait, and task CAS operations to canonical JSON', async () => {
     const { ctx, lead } = await setup(['hang', textResponse('lead received wakeup')])
     const spawned = await execute(ctx, lead, 'spawn_teammate', {

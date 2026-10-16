@@ -81,9 +81,8 @@ const NATIVE_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', 'co
 const REVIEWED_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', 'reassign', 'delete'] as const
 const CONTROLLED_MEMBER_TASK_ACTIONS = ['release'] as const
 
-const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
-const PRODUCT_NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents, then use send_message to wake each required inactive teammate before waiting again.'
+const PRODUCT_NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running, provisioning or about to start, and no runtime work is under way, so wait_agent cannot make progress or wake inactive teammates. Decide from the report; send_message to wake each required inactive teammate before waiting again.'
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the
@@ -202,6 +201,8 @@ const WAIT_VALUE_SCHEMA = {
         message: { type: 'string', required: true },
       },
     },
+    /** What an installed product observer reports about the Team when the wait returns. */
+    report: { type: 'string' },
   },
 } as const
 
@@ -396,7 +397,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     if (!controlledMember) {
       register(registerTeamTool(defineTool({
         name: 'wait_agent',
-        description: `Wait for the next teammate status, mailbox, or shared-task change after this call starts.${config.waitEndsOnUserMessage ? ' A user message also ends the wait.' : ''} This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.`,
+        description: `Wait for the next teammate status, mailbox, or shared-task change after this call starts.${config.waitEndsOnUserMessage ? ' A user message also ends the wait.' : ''} This never wakes inactive members and returns noProgress immediately when no other member is running, provisioning, or has Team mail waiting to start its next run${productTasks ? ', and no runtime work is under way. Its report says which Tasks changed and what needs you; re-list only for what it does not say.' : '. Re-list after wakeup or timeout instead of polling.'}`,
         parameters: {
           timeout_ms: {
             type: 'integer',
@@ -415,23 +416,27 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 3_600_000) {
             await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
           }
-          // The active-peer read and waiter registration must remain one synchronous
+          const report = ctx.agentTeams.beginWaitReport(caller)
+          const reported = (): { report?: string } => {
+            const text = report()
+            return text === undefined ? {} : { report: text }
+          }
+          // The progress read and waiter registration must remain one synchronous
           // span; awaiting between them can lose the only peer-status edge.
-          // The Lead roster row keeps its anchor id when its execution changes.
-          const hasActivePeer = ctx.agentTeams.listMembers(caller).some(member =>
-            member.name !== membership.name && ACTIVE_WAIT_STATUSES.has(member.status))
-          if (!hasActivePeer) {
+          if (!ctx.agentTeams.waitCanProgress(caller)) {
             return {
               timedOut: false,
               noProgress: {
                 reason: 'no-active-peer' as const,
                 message: productTasks ? PRODUCT_NO_ACTIVE_PEER_MESSAGE : NO_ACTIVE_PEER_MESSAGE,
               },
+              ...reported(),
             }
           }
           const result = await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
           return { timedOut: result.timedOut,
-            ...result.userInput === undefined ? {} : { userMessage: { message: USER_MESSAGE_ENDED_WAIT[result.userInput] } } }
+            ...result.userInput === undefined ? {} : { userMessage: { message: USER_MESSAGE_ENDED_WAIT[result.userInput] } },
+            ...reported() }
         },
       })))
     }

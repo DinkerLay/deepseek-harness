@@ -77,7 +77,7 @@ kind: "package-reference"
 
 成员表工具只返回已声明的模型字段。原生运行时的启动／导航标记继续供 Client 使用，不进入创建或列表工具的结果。
 
-发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning 时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。开启 `waitEndsOnUserMessage` 后，用户消息也会结束等待：插话消息紧接着结果送达，排队的消息要等调用方这一轮结束才送达，因此结果请它简短汇报并结束这一轮。接任团队的 Lead 不会把自己正在运行的轮次算作其他成员。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
+发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning、没有 teammate 还有等着开始它下一轮的 Team 邮件、也没有已安装的产品观察者报告 runtime 工作时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。产品观察者可以在两种结果里加上 `report`；开启 `productTaskTools` 时，工具说明让模型先读这份报告，只在报告没说到时再重新列出。开启 `waitEndsOnUserMessage` 后，用户消息也会结束等待：插话消息紧接着结果送达，排队的消息要等调用方这一轮结束才送达，因此结果请它简短汇报并结束这一轮。接任团队的 Lead 不会把自己正在运行的轮次算作其他成员。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
 
 -----
 
