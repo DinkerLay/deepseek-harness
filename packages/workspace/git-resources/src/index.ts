@@ -1299,14 +1299,15 @@ export class GitResources extends Service {
           const inventory = await this.preservationFiles(found.repository.identity, found.resource, content, combined)
           const { files } = inventory; unpreservedPaths = inventory.unpreservedPaths
           conflictStages = inventory.conflictStages
-          const captured: { path: string; digest: string; mode: string }[] = []
+          const conflicted = new Set(conflictStages.map(stage => stage.path))
+          const captured: { path: string; digest: string; mode: string; objectId: string; hunk: boolean }[] = []
           let total = 0
           for (const path of files) {
             const { bytes, mode } = await readRegularFile(found.resource.path, path, this.limits.maxFileBytes)
             if ((total += bytes.length) > this.limits.maxTotalBytes) throw new GitResourceError('FILE_LIMIT', 'Preservation exceeds configured byte bounds')
             const objectId = (await this.runner().run(['hash-object', '-w', '--no-filters', '--stdin'], root, combined, { input: bytes })).stdout.toString('utf8').trim()
             await this.runner().run(['update-index', '--add', '--cacheinfo', `${mode},${objectId},${path}`], root, combined, { env })
-            captured.push({ path, digest: byteHash(bytes), mode })
+            captured.push({ path, digest: byteHash(bytes), mode, objectId, hunk: conflicted.has(path) && conflictHunk(bytes) })
           }
           if (hash(inventory) !== hash(await this.preservationFiles(found.repository.identity, found.resource, content, combined))) {
             throw new GitResourceError('RESOURCE_CHANGED', 'Work-copy code or remaining-path inventory changed during preservation')
@@ -1316,6 +1317,12 @@ export class GitResources extends Service {
             if (byteHash(observed.bytes) !== item.digest || observed.mode !== item.mode) {
               throw new GitResourceError('RESOURCE_CHANGED', 'Work-copy content or mode changed during preservation')
             }
+          }
+          const materialized = integration?.integrationEffect?.tree
+          if (content === 'versioned' && 'expectedRevision' in operation.request && operation.request.resolveMarkerFreeConflicts === true
+            && materialized !== undefined && conflicted.size > 0) {
+            const resolved = await this.recordChangedConflicts(found.resource, materialized, conflicted, captured, combined)
+            conflictStages = conflictStages.filter(stage => !resolved.has(stage.path))
           }
           tree = await this.runner().text(['write-tree'], root, combined, env)
           const finalObserved = await this.verifyResource(found.repository.identity, found.resource, combined)
@@ -1591,6 +1598,28 @@ export class GitResources extends Service {
       await this.runner().run(['read-tree', this.requireBaseline(resource).commit], resource.path, signal)
     }
   }
+  /**
+   * Record in the work copy's own index, from the bytes this seal captured, each conflicted path the worker changed since
+   * the integration wrote it and that holds no conflict hunk: its captured blob as resolved, or its removal when the file
+   * is gone. A path left as the integration wrote it keeps its stages, as conflicts Git writes without markers (binary,
+   * one side deleted) would otherwise pass unseen; so does a path that still holds a hunk.
+   * @returns the paths recorded as resolved.
+   */
+  private async recordChangedConflicts(resource: GitResourceRecord, materialized: string, conflicted: ReadonlySet<string>,
+    captured: readonly { path: string; mode: string; objectId: string; hunk: boolean }[],
+    signal: AbortSignal): Promise<ReadonlySet<string>> {
+    const git = this.runner(), byPath = new Map(captured.map(item => [item.path, item])), resolved = new Set<string>()
+    for (const path of [...conflicted].sort()) {
+      const written = await git.run(['rev-parse', '--verify', '--quiet', `${materialized}:${path}`], resource.path, signal, { allowFailure: true })
+      const before = written.status === 0 ? written.stdout.toString('utf8').trim() : undefined
+      const now = byPath.get(path)
+      if (now === undefined ? before === undefined : now.hunk || now.objectId === before) continue
+      await git.run(now === undefined ? ['update-index', '--force-remove', '--', path]
+        : ['update-index', '--cacheinfo', `${now.mode},${now.objectId},${path}`], resource.path, signal)
+      resolved.add(path)
+    }
+    return resolved
+  }
   private async preservationFiles(identity: GitRepositoryIdentity, resource: GitResourceRecord,
     content: 'versioned' | 'all', signal: AbortSignal): Promise<{ files: string[]; unpreservedPaths: string[]; conflictStages: readonly GitIntegrationConflictStage[] }> {
     const versioned = await versionedFiles(this.runner(), resource.path, identity.commonDir.path, signal, this.limits)
@@ -1787,4 +1816,13 @@ async function removeSnapshotDirectory(path: string): Promise<void> {
   }
   await writable(path)
   await rm(path, { recursive: true, force: true })
+}
+
+/**
+ * Whether file bytes still hold a conflict hunk: a line opening with seven or more `<` and a line opening with seven or more
+ * `>`, as Git writes them at its default or a larger `conflict-marker-size`.
+ */
+function conflictHunk(bytes: Buffer): boolean {
+  const text = bytes.toString('latin1')
+  return /^<{7,}(?:[ \r]|$)/m.test(text) && /^>{7,}(?:[ \r]|$)/m.test(text)
 }

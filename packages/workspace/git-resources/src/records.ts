@@ -35,7 +35,8 @@ const baseline = z.discriminatedUnion('kind', [z.object({ kind: z.literal('commi
 const create = z.object({ operationId, consumerScope, originalRequestJson: originalJson, workspaceId,
   baseline, expectedPreviewFingerprint: id }).strict()
 const preserve = z.object({ operationId, resourceId, expectedRevision: z.number().int().positive(),
-  content: z.enum(['versioned', 'all']), originalRequestJson: originalJson.optional() }).strict()
+  content: z.enum(['versioned', 'all']), resolveMarkerFreeConflicts: z.boolean().optional(),
+  originalRequestJson: originalJson.optional() }).strict()
 const use = z.object({ useId: id, ownerId: id, epoch: id, phase: z.enum(['held', 'needs_attention', 'released']) }).strict()
 const resource = z.object({ resourceId, repositoryId, consumerScope, revision: z.number().int().positive(),
   path: id, reservedAbsent: z.literal(true),

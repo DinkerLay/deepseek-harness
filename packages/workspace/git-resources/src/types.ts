@@ -163,6 +163,14 @@ export interface GitResourcePreserveRequest {
   readonly expectedRevision: number
   /** Defaults to versioned: tracked plus nonignored untracked working bytes, never ignored dependencies. */
   readonly content?: 'versioned' | 'all'
+  /**
+   * Versioned only: record in the work copy's own index, from the bytes this seal captures, each conflicted path the
+   * worker changed since the integration wrote it and that holds no conflict hunk (a line opening with seven or more `<`
+   * and one opening with seven or more `>`): its bytes as resolved, or its removal when the file is gone. A path left as
+   * the integration wrote it, or still holding a hunk, keeps its conflict stages. The record is Git bookkeeping a
+   * sandboxed worker cannot write; it does not prove the conflict was handled well.
+   */
+  readonly resolveMarkerFreeConflicts?: boolean
   /** Optional bounded original consumer JSON for cold correlation; never interpreted as authority. */
   readonly originalRequestJson?: string
 }

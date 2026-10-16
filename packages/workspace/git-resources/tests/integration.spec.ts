@@ -1,5 +1,5 @@
 /** Real Loader integrations preserve source versions and materialize actual Git conflicts in a new copy. */
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { GitConsumerScope, GitOperationId } from '../src/index.ts'
@@ -86,6 +86,44 @@ it('retains real content markers and 1/2/3 stages, stops before later inputs and
   expect(await readFile(join(integrated.resource.path, 'removed.txt'), 'utf8')).toBe('Remove this deliberately\n')
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('BASE\n')
   expect(integrated.resource.state).toBe('conflicted')
+})
+
+it('records only conflicted files the worker changed and left without a hunk as resolved, and only when the seal asks', async () => {
+  const test = await setup()
+  const names = ['file.txt', 'other.txt', 'gone.txt', 'long.txt', 'binary.dat']
+  const side = (label: string) => async (path: string) => {
+    for (const name of names) await writeFile(join(path, name), name === 'binary.dat' ? `\0${label}\0` : `${label} ${name}\n`)
+  }
+  const a = await test.version('hunk-a', side('LEFT'))
+  const b = await test.version('hunk-b', side('RIGHT'))
+  const integrated = await test.ctx.gitResources.integrate(await test.request([a.operation.operationId, b.operation.operationId], 'hunk-integration'))
+  const copy = integrated.resource.path
+  // Resolved files; a file left with its hunk; one rewritten with longer markers; an untouched binary conflict Git wrote without markers.
+  await writeFile(join(copy, 'file.txt'), 'BOTH\n')
+  await rm(join(copy, 'gone.txt'))
+  expect(await readFile(join(copy, 'other.txt'), 'utf8')).toContain('<<<<<<<')
+  await writeFile(join(copy, 'long.txt'), `${'<'.repeat(9)} ours\nLEFT\n${'='.repeat(9)}\nRIGHT\n${'>'.repeat(9)} theirs\n`)
+  expect((await readFile(join(copy, 'binary.dat'))).includes('<<<<<<<')).toBe(false)
+  const unmerged = () => [...new Set(test.git(['-C', copy, 'ls-files', '-u']).split('\n').filter(Boolean)
+    .map(row => row.slice(row.indexOf('\t') + 1)))].sort()
+  const seal = async (id: string, resolveMarkerFreeConflicts?: boolean) => {
+    const current = test.ctx.gitResources.read(integrated.resource.resourceId)
+    if (current === undefined) throw new Error('the integration copy remains registered')
+    return await test.ctx.gitResources.preserve({ operationId: GitOperationId(id), resourceId: current.resourceId,
+      expectedRevision: current.revision, content: 'versioned', ...resolveMarkerFreeConflicts === undefined ? {} : { resolveMarkerFreeConflicts } })
+  }
+  // Without the option the seal reads the index as it is and changes nothing.
+  const plain = await seal('hunk-plain')
+  expect([...new Set(plain.operation.effectConflictStages?.map(stage => stage.path))].sort()).toEqual([...names].sort())
+  expect(unmerged()).toEqual([...names].sort())
+  const resolved = await seal('hunk-resolved', true)
+  const kept = ['binary.dat', 'long.txt', 'other.txt']
+  expect([...new Set(resolved.operation.effectConflictStages?.map(stage => stage.path))].sort()).toEqual(kept)
+  expect(unmerged()).toEqual(kept)
+  expect(test.git(['-C', copy, 'ls-files', '-s', '--', 'file.txt'])).toMatch(/ 0\tfile\.txt$/)
+  expect(test.git(['-C', copy, 'ls-files', '--', 'gone.txt'])).toBe('')
+  expect(test.git(['-C', copy, 'cat-file', '-p', `${resolved.operation.effectTree}:file.txt`])).toBe('BOTH')
+  expect(resolved.resource.state).toBe('conflicted')
 })
 
 async function resolutionFixture() {
