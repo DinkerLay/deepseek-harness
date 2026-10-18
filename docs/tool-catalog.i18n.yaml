@@ -9,8 +9,8 @@
   en: 6cc2cd9ced70bb09
   zh: 1c0e6cb4ba2ed637
 /tool-schema-catalog/tool-package-map:
-  en: 24e6be3db7ec7e52
-  zh: 4991a72116e98b58
+  en: 20382580f8158b80
+  zh: a084c98f84a644f6
 /tool-schema-catalog/deepseek-ai-dsh-plugin-manager:
   en: e0143916bb634762
   zh: e0143916bb634762
@@ -315,5 +315,5 @@
   en: 8673f203aea9bdf2
   zh: 4e17783ffdf34c83
 /tool-schema-catalog/deepseek-ai-dsh-tool-web/web-search:
-  en: cc1ad38bf0006710
-  zh: 324eacb827a09e93
+  en: 729c1b137024b667
+  zh: 571f229e2f79a32a

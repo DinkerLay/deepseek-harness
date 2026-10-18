@@ -4046,10 +4046,10 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-web`
 
 - `inject`: `tools` · `web` · `systemPrompt`
-- `source`: [`packages/web/tool-web/src/index.ts:37`](../packages/web/tool-web/src/index.ts)
+- `source`: [`packages/web/tool-web/src/index.ts:46`](../packages/web/tool-web/src/index.ts)
 
 ```ts config-catalog
-/** Plugin config: which web tools to register, search bounds, per-tool budgets, and the fetch output cap. */
+/** Plugin config: which web tools to register, search bounds, per-tool budgets, the fetch output cap, and fetch windows. */
 export interface Config {
   /** Register `web_search`. Defaults to true. */
   search?: boolean
@@ -4063,8 +4063,28 @@ export interface Config {
   fetchTimeoutMs?: number
   /** Cooperative timeout budget (ms) for `web_search`. Defaults to 30000. */
   searchTimeoutMs?: number
-  /** Cap on source characters converted and complete `web_fetch` output characters. Defaults to 200000. */
+  /**
+   * Cap on source characters converted and complete `web_fetch` output characters. Defaults to 200000.
+   * With `fetchWindowTokens` set, it caps the kept page text instead of one output.
+   */
   fetchMaxOutputChars?: number
+  /**
+   * Upper bound on the estimated tokens of one complete `web_fetch` output in window mode. Unset (the
+   * default) returns the whole page in one output. When set, `web_fetch` takes an optional `start`
+   * offset and returns the page text from there in a window whose header, text, and footer fit this
+   * bound; the footer gives the next `start`. Continuations read the copy kept from the session's
+   * fetch of the same URL. Set it at or below the spill-policy inline budget so windows are not spilled.
+   */
+  fetchWindowTokens?: number
+  /** Most page copies kept for `web_fetch` window continuations across sessions. Defaults to 32. */
+  fetchWindowCacheEntries?: number
+  /**
+   * Most page-text characters kept for `web_fetch` window continuations across copies; with
+   * `fetchWindowTokens` set it must be at least `fetchMaxOutputChars`. Defaults to 4000000.
+   */
+  fetchWindowCacheChars?: number
+  /** Time (ms) a kept page copy serves `web_fetch` continuations after it was stored. Defaults to 1800000. */
+  fetchWindowCacheTtlMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-web -->

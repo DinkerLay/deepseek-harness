@@ -14,6 +14,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { estimateContent } from '@deepseek-ai/dsh-token-meter/estimate'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -47,18 +48,23 @@ beforeEach(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   spillRoot = mkdtempSync(join(tmpdir(), 'dsh-spill-web-'))
+  ctx = await mountSpillStack({})
+})
 
-  ctx = new Context()
-  await ctx.plugin(SystemPrompt)
-  await ctx.plugin(ToolRuntime)
-  await ctx.plugin(WebRuntime, { fetchProvider: WebFetchLocal.LOCAL_FETCH_PROVIDER_ID })
+/** Mount the real fetch backend, the local spill backend, spill-policy, and tool-web. */
+async function mountSpillStack(toolWebConfig: ToolWeb.Config): Promise<Context> {
+  const stack = new Context()
+  await stack.plugin(SystemPrompt)
+  await stack.plugin(ToolRuntime)
+  await stack.plugin(WebRuntime, { fetchProvider: WebFetchLocal.LOCAL_FETCH_PROVIDER_ID })
   // Provider cap generous so the tool returns a large formatted result; the
   // policy cap is what triggers the spill (the Agent Note's separation of concerns).
-  await ctx.plugin(WebFetchLocal, { maxBodyChars: 500_000 })
-  await ctx.plugin(LocalSpillStore, { root: spillRoot })
-  await ctx.plugin(SpillPolicy, { maxInlineTokens: MAX_INLINE_TOKENS })
-  await ctx.plugin(ToolWeb)
-})
+  await stack.plugin(WebFetchLocal, { maxBodyChars: 500_000 })
+  await stack.plugin(LocalSpillStore, { root: spillRoot })
+  await stack.plugin(SpillPolicy, { maxInlineTokens: MAX_INLINE_TOKENS })
+  await stack.plugin(ToolWeb, toolWebConfig)
+  return stack
+}
 
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -98,5 +104,31 @@ describe('web_fetch spill showcase', () => {
     expect(saved).toContain('(HTTP 200)')
     expect(saved).toContain(BODY)
     expect(saved.length).toBeGreaterThan(text.length)
+  })
+
+  it('keeps every web_fetch window inline when the window budget matches the inline budget', async () => {
+    const windowed = await mountSpillStack({ fetchWindowTokens: MAX_INLINE_TOKENS })
+    const agent = { session: { header: { id: SessionId('web-sess') } } as Agent['session'] } as Agent
+    let start = 0
+    let read = ''
+    for (let index = 0; index < 20; index += 1) {
+      const out = await windowed.tools.execute({
+        callId: ToolCallId(`window-${index}`), name: 'web_fetch', arguments: { url: base, start }, agent, signal: testToolSignal,
+      })
+      expect(out.isError).toBe(false)
+      const text = out.content.map(b => b.type === 'text' ? b.text : '').join('')
+      expect(text).not.toContain('Full formatted result stored at:')
+      expect(estimateContent(out.content)).toBeLessThanOrEqual(MAX_INLINE_TOKENS)
+      const value = out.value as { text: string; end: number; total: number }
+      read += value.text
+      if (value.end === value.total) {
+        expect(text).toContain('The page ends here.')
+        break
+      }
+      expect(text).toContain(`start=${value.end}.)`)
+      start = value.end
+    }
+    expect(read).toBe(BODY)
+    await windowed.fiber.dispose()
   })
 })

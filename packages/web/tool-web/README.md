@@ -49,7 +49,11 @@ Load the web service, at least one backend, and this package; both tools registe
 | `searchMaxQueries` | `4` | Upper bound on queries accepted by one `web_search` call; the value appears in prompt guidance and schema descriptions |
 | `fetchTimeoutMs` | `30000` | Cooperative tool-call timeout budget (ms) for `web_fetch` |
 | `searchTimeoutMs` | `30000` | Cooperative tool-call timeout budget (ms) for `web_search` |
-| `fetchMaxOutputChars` | `200000` | Cap on source characters converted synchronously and on one complete `web_fetch` output |
+| `fetchMaxOutputChars` | `200000` | Cap on source characters converted synchronously and on one complete `web_fetch` output; in window mode, on the kept page text |
+| `fetchWindowTokens` | unset | Window mode: upper bound on the estimated tokens of one complete `web_fetch` output; unset returns the whole page |
+| `fetchWindowCacheEntries` | `32` | Most page copies kept for window continuations across sessions |
+| `fetchWindowCacheChars` | `4000000` | Most page-text characters kept across copies; at least `fetchMaxOutputChars` when window mode is on |
+| `fetchWindowCacheTtlMs` | `1800000` | Time (ms) a kept page copy serves continuations after it was stored |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-web) is the exhaustive source for every accepted field and its JSDoc. `searchMaxQueries` bounds the accepted array before exact-string deduplication and provider fan-out; validation rejects an oversized array before any search starts. The timeout budgets attach to each tool definition and are enforced by [`@deepseek-ai/dsh-tool-call-timeout-policy`](../../guard/timeout-policy/README.md); the model-facing schemas expose no timeout argument.
 
@@ -71,13 +75,19 @@ Call `web_fetch` with one `url`. HTML bodies are filtered and rendered to markdo
 web_fetch({ url: 'https://example.com' })
 ```
 
+With `fetchWindowTokens` set, `web_fetch` reads a long page in windows. A call without `start` fetches the page and returns its rendered text from offset 0 in a window whose complete output (header, text, and footer) is estimated at or under `fetchWindowTokens`, cut at a line end where possible. When text remains, the tool keeps the rendered text for the calling session and the footer gives the shown range, the page-text length, and the exact next call; a continuation with that `start` reads the same kept copy instead of fetching again, so the windows tile the page without gaps or overlaps. A page that fits one window is not kept. Set `fetchWindowTokens` at or below the spill-policy `maxInlineTokens` so windows stay inline. A kept copy is lost when it expires, is evicted, or the process restarts; a continuation then fetches again and says the part may not line up with the parts already read. This bounds one read, not research output: network protections, redirects, timeouts, and provider size limits are unchanged.
+
+```text
+web_fetch({ url: 'https://example.com/long-guide', start: 48812 })
+```
+
 ### Stable registration
 
 Tool registration follows product enablement, not backend availability: a tool stays visible even when its selected provider is missing, misconfigured, ambiguous, or temporarily unavailable. Execution then fails with a structured `WebError` — for example `WEB_PROVIDER_UNAVAILABLE` or `WEB_PROVIDER_AMBIGUOUS` — which becomes an error tool result the model can read and hooks or UI can route on. To remove a web tool, disable it here in config.
 
 ### Failures and recovery
 
-Schema validation rejects an absent or non-array `queries` field, non-string array elements, an oversized array, or a blank URL before execution, with exact messages such as `Error: queries must contain at least one query` and `Error: url must be a non-empty string`. Provider-side failures surface as structured error tool results; the model can read them and decide the next step, for example fetching a cited URL or refining a query.
+Schema validation rejects an absent or non-array `queries` field, non-string array elements, an oversized array, or a blank URL before execution, with exact messages such as `Error: queries must contain at least one query` and `Error: url must be a non-empty string`. In window mode, a negative `start` or one at or past the end of the page text is an error; the latter names the page-text length, and when the earlier copy was no longer kept it says the length comes from a new fetch and to call without `start` to read the new page from the beginning. A budget that cannot hold one character of page text beside the header and the longest footer of any later window fails the call before the first window with `Error: the output budget leaves no room for page text after the header and footer for this url`, so a page whose first window is returned can be read to its end. Provider-side failures surface as structured error tool results; the model can read them and decide the next step, for example fetching a cited URL or refining a query.
 
 -----
 
@@ -102,7 +112,7 @@ The package is built on one separation and one registration rule:
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: config schema, enablement, timeout budgets, tool registration |
 | [`src/search.ts`](src/search.ts) | The `web_search` tool: argument validation, query fan-out, merge, formatting, presentation meta |
-| [`src/fetch.ts`](src/fetch.ts) | The `web_fetch` tool: HTML→markdown conversion, output caps, formatting, presentation meta |
+| [`src/fetch.ts`](src/fetch.ts) | The `web_fetch` tool: HTML→markdown conversion, output caps, formatting, window mode and kept page copies, presentation meta |
 | — | No runtime invariant companion is published; this model-facing adapter has no independent lifecycle stream; execution relations are owned by the capability seam it calls. |
 
 ### Search flow
@@ -113,9 +123,11 @@ The package is built on one separation and one registration rule:
 
 `web_fetch` removes active and hidden HTML before a shared turndown converter renders GFM tables and strikethrough. A lexical nesting guard and conversion failures produce a fixed omission marker instead of returning unsafe raw HTML, and a synchronous conversion cap bounds DOM work. The complete output — header, untrusted-content notice, rendered body, and truncation footer — is then bounded as a whole. Conversion is memoized per result and cap so registry render and presentation share one parse.
 
+In window mode the same conversion produces a page copy whose text is cut to `fetchMaxOutputChars`. The tool keeps copies in a per-registration in-memory store keyed by owning session id and requested URL, bounded by entry count, total characters, and age; storing or reading a copy makes it the most recently used, and storing a copy drops expired entries and then the least recently used. A call without `start` always fetches; a continuation reads the unexpired copy, and without one (or without an owning session) fetches again and marks the window as refetched. A fetch keeps its copy only when the returned window ends before the page text does, and otherwise drops any earlier copy under the same key. The window end is the largest one whose complete output fits under `estimateContent` from `@deepseek-ai/dsh-token-meter/estimate`, the estimator spill-policy uses, then moved back to a line end when that keeps at least half the window. Before returning a window that leaves text, the tool checks that one character fits beside the last window's footer and beside the continuation footer with the largest offsets a later window can show; every later window then advances, and the call fails instead when the check does not hold. The output value holds only the window with `start`, `end`, `total`, `truncated`, and `refetched`; render rebuilds the text from it.
+
 ### Presentation
 
-Each tool attaches structured metadata to its result (`output.presentationMeta`) — the faithful search sources, or the fetch summary (final URL, status code, effective truncation) — so the UI can render `web` result cards and replay reproduces them without reparsing the lossy render text. A UI without the `web` capability falls back to the raw tool result, which is the same text.
+Each tool attaches structured metadata to its result (`output.presentationMeta`) — the faithful search sources, or the fetch summary (final URL, status code, effective truncation) — so the UI can render `web` result cards and replay reproduces them without reparsing the lossy render text. In window mode the fetch summary reports truncation only on the last window of a cut page text, matching its footer. A UI without the `web` capability falls back to the raw tool result, which is the same text.
 
 </details>
 
@@ -175,15 +187,15 @@ Prefix-stable while visible tools, scope, and guidance text are unchanged. Confi
 
 #### What the model sees
 
-The model sees the generated [`web_search` and `web_fetch` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-web). Result-count and timeout budgets are deployment settings, not model arguments.
+The model sees the generated [`web_search` and `web_fetch` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-web). Result-count and timeout budgets are deployment settings, not model arguments. With `fetchWindowTokens` set, the `web_fetch` description adds `A long page is returned in parts; the end of each part gives the start value for the next part.` and the schema adds an optional integer `start`: `Character offset into the page text. Omit for the first part; to read on, pass the start value given at the end of the previous part.`
 
 #### Token effect
 
-Fixed schema cost per request for a resolved `searchMaxQueries`; config disablement and scoped restrictions remove both the tool schema and its guidance.
+Fixed schema cost per request for a resolved `searchMaxQueries` and window mode; window mode adds the `start` parameter and one description sentence. Config disablement and scoped restrictions remove both the tool schema and its guidance.
 
 #### KV Cache effect
 
-Prefix-stable while definitions, resolved query cap, and visibility are unchanged. Config enablement, changing `searchMaxQueries`, plugin lifecycle, or scoped restrictions may invalidate reuse from the first changed schema token.
+Prefix-stable while definitions, resolved query cap, window mode, and visibility are unchanged. Config enablement, changing `searchMaxQueries`, turning window mode on or off, plugin lifecycle, or scoped restrictions may invalidate reuse from the first changed schema token.
 
 ### Search result
 
@@ -227,11 +239,25 @@ Provider caps bound body size; retained call arguments and results are resent un
 
 Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
 
+### Fetch windows
+
+#### What the model sees
+
+In window mode each result starts with the same header. A continuation that found no kept copy adds `The earlier copy of this page is no longer kept, so this part comes from a new fetch and may not line up with the parts already read.` and a blank line. The window text follows, then one blank line and a footer: `(Showing page text characters <start> to <end> of <total>. To read on, call web_fetch with url "<url>" and start=<end>.)` while text remains; `(Showing page text characters <start> to <total> of <total>. The page ends here.)` on the last window; or, when the provider or `fetchMaxOutputChars` cut the page, `(Showing page text characters <start> to <total> of <total>. The page text stops here because the fetch size limit cut the page; the rest of the page was not fetched. Fetch a more specific URL or section for the rest.)`. A complete page that fits one window has no footer, as in whole-page mode.
+
+#### Token effect
+
+Each window's complete output is estimated at or under `fetchWindowTokens`, so a long page costs one bounded result per part instead of a spilled head and tail; a page read to the end costs about its full text plus one header and footer per part.
+
+#### KV Cache effect
+
+Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
+
 ### Argument errors
 
 #### What the model sees
 
-Schema validation rejects an absent or non-array `queries` field and non-string array elements before execution. Value errors become exactly `Error: queries must contain at least one query`, `Error: queries must contain at most 1 query` when the configured cap is one, `Error: queries must contain at most <count> queries` for larger caps, `Error: each query must be a non-empty string`, or `Error: url must be a non-empty string`.
+Schema validation rejects an absent or non-array `queries` field and non-string array elements before execution. Value errors become exactly `Error: queries must contain at least one query`, `Error: queries must contain at most 1 query` when the configured cap is one, `Error: queries must contain at most <count> queries` for larger caps, `Error: each query must be a non-empty string`, or `Error: url must be a non-empty string`. In window mode a non-integer `start` fails schema validation, and value errors are exactly `Error: start must be a non-negative integer`, `Error: start <start> is at or past the end of the page text, which has <total> characters`, or, when the earlier copy was no longer kept, `Error: The earlier copy of this page is no longer kept; a new fetch has <total> characters of page text, so start <start> is at or past its end. Call web_fetch without start to read the new page from the beginning.`
 
 #### Token effect
 
@@ -250,7 +276,8 @@ These limits define when the tools are incomplete or need deployment cooperation
 
 - **There is no batch-wide native-search counter** — `searchMaxQueries` bounds `ctx.web.search` calls, but a provider may perform several native searches inside each call; for example a model-backed provider configured with `maxUses` can permit up to `searchMaxQueries × maxUses` native searches, and `searchMaxResults` limits only the combined sources returned to the caller. Deployments control cost through these independent consumer and provider settings because the service does not know provider-internal search units.
 - **HTML→markdown conversion omits inputs it cannot safely represent** — [turndown](https://github.com/mixmark-io/turndown) converts at most `fetchMaxOutputChars` source characters through a real DOM. A 512-level nesting guard and conversion exceptions produce a fixed omission marker instead of raw HTML; table `colspan` remains unsupported because GFM has no spanning-cell representation ([archived dependency decision](../../../.agents/notes/archived/simplification/2026-07-26-turndown-for-tool-web-html-markdown.md)).
-- **The model-facing API is minimal by design, with promotions deferred** — `max_results` stays a config bound (not a model argument), and `web_fetch` takes only `url` (no `format`/`prompt`/LLM-summarization mode); both are named later steps in [the seam Agent Note](../../../.agents/notes/implemented/architecture/2026-06-24-web-capability-seam.md).
+- **The model-facing API is minimal by design, with promotions deferred** — `max_results` stays a config bound (not a model argument), and `web_fetch` takes only `url`, plus `start` in window mode (no `format`/`prompt`/LLM-summarization mode); both are named later steps in [the seam Agent Note](../../../.agents/notes/implemented/architecture/2026-06-24-web-capability-seam.md).
+- **Window budgets use the fixed four-characters-per-token estimate** — window mode sizes each output with the same `estimateContent` heuristic spill-policy applies, so windows never spill, but CJK and other dense scripts can cost more real tokens than `fetchWindowTokens`. Kept page copies live in process memory per tool registration; a restart, expiry, or eviction makes the next continuation fetch again.
 - **Public fetches do not request approval** — the shipped `cordis`, `code`, and `standard` presets expose `web_fetch` in every sandbox and approval mode. The HTTP provider blocks non-public destinations, but a model can send data to a public URL. Deployments that need per-call confirmation must add a `tools/pre-execute` policy or disable fetch.
 
 <a id="dev-note"></a>
