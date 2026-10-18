@@ -166,9 +166,11 @@ export interface GitResourcePreserveRequest {
   /**
    * Versioned only: record in the work copy's own index, from the bytes this seal captures, each conflicted path the
    * worker changed since the integration wrote it and that holds no conflict hunk (a line opening with seven or more `<`
-   * and one opening with seven or more `>`): its bytes as resolved, or its removal when the file is gone. A path left as
-   * the integration wrote it, or still holding a hunk, keeps its conflict stages. The record is Git bookkeeping a
-   * sandboxed worker cannot write; it does not prove the conflict was handled well.
+   * and one opening with seven or more `>`): its bytes as resolved, or its removal when the file is gone. Paths Git
+   * reports as one conflict settle together: once the worker changed one, the others without a hunk are recorded as this
+   * seal holds them. A conflicted path the integration did not write and the seal does not hold is recorded as removed.
+   * Otherwise a path left as the integration wrote it keeps its conflict stages, and a path still holding a hunk always
+   * does. The record is Git bookkeeping a sandboxed worker cannot write; it does not prove the conflict was handled well.
    */
   readonly resolveMarkerFreeConflicts?: boolean
   /** Optional bounded original consumer JSON for cold correlation; never interpreted as authority. */

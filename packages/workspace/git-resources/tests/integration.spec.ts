@@ -126,6 +126,44 @@ it('records only conflicted files the worker changed and left without a hunk as 
   expect(resolved.resource.state).toBe('conflicted')
 })
 
+it('records the source of a rename/rename conflict as removed and settles its other paths once the worker changed one', async () => {
+  const test = await setup()
+  const rename = (name: string) => async (path: string) => {
+    await writeFile(join(path, name), await readFile(join(path, 'removed.txt')))
+    await rm(join(path, 'removed.txt'))
+  }
+  const a = await test.version('rename-a', rename('left.txt'))
+  const b = await test.version('rename-b', rename('right.txt'))
+  const integrated = await test.ctx.gitResources.integrate(await test.request([a.operation.operationId, b.operation.operationId], 'rename-integration'))
+  const effect = integrated.operation.integrationEffect, copy = integrated.resource.path
+  // Git stages the source and both names, but writes only the two names: the source exists in neither the tree nor the copy.
+  expect(effect?.conflictStages.map(stage => `${stage.stage} ${stage.path}`)).toEqual(['2 left.txt', '1 removed.txt', '3 right.txt'])
+  expect(effect?.conflictMessages).toContainEqual(expect.objectContaining({ kind: 'CONFLICT (rename/rename)',
+    paths: ['removed.txt', 'left.txt', 'right.txt'] }))
+  expect(test.git(['ls-tree', '--name-only', effect?.tree ?? ''])).toBe('file.txt\nleft.txt\nright.txt')
+  const unmerged = () => [...new Set(test.git(['-C', copy, 'ls-files', '-u']).split('\n').filter(Boolean)
+    .map(row => row.slice(row.indexOf('\t') + 1)))].sort()
+  const seal = async (id: string) => {
+    const current = test.ctx.gitResources.read(integrated.resource.resourceId)
+    if (current === undefined) throw new Error('the integration copy remains registered')
+    return await test.ctx.gitResources.preserve({ operationId: GitOperationId(id), resourceId: current.resourceId,
+      expectedRevision: current.revision, content: 'versioned', resolveMarkerFreeConflicts: true })
+  }
+  // Untouched, both names stay as the integration wrote them; only the source nothing holds is recorded as removed.
+  const untouched = await seal('rename-untouched')
+  expect([...new Set(untouched.operation.effectConflictStages?.map(stage => stage.path))].sort()).toEqual(['left.txt', 'right.txt'])
+  expect(unmerged()).toEqual(['left.txt', 'right.txt'])
+  expect(test.git(['-C', copy, 'ls-files', '--', 'removed.txt'])).toBe('')
+  // Keeping one name and deleting the other settles the kept name as the seal holds it.
+  await rm(join(copy, 'right.txt'))
+  const settled = await seal('rename-settled')
+  expect(settled.operation.effectConflictStages).toEqual([])
+  expect(unmerged()).toEqual([])
+  expect(test.git(['-C', copy, 'ls-files', '-s', '--', 'left.txt'])).toMatch(/ 0\tleft\.txt$/)
+  expect(test.git(['ls-tree', '--name-only', settled.operation.effectTree ?? ''])).toBe('file.txt\nleft.txt')
+  expect(test.git(['cat-file', '-p', `${settled.operation.effectTree}:left.txt`])).toBe('Remove this deliberately')
+})
+
 async function resolutionFixture() {
   const test = await setup()
   const a = await test.version('resolution-a', async (path) => { await writeFile(join(path, 'file.txt'), 'LEFT\n') })

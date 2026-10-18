@@ -17,7 +17,7 @@ import { ResourceGit } from './git.ts'
 import { inspectIntegration, integrationPreviewRequestSchema, integrationRequestSchema, materializeIntegrationIndex,
   mergeIntegration, verifyIntegrationIndex, integrationConflictIds, integrationResolutionSelectionSchema,
   integrationResolutionRequestSchema } from './integration.ts'
-import type { GitIntegrationConflictStage, GitIntegrationPreviewRequest, GitIntegrationPreview, GitIntegrationRequest,
+import type { GitIntegrationConflictStage, GitIntegrationEffect, GitIntegrationPreviewRequest, GitIntegrationPreview, GitIntegrationRequest,
   GitIntegrationResolutionObservation, GitIntegrationResolutionPreview, GitIntegrationResolutionRequest,
   GitIntegrationResolutionSelection } from './integration.ts'
 import { applicationPreviewRequestSchema, applicationRequestSchema, applyApplication, inspectApplication,
@@ -1449,10 +1449,10 @@ export class GitResources extends Service {
               throw new GitResourceError('RESOURCE_CHANGED', 'Work-copy content or mode changed during preservation')
             }
           }
-          const materialized = integration?.integrationEffect?.tree
+          const written = integration?.integrationEffect
           if (content === 'versioned' && 'expectedRevision' in operation.request && operation.request.resolveMarkerFreeConflicts === true
-            && materialized !== undefined && conflicted.size > 0) {
-            const resolved = await this.recordChangedConflicts(found.resource, materialized, conflicted, captured, combined)
+            && written !== undefined && conflicted.size > 0) {
+            const resolved = await this.recordChangedConflicts(found.resource, written, conflicted, captured, combined)
             conflictStages = conflictStages.filter(stage => !resolved.has(stage.path))
           }
           tree = await this.runner().text(['write-tree'], root, combined, env)
@@ -1732,19 +1732,37 @@ export class GitResources extends Service {
   /**
    * Record in the work copy's own index, from the bytes this seal captured, each conflicted path the worker changed since
    * the integration wrote it and that holds no conflict hunk: its captured blob as resolved, or its removal when the file
-   * is gone. A path left as the integration wrote it keeps its stages, as conflicts Git writes without markers (binary,
-   * one side deleted) would otherwise pass unseen; so does a path that still holds a hunk.
+   * is gone. Paths Git reports as one conflict settle together: once the worker changed one, the others without a hunk
+   * are recorded as the seal holds them, as when one side renamed f to g, the other renamed it to h (stages at f, g and h)
+   * and the worker deleted h. A path the integration did not write and the seal does not hold, like that f, is recorded
+   * as removed: nothing is kept there and nothing Git wrote passes unseen. Otherwise a path left as the integration wrote
+   * it keeps its stages, as conflicts Git writes without markers (binary, one side deleted) would pass unseen; a path that
+   * still holds a hunk always does.
+   * @param written - the integration's merge effect: the tree it wrote and the conflicts Git reported.
    * @returns the paths recorded as resolved.
    */
-  private async recordChangedConflicts(resource: GitResourceRecord, materialized: string, conflicted: ReadonlySet<string>,
+  private async recordChangedConflicts(resource: GitResourceRecord, written: GitIntegrationEffect, conflicted: ReadonlySet<string>,
     captured: readonly { path: string; mode: string; objectId: string; hunk: boolean }[],
     signal: AbortSignal): Promise<ReadonlySet<string>> {
     const git = this.runner(), byPath = new Map(captured.map(item => [item.path, item])), resolved = new Set<string>()
-    for (const path of [...conflicted].sort()) {
-      const written = await git.run(['rev-parse', '--verify', '--quiet', `${materialized}:${path}`], resource.path, signal, { allowFailure: true })
-      const before = written.status === 0 ? written.stdout.toString('utf8').trim() : undefined
+    const paths = [...conflicted].sort(), absent = new Set<string>(), changed = new Set<string>()
+    for (const path of paths) {
+      const blob = await git.run(['rev-parse', '--verify', '--quiet', `${written.tree}:${path}`], resource.path, signal,
+        { allowFailure: true })
+      const before = blob.status === 0 ? blob.stdout.toString('utf8').trim() : undefined
       const now = byPath.get(path)
-      if (now === undefined ? before === undefined : now.hunk || now.objectId === before) continue
+      if (now === undefined && before === undefined) absent.add(path)
+      else if (now === undefined || now.objectId !== before) changed.add(path)
+    }
+    const settled = new Set(changed)
+    for (const conflict of written.conflictMessages) {
+      if (conflict.kind.startsWith('CONFLICT') && conflict.paths.some(path => changed.has(path))) {
+        for (const path of conflict.paths) settled.add(path)
+      }
+    }
+    for (const path of paths) {
+      const now = byPath.get(path)
+      if ((now !== undefined && now.hunk) || (!absent.has(path) && !settled.has(path))) continue
       await git.run(now === undefined ? ['update-index', '--force-remove', '--', path]
         : ['update-index', '--cacheinfo', `${now.mode},${now.objectId},${path}`], resource.path, signal)
       resolved.add(path)
