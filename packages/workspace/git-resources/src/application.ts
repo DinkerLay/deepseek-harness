@@ -16,6 +16,13 @@ import { decodeIntegrationMerge } from './integration.ts'
 import { applicationPathSchema, gitObjectIdSchema, treeManifestHash } from './manifest.ts'
 import type { GitApplicationPath, GitFileState } from './manifest.ts'
 
+/** Files an earlier confirmed application wrote, still its last writer in the target state this one starts from. */
+export interface GitApplicationWritten {
+  readonly applicationOperationId: GitOperationId
+  readonly paths: readonly string[]
+  /** Paths whose written content the selected version's own commits never held; empty when it descends from that application. */
+  readonly missing: readonly string[]
+}
 /** Exact owner-resolved version; no latest-resource lookup occurs inside application plumbing. */
 export interface GitApplicationSource {
   readonly repository: GitRepositoryIdentity
@@ -23,11 +30,14 @@ export interface GitApplicationSource {
   readonly preserveOperationId: GitOperationId
   readonly resourceId: GitResourceId
   readonly consumerScope: GitConsumerScope
+  /** Host-known target state: the version line's starting project tree, or the result its later applications left. */
   readonly originalTargetBaseTree: string
   readonly resultCommit: string
   readonly resultTree: string
   readonly manifestHash: string
   readonly resolutionOperationId?: GitOperationId | undefined
+  /** Earlier confirmed applications in this consumer scope that wrote part of `originalTargetBaseTree`. */
+  readonly written?: readonly GitApplicationWritten[] | undefined
 }
 /** Explicit target Workspace and immutable source IDs, never an arbitrary Host path. */
 export interface GitApplicationPreviewRequest {
@@ -66,6 +76,8 @@ export interface GitApplicationPreview {
   /** Complete bounded Git diff; binary bodies remain Git's textual binary-patch representation. */
   readonly patch: string
   readonly binary: boolean
+  /** Files an earlier application wrote that this version, not built on that application, replaces or deletes. */
+  readonly replacesWritten?: { readonly replaced: readonly string[]; readonly deleted: readonly string[] } | undefined
   readonly fingerprint: string
 }
 /** Interrupted writes are reported per path; unknown or partial outcomes never replay automatically. */
@@ -146,12 +158,15 @@ export function applicationSchemas(repository: z.ZodType<GitRepositoryIdentity>)
   const source = z.object({ repository, integrationOperationId: operationId, preserveOperationId: operationId,
     resourceId: id.transform(value => brandString<GitResourceId>(value)), consumerScope,
     originalTargetBaseTree: gitObjectIdSchema, resultCommit: gitObjectIdSchema, resultTree: gitObjectIdSchema,
-    manifestHash: id, ...resolution }).strict()
+    manifestHash: id, ...resolution, written: z.array(z.object({ applicationOperationId: operationId,
+      paths: z.array(id).readonly(), missing: z.array(id).readonly() }).strict()).readonly().optional() }).strict()
   const target = z.object({ repository, head: gitObjectIdSchema, symbolicRef: id.optional(), indexHash: id,
     touched: z.array(applicationPathSchema).readonly(),
     ancestors: z.array(z.object({ path: z.string(), identity: witness.optional() }).strict()).readonly(),
     fingerprint: id }).strict()
-  const preview = z.object({ source, target, patchHash: id, patch: z.string(), binary: z.boolean(), fingerprint: id }).strict()
+  const preview = z.object({ source, target, patchHash: id, patch: z.string(), binary: z.boolean(),
+    replacesWritten: z.object({ replaced: z.array(id).readonly(), deleted: z.array(id).readonly() }).strict().optional(),
+    fingerprint: id }).strict()
   const effect = z.object({ preview, observation: applicationObservationSchema }).strict()
   return { source, target, preview, effect,
     inversePreview: z.object({ applicationOperationId: operationId, original: effect, currentTarget: target, fingerprint: id }).strict() }
@@ -233,6 +248,9 @@ async function patchBytes(git: ResourceGit, source: GitApplicationSource, target
     source.originalTargetBaseTree, source.resultTree, '--'], target.root.path, signal)).stdout
 }
 
+/** Changed target paths named in a refusal; the rest are counted. */
+const CHANGED_NAMED = 20
+
 /** Preview exact before/after bytes without creating objects, refs, indices or temporary copies.
  * @param git - existing safe argv runner.
  * @param target - registered user target identity freshly checked by its owner.
@@ -254,17 +272,21 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   for (const path of paths) intended.push({ path, before: await immutableState(git, target, old.get(path), signal),
     after: await immutableState(git, target, next.get(path), signal) })
   const first = await targetCut(git, target, intended, signal, limits)
-  for (let index = 0; index < intended.length; index++) {
-    if (hash(first.touched[index]?.before) !== hash(intended[index]?.before)) {
-      throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Touched target content differs from the selected integration baseline; prepare a fresh candidate')
-    }
+  const changed = intended.filter((entry, index) => hash(first.touched[index]?.before) !== hash(entry.before)).map(entry => entry.path)
+  if (changed.length > 0) {
+    const named = changed.slice(0, CHANGED_NAMED).join(', '), more = changed.length - CHANGED_NAMED
+    throw new GitResourceError('APPLICATION_TARGET_CHANGED', `Target files changed from the state this version starts from and are not overwritten: ${named}${more > 0 ? ` and ${more} more` : ''}`)
   }
   const patch = await patchBytes(git, source, target, signal), second = await targetCut(git, target, intended, signal, limits)
   if (second.fingerprint !== first.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Application target changed during its read-only preview')
   const text = patch.toString('utf8')
   if (!Buffer.from(text).equals(patch)) throw new GitResourceError('APPLICATION_PATCH_UNSUPPORTED', 'Git patch cannot be represented losslessly in the UTF-8 user preview')
+  const replacing = new Set((source.written ?? []).flatMap(written => written.missing))
+  const replaces = intended.filter(entry => replacing.has(entry.path))
   const value = { source: structuredClone(source), target: second, patchHash: byteHash(patch), patch: text,
-    binary: text.includes('GIT binary patch\n') }
+    binary: text.includes('GIT binary patch\n'), ...replaces.length === 0 ? {} : { replacesWritten: {
+      replaced: replaces.filter(entry => entry.after.kind !== 'absent').map(entry => entry.path),
+      deleted: replaces.filter(entry => entry.after.kind === 'absent').map(entry => entry.path) } } }
   return { ...value, fingerprint: hash(value) }
 }
 

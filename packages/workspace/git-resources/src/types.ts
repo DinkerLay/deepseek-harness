@@ -9,7 +9,7 @@ import type { GitResourceCleanupObservation, GitResourceCleanupPreview, GitResou
 export type { GitIntegrationPreviewRequest, GitIntegrationRequest, GitIntegrationInput, GitIntegrationPreview,
   GitIntegrationConflictStage, GitIntegrationConflictMessage, GitIntegrationEffect, GitIntegrationResolutionSelection,
   GitIntegrationResolutionRequest, GitIntegrationResolutionEffect, GitIntegrationResolutionPreview } from './integration.ts'
-export type { GitApplicationSource, GitApplicationPreviewRequest, GitApplicationRequest, GitApplicationTargetCut,
+export type { GitApplicationSource, GitApplicationWritten, GitApplicationPreviewRequest, GitApplicationRequest, GitApplicationTargetCut,
   GitApplicationPreview, GitApplicationObservation, GitApplicationEffect, GitInversePreviewRequest,
   GitInverseRequest, GitInversePreview } from './application.ts'
 export type { GitResourceCleanupObservation, GitResourceCleanupPreview, GitResourceCleanupRequest } from './cleanup.ts'

@@ -178,6 +178,11 @@
     },
     {
       "doc": "docs/subsystems/workspace.md",
+      "symbol": "GitApplicationWritten",
+      "source": "packages/workspace/git-resources/src/application.ts"
+    },
+    {
+      "doc": "docs/subsystems/workspace.md",
       "symbol": "GitApplicationSource",
       "source": "packages/workspace/git-resources/src/application.ts"
     },

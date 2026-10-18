@@ -1333,7 +1333,7 @@ export type Config = LocalConfig
 ## `@deepseek-ai/dsh-git-resources`
 
 - `inject`: `workspaceRegistry` · `storageDomain` · `subprocess`
-- `source`: [`packages/workspace/git-resources/src/index.ts:60`](../packages/workspace/git-resources/src/index.ts)
+- `source`: [`packages/workspace/git-resources/src/index.ts:64`](../packages/workspace/git-resources/src/index.ts)
 
 ```ts config-catalog
 /** Deployment bounds and the explicit Harness home, never a caller-selected arbitrary resource directory. */

@@ -549,6 +549,16 @@ interface GitIntegrationResolutionPreview {
 Source: [`packages/workspace/git-resources/src/application.ts`](../../packages/workspace/git-resources/src/application.ts)
 
 ```ts type-equiv
+/** Files an earlier confirmed application wrote, still its last writer in the target state this one starts from. */
+interface GitApplicationWritten {
+  readonly applicationOperationId: GitOperationId
+  readonly paths: readonly string[]
+  /** Paths whose written content the selected version's own commits never held; empty when it descends from that application. */
+  readonly missing: readonly string[]
+}
+```
+
+```ts type-equiv
 /** Exact owner-resolved version; no latest-resource lookup occurs inside application plumbing. */
 interface GitApplicationSource {
   readonly repository: GitRepositoryIdentity
@@ -556,11 +566,14 @@ interface GitApplicationSource {
   readonly preserveOperationId: GitOperationId
   readonly resourceId: GitResourceId
   readonly consumerScope: GitConsumerScope
+  /** Host-known target state: the version line's starting project tree, or the result its later applications left. */
   readonly originalTargetBaseTree: string
   readonly resultCommit: string
   readonly resultTree: string
   readonly manifestHash: string
   readonly resolutionOperationId?: GitOperationId | undefined
+  /** Earlier confirmed applications in this consumer scope that wrote part of `originalTargetBaseTree`. */
+  readonly written?: readonly GitApplicationWritten[] | undefined
 }
 ```
 
@@ -606,6 +619,8 @@ interface GitApplicationPreview {
   /** Complete bounded Git diff; binary bodies remain Git's textual binary-patch representation. */
   readonly patch: string
   readonly binary: boolean
+  /** Files an earlier application wrote that this version, not built on that application, replaces or deletes. */
+  readonly replacesWritten?: { readonly replaced: readonly string[]; readonly deleted: readonly string[] } | undefined
   readonly fingerprint: string
 }
 ```

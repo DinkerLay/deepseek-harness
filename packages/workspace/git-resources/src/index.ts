@@ -23,12 +23,14 @@ import type { GitIntegrationConflictStage, GitIntegrationPreviewRequest, GitInte
 import { applicationPreviewRequestSchema, applicationRequestSchema, applyApplication, inspectApplication,
   inspectInverse, inversePreviewRequestSchema, inverseRequestSchema, observeApplication, prepareInverse as prepareInverseObjects } from './application.ts'
 import type { GitApplicationPreviewRequest, GitApplicationPreview, GitApplicationRequest, GitApplicationSource,
-  GitInversePreviewRequest, GitInversePreview, GitInverseRequest } from './application.ts'
+  GitApplicationWritten, GitInversePreviewRequest, GitInversePreview, GitInverseRequest } from './application.ts'
 import { cleanupRequestSchema } from './cleanup.ts'
 import type { GitResourceCleanupObservation, GitResourceCleanupPreview, GitResourceCleanupRequest } from './cleanup.ts'
 import { GitResourceError } from './error.ts'
 import { gitResourceDomain, hash } from './records.ts'
 import type { RepositoryRecord } from './records.ts'
+import { gitObjectIdSchema } from './manifest.ts'
+import type { GitFileState } from './manifest.ts'
 import { byteHash, inspectConfiguration, inspectRepository, missing, pathIdentity, previewRepository, readRegularFile, selectedPath, treeEntries, versionedFiles } from './preview.ts'
 import type { GitOperationId, GitRepositoryId, GitResourceId, GitConsumerScope, GitResourceCreateRequest, GitResourceOperation,
   GitResourceOperationView, GitResourcePreserveRequest, GitResourcePreview, GitResourcePreviewRequest,
@@ -268,7 +270,7 @@ export class GitResources extends Service {
           effect: operation.resolutionEffect }
       })
       return inspectIntegration(this.runner(), base.repository.identity, base.resource, sources, captured, combined,
-        this.limits, version, prior?.integrationEffect?.originalTargetBaseTree, resolutions)
+        this.limits, version, this.versionLine(captured.baseResourceId).tree, resolutions)
     })
   }
 
@@ -375,17 +377,24 @@ export class GitResources extends Service {
     }, signal))
   }
 
-  /** Observe an exact ready version and registered target; no file, index, ref or Git object writes.
+  /** Observe an exact ready version and registered target; no file, index or ref writes. When earlier applications compose
+   * a target state no existing tree holds, only that state's tree objects are written.
    * @param request - immutable version, optional exact resolution receipt and target Workspace identity.
    * @param signal - read-only preview cancellation.
    * @returns complete target HEAD/index/touched-path CAS and plain patch digest.
    */
   async previewApplication(request: GitApplicationPreviewRequest,
     signal: AbortSignal = this.lifetime.signal): Promise<GitApplicationPreview> {
+    return this.inspectApplicationRequest(request, signal)
+  }
+
+  /** The preview of one application request, ignoring the named in-flight application when it rechecks itself. */
+  private async inspectApplicationRequest(request: GitApplicationPreviewRequest, signal: AbortSignal,
+    self?: GitOperationId): Promise<GitApplicationPreview> {
     const captured = applicationPreviewRequestSchema.parse(request)
     return this.owned(async () => {
       const combined = AbortSignal.any([signal, this.lifetime.signal])
-      const source = await this.applicationSource(captured, combined)
+      const source = await this.applicationSource(captured, combined, self)
       const workspace = this.ctx.workspaceRegistry.get(captured.targetWorkspaceId)
       if (workspace === undefined) throw new GitResourceError('WORKSPACE_NOT_FOUND', 'Application target Workspace is not registered')
       const target = await inspectRepository(this.runner(), workspace.path, workspace.id, this.isolation, this.home, combined)
@@ -541,10 +550,12 @@ export class GitResources extends Service {
             }
             const request = current.operation.request
             if (!('integrationOperationId' in request && 'targetWorkspaceId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application request has no exact source/target selection')
-            const fresh = await this.previewApplication({ consumerScope: current.operation.consumerScope,
+            await this.sealedSource({ consumerScope: current.operation.consumerScope,
               integrationOperationId: request.integrationOperationId, preserveOperationId: request.preserveOperationId,
               targetWorkspaceId: request.targetWorkspaceId,
               ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } }, combined)
+            // The recorded source stays the comparison: a later application elsewhere changes the known state, not this cut.
+            const fresh = await inspectApplication(this.runner(), preview.target.repository, preview.source, combined, this.limits)
             if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('OPERATION_EFFECT_UNKNOWN', 'Original complete application cut changed before safe abandonment')
           } else if (current.operation.kind === 'cleanup') {
             const preview = current.operation.cleanupPreview
@@ -927,7 +938,17 @@ export class GitResources extends Service {
     return { ...value, fingerprint: hash(value) }
   }
 
-  private async applicationSource(selection: GitApplicationPreviewRequest, signal: AbortSignal): Promise<GitApplicationSource> {
+  /** The selected exact version with the Host-known target state it starts from. */
+  private async applicationSource(selection: GitApplicationPreviewRequest, signal: AbortSignal,
+    self?: GitOperationId): Promise<GitApplicationSource> {
+    const sealed = await this.sealedSource(selection, signal)
+    const known = await this.knownTarget(sealed.resourceId, selection, sealed.resultCommit, signal, self)
+    return { ...sealed, originalTargetBaseTree: known.tree, ...known.written.length === 0 ? {} : { written: known.written } }
+  }
+
+  /** The selected exact version, checked against its immutable reference and manifest; its target base is the one the
+   * integration recorded, before earlier applications are taken into account. */
+  private async sealedSource(selection: GitApplicationPreviewRequest, signal: AbortSignal): Promise<GitApplicationSource> {
     const origin = this.requireOperation(selection.integrationOperationId), version = this.requireOperation(selection.preserveOperationId)
     const effect = origin.operation.integrationEffect, seal = version.operation
     if (origin.operation.kind !== 'integrate' && origin.operation.kind !== 'inverse'
@@ -967,6 +988,115 @@ export class GitResources extends Service {
       resourceId: seal.resourceId, consumerScope: seal.consumerScope, originalTargetBaseTree: effect.originalTargetBaseTree,
       resultCommit: seal.effectCommit, resultTree: seal.effectTree, manifestHash: seal.effectManifestHash,
       ...selection.resolutionOperationId === undefined ? {} : { resolutionOperationId: selection.resolutionOperationId } }
+  }
+
+  /** The project tree a version line started from: its first copy's project baseline, followed back through copies made
+   * from a confirmed seal or integration of this consumer scope, or the target snapshot of an inverse candidate.
+   * @param resourceId - any resource of the line.
+   * @returns that tree and the journal position of the operation that captured it.
+   */
+  private versionLine(resourceId: GitResourceId): { tree: string; position: number } {
+    const seen = new Set<GitResourceId>()
+    for (let current = resourceId; ;) {
+      if (seen.has(current)) throw new GitResourceError('RECORD_INVALID', 'Managed version line refers back to itself')
+      seen.add(current)
+      const { repository, resource } = this.requireResource(current), operations = repository.operations
+      const madeAt = operations.findIndex(value => value.resourceId === current && (value.kind === 'integrate' || value.kind === 'inverse'))
+      const made = operations[madeAt]
+      if (made?.kind === 'inverse') {
+        const tree = made.integrationEffect?.originalTargetBaseTree
+        if (tree === undefined) throw new GitResourceError('RECORD_INVALID', 'Inverse candidate has no target snapshot')
+        return { tree, position: madeAt }
+      }
+      if (made !== undefined) {
+        const base = made.integrationPreview?.request.baseResourceId
+        if (base === undefined) throw new GitResourceError('RECORD_INVALID', 'Integration has no recorded base resource')
+        current = base; continue
+      }
+      const createdAt = operations.findIndex(value => value.resourceId === current && value.kind === 'create')
+      const baseline = operations[createdAt]?.preview?.request.baseline
+      const commit = baseline?.kind === 'commit' ? baseline.commit : undefined
+      const producer = commit === undefined ? undefined : operations.find(value => value.phase === 'confirmed'
+        && value.consumerScope === resource.consumerScope && value.resourceId !== current
+        && (value.kind === 'preserve' && value.effectContent === 'versioned' && value.effectCommit === commit
+          || (value.kind === 'integrate' || value.kind === 'inverse') && value.integrationEffect?.commit === commit))
+      if (producer === undefined) return { tree: this.requireBaseline(resource).tree, position: Math.max(createdAt, 0) }
+      current = producer.resourceId
+    }
+  }
+
+  /** The Host-known target state an application starts from: the version line's starting tree with the files this
+   * scope's later confirmed applications to the same target wrote. An unconfirmed application that may have changed a
+   * touched file refuses instead; one whose touched files are all still before has no effect.
+   * @param resourceId - the integration or inverse resource being applied.
+   * @param selection - consumer scope and target.
+   * @param resultCommit - the selected version, checked against what each earlier application wrote.
+   * @param signal - cancellation.
+   * @param self - an in-flight application rechecking its own preview.
+   * @returns the tree of that state (written only when no existing tree holds it), and which earlier applications last
+   *   wrote which of its files.
+   */
+  private async knownTarget(resourceId: GitResourceId, selection: GitApplicationPreviewRequest, resultCommit: string,
+    signal: AbortSignal, self?: GitOperationId): Promise<{ tree: string; written: GitApplicationWritten[] }> {
+    const line = this.versionLine(resourceId), { repository } = this.requireResource(resourceId), identity = repository.identity
+    const applications = repository.operations.flatMap((value, position) => value.kind === 'apply' && value.operationId !== self
+      && value.consumerScope === selection.consumerScope && 'targetWorkspaceId' in value.request
+      && value.request.targetWorkspaceId === selection.targetWorkspaceId ? [{ value, position }] : [])
+    for (const { value } of applications) {
+      if (value.phase !== 'intended' && value.phase !== 'acting' && value.phase !== 'needs_attention' || value.externalWriteStarted === false) continue
+      const preview = value.applicationPreview
+      if (preview !== undefined && (await observeApplication(this.runner(), preview, signal, this.limits)).paths
+        .every(path => path.state === 'before')) continue
+      throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', `An earlier application to this target may have written files and is not confirmed: ${value.operationId}`)
+    }
+    const later = applications.flatMap(({ value, position }) => position > line.position && value.phase === 'confirmed'
+      && value.applicationEffect !== undefined ? [{ operationId: value.operationId, preview: value.applicationEffect.preview }] : [])
+    if (later.length === 0) return { tree: line.tree, written: [] }
+    const known = new Map<string, GitFileState>(), writer = new Map<string, number>()
+    for (const [index, { preview }] of later.entries()) {
+      for (const path of preview.target.touched) { known.set(path.path, path.after); writer.set(path.path, index) }
+    }
+    const tree = await this.knownTree(identity, line.tree, known, signal)
+    const written: GitApplicationWritten[] = []
+    for (const [index, { operationId, preview }] of later.entries()) {
+      const paths = [...writer].filter(([, by]) => by === index).map(([path]) => path).sort()
+      if (paths.length === 0) continue
+      const descends = await this.runner().run(['merge-base', '--is-ancestor', preview.source.resultCommit, resultCommit],
+        identity.root.path, signal, { allowFailure: true })
+      if (descends.status !== 0 && descends.status !== 1) throw new GitResourceError('APPLICATION_SOURCE_UNAVAILABLE', 'Earlier application version ancestry is unavailable')
+      if (descends.status === 1) {
+        // Objects of the selected version's own commits; content the project HEAD already holds is not listed.
+        const objects = new Set((await this.runner().text(['rev-list', '--objects', resultCommit, '--not', 'HEAD'], identity.root.path, signal))
+          .split('\n').map(row => row.replace(/ .*$/su, '')))
+        written.push({ applicationOperationId: operationId, paths, missing: paths.filter((path) => {
+          const state = known.get(path)
+          return state?.kind !== 'file' || !objects.has(state.objectId)
+        }) })
+      } else written.push({ applicationOperationId: operationId, paths, missing: [] })
+    }
+    return { tree, written }
+  }
+
+  /** Write the tree of a target state: a starting tree with later written files, through a private scratch index.
+   * Only tree objects are added; no file, ref or project index changes.
+   * @param identity - repository whose object store holds every listed blob.
+   * @param base - the starting tree.
+   * @param files - each later written path and its state.
+   * @param signal - cancellation.
+   * @returns the tree id; an existing tree with the same content keeps its id.
+   */
+  private async knownTree(identity: GitRepositoryIdentity, base: string, files: ReadonlyMap<string, GitFileState>,
+    signal: AbortSignal): Promise<string> {
+    await this.assertManagedDirectory('scratch')
+    const scratch = await mkdtemp(join(this.root, 'scratch', 'known-'))
+    try {
+      const env = { GIT_INDEX_FILE: join(scratch, 'index') }, root = identity.root.path
+      await this.runner().run(['read-tree', base], root, signal, { env })
+      const zero = '0'.repeat(base.length)
+      const rows = [...files].map(([path, state]) => state.kind === 'file' ? `${state.mode} ${state.objectId}\t${path}` : `0 ${zero}\t${path}`)
+      await this.runner().run(['update-index', '--index-info'], root, signal, { env, input: Buffer.from(`${rows.join('\n')}\n`) })
+      return gitObjectIdSchema.parse((await this.runner().text(['write-tree'], root, signal, env)).trim())
+    } finally { await rm(scratch, { recursive: true, force: true }) }
   }
 
   private async readCleanup(resourceId: GitResourceId, signal: AbortSignal): Promise<GitResourceCleanupPreview> {
@@ -1072,10 +1202,11 @@ export class GitResources extends Service {
         else {
           const request = operation.request
           if (!('targetWorkspaceId' in request && 'integrationOperationId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application intent request is invalid')
-          const fresh = await this.previewApplication({ consumerScope: operation.consumerScope,
+          const fresh = await this.inspectApplicationRequest({ consumerScope: operation.consumerScope,
             integrationOperationId: request.integrationOperationId, preserveOperationId: request.preserveOperationId,
             targetWorkspaceId: request.targetWorkspaceId,
-            ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } }, combined)
+            ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } },
+          combined, operation.operationId)
           if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Original application cut changed; no fresh target was adopted')
           check()
           await this.save(operation.repositoryId, operation.resourceId, operation.operationId, resource => resource,

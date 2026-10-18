@@ -57,7 +57,7 @@ kind: "package-reference"
 
 ### 显式目标变化与清理
 
-`previewApplication`展示完整有界普通/二进制patch及目标HEAD、index、受影响字节、模式和父目录见证。`apply`要求认证Host权限和已知写入者占用；请求JSON不能替代证明。写入前的精确新切面必须仍一致，HEAD/index保持不变。纯对账报告before、after、partial或unknown；只在已派发效果精确after时确认，不盲重放部分或未知内容。
+`previewApplication`展示完整有界普通/二进制patch及目标HEAD、index、受影响字节、模式和父目录见证。patch从Host确知的目标状态出发，而不是集成自己的基线：版本线最初所基于的项目树（经同一消费者范围内由已确认封存或集成创建的副本回溯），加上该范围此后对同一目标已确认应用实际写过的文件。没有现成的树等于这个状态时，预览通过私有临时index写出它的树对象，不写文件、ref或项目index。较早的应用尚未确认时，除非它涉及的文件都仍是写入前状态，新预览拒绝；受影响的目标文件不在已知状态时拒绝并给出路径。`replacesWritten`列出版本要替换或删除、而它自己的提交从未有过其写入内容的已写文件，因此不是在某次应用上继续做的版本会显示它撤掉了什么。`apply`要求认证Host权限和已知写入者占用；请求JSON不能替代证明。写入前的精确新切面必须仍一致，HEAD/index保持不变。纯对账报告before、after、partial或unknown；只在已派发效果精确after时确认，不盲重放部分或未知内容。
 
 `previewInverse`和`prepareInverse`从当前目标和原差异出发，不再应用旧来源输入，也不碰项目文件。独立候选必须经过普通验证和新的显式应用。
 
