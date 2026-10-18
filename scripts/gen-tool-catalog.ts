@@ -672,10 +672,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
       await ctx.plugin(ToolWeb)
     },
     note:
-      'web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps.'
-      + ' This page shows the default whole-page web_fetch. With `fetchWindowTokens` set, web_fetch also takes an optional integer'
-      + ' `start` (a character offset into the page text), returns one token-bounded window of the page per call, and ends each'
-      + ' window with the next `start`.',
+      'web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps.',
   },
 ]
 

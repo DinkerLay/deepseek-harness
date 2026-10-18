@@ -19,9 +19,6 @@
       "path": "../../llm/llm"
     },
     {
-      "path": "../../llm/token-meter"
-    },
-    {
       "path": "../../core/tools"
     },
     {

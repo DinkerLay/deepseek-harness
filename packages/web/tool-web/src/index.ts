@@ -15,7 +15,7 @@ import { applyWebFetchTool } from './fetch.ts'
 export { WEB_SEARCH_MAX_QUERIES, WEB_SEARCH_MAX_RESULTS, applyWebSearchTool, formatSearchOutput, presentSearchCall, presentSearchResult, searchMetaFromValue, searchMetaFromResult } from './search.ts'
 export type { WebSearchMeta } from './search.ts'
 export { applyWebFetchTool, formatFetchOutput, parseFetchArgs, presentFetchCall, presentFetchResult, fetchMetaFromValue, fetchMetaFromResult } from './fetch.ts'
-export type { WebFetchMeta, WebFetchWindowOptions } from './fetch.ts'
+export type { WebFetchMeta } from './fetch.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-web'
@@ -33,16 +33,7 @@ export const DEFAULT_WEB_TOOL_TIMEOUT_MS = 30_000
  */
 export const DEFAULT_FETCH_MAX_OUTPUT_CHARS = 200_000
 
-/** Default number of page copies `web_fetch` window mode keeps across sessions. */
-export const DEFAULT_FETCH_WINDOW_CACHE_ENTRIES = 32
-
-/** Default page-text characters `web_fetch` window mode keeps across copies: twenty default-capped pages. */
-export const DEFAULT_FETCH_WINDOW_CACHE_CHARS = 4_000_000
-
-/** Default time (ms) a kept page copy serves `web_fetch` continuations: 30 minutes. */
-export const DEFAULT_FETCH_WINDOW_CACHE_TTL_MS = 1_800_000
-
-/** Plugin config: which web tools to register, search bounds, per-tool budgets, the fetch output cap, and fetch windows. */
+/** Plugin config: which web tools to register, search bounds, per-tool budgets, and the fetch output cap. */
 export interface Config {
   /** Register `web_search`. Defaults to true. */
   search?: boolean
@@ -56,28 +47,8 @@ export interface Config {
   fetchTimeoutMs?: number
   /** Cooperative timeout budget (ms) for `web_search`. Defaults to 30000. */
   searchTimeoutMs?: number
-  /**
-   * Cap on source characters converted and complete `web_fetch` output characters. Defaults to 200000.
-   * With `fetchWindowTokens` set, it caps the kept page text instead of one output.
-   */
+  /** Cap on source characters converted and complete `web_fetch` output characters. Defaults to 200000. */
   fetchMaxOutputChars?: number
-  /**
-   * Upper bound on the estimated tokens of one complete `web_fetch` output in window mode. Unset (the
-   * default) returns the whole page in one output. When set, `web_fetch` takes an optional `start`
-   * offset and returns the page text from there in a window whose header, text, and footer fit this
-   * bound; the footer gives the next `start`. Continuations read the copy kept from the session's
-   * fetch of the same URL. Set it at or below the spill-policy inline budget so windows are not spilled.
-   */
-  fetchWindowTokens?: number
-  /** Most page copies kept for `web_fetch` window continuations across sessions. Defaults to 32. */
-  fetchWindowCacheEntries?: number
-  /**
-   * Most page-text characters kept for `web_fetch` window continuations across copies; with
-   * `fetchWindowTokens` set it must be at least `fetchMaxOutputChars`. Defaults to 4000000.
-   */
-  fetchWindowCacheChars?: number
-  /** Time (ms) a kept page copy serves `web_fetch` continuations after it was stored. Defaults to 1800000. */
-  fetchWindowCacheTtlMs?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -88,14 +59,10 @@ export const Config: z<Config> = z.object({
   fetchTimeoutMs: z.number().default(DEFAULT_WEB_TOOL_TIMEOUT_MS),
   searchTimeoutMs: z.number().default(DEFAULT_WEB_TOOL_TIMEOUT_MS),
   fetchMaxOutputChars: z.number().default(DEFAULT_FETCH_MAX_OUTPUT_CHARS),
-  fetchWindowTokens: z.number(),
-  fetchWindowCacheEntries: z.number().default(DEFAULT_FETCH_WINDOW_CACHE_ENTRIES),
-  fetchWindowCacheChars: z.number().default(DEFAULT_FETCH_WINDOW_CACHE_CHARS),
-  fetchWindowCacheTtlMs: z.number().default(DEFAULT_FETCH_WINDOW_CACHE_TTL_MS),
 })
 
-/** Complete config after schemastery applies every field default; `fetchWindowTokens` has none. */
-type ResolvedConfig = Required<Omit<Config, 'fetchWindowTokens'>> & Pick<Config, 'fetchWindowTokens'>
+/** Complete config after schemastery applies every field default. */
+type ResolvedConfig = Required<Config>
 
 /** Configured count, timeout, and character caps must be positive integers. */
 function assertPositiveInteger(name: string, value: number): void {
@@ -111,8 +78,7 @@ function assertPositiveInteger(name: string, value: number): void {
  * here and attached to the tool as `ToolDefinition.timeoutMs` for
  * `@deepseek-ai/dsh-tool-call-timeout-policy` to enforce. The tools' disposers are
  * fiber-scoped (the effect-based registries clean up on dispose), so no manual
- * teardown is needed. A set `fetchWindowTokens` registers the window-mode
- * `web_fetch`, whose kept page copies live only as long as this registration.
+ * teardown is needed.
  */
 export function apply(ctx: Context, config: Config): void {
   // schemastery (Config) has already filled every defaulted field.
@@ -122,26 +88,8 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveInteger('fetchTimeoutMs', resolved.fetchTimeoutMs)
   assertPositiveInteger('searchTimeoutMs', resolved.searchTimeoutMs)
   assertPositiveInteger('fetchMaxOutputChars', resolved.fetchMaxOutputChars)
-  assertPositiveInteger('fetchWindowCacheEntries', resolved.fetchWindowCacheEntries)
-  assertPositiveInteger('fetchWindowCacheChars', resolved.fetchWindowCacheChars)
-  assertPositiveInteger('fetchWindowCacheTtlMs', resolved.fetchWindowCacheTtlMs)
-  const windowTokens = resolved.fetchWindowTokens
-  if (windowTokens !== undefined) {
-    assertPositiveInteger('fetchWindowTokens', windowTokens)
-    // Every kept copy must fit the character bound, or continuations could never read it.
-    if (resolved.fetchWindowCacheChars < resolved.fetchMaxOutputChars) {
-      throw new Error('tool-web: fetchWindowCacheChars must be at least fetchMaxOutputChars when fetchWindowTokens is set')
-    }
-  }
   if (resolved.search) {
     applyWebSearchTool(ctx, resolved.searchMaxResults, resolved.searchMaxQueries, resolved.searchTimeoutMs, resolved.fetch)
   }
-  if (resolved.fetch) {
-    applyWebFetchTool(ctx, resolved.fetchTimeoutMs, resolved.fetchMaxOutputChars, windowTokens === undefined ? undefined : {
-      tokens: windowTokens,
-      cacheEntries: resolved.fetchWindowCacheEntries,
-      cacheChars: resolved.fetchWindowCacheChars,
-      cacheTtlMs: resolved.fetchWindowCacheTtlMs,
-    })
-  }
+  if (resolved.fetch) applyWebFetchTool(ctx, resolved.fetchTimeoutMs, resolved.fetchMaxOutputChars)
 }
