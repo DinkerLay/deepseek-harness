@@ -32,6 +32,11 @@ export interface Config {
   readonly productTaskTools?: boolean
   /** End `wait_agent` when a user message reaches the waiting member, unless a Lead handoff has frozen the Team. */
   readonly waitEndsOnUserMessage?: boolean
+  /**
+   * End a direct `wait_agent` call as soon as a message other than a user message waits for the member's next step, unless a
+   * Lead handoff has frozen the Team. A call nested in a `run_code` program waits as before.
+   */
+  readonly waitEndsOnPendingInput?: boolean
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
@@ -43,6 +48,7 @@ export const Config: z<Config> = z.object({
   autonomousDelegation: z.boolean().default(false),
   productTaskTools: z.boolean().default(false),
   waitEndsOnUserMessage: z.boolean().default(false),
+  waitEndsOnPendingInput: z.boolean().default(false),
 })
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
@@ -206,25 +212,42 @@ const WAIT_VALUE_SCHEMA = {
   },
 } as const
 
+/** Why input ended the wait and what the member does about it. */
+const WAIT_ENDED_BY_INPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    message: { type: 'string', required: true },
+  },
+} as const
+
 /** `wait_agent` value when a user message can end the wait (`waitEndsOnUserMessage`). */
 const WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA = {
   ...WAIT_VALUE_SCHEMA,
-  properties: {
-    ...WAIT_VALUE_SCHEMA.properties,
-    userMessage: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        message: { type: 'string', required: true },
-      },
-    },
-  },
+  properties: { ...WAIT_VALUE_SCHEMA.properties, userMessage: WAIT_ENDED_BY_INPUT_SCHEMA },
+} as const
+
+/** `wait_agent` value when other messages waiting for the next step can end the wait (`waitEndsOnPendingInput`). */
+const WAIT_WITH_PENDING_INPUT_VALUE_SCHEMA = {
+  ...WAIT_VALUE_SCHEMA,
+  properties: { ...WAIT_VALUE_SCHEMA.properties, pendingInput: WAIT_ENDED_BY_INPUT_SCHEMA },
+} as const
+
+/** `wait_agent` value when both a user message and other waiting messages can end the wait. */
+const WAIT_WITH_ANY_INPUT_VALUE_SCHEMA = {
+  ...WAIT_VALUE_SCHEMA,
+  properties: { ...WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA.properties, pendingInput: WAIT_ENDED_BY_INPUT_SCHEMA },
 } as const
 
 /** What a waiting member does about the user message that ended its wait, by when the message reaches it. */
 const USER_MESSAGE_ENDED_WAIT = {
   'next-step': 'The user sent a message. It reaches you right after this result; respond to it before waiting again.',
   'next-turn': 'The user sent a message. It reaches you when this turn ends: briefly report where the work stands and end your turn to read it. Teammates keep working meanwhile.',
+} as const
+
+/** Tells a member whose wait ended, or never started, on other waiting messages that its next step reads them. */
+const PENDING_INPUT_ENDED = {
+  pendingInput: { message: 'New messages or notices arrived for you. They reach you right after this result.' },
 } as const
 
 const INTERRUPT_VALUE_SCHEMA = {
@@ -397,22 +420,27 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
     if (!controlledMember) {
       register(registerTeamTool(defineTool({
         name: 'wait_agent',
-        description: `Wait for the next teammate status, mailbox, or shared-task change after this call starts.${config.waitEndsOnUserMessage ? ' A user message also ends the wait.' : ''} This never wakes inactive members and returns noProgress immediately when no other member is running, provisioning, or has Team mail waiting to start its next run${productTasks ? ', and no runtime work is under way. Its report says which Tasks changed and what needs you; re-list only for what it does not say.' : '. Re-list after wakeup or timeout instead of polling.'}`,
+        description: `Wait for the next teammate status, mailbox, or shared-task change after this call starts.${config.waitEndsOnUserMessage ? ' A user message also ends the wait.' : ''}${
+          config.waitEndsOnPendingInput ? ' It also ends as soon as new messages or notices are waiting for you.' : ''} This never wakes inactive members and returns noProgress immediately when no other member is running, provisioning, or has Team mail waiting to start its next run${productTasks ? ', and no runtime work is under way. Its report says which Tasks changed and what needs you; re-list only for what it does not say.' : '. Re-list after wakeup or timeout instead of polling.'}`,
         parameters: {
           timeout_ms: {
             type: 'integer',
             description: 'Wait duration in milliseconds, from 10000 through 3600000. Defaults to 30000.',
           },
         },
-        output: jsonOutput(config.waitEndsOnUserMessage ? WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA : WAIT_VALUE_SCHEMA),
+        output: jsonOutput(config.waitEndsOnPendingInput
+          ? config.waitEndsOnUserMessage ? WAIT_WITH_ANY_INPUT_VALUE_SCHEMA : WAIT_WITH_PENDING_INPUT_VALUE_SCHEMA
+          : config.waitEndsOnUserMessage ? WAIT_WITH_USER_MESSAGE_VALUE_SCHEMA : WAIT_VALUE_SCHEMA),
         // Waiting only observes; an interrupted wait has no outcome to confirm.
         isConcurrencySafe: () => true,
         async execute(args, exec) {
           const caller = callingAgent(exec.agent, 'wait_agent')
           const timeoutMs = args.timeout_ms ?? 30_000
+          // The next step claims pending input only after a program returns, so a call nested in one is not ended by it.
+          const pendingInput = config.waitEndsOnPendingInput && exec.parent === undefined
+          const options = { ...config.waitEndsOnUserMessage ? { userInput: true } : {}, ...pendingInput ? { pendingInput } : {} }
           // Preserve TeamService's authoritative timeout validation before the
           // model-only no-progress shortcut.
-          const options = config.waitEndsOnUserMessage ? { userInput: true } : {}
           if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 3_600_000) {
             await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
           }
@@ -430,12 +458,14 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
                 reason: 'no-active-peer' as const,
                 message: productTasks ? PRODUCT_NO_ACTIVE_PEER_MESSAGE : NO_ACTIVE_PEER_MESSAGE,
               },
+              ...pendingInput && ctx.agentTeams.pendingInputEndsWait(caller) ? PENDING_INPUT_ENDED : {},
               ...reported(),
             }
           }
           const result = await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal, options)
           return { timedOut: result.timedOut,
             ...result.userInput === undefined ? {} : { userMessage: { message: USER_MESSAGE_ENDED_WAIT[result.userInput] } },
+            ...result.pendingInput === true ? PENDING_INPUT_ENDED : {},
             ...reported() }
         },
       })))
@@ -613,6 +643,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     autonomousDelegation: config.autonomousDelegation ?? false,
     productTaskTools: config.productTaskTools ?? false,
     waitEndsOnUserMessage: config.waitEndsOnUserMessage ?? false,
+    waitEndsOnPendingInput: config.waitEndsOnPendingInput ?? false,
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {

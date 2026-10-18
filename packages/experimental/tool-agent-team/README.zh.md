@@ -52,6 +52,7 @@ kind: "package-reference"
 | `autonomousDelegation` | `false` | Lead 可在委派有帮助时自主招募，无须明确提出 Team；与受控模式独立 |
 | `productTaskTools` | `false` | 受控 Team 的全部 Task 工具和 Task 规则交给产品 Task 扩展：不注册原生 Task 工具，受控提示只保留招募、消息和等待 |
 | `waitEndsOnUserMessage` | `false` | 用户消息到达正在等待的成员时结束 `wait_agent`，Lead 交接冻结 Team 期间除外；结果写明这条消息是紧接着送达，还是当前轮次结束后送达 |
+| `waitEndsOnPendingInput` | `false` | 正在等待的成员下一步要读的其他消息（已经在那里或刚到）结束直接调用的 `wait_agent`，Lead 交接冻结 Team 期间除外；结果写明这条消息紧接着送达。`run_code` 程序里的调用照旧等待 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-tool-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -77,7 +78,7 @@ kind: "package-reference"
 
 成员表工具只返回已声明的模型字段。原生运行时的启动／导航标记继续供 Client 使用，不进入创建或列表工具的结果。
 
-发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning、没有 teammate 还有等着开始它下一轮的 Team 邮件、也没有已安装的产品观察者报告 runtime 工作时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。产品观察者可以在两种结果里加上 `report`；开启 `productTaskTools` 时，工具说明让模型先读这份报告，只在报告没说到时再重新列出。开启 `waitEndsOnUserMessage` 后，用户消息也会结束等待：插话消息紧接着结果送达，排队的消息要等调用方这一轮结束才送达，因此结果请它简短汇报并结束这一轮。接任团队的 Lead 不会把自己正在运行的轮次算作其他成员。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
+发送消息在安全存储后即成功：结果为 `accepted`（已立即送达）或 `queued`（等待中），排队的消息绝不能重发。当没有其他成员 running 或 provisioning、没有 teammate 还有等着开始它下一轮的 Team 邮件、也没有已安装的产品观察者报告 runtime 工作时，`wait_agent` 会立即返回 `noProgress`，提示调用方先唤醒 teammate；否则它会等待下一次变化，调用方随后重新读取状态。产品观察者可以在两种结果里加上 `report`；开启 `productTaskTools` 时，工具说明让模型先读这份报告，只在报告没说到时再重新列出。开启 `waitEndsOnUserMessage` 后，用户消息也会结束等待：插话消息紧接着结果送达，排队的消息要等调用方这一轮结束才送达，因此结果请它简短汇报并结束这一轮。开启 `waitEndsOnPendingInput` 后，等着调用方下一步读取的 Team 消息或通知会让直接调用的等待立即结束，调用前就已送达的也一样；结果里的 `pendingInput` 说明它紧接着结果送达，`noProgress` 结果也带上同样的字段。下一步读过这条消息之后再等待则照常等待；`run_code` 程序里的调用也照常等待，因为程序返回之后才有下一步。接任团队的 Lead 不会把自己正在运行的轮次算作其他成员。基于过期 revision 的任务编辑会被拒绝，而不是覆盖更新的成果。
 
 -----
 

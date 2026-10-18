@@ -831,7 +831,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
-- `source`: [`packages/experimental/agent-team/src/types.ts:487`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:497`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -1259,6 +1259,11 @@ export interface Config {
   readonly productTaskTools?: boolean
   /** End `wait_agent` when a user message reaches the waiting member, unless a Lead handoff has frozen the Team. */
   readonly waitEndsOnUserMessage?: boolean
+  /**
+   * End a direct `wait_agent` call as soon as a message other than a user message waits for the member's next step, unless a
+   * Lead handoff has frozen the Team. A call nested in a `run_code` program waits as before.
+   */
+  readonly waitEndsOnPendingInput?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-tool-agent-team -->

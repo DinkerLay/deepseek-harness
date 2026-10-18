@@ -611,6 +611,11 @@ export interface TeamWaitOptions {
    * frozen the Team.
    */
   readonly userInput?: boolean | undefined
+  /**
+   * Also end the wait for a message other than a user message pending in, or entering, the caller's own next-step list,
+   * which its next step claims, unless a Lead coordination has frozen the Team. Next-turn input does not count.
+   */
+  readonly pendingInput?: boolean | undefined
 }
 
 /**
@@ -638,6 +643,8 @@ export interface TeamWaitResult {
   readonly timedOut: boolean
   /** Inbox list holding the user message that ended a wait requested with `userInput`. */
   readonly userInput?: InboxTarget | undefined
+  /** Present when a next-step message other than a user message ended a wait requested with `pendingInput`. */
+  readonly pendingInput?: true | undefined
 }
 
 declare module '@deepseek-ai/dsh-session/types' {

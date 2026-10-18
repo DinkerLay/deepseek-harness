@@ -600,8 +600,9 @@ async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTas
  * @param timeoutMs - bounded wait duration from ten seconds through one hour.
  * @param signal - caller cancellation for the wait only.
  * @param options - `userInput` also ends the wait for a user message already pending in, or entering, the caller's own
- *   inbox; a Lead coordination that has frozen the Team ignores user input, which belongs to the next Lead.
- * @returns one observed change, the inbox list of the user message that ended the wait, or a timeout result.
+ *   inbox; `pendingInput` also ends it for any other message pending in, or entering, the caller's next-step list. A Lead
+ *   coordination that has frozen the Team ignores both, as that input belongs to the next Lead.
+ * @returns one observed change, the input that ended the wait, or a timeout result.
  */
 async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult>
 

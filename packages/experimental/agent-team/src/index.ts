@@ -97,10 +97,13 @@ function positiveLimit(name: string, value: number): number {
   return value
 }
 
-/** Interval of the claim recheck after a user message enters a waiting member's controlled inbox. */
-const USER_INPUT_RECHECK_MS = 10
-/** Longest wait for a controlled input receipt before a user message ends the wait regardless. */
-const USER_INPUT_CONFIRM_MS = 1_000
+/** Interval of the claim recheck after input that ends a wait enters a waiting member's controlled inbox. */
+const INPUT_RECHECK_MS = 10
+/** Longest wait for a controlled input receipt before input ends the wait regardless. */
+const INPUT_CONFIRM_MS = 1_000
+
+/** The caller's own input that ends a wait, as its result reports it. */
+type TeamWaitInput = Omit<TeamWaitResult, 'timedOut'>
 
 /** Agent Teams service backed by the exact live Lead Session log. */
 export class TeamService extends Service {
@@ -608,8 +611,9 @@ export class TeamService extends Service {
    * @param timeoutMs - bounded wait duration from ten seconds through one hour.
    * @param signal - caller cancellation for the wait only.
    * @param options - `userInput` also ends the wait for a user message already pending in, or entering, the caller's own
-   *   inbox; a Lead coordination that has frozen the Team ignores user input, which belongs to the next Lead.
-   * @returns one observed change, the inbox list of the user message that ended the wait, or a timeout result.
+   *   inbox; `pendingInput` also ends it for any other message pending in, or entering, the caller's next-step list. A Lead
+   *   coordination that has frozen the Team ignores both, as that input belongs to the next Lead.
+   * @returns one observed change, the input that ended the wait, or a timeout result.
    */
   async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult> {
     const membership = this.roster.membership(caller)
@@ -619,36 +623,33 @@ export class TeamService extends Service {
         : [this.observe('watch', () => watch(caller, wake), () => {})])
       return () => { for (const dispose of disposers) this.observe('watch', dispose, undefined) }
     }
-    if (options.userInput !== true) return await this.activity.wait(membership.id, timeoutMs, signal, watched)
-    const pendingUserInput = (): TeamWaitResult['userInput'] => {
-      if (leadCoordinationFrozen(this.ctx.sessionProjections.stateOf(membership.root.session, 'agentTeam')?.leadCoordination)) return undefined
-      if (caller.inbox.nextStep.some(message => message.source.kind === 'user')) return 'next-step'
-      return caller.inbox.nextTurn.some(message => message.source.kind === 'user') ? 'next-turn' : undefined
+    if (options.userInput !== true && options.pendingInput !== true) {
+      return await this.activity.wait(membership.id, timeoutMs, signal, watched)
     }
-    const observed: { userInput?: TeamWaitResult['userInput'] } = {}
+    const observed: { input?: TeamWaitInput } = {}
     const result = await this.activity.wait(membership.id, timeoutMs, signal, (wake) => {
       const confirming: { timer?: ReturnType<typeof setTimeout> | undefined; deadline: number } = { deadline: 0 }
       // Controlled input is claimable only once its receipt is durable; waking earlier would refuse the next step's claim.
       // The check repeats briefly while the receipt is confirmed, then wakes in any case so the message is never left behind.
       const check = (): void => {
         confirming.timer = undefined
-        const userInput = pendingUserInput()
-        if (userInput === undefined) return
+        const input = this.endingInput(caller, membership, options)
+        if (input === undefined) return
         if (!this.ctx.agents.canClaimInput(caller) && Date.now() < confirming.deadline) {
-          confirming.timer = setTimeout(check, USER_INPUT_RECHECK_MS)
+          confirming.timer = setTimeout(check, INPUT_RECHECK_MS)
           return
         }
-        observed.userInput = userInput
+        observed.input = input
         wake()
       }
       const start = (): void => {
         if (confirming.timer !== undefined) return
-        confirming.deadline = Date.now() + USER_INPUT_CONFIRM_MS
+        confirming.deadline = Date.now() + INPUT_CONFIRM_MS
         check()
       }
-      // The listener registers before the pending read, so no user message falls between them.
+      // The listener registers before the pending read, so no message falls between them.
       const dispose = this.ctx.on('agent/inbox/inserted', ({ agent, message }) => {
-        if (agent === caller && message.source.kind === 'user') start()
+        if (agent === caller && (message.source.kind === 'user' ? options.userInput : options.pendingInput) === true) start()
       })
       const unwatch = watched(wake)
       start()
@@ -658,7 +659,37 @@ export class TeamService extends Service {
         clearTimeout(confirming.timer)
       }
     })
-    return observed.userInput === undefined ? result : { timedOut: false, userInput: observed.userInput }
+    return observed.input === undefined ? result : { timedOut: false, ...observed.input }
+  }
+
+  /**
+   * Whether a wait requested with `pendingInput` would end for input already pending: a message other than a user message
+   * waits in the caller's next-step list, and no Lead coordination has frozen the Team. It neither reads nor claims input.
+   * @param caller - exact live Team member about to wait.
+   * @returns true when that input would end the wait.
+   */
+  pendingInputEndsWait(caller: Agent): boolean {
+    return this.endingInput(caller, this.roster.membership(caller), { pendingInput: true }) !== undefined
+  }
+
+  /**
+   * Read the caller's own input that ends a wait with these options; a Lead coordination that has frozen the Team leaves
+   * all of it to the next Lead.
+   * @param caller - exact live Team member waiting.
+   * @param membership - the caller's resolved Team membership.
+   * @param options - the kinds of input that end the wait.
+   * @returns the ending input, or undefined when none ends the wait.
+   */
+  private endingInput(caller: Agent, membership: TeamMembership, options: TeamWaitOptions): TeamWaitInput | undefined {
+    const team = this.ctx.sessionProjections.stateOf(membership.root.session, 'agentTeam')
+    if (leadCoordinationFrozen(team?.leadCoordination)) return undefined
+    const userInput = options.userInput !== true ? undefined
+      : caller.inbox.nextStep.some(message => message.source.kind === 'user') ? 'next-step'
+        : caller.inbox.nextTurn.some(message => message.source.kind === 'user') ? 'next-turn' : undefined
+    // Only the next step claims its list; counting next-turn input would end every later wait of this turn at once.
+    const pendingInput = options.pendingInput === true && caller.inbox.nextStep.some(message => message.source.kind !== 'user')
+    if (userInput === undefined && !pendingInput) return undefined
+    return { ...userInput === undefined ? {} : { userInput }, ...pendingInput ? { pendingInput } : {} }
   }
 
   /**
