@@ -257,3 +257,18 @@ it('keeps file names holding a line break intact in the known state and in a rev
   expect(files).toContain(kept)
   expect(files).not.toContain(odd)
 })
+
+it.each(['true', 'false'])('writes a tracked file with a decomposed name on disk when core.precomposeunicode is %s', async (compose) => {
+  const test = await fixture()
+  const { mkdir } = await import('node:fs/promises')
+  test.git(['config', 'core.precomposeunicode', compose])
+  const decomposed = 'Ré', file = 'café.txt', composed = 'Ré/café.txt'
+  await mkdir(join(test.project, decomposed))
+  await writeFile(join(test.project, decomposed, file), 'BASE\n')
+  test.git(['add', '-A']); test.git(['commit', '--quiet', '-m', 'user file with a decomposed name'])
+  const tracked = test.git(['ls-files', '-z']).split('\0').find(path => path.normalize('NFC') === composed)
+  if (tracked === undefined) throw new Error('the file is tracked')
+  const work = await test.work('edit', await test.copy('edit', test.git(['rev-parse', 'HEAD'])), { [tracked]: 'TEAM\n' })
+  expect((await test.apply('edit', test.direct(work))).operation.phase).toBe('confirmed')
+  expect(await test.read(join(decomposed, file))).toBe('TEAM\n')
+})

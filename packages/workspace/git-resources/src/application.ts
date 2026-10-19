@@ -266,17 +266,20 @@ async function patchBytes(git: ResourceGit, source: GitApplicationSource, target
 }
 
 /** Whether every directory and the file of a path, already read through it, exist under exactly these names in the target,
- * not under names that only match them case-insensitively or after Unicode normalization. Listings are read once per call.
+ * not under names that only match them case-insensitively or, unless Git composes them, after Unicode normalization.
+ * Listings are read once per call.
  * @param root - target root.
+ * @param precompose - whether Git composes decomposed names on disk (core.precomposeunicode), as it does when comparing paths.
  * @returns a check of one relative path.
  */
-function exactPaths(root: string): (path: string) => Promise<boolean> {
+function exactPaths(root: string, precompose: boolean): (path: string) => Promise<boolean> {
   const listings = new Map<string, Promise<string[]>>()
   return async (path) => {
     const parts = path.split('/')
     for (const [depth, name] of parts.entries()) {
       const directory = parts.slice(0, depth).join('/')
       const listing = listings.get(directory) ?? readdir(join(root, directory))
+        .then(names => precompose ? names.map(entry => entry.normalize('NFC')) : names)
       listings.set(directory, listing)
       if (!(await listing).includes(name)) return false
     }
@@ -311,7 +314,10 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   // A path is written from its known before state, or left alone when it already holds the after state. A file read
   // through a differently cased or normalized name on a case-insensitive target is neither: it would pass as current, or
   // be written through the alias, while the path it was asked for does not exist.
-  const exact = exactPaths(target.root.path), changed: string[] = []
+  // Git with core.precomposeunicode reads decomposed names on disk as their composed form, so they compare that way.
+  const precompose = (await git.run(['config', '--bool', 'core.precomposeunicode'], target.root.path, signal, { allowFailure: true }))
+    .stdout.toString('utf8').trim() === 'true'
+  const exact = exactPaths(target.root.path, precompose), changed: string[] = []
   for (const [index, entry] of intended.entries()) {
     const actual = first.touched[index]?.before
     if ((actual?.kind !== 'file' || await exact(entry.path))
