@@ -1,6 +1,6 @@
 /** Explicit user-target cuts, plain Git application and pure interrupted-effect observations. */
-import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
@@ -265,6 +265,12 @@ async function patchBytes(git: ResourceGit, source: GitApplicationSource, target
   { env: { GIT_LITERAL_PATHSPECS: '1' } })).stdout
 }
 
+/** Whether the target directory, already read for this file, holds an entry with exactly its name, not one that only
+ * matches it case-insensitively. */
+async function exactEntry(root: string, path: string): Promise<boolean> {
+  return (await readdir(join(root, dirname(path)))).includes(basename(path))
+}
+
 /** Changed target paths named in a refusal; the rest are counted. */
 const CHANGED_NAMED = 20
 
@@ -289,9 +295,15 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   for (const path of paths) intended.push({ path, before: await immutableState(git, target, old.get(path), signal),
     after: await immutableState(git, target, next.get(path), signal) })
   const first = await targetCut(git, target, intended, signal, limits)
-  // A path is written from its known before state, or left alone when it already holds the after state.
-  const changed = intended.filter((entry, index) => hash(first.touched[index]?.before) !== hash(entry.before)
-    && hash(first.touched[index]?.before) !== hash(entry.after)).map(entry => entry.path)
+  // A path is written from its known before state, or left alone when it already holds the after state under its exact
+  // name: on a case-insensitive target a differently cased file reads the same and must not pass as current.
+  const changed: string[] = []
+  for (const [index, entry] of intended.entries()) {
+    const actual = hash(first.touched[index]?.before)
+    if (actual === hash(entry.before) || actual === hash(entry.after)
+      && (entry.after.kind === 'absent' || await exactEntry(target.root.path, entry.path))) continue
+    changed.push(entry.path)
+  }
   if (changed.length > 0) {
     const named = changed.slice(0, CHANGED_NAMED).join(', '), more = changed.length - CHANGED_NAMED
     throw new GitResourceError('APPLICATION_TARGET_CHANGED', `Target files changed from the state this version starts from and are not overwritten: ${named}${more > 0 ? ` and ${more} more` : ''}`)

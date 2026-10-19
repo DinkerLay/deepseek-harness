@@ -1076,8 +1076,12 @@ export class GitResources extends Service {
     for (const { value } of applications) {
       if (value.phase !== 'intended' && value.phase !== 'acting' && value.phase !== 'needs_attention' || value.externalWriteStarted === false) continue
       const preview = value.applicationPreview
-      if (preview !== undefined && (await observeApplication(this.runner(), preview, signal, this.limits)).paths
-        .every(path => path.state === 'before')) continue
+      if (preview !== undefined) {
+        // Files it would write are all still before, and files it found already current are unchanged.
+        const writes = new Set(applicationWrites(preview.target.touched).map(entry => entry.path))
+        if ((await observeApplication(this.runner(), preview, signal, this.limits)).paths
+          .every(path => writes.has(path.path) ? path.state === 'before' : path.state !== 'unknown')) continue
+      }
       throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', `An earlier application to this target may have written files and is not confirmed: ${value.operationId}`)
     }
     const later = applications.flatMap(({ value, position }) => position > line.position && value.phase === 'confirmed'
@@ -1652,7 +1656,8 @@ export class GitResources extends Service {
       const observation = await observeApplication(this.runner(), preview, combined, this.limits)
       if (operation.phase === 'confirmed') return structuredClone(this.requireOperation(operation.operationId))
       combined.throwIfAborted()
-      const completed = observation.state === 'after' && (operation.externalWriteStarted === true || preview.target.touched.length === 0)
+      const completed = observation.state === 'after'
+        && (operation.externalWriteStarted === true || applicationWrites(preview.target.touched).length === 0)
       await this.save(operation.repositoryId, operation.resourceId, operation.operationId, resource => resource,
         current => ({ ...current, phase: completed ? 'confirmed' : 'needs_attention', applicationObservation: observation,
           ...completed ? { applicationEffect: { preview, observation } }

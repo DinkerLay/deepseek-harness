@@ -1,8 +1,9 @@
 /** Applications leave already-current files alone, and a code result sealed on its own work copy applies directly. */
-import { writeFile } from 'node:fs/promises'
+import { readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { GitOperationId } from '../src/index.ts'
+import { ResourceGit } from '../src/git.ts'
 import { fixture, scope, signal } from './repeat-harness.ts'
 
 it('leaves a file the target already holds in the new state alone and writes the rest', async () => {
@@ -131,4 +132,62 @@ it('abandons a direct application stopped before it wrote anything', async () =>
   if (pending === undefined) throw new Error('the stopped intent is recorded')
   expect((await test.owner.abandonOperation(request.operationId, pending.operation.fingerprint, 'Stop the unstarted write-back',
     signal, () => {})).operation.phase).toBe('abandoned')
+})
+
+it('never takes a differently cased file as current, so a case-only rename cannot delete the user\'s only copy', async () => {
+  const test = await fixture()
+  await writeFile(join(test.project, 'Readme.md'), 'read me\n')
+  test.git(['add', '--', 'Readme.md']); test.git(['commit', '--quiet', '-m', 'user readme'])
+  const head = test.git(['rev-parse', 'HEAD'])
+  const copy = await test.copy('rename', head)
+  await test.owner.withWriteUse(copy.resourceId, { useId: 'rename', ownerId: 'rename', epoch: '1' }, signal, async (lease) => {
+    test.git(['-C', lease.resource.path, 'mv', 'Readme.md', 'README.md'])
+  })
+  const current = test.owner.read(copy.resourceId)
+  if (current === undefined) throw new Error('work copy remains registered')
+  const sealed = await test.owner.preserve({ operationId: GitOperationId('rename-seal'), resourceId: current.resourceId,
+    expectedRevision: current.revision, content: 'versioned' })
+  if (test.git(['config', '--bool', 'core.ignorecase']) === 'true') {
+    await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
+      message: 'Target files changed from the state this version starts from and are not overwritten: README.md' })
+    expect(await readdir(test.project)).toContain('Readme.md')
+  } else {
+    const preview = await test.owner.previewApplication(test.direct(sealed))
+    expect(preview.alreadyCurrent).toBeUndefined()
+    expect((await test.apply('rename', test.direct(sealed))).operation.phase).toBe('confirmed')
+    expect(await readdir(test.project)).toContain('README.md')
+  }
+})
+
+it('lets later previews through after an application with an already-current file stopped before writing', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'labels.csv': 'id,label\n' })
+  await writeFile(join(test.project, 'labels.csv'), 'id,label\n')
+  const preview = await test.owner.previewApplication(test.direct(work))
+  const request = { ...test.direct(work), operationId: GitOperationId('ref-failed'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: preview.fingerprint }
+  const run: ResourceGit['run'] = Reflect.get(ResourceGit.prototype, 'run')
+  const refs = vi.spyOn(ResourceGit.prototype, 'run').mockImplementation(function (this: ResourceGit, ...args) {
+    if (args[0][0] === 'update-ref') return Promise.reject(new Error('reference write failed'))
+    return run.call(this, ...args)
+  })
+  await expect(test.owner.apply(request, signal, () => {})).rejects.toThrow('reference write failed')
+  refs.mockRestore()
+  expect(test.owner.status(request.operationId)?.operation).toMatchObject({ phase: 'needs_attention', externalWriteStarted: true })
+  const other = await test.work('other', await test.copy('other', test.base), { 'b.txt': 'B\n' })
+  expect((await test.owner.previewApplication(test.direct(other))).target.touched.map(path => path.path)).toEqual(['b.txt'])
+})
+
+it('confirms an interrupted application with nothing to write when it is reconciled', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n' })
+  await writeFile(join(test.project, 'app.js'), 'v1\n')
+  const preview = await test.owner.previewApplication(test.direct(work))
+  const request = { ...test.direct(work), operationId: GitOperationId('interrupted-current'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: preview.fingerprint }
+  let checks = 0
+  await expect(test.owner.apply(request, signal, () => { if (++checks > 1) throw new Error('authority withdrawn') }))
+    .rejects.toThrow('authority withdrawn')
+  expect((await test.owner.reconcile(request.operationId)).operation).toMatchObject({ phase: 'confirmed',
+    applicationObservation: { state: 'after' } })
 })
