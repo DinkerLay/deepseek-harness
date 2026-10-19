@@ -11,6 +11,7 @@ import { hash } from './json-hash.ts'
 import type { GitBaselineEntry, GitDirtyState, GitPathIdentity, GitRepositoryIdentity, GitRepositoryId,
   GitResourcePreview, GitResourcePreviewRequest } from './types.ts'
 import type { GitIntegrationConflictStage } from './integration.ts'
+import { assertReadableNames, nameRules } from './names.ts'
 
 /** Owner-configured file and manifest limits apply before reading file bytes. */
 export interface PreviewLimits { readonly maxFiles: number; readonly maxFileBytes: number; readonly maxTotalBytes: number }
@@ -80,6 +81,13 @@ export function validateContentPath(path: string): void {
  */
 export function missing(error: unknown): boolean {
   return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+}
+/** Classify an operating-system refusal from a filesystem call, whose message names the absolute path.
+ * @param error - filesystem failure.
+ * @returns true for a refusal carrying its system error code.
+ */
+function systemError(error: unknown): error is Error & { readonly code: string } {
+  return error instanceof Error && 'syscall' in error && 'code' in error && typeof error.code === 'string'
 }
 /** Hash raw bytes without invoking Git transformations.
  * @param bytes - exact bytes.
@@ -193,7 +201,13 @@ export async function versionedFiles(git: ResourceGit, root: string, commonDir: 
       const target = await selectedPath(root, path)
       if (!(await lstat(target)).isFile()) throw new GitResourceError('TREE_ENTRY_UNSUPPORTED', 'Code seal contains nonregular content')
       files.push(path)
-    } catch (error) { if (!missing(error) || !tracked.has(path)) throw error }
+    } catch (error) {
+      if (missing(error) && tracked.has(path)) continue
+      // A filesystem refusal, such as a file standing where a directory of the path was, is reported with the relative
+      // path, never the Host path its own message names.
+      if (error instanceof GitResourceError || !systemError(error)) throw error
+      throw new GitResourceError('TREE_ENTRY_UNSUPPORTED', `Code seal cannot read ${path} as a regular file (${error.code})`)
+    }
   }
   return { files: files.sort(), unpreservedPaths, conflictStages }
 }
@@ -314,10 +328,11 @@ export async function treeEntries(git: ResourceGit, identity: GitRepositoryIdent
  * @param request - explicit commit or layered selection.
  * @param signal - cancellation.
  * @param limits - complete observation bounds.
+ * @param platform - this Host's operating system, which decides how Git reads file names on disk.
  * @returns detached metadata and a deterministic creation cut; no object/index/ref writes.
  */
 export async function previewRepository(git: ResourceGit, identity: GitRepositoryIdentity, request: GitResourcePreviewRequest,
-  signal: AbortSignal, limits: PreviewLimits): Promise<GitResourcePreview> {
+  signal: AbortSignal, limits: PreviewLimits, platform: NodeJS.Platform): Promise<GitResourcePreview> {
   await assertIgnoreSources(git, identity.root.path, identity.commonDir.path, signal, limits)
   const root = identity.root.path, named = request.baseline.kind === 'commit' ? request.baseline.commit : request.baseline.baseCommit
   if (!named || named.startsWith('-') || named.includes('\0') || named.includes('\n')) throw new GitResourceError('COMMIT_INVALID', 'Baseline must name an explicit commit')
@@ -370,6 +385,9 @@ export async function previewRepository(git: ResourceGit, identity: GitRepositor
   }
   const selected: GitBaselineEntry[] = [], chosen = request.baseline.kind === 'selected' ? request.baseline.paths : []
   if (chosen.length > limits.maxFiles || new Set(chosen.map(item => item.path)).size !== chosen.length) throw new GitResourceError('SELECTION_INVALID', 'Selection is duplicated or exceeds its configured limit')
+  // The copy holds every baseline path: one Git on this Host reads under another name would be sealed as that other path.
+  assertReadableNames(new Set([...originalEntries.map(entry => entry.path), ...chosen.map(item => item.path)]),
+    await nameRules(git, root, signal, platform))
   let total = 0
   for (const item of chosen) {
     await selectedPath(root, item.path)

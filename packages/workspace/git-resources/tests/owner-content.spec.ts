@@ -1,6 +1,6 @@
 /** Content preservation checks live files, actual HEAD and durable original effects rather than inferred summaries. */
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import type { KvUnit } from '@deepseek-ai/dsh-storage'
@@ -251,4 +251,22 @@ it.skipIf(process.platform === 'win32')('rejects a real FIFO from all-file prese
   execFileSync('mkfifo', [path])
   await expect(test.ctx.gitResources.preserve({ operationId: GitOperationId('fifo-not-file'), resourceId: test.made.resource.resourceId,
     expectedRevision: test.made.resource.revision, content: 'all' })).rejects.toMatchObject({ code: 'TREE_ENTRY_UNSUPPORTED' })
+})
+
+// Windows reports a path below a file as missing, so there the tracked file counts as deleted.
+it.skipIf(process.platform === 'win32')('records a seal refused for a directory replaced by a file under the relative path only', async () => {
+  const test = await harness()
+  await repository(test)
+  await mkdir(join(test.project, 'dir')); await writeFile(join(test.project, 'dir', 'a.txt'), 'A\n')
+  test.git(['add', '--', 'dir/a.txt']); test.git(['commit', '--quiet', '-m', 'directory'])
+  const preview = await test.ctx.gitResources.preview({ workspaceId: test.workspace.id,
+    baseline: { kind: 'commit', commit: test.git(['rev-parse', 'HEAD']) } })
+  const made = await test.ctx.gitResources.create({ ...preview.request, consumerScope: GitConsumerScope('owner-content'),
+    originalRequestJson: '{}', operationId: GitOperationId('directory-copy'), expectedPreviewFingerprint: preview.fingerprint })
+  await rm(join(made.resource.path, 'dir'), { recursive: true }); await writeFile(join(made.resource.path, 'dir'), 'now a file\n')
+  const message = 'Code seal cannot read dir/a.txt as a regular file (ENOTDIR)'
+  await expect(test.ctx.gitResources.preserve({ operationId: GitOperationId('directory-now-file'), resourceId: made.resource.resourceId,
+    expectedRevision: made.resource.revision, content: 'versioned' })).rejects.toMatchObject({ code: 'TREE_ENTRY_UNSUPPORTED', message })
+  expect(test.ctx.gitResources.status(GitOperationId('directory-now-file'))?.operation)
+    .toMatchObject({ kind: 'preserve', phase: 'needs_attention', diagnostic: message })
 })

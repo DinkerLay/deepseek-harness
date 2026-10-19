@@ -850,7 +850,9 @@ async previewResolution(selection: GitIntegrationResolutionSelection, signal: Ab
  */
 async resolveIntegration(request: GitIntegrationResolutionRequest, signal: AbortSignal, assertProof: () => void): Promise<GitResourceOperationView>
 
-/** Observe an exact ready version and registered target; no file, index, ref or Git object writes.
+/** Observe an exact ready version and registered target; no file, index or ref writes. When earlier applications compose
+ * a target state no existing tree holds, or the target already holds some touched files, only the trees the patch starts
+ * from are written.
  * @param request - immutable version, optional exact resolution receipt and target Workspace identity.
  * @param signal - read-only preview cancellation.
  * @returns complete target HEAD/index/touched-path CAS and plain patch digest.

@@ -21,6 +21,20 @@ export const gitFileStateSchema = z.discriminatedUnion('kind', [z.object({ kind:
 /** Strict before/after manifest entry; filesystem paths are checked by the existing path owner. */
 export const applicationPathSchema = z.object({ path: z.string().min(1), before: gitFileStateSchema, after: gitFileStateSchema }).strict()
 
+/** A path's stage-zero index entry, or its absence, which removes every stage of the path. */
+export type GitIndexState = { readonly kind: 'absent' } | { readonly mode: string; readonly objectId: string }
+/** Encode the input of `update-index -z --index-info`. Names reach Git NUL-separated on stdin, never as arguments, so they
+ * are written byte-exact on every platform: Git for macOS composes decomposed names given as arguments, and a line break
+ * ends a row of the line-separated form.
+ * @param rows - each path and the state its index entry takes, applied in this order.
+ * @param objectFormat - repository object format, which sets the length of a removal's null object name.
+ * @returns the complete input.
+ */
+export function indexInfo(rows: Iterable<readonly [string, GitIndexState]>, objectFormat: 'sha1' | 'sha256'): Buffer {
+  const zero = '0'.repeat(objectFormat === 'sha1' ? 40 : 64)
+  return Buffer.from([...rows].map(([path, state]) => 'objectId' in state
+    ? `${state.mode} ${state.objectId}\t${path}\0` : `0 ${zero}\t${path}\0`).join(''))
+}
 /** Hash the complete ordered Git tree entries, including actual blob byte lengths.
  * @param entries - bounded entries returned by the sole Git tree reader.
  * @returns the existing immutable preservation digest, without scanning working files.

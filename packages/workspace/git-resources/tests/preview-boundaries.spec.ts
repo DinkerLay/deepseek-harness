@@ -194,6 +194,27 @@ describe('local ignore and index metadata', () => {
     await expect(files()).rejects.toMatchObject({ code: 'TREE_ENTRY_UNSUPPORTED' })
   })
 
+  // Windows reports a path below a file as missing, so there the tracked file counts as deleted.
+  it.skipIf(process.platform === 'win32')('names a tracked path below a directory replaced by a file only relative to the work copy', async () => {
+    await mkdir(join(test.project, 'dir')); await writeFile(join(test.project, 'dir', 'a.txt'), 'A\n')
+    test.git(['add', '--', 'dir/a.txt']); test.git(['commit', '--quiet', '-m', 'directory'])
+    await rm(join(test.project, 'dir'), { recursive: true }); await writeFile(join(test.project, 'dir'), 'now a file\n')
+    await expect(files()).rejects.toMatchObject({ code: 'TREE_ENTRY_UNSUPPORTED',
+      message: 'Code seal cannot read dir/a.txt as a regular file (ENOTDIR)' })
+  })
+
+  it('names a listed path the system refuses to read only relative to the work copy', async () => {
+    const path = join(test.project, 'file.txt')
+    const refusal = Object.assign(new Error(`EACCES: permission denied, lstat '${path}'`), { code: 'EACCES', syscall: 'lstat', path })
+    vi.mocked(lstat).mockImplementation(async (...args) => {
+      if (args[0] === path) throw refusal
+      return actualFs.lstat(...args)
+    })
+    const refused: unknown = await files().catch((error: unknown) => error)
+    expect(refused).toMatchObject({ code: 'TREE_ENTRY_UNSUPPORTED', message: 'Code seal cannot read file.txt as a regular file (EACCES)' })
+    expect(String(refused)).not.toContain(test.project)
+  })
+
   it('counts remaining ignored paths independently of tracked content', async () => {
     await writeFile(join(test.project, '.git', 'info', 'exclude'), 'ignored-*\n')
     for (const name of ['ignored-a', 'ignored-b', 'ignored-c']) await writeFile(join(test.project, name), 'not preserved')
@@ -311,7 +332,7 @@ describe('complete tree and selected baseline limits', () => {
   let test: Fixture
   beforeEach(async () => { test = await setup() })
   const preview = (request: GitResourcePreviewRequest = test.request, limits = edgeLimits) =>
-    previewRepository(test.runner, test.identity, request, edgeSignal, limits)
+    previewRepository(test.runner, test.identity, request, edgeSignal, limits, process.platform)
   const selection = (paths: Extract<GitResourcePreviewRequest['baseline'], { kind: 'selected' }>['paths']): GitResourcePreviewRequest =>
     ({ workspaceId: test.workspace.id, baseline: { kind: 'selected', baseCommit: test.base, paths } })
 

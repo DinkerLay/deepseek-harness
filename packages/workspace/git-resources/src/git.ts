@@ -22,11 +22,16 @@ export class ResourceGit {
    * @param args - exact built-in Git arguments.
    * @param cwd - verified local directory.
    * @param signal - operation cancellation; admitted process teardown is drained.
-   * @param options - private index, binary stdin and explicitly tolerated failure.
+   * @param options - private index, binary stdin, explicitly tolerated failure and settings that take precedence over the
+   * repository's own configuration for this command.
    * @returns bounded raw bytes after the managed process range exits.
    */
-  async run(args: readonly string[], cwd: string, signal: AbortSignal,
-    options: { env?: NodeJS.ProcessEnv; input?: Buffer; allowFailure?: boolean } = {}): Promise<GitCommandResult> {
+  async run(args: readonly string[], cwd: string, signal: AbortSignal, options: {
+    env?: NodeJS.ProcessEnv
+    input?: Buffer
+    allowFailure?: boolean
+    config?: Readonly<Record<string, string>>
+  } = {}): Promise<GitCommandResult> {
     const env: NodeJS.ProcessEnv = { HOME: this.isolation, USERPROFILE: this.isolation, XDG_CONFIG_HOME: this.isolation,
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(this.isolation, 'empty-config'), GIT_CONFIG_SYSTEM: join(this.isolation, 'empty-config'), GIT_CONFIG_COUNT: '0',
       GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0',
@@ -40,7 +45,8 @@ export class ResourceGit {
     const handle = this.subprocess.spawn({ argv: [this.executable, '-c', `core.hooksPath=${this.isolation}`,
       '-c', `core.excludesFile=${join(this.isolation, 'empty-config')}`,
       '-c', `core.attributesFile=${join(this.isolation, 'empty-config')}`,
-      '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'gc.auto=0', ...args], cwd, env,
+      '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'gc.auto=0',
+      ...Object.entries(options.config ?? {}).flatMap(([key, value]) => ['-c', `${key}=${value}`]), ...args], cwd, env,
     stdio: { stdin: options.input === undefined ? 'ignore' : 'pipe', stdout: 'pipe', stderr: 'pipe' },
     graceMs: this.limits.graceMs, signal: combined })
     const collect = async (stream: typeof handle.stdout) => {

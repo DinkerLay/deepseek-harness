@@ -30,12 +30,12 @@ describe('real additions/deletions through absent parents', () => {
     await rm(join(path, 'removed.txt'))
   }) })
   it('applies exact added/deleted bytes while preserving target HEAD and index', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
     expect(preview.target.touched).toMatchObject([{ path: 'new/nested/added.txt', before: { kind: 'absent' }, after: { kind: 'file' } },
       { path: 'removed.txt', before: { kind: 'file' }, after: { kind: 'absent' } }])
     expect(preview.target.ancestors.filter(value => value.identity === undefined).map(value => value.path)).toEqual(['new', 'new/nested'])
     const before = await readFile(join(test.project, '.git', 'index')), head = test.git(['rev-parse', 'HEAD'])
-    const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits)
+    const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
     expect(effect.observation.state).toBe('after')
     expect(await readFile(join(test.project, 'new', 'nested', 'added.txt'), 'utf8')).toBe('New exact content\n')
     await expect(readFile(join(test.project, 'removed.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -43,12 +43,12 @@ describe('real additions/deletions through absent parents', () => {
     expect(test.git(['rev-parse', 'HEAD'])).toBe(head)
   })
   it('prepares a separate inverse for the added/deleted paths and drains its scratch directory', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
     const before = await readFile(join(test.project, '.git', 'index')), head = test.git(['rev-parse', 'HEAD'])
-    const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits)
-    const inverse = await inspectInverse(test.runner, effect, GitOperationId('addition-deletion-application'), edgeSignal, edgeLimits)
+    const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
+    const inverse = await inspectInverse(test.runner, effect, GitOperationId('addition-deletion-application'), edgeSignal, edgeLimits, process.platform)
     const candidate = await prepareInverse(test.runner, inverse, GitOperationId('addition-deletion-inverse'),
-      '2026-10-06T00:00:00.000Z', test.scratch, test.lease, edgeLimits)
+      '2026-10-06T00:00:00.000Z', test.host, test.lease, edgeLimits)
     expect(candidate.result).toBe('prepared')
     expect(test.git(['ls-tree', '-r', '--name-only', candidate.tree])).toBe('file.txt\nremoved.txt')
     expect(test.git(['show', `${candidate.tree}:removed.txt`])).toBe('Remove this deliberately')
@@ -61,10 +61,10 @@ describe('real additions/deletions through absent parents', () => {
 it('detects binary patches and retains a detached target and genuinely absent index', async () => {
   const test = await applicationEdgeFixture(async (path) => { await writeFile(join(path, 'file.txt'), Buffer.from([0, 1, 255, 2])) })
   test.git(['checkout', '--detach', '--quiet', test.base]); await rm(join(test.project, '.git', 'index'))
-  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
   expect(preview.binary).toBe(true); expect(preview.patch).toContain('GIT binary patch\n')
   expect(preview.target.symbolicRef).toBeUndefined()
-  const applied = await applyApplication(test.runner, preview, test.lease, edgeLimits)
+  const applied = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
   expect(applied.observation).toMatchObject({ state: 'after', headUnchanged: true, indexUnchanged: true })
   expect(await readFile(join(test.project, 'file.txt'))).toEqual(Buffer.from([0, 1, 255, 2]))
   await expect(readFile(join(test.project, '.git', 'index'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -72,12 +72,12 @@ it('detects binary patches and retains a detached target and genuinely absent in
 
 it('rejects unresolved real index stages and invalid durable application/inverse requests', async () => {
   const test = await applicationEdgeFixture()
-  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
   const schemas = applicationSchemas(z.custom<typeof test.identity>())
   expect(schemas.source.parse(test.source)).toEqual(test.source)
   expect(schemas.preview.parse(preview)).toEqual(preview)
-  const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits)
-  const inverse = await inspectInverse(test.runner, effect, GitOperationId('schema-original'), edgeSignal, edgeLimits)
+  const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
+  const inverse = await inspectInverse(test.runner, effect, GitOperationId('schema-original'), edgeSignal, edgeLimits, process.platform)
   expect(schemas.effect.parse(effect)).toEqual(effect); expect(schemas.inversePreview.parse(inverse)).toEqual(inverse)
   expect(() => schemas.target.parse({ ...preview.target, extraAuthority: true })).toThrow()
   const request = { consumerScope: test.source.consumerScope, integrationOperationId: test.source.integrationOperationId,
@@ -92,19 +92,19 @@ it('rejects unresolved real index stages and invalid durable application/inverse
   test.git(['update-index', '--force-remove', '--', 'file.txt'])
   test.git(['update-index', '-z', '--index-info'], `100644 ${object} 1\tfile.txt\0`)
   const before = await readFile(join(test.project, '.git', 'index'))
-  await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_INDEX_UNMERGED' })
+  await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform)).rejects.toMatchObject({ code: 'APPLICATION_INDEX_UNMERGED' })
   expect(await readFile(join(test.project, '.git', 'index'))).toEqual(before)
 })
 
 it('refuses an occupied new path and nonregular or linked target content without treating errors as absence', async () => {
   const test = await applicationEdgeFixture(async (path) => { await writeFile(join(path, 'added.txt'), 'Selected addition\n') })
   await writeFile(join(test.project, 'added.txt'), 'User-owned occupied path\n')
-  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits))
+  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host))
     .rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
   await rm(join(test.project, 'added.txt')); await mkdir(join(test.project, 'added.txt'))
-  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)).rejects.toMatchObject({ code: 'FILE_LIMIT' })
+  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)).rejects.toMatchObject({ code: 'FILE_LIMIT' })
   await rm(join(test.project, 'added.txt'), { recursive: true }); await symlink(join(test.project, 'file.txt'), join(test.project, 'added.txt'))
-  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits))
+  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host))
     .rejects.toMatchObject({ code: 'SYMLINK_UNSUPPORTED' })
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('BASE\n')
 })
@@ -113,17 +113,17 @@ it('rejects a replaced target repository witness and reports identical bytes und
   const test = await applicationEdgeFixture(async (path) => {
     await mkdir(join(path, 'nested')); await writeFile(join(path, 'nested', 'new.txt'), 'Selected\n')
   })
-  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-  const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits)
-  const inverse = await inspectInverse(test.runner, effect, GitOperationId('parent-change-original'), edgeSignal, edgeLimits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+  const effect = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
+  const inverse = await inspectInverse(test.runner, effect, GitOperationId('parent-change-original'), edgeSignal, edgeLimits, process.platform)
   await rename(join(test.project, 'nested'), join(test.root, 'prior-nested')); await mkdir(join(test.project, 'nested'))
   await writeFile(join(test.project, 'nested', 'new.txt'), 'Selected\n')
   const changed = { ...preview, target: inverse.currentTarget }
-  expect(await observeApplication(test.runner, changed, edgeSignal, edgeLimits)).toMatchObject({ state: 'unknown', headUnchanged: true, indexUnchanged: true })
+  expect(await observeApplication(test.runner, changed, edgeSignal, edgeLimits, process.platform)).toMatchObject({ state: 'unknown', headUnchanged: true, indexUnchanged: true })
   await rm(join(test.project, 'nested'), { recursive: true })
-  expect((await observeApplication(test.runner, changed, edgeSignal, edgeLimits)).state).toBe('unknown')
+  expect((await observeApplication(test.runner, changed, edgeSignal, edgeLimits, process.platform)).state).toBe('unknown')
   await rename(join(test.project, '.git'), join(test.root, 'prior-git')); await mkdir(join(test.project, '.git'))
-  await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_REPLACED' })
+  await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_REPLACED' })
 })
 
 describe('a parent replaced between a real file read and ancestor inspection', () => {
@@ -132,12 +132,12 @@ describe('a parent replaced between a real file read and ancestor inspection', (
     await mkdir(join(path, 'nested')); await writeFile(join(path, 'nested', 'new.txt'), 'Selected\n')
   }) })
   it('refuses a non-directory ancestor without rewriting the substituted path', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-    await applyApplication(test.runner, preview, test.lease, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+    await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
     await afterGitStep(test, args => args[0] === 'hash-object', async () => {
       await rename(join(test.project, 'nested'), join(test.root, 'prior-parent'))
       await writeFile(join(test.project, 'nested'), 'A user-owned regular file replaced the directory\n')
-    }, async () => { await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits))
+    }, async () => { await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform))
       .rejects.toMatchObject({ code: 'APPLICATION_TARGET_UNAVAILABLE' }) })
     expect(await readFile(join(test.project, 'nested'), 'utf8')).toBe('A user-owned regular file replaced the directory\n')
   })
@@ -145,7 +145,7 @@ describe('a parent replaced between a real file read and ancestor inspection', (
 
 it('cancels after successful patch preflight with no working-file write or process left active', async () => {
   const test = await applicationEdgeFixture()
-  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
   const cancellation = new AbortController(), run = test.runner.run.bind(test.runner)
   const actualCalls: string[][] = []
   const fault = vi.spyOn(test.runner, 'run').mockImplementation(async (...args) => {
@@ -155,25 +155,25 @@ it('cancels after successful patch preflight with no working-file write or proce
     return result
   })
   try {
-    await expect(applyApplication(test.runner, preview, { signal: cancellation.signal, assertCurrent: () => {} }, edgeLimits))
+    await expect(applyApplication(test.runner, preview, { signal: cancellation.signal, assertCurrent: () => {} }, edgeLimits, test.host))
       .rejects.toThrow('user stopped the pending application')
   } finally { fault.mockRestore() }
   expect(actualCalls.filter(args => args[0] === 'apply').every(args => args.includes('--check'))).toBe(true)
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('BASE\n')
-  expect((await observeApplication(test.runner, preview, edgeSignal, edgeLimits)).state).toBe('before')
+  expect((await observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform)).state).toBe('before')
 })
 
 it('refuses uncertain inverse input and rejects changes after inverse preview or while snapshotting', async () => {
   const test = await applicationEdgeFixture()
-  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-  const original = await applyApplication(test.runner, preview, test.lease, edgeLimits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+  const original = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
   await expect(inspectInverse(test.runner, { ...original, observation: { ...original.observation, state: 'partial' } },
-    GitOperationId('uncertain-original'), edgeSignal, edgeLimits)).rejects.toMatchObject({ code: 'INVERSE_SOURCE_UNCERTAIN' })
-  const inverse = await inspectInverse(test.runner, original, GitOperationId('inverse-original'), edgeSignal, edgeLimits)
+    GitOperationId('uncertain-original'), edgeSignal, edgeLimits, process.platform)).rejects.toMatchObject({ code: 'INVERSE_SOURCE_UNCERTAIN' })
+  const inverse = await inspectInverse(test.runner, original, GitOperationId('inverse-original'), edgeSignal, edgeLimits, process.platform)
   await writeFile(join(test.project, 'file.txt'), 'User changed after the inverse preview\n')
   await expect(prepareInverse(test.runner, inverse, GitOperationId('stale-inverse'), '2026-10-06T00:00:00.000Z',
-    test.scratch, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
-  const current = await inspectInverse(test.runner, original, GitOperationId('inverse-original'), edgeSignal, edgeLimits)
+    test.host, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+  const current = await inspectInverse(test.runner, original, GitOperationId('inverse-original'), edgeSignal, edgeLimits, process.platform)
   const run = test.runner.run.bind(test.runner)
   const fault = vi.spyOn(test.runner, 'run').mockImplementation(async (...args) => {
     const result = await run(...args)
@@ -182,7 +182,7 @@ it('refuses uncertain inverse input and rejects changes after inverse preview or
   })
   try {
     await expect(prepareInverse(test.runner, current, GitOperationId('raced-inverse'), '2026-10-06T00:00:00.000Z',
-      test.scratch, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+      test.host, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
   } finally { fault.mockRestore() }
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('User changed during inverse snapshot\n')
   expect(await readdir(test.scratch)).toEqual([])
@@ -243,30 +243,30 @@ describe('application observation failure windows', () => {
   let test: Awaited<ReturnType<typeof applicationEdgeFixture>>
   beforeEach(async () => { test = await applicationEdgeFixture() })
   it('refuses an index changed before application and an inconsistent persisted patch digest before Git apply', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-    await expect(applyApplication(test.runner, { ...preview, patchHash: 'inconsistent-saved-digest' }, test.lease, edgeLimits))
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+    await expect(applyApplication(test.runner, { ...preview, patchHash: 'inconsistent-saved-digest' }, test.lease, edgeLimits, test.host))
       .rejects.toMatchObject({ code: 'APPLICATION_VERSION_CHANGED' })
     await writeFile(join(test.project, 'later-index.txt'), 'New user index work\n'); test.git(['add', '--', 'later-index.txt'])
-    await expect(applyApplication(test.runner, preview, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+    await expect(applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
     expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('BASE\n')
   })
   it('rejects a read-only preview whose second cut observes a later edit', async () => {
     await afterGitStep(test, args => args[0] === 'diff', async () => { await writeFile(join(test.project, 'file.txt'), 'Changed during preview\n') },
-      async () => { await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits))
+      async () => { await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host))
         .rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' }) })
     expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('Changed during preview\n')
   })
   it('refuses a linked index rather than hashing content from a substituted metadata path', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
     const index = join(test.project, '.git', 'index'), saved = join(test.root, 'owned-saved-index')
     await rename(index, saved); await symlink(saved, index)
-    await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits)).rejects.toMatchObject({ code: 'SYMLINK_UNSUPPORTED' })
+    await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform)).rejects.toMatchObject({ code: 'SYMLINK_UNSUPPORTED' })
   })
   it('refuses HEAD metadata corrupted after a valid real rev-parse and before symbolic-ref', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
     await afterGitStep(test, args => args[0] === 'rev-parse' && args[1] === '--verify' && args[2] === 'HEAD',
       async () => { await writeFile(join(test.project, '.git', 'HEAD'), 'invalid-head\n') },
-      async () => { await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits))
+      async () => { await expect(observeApplication(test.runner, preview, edgeSignal, edgeLimits, process.platform))
         .rejects.toMatchObject({ code: 'APPLICATION_TARGET_UNAVAILABLE' }) })
   })
   it('refuses a loose immutable object whose actual bytes changed after the bounded size read', async () => {
@@ -277,28 +277,28 @@ describe('application observation failure windows', () => {
       await afterGitStep(test, args => args[0] === 'ls-tree' && args.includes(test.source.originalTargetBaseTree), async () => {
         const content = Buffer.from('Externally replaced immutable bytes\n')
         await writeFile(objectPath, deflateSync(Buffer.concat([Buffer.from(`blob ${content.length}\0`), content])))
-      }, async () => { await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits))
+      }, async () => { await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host))
         .rejects.toMatchObject({ code: 'APPLICATION_VERSION_CHANGED' }) })
     } finally { await writeFile(objectPath, original); await chmod(objectPath, info.mode) }
   })
   it('rejects an inverse cut that changes between its two read-only observations or after its private write-tree', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-    const original = await applyApplication(test.runner, preview, test.lease, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+    const original = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
     await afterGitStep(test, args => args[0] === 'rev-parse' && args[1] === '--git-path' && args[2] === 'index',
       async () => { await writeFile(join(test.project, 'file.txt'), 'Changed between inverse observations\n') },
-      async () => { await expect(inspectInverse(test.runner, original, GitOperationId('two-cuts-original'), edgeSignal, edgeLimits))
+      async () => { await expect(inspectInverse(test.runner, original, GitOperationId('two-cuts-original'), edgeSignal, edgeLimits, process.platform))
         .rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' }) })
-    const inverse = await inspectInverse(test.runner, original, GitOperationId('two-cuts-original'), edgeSignal, edgeLimits)
+    const inverse = await inspectInverse(test.runner, original, GitOperationId('two-cuts-original'), edgeSignal, edgeLimits, process.platform)
     await afterGitStep(test, args => args[0] === 'write-tree',
       async () => { await writeFile(join(test.project, 'file.txt'), 'Changed after private inverse snapshot\n') },
       async () => { await expect(prepareInverse(test.runner, inverse, GitOperationId('post-tree-inverse'),
-        '2026-10-06T00:00:00.000Z', test.scratch, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' }) })
+        '2026-10-06T00:00:00.000Z', test.host, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' }) })
     expect(await readdir(test.scratch)).toEqual([])
   })
   it('rejects corrupted hash-object response metadata after the actual Git object write', async () => {
-    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits)
-    const original = await applyApplication(test.runner, preview, test.lease, edgeLimits)
-    const inverse = await inspectInverse(test.runner, original, GitOperationId('corrupted-response-original'), edgeSignal, edgeLimits)
+    const preview = await inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host)
+    const original = await applyApplication(test.runner, preview, test.lease, edgeLimits, test.host)
+    const inverse = await inspectInverse(test.runner, original, GitOperationId('corrupted-response-original'), edgeSignal, edgeLimits, process.platform)
     const run = test.runner.run.bind(test.runner); let actualObject: string | undefined
     // This negative control corrupts returned metadata only after real Git wrote the correct blob.
     // It does not claim that normal Git hashes identical bytes inconsistently.
@@ -312,7 +312,7 @@ describe('application observation failure windows', () => {
     })
     try {
       await expect(prepareInverse(test.runner, inverse, GitOperationId('corrupted-response-inverse'),
-        '2026-10-06T00:00:00.000Z', test.scratch, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+        '2026-10-06T00:00:00.000Z', test.host, test.lease, edgeLimits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
     } finally { fault.mockRestore() }
     if (actualObject === undefined) throw new Error('the real hash-object write must precede metadata corruption')
     expect(test.git(['cat-file', '-t', actualObject])).toBe('blob')
@@ -326,9 +326,9 @@ it('bounds the complete old/new union and rejects non-UTF-8 text patches from re
     await rm(join(path, 'file.txt')); await rm(join(path, 'removed.txt'))
     await writeFile(join(path, 'one.txt'), 'One\n'); await writeFile(join(path, 'two.txt'), Buffer.from([0x66, 0xff, 0x0a]))
   })
-  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, { ...edgeLimits, maxFiles: 2 }))
+  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, { ...edgeLimits, maxFiles: 2 }, test.host))
     .rejects.toMatchObject({ code: 'MANIFEST_LIMIT' })
-  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits))
+  await expect(inspectApplication(test.runner, test.identity, test.source, edgeSignal, edgeLimits, test.host))
     .rejects.toMatchObject({ code: 'APPLICATION_PATCH_UNSUPPORTED' })
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('BASE\n')
 })

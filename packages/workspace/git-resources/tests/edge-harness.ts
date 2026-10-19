@@ -52,7 +52,7 @@ export async function applicationEdgeFixture(change?: (path: string) => Promise<
     originalTargetBaseTree: integrated.operation.integrationEffect.originalTargetBaseTree,
     resultCommit: effectCommit, resultTree: effectTree, manifestHash: effectManifestHash }
   const scratch = join(test.root, 'edge-inverse-scratch'); await mkdir(scratch)
-  return { ...test, integrated, sealed, source, scratch }
+  return { ...test, integrated, sealed, source, scratch, host: { platform: process.platform, scratchRoot: scratch } }
 }
 
 /** Abort only after the real domain backend durably saves this operation's original intent. */

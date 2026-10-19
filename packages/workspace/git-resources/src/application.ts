@@ -1,5 +1,6 @@
 /** Explicit user-target cuts, plain Git application and pure interrupted-effect observations. */
-import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
+import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -13,8 +14,10 @@ import type { GitConsumerScope, GitOperationId, GitPathIdentity, GitRepositoryId
 import type { GitIntegrationWriteScope } from './integration.ts'
 import type { GitIntegrationEffect } from './integration.ts'
 import { decodeIntegrationMerge } from './integration.ts'
-import { applicationPathSchema, gitObjectIdSchema, treeManifestHash } from './manifest.ts'
-import type { GitApplicationPath, GitFileState } from './manifest.ts'
+import { applicationPathSchema, gitObjectIdSchema, indexInfo, treeManifestHash } from './manifest.ts'
+import type { GitApplicationPath, GitFileState, GitIndexState } from './manifest.ts'
+import { assertReadableNames, gitNameOf, nameRules, namedPaths, withCodePoints } from './names.ts'
+import type { GitNameRules } from './names.ts'
 
 /** Files an earlier confirmed application wrote, still its last writer in the target state this one starts from. */
 export interface GitApplicationWritten {
@@ -114,6 +117,13 @@ export interface GitInversePreview {
   readonly original: GitApplicationEffect
   readonly currentTarget: GitApplicationTargetCut
   readonly fingerprint: string
+}
+/** Same-host facts and owner storage the application plumbing uses besides Git and the target. */
+export interface GitApplicationHost {
+  /** This Host's operating system, which decides how Git reads file names on disk. */
+  readonly platform: NodeJS.Platform
+  /** Existing private owner directory for scratch indexes. */
+  readonly scratchRoot: string
 }
 /** Owner-shared strict decoders reuse one repository identity definition. */
 export interface GitApplicationSchemas {
@@ -255,51 +265,183 @@ export function applicationWrites(touched: readonly GitApplicationPath[]): reado
   return touched.filter(entry => hash(entry.before) !== hash(entry.after))
 }
 
-async function patchBytes(git: ResourceGit, source: GitApplicationSource, target: GitRepositoryIdentity,
-  signal: AbortSignal, touched: readonly GitApplicationPath[]): Promise<Buffer> {
-  const writes = applicationWrites(touched)
-  if (writes.length === 0) return Buffer.alloc(0)
-  const only = writes.length === touched.length ? [] : writes.map(entry => entry.path)
-  return (await git.run(['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--no-renames',
-    source.originalTargetBaseTree, source.resultTree, '--', ...only], target.root.path, signal,
-  { env: { GIT_LITERAL_PATHSPECS: '1' } })).stdout
+/** Write the tree of a starting tree with some paths replaced or removed, through a private scratch index. Only tree
+ * objects are added; no file, ref or project index changes.
+ * @param git - existing safe argv runner.
+ * @param identity - repository whose object store holds every named blob.
+ * @param base - the starting tree.
+ * @param files - each changed path and its state.
+ * @param scratchRoot - existing private owner directory.
+ * @param signal - cancellation.
+ * @returns the tree id; an existing tree with the same content keeps its id.
+ */
+export async function scratchTree(git: ResourceGit, identity: GitRepositoryIdentity, base: string,
+  files: Iterable<readonly [string, GitIndexState]>, scratchRoot: string, signal: AbortSignal): Promise<string> {
+  const scratch = await mkdtemp(join(scratchRoot, 'tree-'))
+  try {
+    const env = { GIT_INDEX_FILE: join(scratch, 'index') }, root = identity.root.path
+    await git.run(['read-tree', base], root, signal, { env })
+    await git.run(['update-index', '-z', '--index-info'], root, signal, { env, input: indexInfo(files, identity.objectFormat) })
+    return gitObjectIdSchema.parse(await git.text(['write-tree'], root, signal, env))
+  } finally { await rm(scratch, { recursive: true, force: true }) }
 }
 
-/** Whether every directory and the file of a path, already read through it, exist under exactly these names in the target,
- * not under names that only match them case-insensitively or, unless Git composes them, after Unicode normalization.
- * Listings are read once per call.
+/** Patch options fixed on the command line, so the target repository's own diff and color settings change neither the
+ * patch bytes nor the paths it names. */
+const PATCH_OPTIONS = ['--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-color',
+  '--src-prefix=a/', '--dst-prefix=b/', '--no-relative', '--unified=3', '--inter-hunk-context=0', '--diff-algorithm=myers',
+  '--indent-heuristic']
+/** Patch settings that have no command-line option; the file order is fixed separately with an empty order file. */
+const PATCH_SETTINGS = { 'diff.suppressBlankEmpty': 'false', 'core.quotePath': 'true' }
+/** `git apply` strips exactly the `a/` or `b/` component every patch path carries, and the target repository's own
+ * whitespace and line-ending settings neither change the context it accepts nor the bytes it writes. */
+const APPLY = ['apply', '-p1', '--binary', '--whitespace=nowarn']
+const APPLY_SETTINGS = { 'apply.ignoreWhitespace': 'no', 'core.autocrlf': 'false' }
+
+async function patchBytes(git: ResourceGit, source: GitApplicationSource, target: GitRepositoryIdentity,
+  signal: AbortSignal, touched: readonly GitApplicationPath[], scratchRoot: string): Promise<Buffer> {
+  const writes = applicationWrites(touched)
+  if (writes.length === 0) return Buffer.alloc(0)
+  // Paths the target already holds in their after state count from that state, so the patch holds only the written paths
+  // and no path is passed to Git as an argument.
+  const current = touched.filter(entry => !writes.includes(entry))
+  const from = current.length === 0 ? source.originalTargetBaseTree : await scratchTree(git, target,
+    source.originalTargetBaseTree, current.map(entry => [entry.path, entry.after]), scratchRoot, signal)
+  const scratch = await mkdtemp(join(scratchRoot, 'patch-'))
+  try {
+    const order = join(scratch, 'order')
+    await writeFile(order, '')
+    return (await git.run(['diff', ...PATCH_OPTIONS, `-O${order}`, from, source.resultTree], target.root.path, signal,
+      { config: PATCH_SETTINGS })).stdout
+  } finally { await rm(scratch, { recursive: true, force: true }) }
+}
+
+/** How the target names one path. */
+export interface TargetPathName {
+  /** No directory or file of the path exists only under a name Git reads as another one. */
+  readonly exact: boolean
+  /** When not exact, the path through the first such directory or file, spelled as on disk; absent when that spelling
+   * cannot be read. */
+  readonly onDisk?: string
+}
+
+/** A name or path compared apart from case and Unicode form, as case-insensitive file systems compare names.
+ * @param value - a name or path.
+ * @returns the comparison key.
+ */
+function looseName(value: string): string { return value.normalize('NFC').toLowerCase() }
+
+/** The listed entry that is the same file as one opened through another name; entries equal to that name apart from case
+ * and Unicode form come before other links to the same file.
+ * @param directory - listed directory.
+ * @param names - its listing.
+ * @param name - the name the file was opened through.
+ * @param opened - the opened file.
+ * @returns the entry, or `undefined` when none of the listed entries is that file any more.
+ */
+async function spellingOnDisk(directory: string, names: readonly string[], name: string, opened: Stats): Promise<string | undefined> {
+  const key = looseName(name)
+  for (const entry of names.toSorted((a, b) => Number(looseName(b) === key) - Number(looseName(a) === key))) {
+    // An entry removed or unreadable since the listing is not the opened file.
+    const info = await lstat(join(directory, entry)).catch(() => undefined)
+    if (info?.dev === opened.dev && info.ino === opened.ino) return entry
+  }
+  return undefined
+}
+
+/** Check that no directory or file of a path exists in the target only under a name Git reads as another one: one that
+ * matches it case-insensitively, in another Unicode form, or in a form Git would not settle. A missing component ends
+ * the check, since nothing below it exists yet; one that cannot be read does not count as missing. Listings are read once
+ * per call.
  * @param root - target root.
- * @param precompose - whether Git composes decomposed names on disk (core.precomposeunicode), as it does when comparing paths.
+ * @param rules - how Git on this Host reads names on disk.
  * @returns a check of one relative path.
  */
-function exactPaths(root: string, precompose: boolean): (path: string) => Promise<boolean> {
-  const listings = new Map<string, Promise<string[]>>()
+export function exactPaths(root: string, rules: GitNameRules): (path: string) => Promise<TargetPathName> {
+  const listings = new Map<string, Promise<{ names: string[]; read: Set<string> }>>()
   return async (path) => {
     const parts = path.split('/')
     for (const [depth, name] of parts.entries()) {
       const directory = parts.slice(0, depth).join('/')
       const listing = listings.get(directory) ?? readdir(join(root, directory))
-        .then(names => precompose ? names.map(entry => entry.normalize('NFC')) : names)
+        .then(names => ({ names, read: new Set(names.flatMap(entry => gitNameOf(entry, rules) ?? [])) }))
       listings.set(directory, listing)
-      if (!(await listing).includes(name)) return false
+      const { names, read } = await listing
+      if (read.has(name)) continue
+      // An unlisted component that still opens exists only under another name; one that is missing ends the check.
+      const opened = await lstat(join(root, directory, name)).catch((error: unknown) => ({ missing: missing(error) }))
+      if ('missing' in opened) return { exact: opened.missing }
+      const entry = await spellingOnDisk(join(root, directory), names, name, opened)
+      return entry === undefined ? { exact: false } : { exact: false, onDisk: [...parts.slice(0, depth), entry].join('/') }
     }
-    return true
+    return { exact: true }
   }
 }
 
-/** Changed target paths named in a refusal; the rest are counted. */
-const CHANGED_NAMED = 20
+/** A touched path the target does not hold in its before or after state under exactly its name. */
+export interface RefusedTargetPath {
+  readonly path: string
+  /** The target holds the path's before or after content, possibly read through another name. */
+  readonly known: boolean
+  readonly name: TargetPathName
+}
 
-/** Preview exact before/after bytes without creating objects, refs, indices or temporary copies.
+/** The directory and file prefixes the touched paths spell in more than one way apart from case and Unicode form.
+ * @param paths - touched paths.
+ * @returns the keys, compared apart from case and Unicode form, of prefixes with two or more spellings.
+ */
+function prefixesSpelledTwice(paths: readonly string[]): Set<string> {
+  const spellings = new Map<string, Set<string>>()
+  for (const path of paths) {
+    const parts = path.split('/')
+    for (const depth of parts.keys()) {
+      const prefix = parts.slice(0, depth + 1).join('/'), key = looseName(prefix)
+      spellings.set(key, (spellings.get(key) ?? new Set<string>()).add(prefix))
+    }
+  }
+  return new Set([...spellings].filter(([, spelled]) => spelled.size > 1).map(([key]) => key))
+}
+
+/** Refuse touched paths the target does not hold in their before or after state under exactly their names. Changed
+ * content is reported as changed. A name that differs only in case or Unicode form is reported apart, with its spelling
+ * as recorded and on disk: renaming it on disk lets the write-back proceed, unless the version itself records the name
+ * in two such spellings, which the target holds as one.
+ * @param refused - at least one refused path, in order.
+ * @param paths - every touched path.
+ * @returns `APPLICATION_TARGET_CHANGED` when any content changed, otherwise `APPLICATION_TARGET_NAME_MISMATCH`.
+ */
+export function targetRefusal(refused: readonly RefusedTargetPath[], paths: readonly string[]): GitResourceError {
+  const changed: string[] = [], renamed: string[] = [], twice: string[] = [], spelledTwice = prefixesSpelledTwice(paths)
+  for (const { path, known, name: { onDisk } } of refused) {
+    if (onDisk === undefined) { changed.push(path); continue }
+    const recorded = path.split('/').slice(0, onDisk.split('/').length).join('/')
+    const shown = `${path} (recorded ${withCodePoints(recorded)}, on disk ${withCodePoints(onDisk)})`
+    if (!known) changed.push(shown)
+    else if (spelledTwice.has(looseName(recorded))) twice.push(shown)
+    else renamed.push(shown)
+  }
+  const names = [
+    ...renamed.length === 0 ? [] : [`Target names differ only in case or Unicode form from the names this version records: ${namedPaths(renamed)}; renaming each on disk to its recorded name lets the write-back proceed`],
+    ...twice.length === 0 ? [] : [`This version records these names in two spellings that differ only in case or Unicode form, which this target holds as one name, so they are not written back here: ${namedPaths(twice)}`]]
+  if (changed.length === 0) return new GitResourceError('APPLICATION_TARGET_NAME_MISMATCH', names.join('. '))
+  return new GitResourceError('APPLICATION_TARGET_CHANGED',
+    [`Target files changed from the state this version starts from and are not overwritten: ${namedPaths(changed)}`, ...names].join('. '))
+}
+
+/** Preview exact before/after bytes without creating refs, project index entries or temporary copies. When the target
+ * already holds some touched paths in their after state, only the tree the patch starts from is written, through a
+ * private scratch index.
  * @param git - existing safe argv runner.
  * @param target - registered user target identity freshly checked by its owner.
  * @param source - exact ready version selected by the owner, including explicit resolution where required.
  * @param signal - read-only observation cancellation.
  * @param limits - complete tree/path/byte bounds.
- * @returns full target CAS and bounded patch digest; changed touched files refuse instead of merging silently.
+ * @param host - this Host's platform and the owner's scratch directory.
+ * @returns full target CAS and bounded patch digest; changed touched files refuse instead of merging silently, and touched
+ * names the target spells otherwise refuse apart from them.
  */
 export async function inspectApplication(git: ResourceGit, target: GitRepositoryIdentity, source: GitApplicationSource,
-  signal: AbortSignal, limits: PreviewLimits): Promise<GitApplicationPreview> {
+  signal: AbortSignal, limits: PreviewLimits, host: GitApplicationHost): Promise<GitApplicationPreview> {
   sameRepository(source.repository, target)
   const before = await treeEntries(git, target, source.originalTargetBaseTree, signal, limits)
   const after = await treeEntries(git, target, source.resultTree, signal, limits)
@@ -307,28 +449,25 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   const paths = [...new Set([...old.keys(), ...next.keys()])]
     .filter(path => hash(old.get(path) ?? null) !== hash(next.get(path) ?? null)).sort()
   if (paths.length > limits.maxFiles) throw new GitResourceError('MANIFEST_LIMIT', 'Complete application path set exceeds its configured bound')
+  // A path Git on this Host reads under another name would be written there, and Git would list it as that other path.
+  const rules = await nameRules(git, target.root.path, signal, host.platform)
+  assertReadableNames(paths, rules)
   const intended: GitApplicationPath[] = []
   for (const path of paths) intended.push({ path, before: await immutableState(git, target, old.get(path), signal),
     after: await immutableState(git, target, next.get(path), signal) })
   const first = await targetCut(git, target, intended, signal, limits)
-  // A path is written from its known before state, or left alone when it already holds the after state. A file read
-  // through a differently cased or normalized name on a case-insensitive target is neither: it would pass as current, or
-  // be written through the alias, while the path it was asked for does not exist.
-  // Git with core.precomposeunicode reads decomposed names on disk as their composed form, so they compare that way.
-  const precompose = (await git.run(['config', '--bool', 'core.precomposeunicode'], target.root.path, signal, { allowFailure: true }))
-    .stdout.toString('utf8').trim() === 'true'
-  const exact = exactPaths(target.root.path, precompose), changed: string[] = []
+  // A path is written from its known before state, or left alone when it already holds the after state. A file or
+  // directory read through a name Git reads as another one (another case on a case-insensitive target, another Unicode
+  // form) is neither: it would pass as current, or be written or created through the alias, while the path it was asked
+  // for does not exist.
+  const exact = exactPaths(target.root.path, rules), refused: RefusedTargetPath[] = []
   for (const [index, entry] of intended.entries()) {
-    const actual = first.touched[index]?.before
-    if ((actual?.kind !== 'file' || await exact(entry.path))
-      && (hash(actual) === hash(entry.before) || hash(actual) === hash(entry.after))) continue
-    changed.push(entry.path)
+    const actual = first.touched[index]?.before, name = await exact(entry.path)
+    const known = hash(actual) === hash(entry.before) || hash(actual) === hash(entry.after)
+    if (!known || !name.exact) refused.push({ path: entry.path, known, name })
   }
-  if (changed.length > 0) {
-    const named = changed.slice(0, CHANGED_NAMED).join(', '), more = changed.length - CHANGED_NAMED
-    throw new GitResourceError('APPLICATION_TARGET_CHANGED', `Target files changed from the state this version starts from and are not overwritten: ${named}${more > 0 ? ` and ${more} more` : ''}`)
-  }
-  const patch = await patchBytes(git, source, target, signal, first.touched)
+  if (refused.length > 0) throw targetRefusal(refused, paths)
+  const patch = await patchBytes(git, source, target, signal, first.touched, host.scratchRoot)
   const second = await targetCut(git, target, intended, signal, limits)
   if (second.fingerprint !== first.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Application target changed during its read-only preview')
   const text = patch.toString('utf8')
@@ -350,18 +489,22 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
  * @param preview - exact original target and immutable before/after manifest.
  * @param signal - observation cancellation.
  * @param limits - bounded target reads.
+ * @param platform - this Host's operating system, which decides how Git reads file names on disk.
  * @returns before/after/partial/unknown facts; no command writes Git or working files.
  */
 export async function observeApplication(git: ResourceGit, preview: GitApplicationPreview, signal: AbortSignal,
-  limits: PreviewLimits): Promise<GitApplicationObservation> {
+  limits: PreviewLimits, platform: NodeJS.Platform): Promise<GitApplicationObservation> {
   const target = preview.target, current = await targetCut(git, target.repository, target.touched, signal, limits)
   const headUnchanged = current.head === target.head && current.symbolicRef === target.symbolicRef
   const indexUnchanged = current.indexHash === target.indexHash
-  const paths = target.touched.map((entry, index): GitApplicationObservation['paths'][number] => {
+  // As in the preview, a path counts only under its exact name; one read through a name Git reads as another is unknown.
+  const root = target.repository.root.path, exact = exactPaths(root, await nameRules(git, root, signal, platform))
+  const paths: GitApplicationObservation['paths'][number][] = []
+  for (const [index, entry] of target.touched.entries()) {
     const actual = current.touched[index]?.before
-    return { path: entry.path, state: hash(actual) === hash(entry.after) ? 'after'
-      : hash(actual) === hash(entry.before) ? 'before' : 'unknown' }
-  })
+    paths.push({ path: entry.path, state: !(await exact(entry.path)).exact ? 'unknown' : hash(actual) === hash(entry.after) ? 'after'
+      : hash(actual) === hash(entry.before) ? 'before' : 'unknown' })
+  }
   const parentsUnchanged = target.ancestors.every(before => before.identity === undefined
     || hash(current.ancestors.find(after => after.path === before.path)?.identity ?? null) === hash(before.identity))
   // A path that was already in its after state counts on both sides; it only has to stay unchanged.
@@ -378,22 +521,23 @@ export async function observeApplication(git: ResourceGit, preview: GitApplicati
  * @param preview - unchanged user-authorized diff and full target cut.
  * @param scope - authenticated range plus known-writer occupation, rechecked before the external write.
  * @param limits - complete target/path bounds.
+ * @param host - this Host's platform and the owner's scratch directory.
  * @returns actual all-after effect; failures require pure observation, never blind replay or rollback.
  */
 export async function applyApplication(git: ResourceGit, preview: GitApplicationPreview, scope: GitIntegrationWriteScope,
-  limits: PreviewLimits): Promise<GitApplicationEffect> {
-  const fresh = await inspectApplication(git, preview.target.repository, preview.source, scope.signal, limits)
+  limits: PreviewLimits, host: GitApplicationHost): Promise<GitApplicationEffect> {
+  const fresh = await inspectApplication(git, preview.target.repository, preview.source, scope.signal, limits, host)
   if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Authorized application cut changed before its write')
-  const patch = await patchBytes(git, preview.source, preview.target.repository, scope.signal, preview.target.touched)
+  const patch = await patchBytes(git, preview.source, preview.target.repository, scope.signal, preview.target.touched, host.scratchRoot)
   if (byteHash(patch) !== preview.patchHash) throw new GitResourceError('APPLICATION_VERSION_CHANGED', 'Authorized patch differs from its recorded digest')
   if (applicationWrites(preview.target.touched).length > 0) {
-    await git.run(['apply', '--check', '--binary', '--whitespace=nowarn', '-'], preview.target.repository.root.path, scope.signal, { input: patch })
+    await git.run([...APPLY, '--check', '-'], preview.target.repository.root.path, scope.signal, { input: patch, config: APPLY_SETTINGS })
     const last = await targetCut(git, preview.target.repository, preview.target.touched, scope.signal, limits)
     if (last.fingerprint !== preview.target.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Application target changed after patch preflight')
     scope.signal.throwIfAborted(); scope.assertCurrent()
-    await git.run(['apply', '--binary', '--whitespace=nowarn', '-'], preview.target.repository.root.path, scope.signal, { input: patch })
+    await git.run([...APPLY, '-'], preview.target.repository.root.path, scope.signal, { input: patch, config: APPLY_SETTINGS })
   }
-  const observation = await observeApplication(git, preview, scope.signal, limits)
+  const observation = await observeApplication(git, preview, scope.signal, limits, host.platform)
   scope.signal.throwIfAborted(); scope.assertCurrent()
   if (observation.state !== 'after') throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', 'Application effects are partial or unknown; inspect the original intent without replay')
   return { preview: structuredClone(preview), observation }
@@ -405,12 +549,18 @@ export async function applyApplication(git: ResourceGit, preview: GitApplication
  * @param applicationOperationId - original operation whose before/after data remains immutable.
  * @param signal - observation cancellation.
  * @param limits - complete current touched-path bounds.
+ * @param platform - this Host's operating system, which decides how Git reads file names on disk.
  * @returns current touched cut; unrelated user changes are neither captured nor rewritten.
  */
 export async function inspectInverse(git: ResourceGit, original: GitApplicationEffect, applicationOperationId: GitOperationId,
-  signal: AbortSignal, limits: PreviewLimits): Promise<GitInversePreview> {
+  signal: AbortSignal, limits: PreviewLimits, platform: NodeJS.Platform): Promise<GitInversePreview> {
   if (original.observation.state !== 'after') throw new GitResourceError('INVERSE_SOURCE_UNCERTAIN', 'Inverse preparation requires the exact confirmed original application effect')
   const target = original.preview.target, first = await targetCut(git, target.repository, target.touched, signal, limits)
+  // The candidate becomes a work copy holding the current target's files and the original starting files: Git on this
+  // Host must read each of their paths under its own name.
+  const held = [...await treeEntries(git, target.repository, first.head, signal, limits),
+    ...await treeEntries(git, target.repository, original.preview.source.originalTargetBaseTree, signal, limits)]
+  assertReadableNames(new Set(held.map(entry => entry.path)), await nameRules(git, target.repository.root.path, signal, platform))
   const second = await targetCut(git, target.repository, target.touched, signal, limits)
   if (first.fingerprint !== second.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current inverse target changed during observation')
   const value = { applicationOperationId, original: structuredClone(original), currentTarget: second }
@@ -423,26 +573,27 @@ export async function inspectInverse(git: ResourceGit, original: GitApplicationE
  * @param preview - unchanged read-only current target cut.
  * @param operationId - new original inverse operation identity.
  * @param createdAt - its persisted deterministic commit time.
- * @param scratchRoot - private existing scratch directory owned by the resource service.
+ * @param host - this Host's platform and the resource service's private existing scratch directory.
  * @param scope - retained authority and known-writer occupation, checked before every external write.
  * @param limits - complete resulting candidate bounds.
  * @returns independent prepared/conflicted inverse objects; user working files and index are never written.
  */
 export async function prepareInverse(git: ResourceGit, preview: GitInversePreview, operationId: GitOperationId,
-  createdAt: string, scratchRoot: string, scope: GitIntegrationWriteScope, limits: PreviewLimits): Promise<GitIntegrationEffect> {
-  const fresh = await inspectInverse(git, preview.original, preview.applicationOperationId, scope.signal, limits)
+  createdAt: string, host: GitApplicationHost, scope: GitIntegrationWriteScope, limits: PreviewLimits): Promise<GitIntegrationEffect> {
+  const fresh = await inspectInverse(git, preview.original, preview.applicationOperationId, scope.signal, limits, host.platform)
   if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current inverse target changed before preparation')
   scope.signal.throwIfAborted(); scope.assertCurrent()
-  const scratch = await mkdtemp(join(scratchRoot, 'inverse-'))
+  const scratch = await mkdtemp(join(host.scratchRoot, 'inverse-'))
   try {
-    const root = preview.currentTarget.repository.root.path, env = { GIT_INDEX_FILE: join(scratch, 'index') }
+    const repository = preview.currentTarget.repository, root = repository.root.path, env = { GIT_INDEX_FILE: join(scratch, 'index') }
     const write = async (args: readonly string[], input?: Buffer, index = env) => {
       scope.signal.throwIfAborted(); scope.assertCurrent()
       return git.run(args, root, scope.signal, { env: index, ...input === undefined ? {} : { input } })
     }
     await write(['read-tree', preview.currentTarget.head])
+    const current: [string, GitIndexState][] = []
     for (const entry of preview.currentTarget.touched) {
-      if (entry.before.kind === 'absent') { await write(['update-index', '--force-remove', '--', entry.path]); continue }
+      if (entry.before.kind === 'absent') { current.push([entry.path, entry.before]); continue }
       const actual = await readRegularFile(root, entry.path, limits.maxFileBytes)
       if (actual.mode !== entry.before.mode || byteHash(actual.bytes) !== entry.before.rawHash) {
         throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current touched content changed while preparing inverse objects')
@@ -450,11 +601,12 @@ export async function prepareInverse(git: ResourceGit, preview: GitInversePrevie
       const object = await write(['hash-object', '-w', '--no-filters', '--stdin'], actual.bytes)
       const objectId = gitObjectIdSchema.parse(object.stdout.toString('utf8').trim())
       if (objectId !== entry.before.objectId) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current inverse object differs from its original preview')
-      await write(['update-index', '--add', '--cacheinfo', `${actual.mode},${objectId},${entry.path}`])
+      current.push([entry.path, { mode: actual.mode, objectId }])
     }
+    await write(['update-index', '-z', '--index-info'], indexInfo(current, repository.objectFormat))
     const snapshot = gitObjectIdSchema.parse((await write(['write-tree'])).stdout.toString('utf8').trim())
-    await treeEntries(git, preview.currentTarget.repository, snapshot, scope.signal, limits)
-    const last = await inspectInverse(git, preview.original, preview.applicationOperationId, scope.signal, limits)
+    await treeEntries(git, repository, snapshot, scope.signal, limits)
+    const last = await inspectInverse(git, preview.original, preview.applicationOperationId, scope.signal, limits, host.platform)
     if (last.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current inverse target changed before three-way preparation')
     scope.signal.throwIfAborted(); scope.assertCurrent()
     const source = preview.original.preview.source
@@ -462,16 +614,15 @@ export async function prepareInverse(git: ResourceGit, preview: GitInversePrevie
     const kept = preview.original.preview.target.touched.filter(entry => hash(entry.before) === hash(entry.after))
     let restore = source.originalTargetBaseTree
     if (kept.length > 0) {
-      const index = { GIT_INDEX_FILE: join(scratch, 'restore-index') }, zero = '0'.repeat(restore.length)
+      const index = { GIT_INDEX_FILE: join(scratch, 'restore-index') }
       await write(['read-tree', restore], undefined, index)
-      await write(['update-index', '-z', '--index-info'], Buffer.from(kept.map(entry => entry.after.kind === 'file'
-        ? `${entry.after.mode} ${entry.after.objectId}\t${entry.path}\0` : `0 ${zero}\t${entry.path}\0`).join('')), index)
+      await write(['update-index', '-z', '--index-info'], indexInfo(kept.map(entry => [entry.path, entry.after]), repository.objectFormat), index)
       restore = gitObjectIdSchema.parse((await write(['write-tree'], undefined, index)).stdout.toString('utf8').trim())
     }
     const response = await git.run(['merge-tree', '--write-tree', '-z', '--messages', `--merge-base=${source.resultTree}`,
       snapshot, restore], root, scope.signal, { allowFailure: true })
     const merged = decodeIntegrationMerge(response.stdout, response.status)
-    const entries = await treeEntries(git, preview.currentTarget.repository, merged.tree, scope.signal, limits)
+    const entries = await treeEntries(git, repository, merged.tree, scope.signal, limits)
     scope.signal.throwIfAborted(); scope.assertCurrent()
     const committed = await git.run(['commit-tree', merged.tree, '-p', preview.currentTarget.head,
       '-m', `DSH inverse ${operationId}`], root, scope.signal, { env: {

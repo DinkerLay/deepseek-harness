@@ -33,7 +33,7 @@ kind: "package-reference"
 
 `timeoutMs`、`graceMs`、`maxOutputBytes`、`maxFiles`、`maxFileBytes`、`maxTotalBytes`、`maxConsumerRequestBytes`与`closeTimeoutMs`限制命令、观察、原始消费方JSON及关闭。文件同时受单文件上界和Git字节通道上界约束；不可物化的基线在预留前由预览拒绝。[Config声明](src/index.ts)拥有接受的默认值。首次需要时解析`gitExecutable`或`git`；Git缺失只拒绝隔离模式，数据查询和文本服务仍可用。
 
-提交基线也会报告全部暂存、未暂存、未跟踪和未合并路径。选定基线要求`baseCommit`，每个路径明确选`index`、`worktree`或`untracked`来源；保留index删除。预览不写Git对象或项目数据。工作文件的原始字节绕过Git过滤器，保留二进制内容与执行位。
+提交基线也会报告全部暂存、未暂存、未跟踪和未合并路径。选定基线要求`baseCommit`，每个路径明确选`index`、`worktree`或`untracked`来源；保留index删除。预览不写Git对象或项目数据。工作文件的原始字节绕过Git过滤器，保留二进制内容与执行位。在macOS上、仓库自己的配置把`core.precomposeunicode`设为true时，基线或选定路径里有Git在本机会读成另一种形式的分解名，就以`PATH_NAME_UNREPRESENTABLE`拒绝，每个路径后列出其中Git会读成别的形式的名称的非ASCII码位；在这些名称以合成形式记录之前一直拒绝，例如用`git -c core.precomposeunicode=false mv -f <名称> <合成名称>`改名后提交。
 
 ### 持久操作与观察
 
@@ -57,7 +57,7 @@ kind: "package-reference"
 
 ### 显式目标变化与清理
 
-`previewApplication`展示完整有界普通/二进制patch及目标HEAD、index、受影响字节、模式和父目录见证。patch从Host确知的目标状态出发，而不是集成自己的基线：版本线最初所基于的项目树（经同一消费者范围内由已确认封存或集成创建的副本回溯），加上该范围此后对同一目标已确认应用实际写过的文件。没有现成的树等于这个状态时，预览通过私有临时index写出它的树对象，不写文件、ref或项目index。较早的应用尚未确认时，除非它涉及的文件都仍是写入前状态，新预览拒绝；受影响的目标文件不在已知状态，或只能经大小写或规范化不同的路径读到时，拒绝并给出路径。`replacesWritten`列出版本要替换或删除、而它自己的提交从未有过其写入内容的已写文件，因此不是在某次应用上继续做的版本会显示它撤掉了什么。目标里已与版本完全相同（内容、类型和mode，且路径完全一致：每一级目录名和文件名，不区分大小写的目标上经大小写不同的路径读到的文件不算，规范化不同的路径除非Git会合成分解名（core.precomposeunicode）也不算）的受影响文件列在`alreadyCurrent`：它仍在写入前核对的目标切面里，补丁不含它，也从不记为已写入，因此不进入已知状态，也不让以后的版本修改或删除它；没有要写的内容时确认完成而不写入。不带`integrationOperationId`时，所选封存必须属于没有集成或反向候选创建的工作副本且没有冲突，按它的版本线直接应用。`apply`要求认证Host权限和已知写入者占用；请求JSON不能替代证明。写入前的精确新切面必须仍一致，HEAD/index保持不变。纯对账报告before、after、partial或unknown；只在已派发效果精确after时确认，不盲重放部分或未知内容。
+`previewApplication`展示完整有界普通/二进制patch及目标HEAD、index、受影响字节、模式和父目录见证。patch从Host确知的目标状态出发，而不是集成自己的基线：版本线最初所基于的项目树（经同一消费者范围内由已确认封存或集成创建的副本回溯），加上该范围此后对同一目标已确认应用实际写过的文件。没有现成的树等于这个状态，或目标已有部分受影响文件时，预览通过私有临时index写出所需的树对象，不写文件、ref或项目index。较早的应用尚未确认时，除非它涉及的文件都仍是写入前状态，新预览拒绝；受影响的目标文件不在已知状态时，拒绝并给出路径。受影响路径上已存在的各级目录和文件，包括新建文件已存在的上级目录，都必须以Git在本机读到的名称原样存在，经其他名称读到的路径纯对账报告为unknown：名称逐字节比较，只有在macOS上、仓库自己的配置把`core.precomposeunicode`设为true时，磁盘上的分解名按Git合成后的形式比较（Git从不替换名称里已有的字符，如U+212B；不合成Unicode 3.2之后新增的组合，如巴厘文的组合；名称里有基本多文种平面之外的码位时整个保持原样），合成形式不能确定的名称拒绝。目标只在大小写或Unicode形式不同的名称下持有受影响路径的已知内容时，以`APPLICATION_TARGET_NAME_MISMATCH`拒绝，写明版本记录的拼写和磁盘上的拼写：在磁盘上改名即可继续写回，除非版本本身记录了两种这样的拼写，而目标只能把它们当作同一个名称。内容已变化时以`APPLICATION_TARGET_CHANGED`拒绝，并在已变化的文件之后列出这类名称。Git合成名称时，Git读成另一种形式的受影响路径（如其他平台的Git按分解形式记录的名称）在写入任何内容前以`PATH_NAME_UNREPRESENTABLE`拒绝；当前目标或起点树里有这样的路径时，`previewInverse`同样拒绝。`replacesWritten`列出版本要替换或删除、而它自己的提交从未有过其写入内容的已写文件，因此不是在某次应用上继续做的版本会显示它撤掉了什么。目标里已与版本完全相同（内容、类型和mode，且按上述规则名称原样一致）的受影响文件列在`alreadyCurrent`：它仍在写入前核对的目标切面里，补丁不含它，也从不记为已写入，因此不进入已知状态，也不让以后的版本修改或删除它；没有要写的内容时确认完成而不写入。不带`integrationOperationId`时，所选封存必须属于没有集成或反向候选创建的工作副本且没有冲突，按它的版本线直接应用。`apply`要求认证Host权限和已知写入者占用；请求JSON不能替代证明。写入前的精确新切面必须仍一致，HEAD/index保持不变。纯对账报告before、after、partial或unknown；只在已派发效果精确after时确认，不盲重放部分或未知内容。
 
 `previewInverse`和`prepareInverse`从当前目标和原差异出发，不再应用旧来源输入，也不碰项目文件。独立候选必须经过普通验证和新的显式应用。
 
@@ -81,7 +81,7 @@ kind: "package-reference"
 
 每个仓库的一条storage-domain记录拥有其资源、使用和操作回执。后端持久确认后变化才可见。Git与存储有不同提交点：回执缺失时，私有ref和相互指向的worktree元数据识别外部效果。稳定的整个home内核租约阻止另一个Host打开竞争的可写资源状态。
 
-仓库检查在运行普通Git命令前，只读取配置键名而不展开local include。子进程环境隔离HOME/全局配置，将外部ignore文件覆盖为拥有者的空文件，并禁用hooks、replace对象、monitor及惰性联网fetch。local ignore规则链接在求值前拒绝，忽略目录不遍历。不安全include、可执行转换、嵌套仓库及不支持的链接明确拒绝。创建使用私有index与原始blob，再物化已核对tree，不经过checkout过滤器。
+仓库检查在运行普通Git命令前，只读取配置键名而不展开local include。子进程环境隔离HOME/全局配置，将外部ignore文件覆盖为拥有者的空文件，并禁用hooks、replace对象、monitor及惰性联网fetch。local ignore规则链接在求值前拒绝，忽略目录不遍历。不安全include、可执行转换、嵌套仓库及不支持的链接明确拒绝。创建使用私有index与原始blob，再物化已核对tree，不经过checkout过滤器。index行经stdin以NUL分隔交给`update-index -z --index-info`，patch不带pathspec，因此文件名从不作为Git参数：macOS上的Git会重新合成参数里的名称，Windows会限制参数长度。patch以固定的路径前缀、上下文、diff算法、文件顺序和路径引用方式生成且不带颜色，以`-p1`、不修正空白、不转换换行应用，因此仓库自己的diff、color、apply和`core.autocrlf`设置既不移动写入的路径，也不改变写入的字节。
 
 不发布运行时不变量伴随包：意图活跃期间，Git/文件系统证据可合法先于其持久回执。创建、对账、使用与保全操作在明确准入和确认点核对该关系；同步定期断言会把已准入中间状态误判为分歧。
 
@@ -127,6 +127,8 @@ kind: "package-reference"
 - 符号链接、submodule tree、不安全仓库配置、外部对象库、非UTF-8路径、drive-qualified选择器及凭据形路径明确拒绝，不静默省略。POSIX上的drive-looking名称也拒绝，避免在Windows取得不同含义。远程仓库、sparse/index扩展与任意自定义过滤器不能替代可核验的本地基线。
 - 保全与集成不是业务结果验收。代码封存后仍有忽略内容，不代表可清理。all文件保全不备份未固定的独立index对象或空目录状态，因此这些情况明确拒绝清理。
 - 本拥有者从不删除快照，快照目录没有写权限：手工删除拥有者home前需先恢复写权限。快照只靠文件权限只读，不是沙箱。
+- 文件名按本拥有者隔离配置下Git的读法比较：只在用户全局Git配置里设置的`core.precomposeunicode`不算，因此在macOS上，按合成形式跟踪、磁盘上以分解形式存放的文件会被拒绝，尽管用户自己的Git把它读成该名称。
+- 工作副本里已跟踪的文件换成同名目录，或在macOS和Linux上已跟踪的目录换成文件时，无法封存：封存以`TREE_ENTRY_UNSUPPORTED`拒绝，且不写出Host路径。
 - 调用方必须在交还或保全前建立执行/后台静止事实。Host必须挂载与Node文件系统相同的本机subprocess提供者；不支持远程执行world。全盘权限下的外部进程仍可在本拥有者协调之外修改目录；观察到变化时拒绝，不证明全局隔离。
 
 <a id="dev-note"></a>

@@ -1,10 +1,13 @@
 /** Applications leave already-current files alone, and a code result sealed on its own work copy applies directly. */
-import { readdir, writeFile } from 'node:fs/promises'
+import { lstat, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { GitOperationId } from '../src/index.ts'
 import { ResourceGit } from '../src/git.ts'
 import { fixture, scope, signal } from './repeat-harness.ts'
+
+/** Whether the target's file system finds an existing name under its upper-case spelling. */
+const caseInsensitive = (project: string, path: string) => lstat(join(project, path.toUpperCase())).then(() => true, () => false)
 
 it('leaves a file the target already holds in the new state alone and writes the rest', async () => {
   const test = await fixture()
@@ -137,6 +140,7 @@ it('abandons a direct application stopped before it wrote anything', async () =>
 it('never takes a differently cased file as current, so a case-only rename cannot delete the user\'s only copy', async () => {
   const test = await fixture()
   await writeFile(join(test.project, 'Readme.md'), 'read me\n')
+  const aliased = await caseInsensitive(test.project, 'Readme.md')
   test.git(['add', '--', 'Readme.md']); test.git(['commit', '--quiet', '-m', 'user readme'])
   const head = test.git(['rev-parse', 'HEAD'])
   const copy = await test.copy('rename', head)
@@ -147,9 +151,10 @@ it('never takes a differently cased file as current, so a case-only rename canno
   if (current === undefined) throw new Error('work copy remains registered')
   const sealed = await test.owner.preserve({ operationId: GitOperationId('rename-seal'), resourceId: current.resourceId,
     expectedRevision: current.revision, content: 'versioned' })
-  if (test.git(['config', '--bool', 'core.ignorecase']) === 'true') {
-    await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
-      message: 'Target files changed from the state this version starts from and are not overwritten: README.md' })
+  if (aliased) {
+    // The version records both spellings; renaming the user's file would only move the refusal to the other one.
+    await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_NAME_MISMATCH',
+      message: 'This version records these names in two spellings that differ only in case or Unicode form, which this target holds as one name, so they are not written back here: README.md (recorded README.md, on disk Readme.md)' })
     expect(await readdir(test.project)).toContain('Readme.md')
   } else {
     const preview = await test.owner.previewApplication(test.direct(sealed))
@@ -198,6 +203,7 @@ it.each([['Docs/file.txt', 'docs/file.txt'], ['a/B/c.txt', 'a/b/c.txt']])(
     const { mkdir } = await import('node:fs/promises')
     await mkdir(join(test.project, from.slice(0, from.lastIndexOf('/'))), { recursive: true })
     await writeFile(join(test.project, from), 'only copy\n')
+    const aliased = await caseInsensitive(test.project, from)
     test.git(['add', '--', from]); test.git(['commit', '--quiet', '-m', 'user file'])
     const copy = await test.copy('rename', test.git(['rev-parse', 'HEAD']))
     await test.owner.withWriteUse(copy.resourceId, { useId: 'rename', ownerId: 'rename', epoch: '1' }, signal, async (lease) => {
@@ -210,9 +216,10 @@ it.each([['Docs/file.txt', 'docs/file.txt'], ['a/B/c.txt', 'a/b/c.txt']])(
     if (current === undefined) throw new Error('work copy remains registered')
     const sealed = await test.owner.preserve({ operationId: GitOperationId('rename-seal'), resourceId: current.resourceId,
       expectedRevision: current.revision, content: 'versioned' })
-    if (test.git(['config', '--bool', 'core.ignorecase']) === 'true') {
-      await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
-        message: `Target files changed from the state this version starts from and are not overwritten: ${to}` })
+    if (aliased) {
+      const recorded = to.slice(0, to.lastIndexOf('/')), onDisk = from.slice(0, from.lastIndexOf('/'))
+      await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_NAME_MISMATCH',
+        message: `This version records these names in two spellings that differ only in case or Unicode form, which this target holds as one name, so they are not written back here: ${to} (recorded ${recorded}, on disk ${onDisk})` })
       expect(test.git(['ls-files', '--', from])).toBe(from)
       expect(await test.read(from)).toBe('only copy\n')
     } else {
@@ -229,12 +236,21 @@ it('refuses to write a known file through a directory the user renamed only in c
   test.git(['add', '--', 'docs/file.txt']); test.git(['commit', '--quiet', '-m', 'docs'])
   const work = await test.work('edit', await test.copy('edit', test.git(['rev-parse', 'HEAD'])), { 'docs/file.txt': 'TEAM\n' })
   await rename(join(test.project, 'docs'), join(test.project, 'Docs'))
-  await expect(test.owner.previewApplication(test.direct(work))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
-    message: 'Target files changed from the state this version starts from and are not overwritten: docs/file.txt' })
+  const aliased = await caseInsensitive(test.project, 'Docs')
+  // A case-sensitive target simply lacks the file; a case-insensitive one holds it under another name.
+  await expect(test.owner.previewApplication(test.direct(work))).rejects.toMatchObject(aliased
+    ? { code: 'APPLICATION_TARGET_NAME_MISMATCH', message: 'Target names differ only in case or Unicode form from the names this version records: docs/file.txt (recorded docs, on disk Docs); renaming each on disk to its recorded name lets the write-back proceed' }
+    : { code: 'APPLICATION_TARGET_CHANGED', message: 'Target files changed from the state this version starts from and are not overwritten: docs/file.txt' })
   expect(await test.read('Docs/file.txt')).toBe('BASE\n')
+  // Renamed back, the file is written under its recorded name.
+  await rename(join(test.project, 'Docs'), join(test.project, 'docs'))
+  expect((await test.apply('edit', test.direct(work))).operation.phase).toBe('confirmed')
+  expect(await test.read('docs/file.txt')).toBe('TEAM\n')
+  expect(test.git(['status', '--porcelain', '-z', '--untracked-files=all']).split('\0').filter(Boolean)).toEqual([' M docs/file.txt'])
 })
 
-it('keeps file names holding a line break intact in the known state and in a reverse candidate', async () => {
+// Windows file names cannot hold a line break.
+it.skipIf(process.platform === 'win32')('keeps file names holding a line break intact in the known state and in a reverse candidate', async () => {
   const test = await fixture()
   const odd = 'line\nbreak.txt', kept = 'also\nodd.txt'
   const work = await test.work('first', await test.copy('first', test.base), { [odd]: 'odd\n', [kept]: 'kept\n' })
@@ -258,17 +274,22 @@ it('keeps file names holding a line break intact in the known state and in a rev
   expect(files).not.toContain(odd)
 })
 
-it.each(['true', 'false'])('writes a tracked file with a decomposed name on disk when core.precomposeunicode is %s', async (compose) => {
-  const test = await fixture()
-  const { mkdir } = await import('node:fs/promises')
-  test.git(['config', 'core.precomposeunicode', compose])
-  const decomposed = 'Ré', file = 'café.txt', composed = 'Ré/café.txt'
-  await mkdir(join(test.project, decomposed))
-  await writeFile(join(test.project, decomposed, file), 'BASE\n')
-  test.git(['add', '-A']); test.git(['commit', '--quiet', '-m', 'user file with a decomposed name'])
-  const tracked = test.git(['ls-files', '-z']).split('\0').find(path => path.normalize('NFC') === composed)
-  if (tracked === undefined) throw new Error('the file is tracked')
-  const work = await test.work('edit', await test.copy('edit', test.git(['rev-parse', 'HEAD'])), { [tracked]: 'TEAM\n' })
-  expect((await test.apply('edit', test.direct(work))).operation.phase).toBe('confirmed')
-  expect(await test.read(join(decomposed, file))).toBe('TEAM\n')
-})
+it.each(['true', 'false', 'unset'])('writes a tracked file whose name is decomposed on disk when core.precomposeunicode is %s',
+  async (compose) => {
+    const test = await fixture()
+    const { mkdir } = await import('node:fs/promises')
+    // git init on macOS writes the setting and elsewhere does not; setting it first makes the unset case the same everywhere.
+    test.git(['config', 'core.precomposeunicode', compose === 'unset' ? 'true' : compose])
+    if (compose === 'unset') test.git(['config', '--unset', 'core.precomposeunicode'])
+    const decomposed = 'Re\u0301', file = 'cafe\u0301.txt'
+    await mkdir(join(test.project, decomposed))
+    await writeFile(join(test.project, decomposed, file), 'BASE\n')
+    test.git(['add', '-A']); test.git(['commit', '--quiet', '-m', 'user file with a decomposed name'])
+    // Only Git for macOS composes the names it reads from disk, and only when the setting is true.
+    const tracked = process.platform === 'darwin' && compose === 'true' ? `${decomposed}/${file}`.normalize('NFC') : `${decomposed}/${file}`
+    expect(test.git(['ls-files', '-z']).split('\0')).toContain(tracked)
+    const work = await test.work('edit', await test.copy('edit', test.git(['rev-parse', 'HEAD'])), { [tracked]: 'TEAM\n' })
+    expect((await test.apply('edit', test.direct(work))).operation.phase).toBe('confirmed')
+    expect(await test.read(join(decomposed, file))).toBe('TEAM\n')
+    expect(test.git(['status', '--porcelain', '-z', '--untracked-files=all']).split('\0').filter(Boolean)).toEqual([` M ${tracked}`])
+  })

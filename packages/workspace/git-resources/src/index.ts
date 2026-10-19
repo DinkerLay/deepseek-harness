@@ -21,16 +21,17 @@ import type { GitIntegrationConflictStage, GitIntegrationEffect, GitIntegrationP
   GitIntegrationResolutionObservation, GitIntegrationResolutionPreview, GitIntegrationResolutionRequest,
   GitIntegrationResolutionSelection } from './integration.ts'
 import { applicationPreviewRequestSchema, applicationRequestSchema, applicationWrites, applyApplication, inspectApplication,
-  inspectInverse, inversePreviewRequestSchema, inverseRequestSchema, observeApplication, prepareInverse as prepareInverseObjects } from './application.ts'
-import type { GitApplicationPreviewRequest, GitApplicationPreview, GitApplicationRequest, GitApplicationSource,
+  inspectInverse, inversePreviewRequestSchema, inverseRequestSchema, observeApplication, prepareInverse as prepareInverseObjects,
+  scratchTree } from './application.ts'
+import type { GitApplicationHost, GitApplicationPreviewRequest, GitApplicationPreview, GitApplicationRequest, GitApplicationSource,
   GitApplicationWritten, GitInversePreviewRequest, GitInversePreview, GitInverseRequest } from './application.ts'
 import { cleanupRequestSchema } from './cleanup.ts'
 import type { GitResourceCleanupObservation, GitResourceCleanupPreview, GitResourceCleanupRequest } from './cleanup.ts'
 import { GitResourceError } from './error.ts'
 import { gitResourceDomain, hash } from './records.ts'
 import type { RepositoryRecord } from './records.ts'
-import { gitObjectIdSchema } from './manifest.ts'
-import type { GitFileState } from './manifest.ts'
+import { indexInfo } from './manifest.ts'
+import type { GitFileState, GitIndexState } from './manifest.ts'
 import { byteHash, inspectConfiguration, inspectRepository, missing, pathIdentity, previewRepository, readRegularFile, selectedPath, treeEntries, versionedFiles } from './preview.ts'
 import type { GitOperationId, GitRepositoryId, GitResourceId, GitConsumerScope, GitResourceCreateRequest, GitResourceOperation,
   GitResourceOperationView, GitResourcePreserveRequest, GitResourcePreview, GitResourcePreviewRequest,
@@ -102,6 +103,8 @@ export class GitResources extends Service {
   private readonly lanes = new Map<string, Promise<void>>()
   private readonly liveUses = new Set<GitResourceId>()
   private readonly managedDirectories = new Map<string, import('./types.ts').GitPathIdentity>()
+  /** Read once: Git's build for this operating system decides how it reads file names on disk. */
+  private readonly platform: NodeJS.Platform = process.platform
   private domain: Domain<typeof gitResourceDomain> | undefined
   private table: KvTable<GitRepositoryId, RepositoryRecord> | undefined
   private homeLease: FileLease | undefined
@@ -188,7 +191,7 @@ export class GitResources extends Service {
       try {
         await this.ensureGit(combined)
         const identity = await inspectRepository(this.runner(), workspace.path, workspace.id, this.isolation, this.home, combined)
-        return await previewRepository(this.runner(), identity, structuredClone(request), combined, this.limits)
+        return await previewRepository(this.runner(), identity, structuredClone(request), combined, this.limits, this.platform)
       } catch (error) {
         if (!(error instanceof GitResourceError)) throw error
         const value = { request: structuredClone(request), permitted: false, diagnostic: error.message, risks: [error.code],
@@ -381,7 +384,8 @@ export class GitResources extends Service {
   }
 
   /** Observe an exact ready version and registered target; no file, index or ref writes. When earlier applications compose
-   * a target state no existing tree holds, only that state's tree objects are written.
+   * a target state no existing tree holds, or the target already holds some touched files, only the trees the patch starts
+   * from are written.
    * @param request - immutable version, optional exact resolution receipt and target Workspace identity.
    * @param signal - read-only preview cancellation.
    * @returns complete target HEAD/index/touched-path CAS and plain patch digest.
@@ -401,7 +405,7 @@ export class GitResources extends Service {
       const workspace = this.ctx.workspaceRegistry.get(captured.targetWorkspaceId)
       if (workspace === undefined) throw new GitResourceError('WORKSPACE_NOT_FOUND', 'Application target Workspace is not registered')
       const target = await inspectRepository(this.runner(), workspace.path, workspace.id, this.isolation, this.home, combined)
-      return inspectApplication(this.runner(), target, source, combined, this.limits)
+      return inspectApplication(this.runner(), target, source, combined, this.limits, await this.applicationHost())
     })
   }
 
@@ -454,7 +458,8 @@ export class GitResources extends Service {
         throw new GitResourceError('INVERSE_SOURCE_UNAVAILABLE', 'Inverse requires an exact confirmed application in this scope and original target')
       }
       await this.assertRepository(original.applicationEffect.preview.target.repository, combined)
-      return inspectInverse(this.runner(), original.applicationEffect, captured.applicationOperationId, combined, this.limits)
+      return inspectInverse(this.runner(), original.applicationEffect, captured.applicationOperationId, combined, this.limits,
+        this.platform)
     })
   }
 
@@ -548,7 +553,7 @@ export class GitResources extends Service {
             const preview = current.operation.applicationPreview
             if (preview === undefined) throw new GitResourceError('RECORD_INVALID', 'Application has no original target cut')
             await this.assertRepository(preview.target.repository, combined)
-            const observation = await observeApplication(this.runner(), preview, combined, this.limits)
+            const observation = await observeApplication(this.runner(), preview, combined, this.limits, this.platform)
             if (observation.state !== 'before' && applicationWrites(preview.target.touched).length > 0) {
               throw new GitResourceError('OPERATION_EFFECT_UNKNOWN', 'Original target is not definitely before the unstarted application')
             }
@@ -560,7 +565,8 @@ export class GitResources extends Service {
               targetWorkspaceId: request.targetWorkspaceId,
               ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } }, combined)
             // The recorded source stays the comparison: a later application elsewhere changes the known state, not this cut.
-            const fresh = await inspectApplication(this.runner(), preview.target.repository, preview.source, combined, this.limits)
+            const fresh = await inspectApplication(this.runner(), preview.target.repository, preview.source, combined, this.limits,
+              await this.applicationHost())
             if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('OPERATION_EFFECT_UNKNOWN', 'Original complete application cut changed before safe abandonment')
           } else if (current.operation.kind === 'cleanup') {
             const preview = current.operation.cleanupPreview
@@ -1079,7 +1085,7 @@ export class GitResources extends Service {
       if (preview !== undefined) {
         // Files it would write are all still before, and files it found already current are unchanged.
         const writes = new Set(applicationWrites(preview.target.touched).map(entry => entry.path))
-        if ((await observeApplication(this.runner(), preview, signal, this.limits)).paths
+        if ((await observeApplication(this.runner(), preview, signal, this.limits, this.platform)).paths
           .every(path => writes.has(path.path) ? path.state === 'before' : path.state !== 'unknown')) continue
       }
       throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', `An earlier application to this target may have written files and is not confirmed: ${value.operationId}`)
@@ -1124,16 +1130,13 @@ export class GitResources extends Service {
    */
   private async knownTree(identity: GitRepositoryIdentity, base: string, files: ReadonlyMap<string, GitFileState>,
     signal: AbortSignal): Promise<string> {
+    return scratchTree(this.runner(), identity, base, files, (await this.applicationHost()).scratchRoot, signal)
+  }
+
+  /** This Host's platform and the checked scratch directory for application plumbing. */
+  private async applicationHost(): Promise<GitApplicationHost> {
     await this.assertManagedDirectory('scratch')
-    const scratch = await mkdtemp(join(this.root, 'scratch', 'known-'))
-    try {
-      const env = { GIT_INDEX_FILE: join(scratch, 'index') }, root = identity.root.path
-      await this.runner().run(['read-tree', base], root, signal, { env })
-      const zero = '0'.repeat(base.length)
-      const rows = [...files].map(([path, state]) => state.kind === 'file' ? `${state.mode} ${state.objectId}\t${path}\0` : `0 ${zero}\t${path}\0`)
-      await this.runner().run(['update-index', '-z', '--index-info'], root, signal, { env, input: Buffer.from(rows.join('')) })
-      return gitObjectIdSchema.parse((await this.runner().text(['write-tree'], root, signal, env)).trim())
-    } finally { await rm(scratch, { recursive: true, force: true }) }
+    return { platform: this.platform, scratchRoot: join(this.root, 'scratch') }
   }
 
   private async readCleanup(resourceId: GitResourceId, signal: AbortSignal): Promise<GitResourceCleanupPreview> {
@@ -1229,7 +1232,7 @@ export class GitResources extends Service {
         await this.assertRepository(preview.target.repository, combined)
         check()
         if (operation.phase === 'confirmed') return structuredClone(this.requireOperation(operation.operationId))
-        const observed = await observeApplication(this.runner(), preview, combined, this.limits)
+        const observed = await observeApplication(this.runner(), preview, combined, this.limits, this.platform)
         if (observed.state === 'partial' || observed.state === 'unknown'
           || observed.state === 'after' && operation.externalWriteStarted !== true && applicationWrites(preview.target.touched).length > 0) {
           throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', 'Partial, unknown or unattributed target effects are not replayed; inspect and prepare a fresh explicit plan')
@@ -1252,7 +1255,8 @@ export class GitResources extends Service {
           await this.writeRef(repository.root.path, `${prefix}/before`, preview.source.originalTargetBaseTree,
             repository.objectFormat, combined, check)
           await this.writeRef(repository.root.path, `${prefix}/after`, preview.source.resultCommit, repository.objectFormat, combined, check)
-          effect = await applyApplication(this.runner(), preview, { signal: combined, assertCurrent: check }, this.limits)
+          effect = await applyApplication(this.runner(), preview, { signal: combined, assertCurrent: check }, this.limits,
+            await this.applicationHost())
         }
         check()
         const completedEffect = effect
@@ -1300,8 +1304,9 @@ export class GitResources extends Service {
         try {
           const env = { GIT_INDEX_FILE: join(scratch, 'index') }
           await git.run(['read-tree', preview.baseCommit], root, combined, { env })
+          const rows: [string, GitIndexState][] = []
           for (const entry of preview.selected) {
-            if (entry.mode === 'deleted') await git.run(['update-index', '--force-remove', '--', entry.path], root, combined, { env })
+            if (entry.mode === 'deleted') rows.push([entry.path, { kind: 'absent' }])
             else {
               let objectId = entry.objectId
               if (entry.source !== 'index' && !alreadyPinned) {
@@ -1312,9 +1317,11 @@ export class GitResources extends Service {
                 objectId = (await git.run(['hash-object', '-w', '--no-filters', '--stdin'], root, combined, { input: bytes })).stdout.toString('utf8').trim()
               }
               if (objectId === undefined) throw new GitResourceError('RECORD_INVALID', 'Selected input has no immutable object identity')
-              await git.run(['update-index', '--add', '--cacheinfo', `${entry.mode},${objectId},${entry.path}`], root, combined, { env })
+              rows.push([entry.path, { mode: entry.mode, objectId }])
             }
           }
+          await git.run(['update-index', '-z', '--index-info'], root, combined,
+            { env, input: indexInfo(rows, found.repository.identity.objectFormat) })
           tree = await git.text(['write-tree'], root, combined, env)
           commit = preview.request.baseline.kind === 'commit' ? preview.baseCommit : await this.commitTree(root, tree, preview.baseCommit, operation, combined)
           await this.writeRef(root, found.resource.privateRef, commit, found.repository.identity.objectFormat, combined)
@@ -1376,11 +1383,11 @@ export class GitResources extends Service {
               applicationOperationId: inverse.applicationOperationId,
               targetWorkspaceId: inverse.currentTarget.repository.workspaceId }, combined)
             if (fresh.fingerprint !== inverse.fingerprint) throw new GitResourceError('PREVIEW_CHANGED', 'Current inverse target changed before preparation')
-            await this.assertManagedDirectory('scratch'); check()
+            const host = await this.applicationHost(); check()
             await this.save(operation.repositoryId, operation.resourceId, operation.operationId, resource => resource,
               current => ({ ...current, externalWriteStarted: true }))
             effect = await prepareInverseObjects(this.runner(), inverse, operation.operationId, operation.createdAt,
-              join(this.root, 'scratch'), { signal: combined, assertCurrent: check }, this.limits)
+              host, { signal: combined, assertCurrent: check }, this.limits)
           } else if (preview !== undefined) {
             const fresh = await this.previewIntegration(preview.request, combined)
             if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('PREVIEW_CHANGED', 'Immutable integration inputs changed before merge')
@@ -1474,9 +1481,10 @@ export class GitResources extends Service {
             const { bytes, mode } = await readRegularFile(found.resource.path, path, this.limits.maxFileBytes)
             if ((total += bytes.length) > this.limits.maxTotalBytes) throw new GitResourceError('FILE_LIMIT', 'Preservation exceeds configured byte bounds')
             const objectId = (await this.runner().run(['hash-object', '-w', '--no-filters', '--stdin'], root, combined, { input: bytes })).stdout.toString('utf8').trim()
-            await this.runner().run(['update-index', '--add', '--cacheinfo', `${mode},${objectId},${path}`], root, combined, { env })
             captured.push({ path, digest: byteHash(bytes), mode, objectId, hunk: conflicted.has(path) && conflictHunk(bytes) })
           }
+          await this.runner().run(['update-index', '-z', '--index-info'], root, combined,
+            { env, input: indexInfo(captured.map(item => [item.path, item]), found.repository.identity.objectFormat) })
           if (hash(inventory) !== hash(await this.preservationFiles(found.repository.identity, found.resource, content, combined))) {
             throw new GitResourceError('RESOURCE_CHANGED', 'Work-copy code or remaining-path inventory changed during preservation')
           }
@@ -1489,7 +1497,8 @@ export class GitResources extends Service {
           const written = integration?.integrationEffect
           if (content === 'versioned' && 'expectedRevision' in operation.request && operation.request.resolveMarkerFreeConflicts === true
             && written !== undefined && conflicted.size > 0) {
-            const resolved = await this.recordChangedConflicts(found.resource, written, conflicted, captured, combined)
+            const resolved = await this.recordChangedConflicts(found.repository.identity, found.resource, written, conflicted,
+              captured, combined)
             conflictStages = conflictStages.filter(stage => !resolved.has(stage.path))
           }
           tree = await this.runner().text(['write-tree'], root, combined, env)
@@ -1653,7 +1662,7 @@ export class GitResources extends Service {
     try {
       if (preview === undefined) throw new GitResourceError('RECORD_INVALID', 'Application intent has no original target cut')
       await this.assertRepository(preview.target.repository, combined)
-      const observation = await observeApplication(this.runner(), preview, combined, this.limits)
+      const observation = await observeApplication(this.runner(), preview, combined, this.limits, this.platform)
       if (operation.phase === 'confirmed') return structuredClone(this.requireOperation(operation.operationId))
       combined.throwIfAborted()
       const completed = observation.state === 'after'
@@ -1776,11 +1785,12 @@ export class GitResources extends Service {
    * as removed: nothing is kept there and nothing Git wrote passes unseen. Otherwise a path left as the integration wrote
    * it keeps its stages, as conflicts Git writes without markers (binary, one side deleted) would pass unseen; a path that
    * still holds a hunk always does.
+   * @param identity - repository of the work copy, whose object format the index rows use.
    * @param written - the integration's merge effect: the tree it wrote and the conflicts Git reported.
    * @returns the paths recorded as resolved.
    */
-  private async recordChangedConflicts(resource: GitResourceRecord, written: GitIntegrationEffect, conflicted: ReadonlySet<string>,
-    captured: readonly { path: string; mode: string; objectId: string; hunk: boolean }[],
+  private async recordChangedConflicts(identity: GitRepositoryIdentity, resource: GitResourceRecord, written: GitIntegrationEffect,
+    conflicted: ReadonlySet<string>, captured: readonly { path: string; mode: string; objectId: string; hunk: boolean }[],
     signal: AbortSignal): Promise<ReadonlySet<string>> {
     const git = this.runner(), byPath = new Map(captured.map(item => [item.path, item])), resolved = new Set<string>()
     const paths = [...conflicted].sort(), absent = new Set<string>(), changed = new Set<string>()
@@ -1798,13 +1808,15 @@ export class GitResources extends Service {
         for (const path of conflict.paths) settled.add(path)
       }
     }
+    const rows: [string, GitIndexState][] = []
     for (const path of paths) {
       const now = byPath.get(path)
       if ((now !== undefined && now.hunk) || (!absent.has(path) && !settled.has(path))) continue
-      await git.run(now === undefined ? ['update-index', '--force-remove', '--', path]
-        : ['update-index', '--cacheinfo', `${now.mode},${now.objectId},${path}`], resource.path, signal)
+      rows.push([path, now ?? { kind: 'absent' }])
       resolved.add(path)
     }
+    // A resolved row replaces every stage of its path; an absent one removes the path.
+    await git.run(['update-index', '-z', '--index-info'], resource.path, signal, { input: indexInfo(rows, identity.objectFormat) })
     return resolved
   }
   private async preservationFiles(identity: GitRepositoryIdentity, resource: GitResourceRecord,

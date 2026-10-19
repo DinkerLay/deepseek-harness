@@ -52,7 +52,8 @@ async function setup(onePath = false) {
     timeoutMs: 10_000, graceMs: 100, maxOutputBytes: 1_000_000 })
   const lease = { signal, assertCurrent: () => {} }
   const scratch = join(test.root, 'inverse-scratch'); await mkdir(scratch)
-  return { ...test, runner, source, lease, scratch, text, identity: basePreview.repository }
+  return { ...test, runner, source, lease, scratch, host: { platform: process.platform, scratchRoot: scratch }, text,
+    identity: basePreview.repository }
 }
 
 it('applies only the selected plain patch while preserving actual HEAD/ref/index and unrelated staged/untracked input', async () => {
@@ -62,9 +63,9 @@ it('applies only the selected plain patch while preserving actual HEAD/ref/index
   await writeFile(join(test.project, 'user-untracked.txt'), 'Untracked user ownership\n')
   const before = await readFile(join(test.project, '.git', 'index')), head = test.git(['rev-parse', 'HEAD']), ref = test.git(['symbolic-ref', 'HEAD'])
   const objects = test.git(['count-objects', '-v']), refs = test.git(['show-ref'])
-  const preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
+  const preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
   expect(test.git(['count-objects', '-v'])).toBe(objects); expect(test.git(['show-ref'])).toBe(refs)
-  const effect = await applyApplication(test.runner, preview, test.lease, limits)
+  const effect = await applyApplication(test.runner, preview, test.lease, limits, test.host)
   expect(effect.observation).toMatchObject({ state: 'after', headUnchanged: true, indexUnchanged: true })
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toContain('APPLIED-2')
   expect(await readFile(join(test.project, 'user-note.txt'), 'utf8')).toBe('Staged user ownership\n')
@@ -121,29 +122,29 @@ it('recovers a lost final receipt by observing the same all-after effect without
 })
 
 it('rejects a later touched user edit before writing and observes partial/unknown without replay', async () => {
-  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
+  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
   await writeFile(join(test.project, 'file.txt'), 'User changed after preview\n')
-  await expect(applyApplication(test.runner, preview, test.lease, limits)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+  await expect(applyApplication(test.runner, preview, test.lease, limits, test.host)).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('User changed after preview\n')
-  expect((await observeApplication(test.runner, preview, signal, limits)).state).toBe('unknown')
+  expect((await observeApplication(test.runner, preview, signal, limits, process.platform)).state).toBe('unknown')
   await writeFile(join(test.project, 'file.txt'), test.text.replace('line-2\n', 'APPLIED-2\n'))
-  expect((await observeApplication(test.runner, preview, signal, limits)).state).toBe('partial')
+  expect((await observeApplication(test.runner, preview, signal, limits, process.platform)).state).toBe('partial')
   expect(await readFile(join(test.project, 'removed.txt'), 'utf8')).toBe('Remove this deliberately\n')
 })
 
 it('denies the Host scope immediately before its working write and treats later index changes as unknown', async () => {
-  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
-  await expect(applyApplication(test.runner, preview, { signal, assertCurrent: () => { throw new Error('user range revoked') } }, limits))
+  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
+  await expect(applyApplication(test.runner, preview, { signal, assertCurrent: () => { throw new Error('user range revoked') } }, limits, test.host))
     .rejects.toThrow('user range revoked')
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe(test.text)
-  expect((await observeApplication(test.runner, preview, signal, limits)).state).toBe('before')
+  expect((await observeApplication(test.runner, preview, signal, limits, process.platform)).state).toBe('before')
   await writeFile(join(test.project, 'new-user-stage.txt'), 'User staged after preview\n')
   test.git(['add', '--', 'new-user-stage.txt'])
-  expect(await observeApplication(test.runner, preview, signal, limits)).toMatchObject({ state: 'unknown', indexUnchanged: false })
+  expect(await observeApplication(test.runner, preview, signal, limits, process.platform)).toMatchObject({ state: 'unknown', indexUnchanged: false })
 })
 
 it.each(['touched', 'index', 'after'] as const)('does not hide a real %s change across patch preflight or external write', async (race) => {
-  const test = await setup(true), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
+  const test = await setup(true), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
   const run = test.runner.run.bind(test.runner)
   const fault = vi.spyOn(test.runner, 'run').mockImplementation(async (...args) => {
     const result = await run(...args)
@@ -155,7 +156,7 @@ it.each(['touched', 'index', 'after'] as const)('does not hide a real %s change 
     }
     return result
   })
-  await expect(applyApplication(test.runner, preview, test.lease, limits)).rejects.toMatchObject({
+  await expect(applyApplication(test.runner, preview, test.lease, limits, test.host)).rejects.toMatchObject({
     code: race === 'after' ? 'APPLICATION_EFFECT_UNCERTAIN' : 'APPLICATION_TARGET_CHANGED' })
   fault.mockRestore()
   if (race !== 'index') expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe('User change in the actual operation window\n')
@@ -172,7 +173,7 @@ it('refuses an independently registered different repository and observes an unc
   const other = await test.ctx.gitResources.preview({ workspaceId: workspace.id,
     baseline: { kind: 'commit', commit: test.git(['-C', otherPath, 'rev-parse', 'HEAD']) } })
   if (other.repository === undefined) throw new Error('other registered sample must be a real repository')
-  await expect(inspectApplication(test.runner, other.repository, test.source, signal, limits))
+  await expect(inspectApplication(test.runner, other.repository, test.source, signal, limits, test.host))
     .rejects.toMatchObject({ code: 'APPLICATION_REPOSITORY_MISMATCH' })
   await test.ctx.gitResources.withWriteUse(test.source.resourceId, { useId: 'unchanged-source', ownerId: 'real-source-owner', epoch: '2' },
     signal, async (scope) => {
@@ -187,21 +188,21 @@ it('refuses an independently registered different repository and observes an unc
     || sealed.operation.effectManifestHash === undefined) throw new Error('no-content seal must still have actual immutable facts')
   const preview = await inspectApplication(test.runner, test.identity, { ...test.source,
     preserveOperationId: sealed.operation.operationId, resultCommit: sealed.operation.effectCommit,
-    resultTree: sealed.operation.effectTree, manifestHash: sealed.operation.effectManifestHash }, signal, limits)
+    resultTree: sealed.operation.effectTree, manifestHash: sealed.operation.effectManifestHash }, signal, limits, test.host)
   const before = test.git(['status', '--porcelain'])
-  expect((await applyApplication(test.runner, preview, test.lease, limits)).observation.state).toBe('after')
+  expect((await applyApplication(test.runner, preview, test.lease, limits, test.host)).observation.state).toBe('after')
   expect(test.git(['status', '--porcelain'])).toBe(before)
 })
 
 it('prepares inverse from the current touched snapshot, retains later independent edits and never changes the user target', async () => {
-  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
-  const original = await applyApplication(test.runner, preview, test.lease, limits)
+  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
+  const original = await applyApplication(test.runner, preview, test.lease, limits, test.host)
   const current = test.text.replace('line-2\n', 'APPLIED-2\n').replace('line-10\n', 'USER-LATER-10\n')
   await writeFile(join(test.project, 'file.txt'), current)
   const before = await readFile(join(test.project, '.git', 'index')), head = test.git(['rev-parse', 'HEAD'])
-  const inverse = await inspectInverse(test.runner, original, GitOperationId('original-application'), signal, limits)
+  const inverse = await inspectInverse(test.runner, original, GitOperationId('original-application'), signal, limits, process.platform)
   const effect = await prepareInverse(test.runner, inverse, GitOperationId('actual-inverse'), '2026-10-06T00:00:00.000Z',
-    test.scratch, test.lease, limits)
+    test.host, test.lease, limits)
   expect(effect.result).toBe('prepared')
   const material = test.git(['show', `${effect.tree}:file.txt`])
   expect(material).not.toContain('APPLIED-2'); expect(material).toContain('USER-LATER-10')
@@ -211,13 +212,13 @@ it('prepares inverse from the current touched snapshot, retains later independen
 })
 
 it('keeps a conflicting later edit as inverse conflict material, not a rollback overwrite', async () => {
-  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits)
-  const original = await applyApplication(test.runner, preview, test.lease, limits)
+  const test = await setup(), preview = await inspectApplication(test.runner, test.identity, test.source, signal, limits, test.host)
+  const original = await applyApplication(test.runner, preview, test.lease, limits, test.host)
   const later = test.text.replace('line-2\n', 'USER-REPLACED-APPLIED-LINE\n')
   await writeFile(join(test.project, 'file.txt'), later)
-  const inverse = await inspectInverse(test.runner, original, GitOperationId('old-conflicting-application'), signal, limits)
+  const inverse = await inspectInverse(test.runner, original, GitOperationId('old-conflicting-application'), signal, limits, process.platform)
   const effect = await prepareInverse(test.runner, inverse, GitOperationId('conflicting-inverse'), '2026-10-06T00:00:00.000Z',
-    test.scratch, test.lease, limits)
+    test.host, test.lease, limits)
   expect(effect.result).toBe('conflicted')
   expect(effect.conflictStages.length).toBeGreaterThan(0)
   expect(await readFile(join(test.project, 'file.txt'), 'utf8')).toBe(later)
