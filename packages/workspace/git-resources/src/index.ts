@@ -20,7 +20,7 @@ import { inspectIntegration, integrationPreviewRequestSchema, integrationRequest
 import type { GitIntegrationConflictStage, GitIntegrationEffect, GitIntegrationPreviewRequest, GitIntegrationPreview, GitIntegrationRequest,
   GitIntegrationResolutionObservation, GitIntegrationResolutionPreview, GitIntegrationResolutionRequest,
   GitIntegrationResolutionSelection } from './integration.ts'
-import { applicationPreviewRequestSchema, applicationRequestSchema, applyApplication, inspectApplication,
+import { applicationPreviewRequestSchema, applicationRequestSchema, applicationWrites, applyApplication, inspectApplication,
   inspectInverse, inversePreviewRequestSchema, inverseRequestSchema, observeApplication, prepareInverse as prepareInverseObjects } from './application.ts'
 import type { GitApplicationPreviewRequest, GitApplicationPreview, GitApplicationRequest, GitApplicationSource,
   GitApplicationWritten, GitInversePreviewRequest, GitInversePreview, GitInverseRequest } from './application.ts'
@@ -89,6 +89,9 @@ export const Config: z<Config> = z.object({ home: z.string(), gitExecutable: z.s
   maxFileBytes: z.number().default(32 * 1024 * 1024), maxTotalBytes: z.number().default(128 * 1024 * 1024),
   closeTimeoutMs: z.number().default(10_000), maxConsumerRequestBytes: z.number().default(128 * 1024) })
 declare module '@deepseek-ai/cordis' { interface Context { gitResources: GitResources } }
+
+/** A confirmed seal's immutable reference, commit, tree and manifest hash. */
+interface SealFacts { readonly ref: string; readonly commit: string; readonly tree: string; readonly manifest: string }
 
 /** Sole same-host owner of managed work copies; no task, agent role or model tool policy. */
 export class GitResources extends Service {
@@ -420,7 +423,8 @@ export class GitResources extends Service {
         return this.finishApplication(old.operation, signal, assertAuthorized)
       }
       const preview = await this.previewApplication({ consumerScope: captured.consumerScope,
-        integrationOperationId: captured.integrationOperationId, preserveOperationId: captured.preserveOperationId,
+        ...captured.integrationOperationId === undefined ? {} : { integrationOperationId: captured.integrationOperationId },
+        preserveOperationId: captured.preserveOperationId,
         targetWorkspaceId: captured.targetWorkspaceId,
         ...captured.resolutionOperationId === undefined ? {} : { resolutionOperationId: captured.resolutionOperationId } }, signal)
       if (preview.fingerprint !== captured.expectedPreviewFingerprint) throw new GitResourceError('PREVIEW_CHANGED', 'Application target changed after preview')
@@ -545,13 +549,14 @@ export class GitResources extends Service {
             if (preview === undefined) throw new GitResourceError('RECORD_INVALID', 'Application has no original target cut')
             await this.assertRepository(preview.target.repository, combined)
             const observation = await observeApplication(this.runner(), preview, combined, this.limits)
-            if (observation.state !== 'before' && preview.target.touched.length > 0) {
+            if (observation.state !== 'before' && applicationWrites(preview.target.touched).length > 0) {
               throw new GitResourceError('OPERATION_EFFECT_UNKNOWN', 'Original target is not definitely before the unstarted application')
             }
             const request = current.operation.request
-            if (!('integrationOperationId' in request && 'targetWorkspaceId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application request has no exact source/target selection')
+            if (!('preserveOperationId' in request && 'targetWorkspaceId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application request has no exact source/target selection')
             await this.sealedSource({ consumerScope: current.operation.consumerScope,
-              integrationOperationId: request.integrationOperationId, preserveOperationId: request.preserveOperationId,
+              ...request.integrationOperationId === undefined ? {} : { integrationOperationId: request.integrationOperationId },
+              preserveOperationId: request.preserveOperationId,
               targetWorkspaceId: request.targetWorkspaceId,
               ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } }, combined)
             // The recorded source stays the comparison: a later application elsewhere changes the known state, not this cut.
@@ -949,6 +954,7 @@ export class GitResources extends Service {
   /** The selected exact version, checked against its immutable reference and manifest; its target base is the one the
    * integration recorded, before earlier applications are taken into account. */
   private async sealedSource(selection: GitApplicationPreviewRequest, signal: AbortSignal): Promise<GitApplicationSource> {
+    if (selection.integrationOperationId === undefined) return this.ownSealSource(selection, signal)
     const origin = this.requireOperation(selection.integrationOperationId), version = this.requireOperation(selection.preserveOperationId)
     const effect = origin.operation.integrationEffect, seal = version.operation
     if (origin.operation.kind !== 'integrate' && origin.operation.kind !== 'inverse'
@@ -976,18 +982,43 @@ export class GitResources extends Service {
         throw new GitResourceError('APPLICATION_SOURCE_UNRESOLVED', 'Conflicted application requires an explicitly selected exact Host resolution receipt')
       }
     }
-    const repository = this.requireResource(origin.resource.resourceId).repository.identity
-    await this.assertRepository(repository, signal)
-    const ref = await this.runner().text(['rev-parse', '--verify', seal.effectRef], repository.root.path, signal)
-    const tree = await this.runner().text(['rev-parse', `${ref}^{tree}`], repository.root.path, signal)
-    if (ref !== seal.effectCommit || tree !== seal.effectTree
-      || hash(await treeEntries(this.runner(), repository, tree, signal, this.limits)) !== seal.effectManifestHash) {
-      throw new GitResourceError('APPLICATION_VERSION_CHANGED', 'Exact application seal no longer matches its immutable reference/manifest')
-    }
+    const repository = await this.verifiedSeal(seal.resourceId, { ref: seal.effectRef, commit: seal.effectCommit, tree: seal.effectTree,
+      manifest: seal.effectManifestHash }, signal)
     return { repository, integrationOperationId: origin.operation.operationId, preserveOperationId: seal.operationId,
       resourceId: seal.resourceId, consumerScope: seal.consumerScope, originalTargetBaseTree: effect.originalTargetBaseTree,
       resultCommit: seal.effectCommit, resultTree: seal.effectTree, manifestHash: seal.effectManifestHash,
       ...selection.resolutionOperationId === undefined ? {} : { resolutionOperationId: selection.resolutionOperationId } }
+  }
+
+  /** A code result sealed on its own work copy: no integration or inverse made the copy, and the seal holds no conflict. */
+  private async ownSealSource(selection: GitApplicationPreviewRequest, signal: AbortSignal): Promise<GitApplicationSource> {
+    const { operation: seal } = this.requireOperation(selection.preserveOperationId)
+    const { repository: record } = this.requireResource(seal.resourceId)
+    if (selection.resolutionOperationId !== undefined || seal.kind !== 'preserve' || seal.phase !== 'confirmed'
+      || seal.consumerScope !== selection.consumerScope || seal.effectContent !== 'versioned' || seal.effectIntegrationOperationId !== undefined
+      || (seal.effectConflictStages?.length ?? 0) > 0 || (seal.effectUnresolvedConflictIds?.length ?? 0) > 0
+      || seal.effectCommit === undefined || seal.effectTree === undefined || seal.effectManifestHash === undefined
+      || seal.effectRef === undefined || record.operations.some(value => value.resourceId === seal.resourceId && (value.kind === 'integrate' || value.kind === 'inverse'))) {
+      throw new GitResourceError('APPLICATION_SOURCE_UNAVAILABLE', 'A direct application requires a complete exact versioned seal of a work copy no integration made, in this consumer scope')
+    }
+    const repository = await this.verifiedSeal(seal.resourceId, { ref: seal.effectRef, commit: seal.effectCommit, tree: seal.effectTree,
+      manifest: seal.effectManifestHash }, signal)
+    return { repository, preserveOperationId: seal.operationId, resourceId: seal.resourceId, consumerScope: seal.consumerScope,
+      originalTargetBaseTree: this.versionLine(seal.resourceId).tree, resultCommit: seal.effectCommit, resultTree: seal.effectTree,
+      manifestHash: seal.effectManifestHash }
+  }
+
+  /** The repository of a confirmed seal whose reference and manifest still match it. */
+  private async verifiedSeal(resourceId: GitResourceId, seal: SealFacts, signal: AbortSignal): Promise<GitRepositoryIdentity> {
+    const repository = this.requireResource(resourceId).repository.identity
+    await this.assertRepository(repository, signal)
+    const ref = await this.runner().text(['rev-parse', '--verify', seal.ref], repository.root.path, signal)
+    const tree = await this.runner().text(['rev-parse', `${ref}^{tree}`], repository.root.path, signal)
+    if (ref !== seal.commit || tree !== seal.tree
+      || hash(await treeEntries(this.runner(), repository, tree, signal, this.limits)) !== seal.manifest) {
+      throw new GitResourceError('APPLICATION_VERSION_CHANGED', 'Exact application seal no longer matches its immutable reference/manifest')
+    }
+    return repository
   }
 
   /** The project tree a version line started from: its first copy's project baseline, followed back through copies made
@@ -1054,8 +1085,10 @@ export class GitResources extends Service {
     if (later.length === 0) return { tree: line.tree, written: [] }
     const known = new Map<string, GitFileState>(), writer = new Map<string, number>()
     for (const [index, { preview }] of later.entries()) {
-      for (const path of preview.target.touched) { known.set(path.path, path.after); writer.set(path.path, index) }
+      // A path the application found already current was observed, not written: it stays out of the known state.
+      for (const path of applicationWrites(preview.target.touched)) { known.set(path.path, path.after); writer.set(path.path, index) }
     }
+    if (known.size === 0) return { tree: line.tree, written: [] }
     const tree = await this.knownTree(identity, line.tree, known, signal)
     const written: GitApplicationWritten[] = []
     for (const [index, { operationId, preview }] of later.entries()) {
@@ -1194,17 +1227,17 @@ export class GitResources extends Service {
         if (operation.phase === 'confirmed') return structuredClone(this.requireOperation(operation.operationId))
         const observed = await observeApplication(this.runner(), preview, combined, this.limits)
         if (observed.state === 'partial' || observed.state === 'unknown'
-          || observed.state === 'after' && operation.externalWriteStarted !== true && preview.target.touched.length > 0) {
+          || observed.state === 'after' && operation.externalWriteStarted !== true && applicationWrites(preview.target.touched).length > 0) {
           throw new GitResourceError('APPLICATION_EFFECT_UNCERTAIN', 'Partial, unknown or unattributed target effects are not replayed; inspect and prepare a fresh explicit plan')
         }
         let effect: import('./application.ts').GitApplicationEffect
         if (observed.state === 'after') effect = { preview, observation: observed }
         else {
           const request = operation.request
-          if (!('targetWorkspaceId' in request && 'integrationOperationId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application intent request is invalid')
+          if (!('targetWorkspaceId' in request && 'preserveOperationId' in request)) throw new GitResourceError('RECORD_INVALID', 'Application intent request is invalid')
           const fresh = await this.inspectApplicationRequest({ consumerScope: operation.consumerScope,
-            integrationOperationId: request.integrationOperationId, preserveOperationId: request.preserveOperationId,
-            targetWorkspaceId: request.targetWorkspaceId,
+            ...request.integrationOperationId === undefined ? {} : { integrationOperationId: request.integrationOperationId },
+            preserveOperationId: request.preserveOperationId, targetWorkspaceId: request.targetWorkspaceId,
             ...request.resolutionOperationId === undefined ? {} : { resolutionOperationId: request.resolutionOperationId } },
           combined, operation.operationId)
           if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Original application cut changed; no fresh target was adopted')

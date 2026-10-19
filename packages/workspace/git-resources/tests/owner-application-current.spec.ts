@@ -1,0 +1,134 @@
+/** Applications leave already-current files alone, and a code result sealed on its own work copy applies directly. */
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { expect, it } from 'vitest'
+import { GitOperationId } from '../src/index.ts'
+import { fixture, scope, signal } from './repeat-harness.ts'
+
+it('leaves a file the target already holds in the new state alone and writes the rest', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'labels.csv': 'id,label\n' })
+  // The user puts the same input file into the project the member copied into its work.
+  await writeFile(join(test.project, 'labels.csv'), 'id,label\n')
+  const preview = await test.owner.previewApplication(test.direct(work))
+  expect(preview.alreadyCurrent).toEqual(['labels.csv'])
+  expect(preview.patch).toContain('app.js')
+  expect(preview.patch).not.toContain('labels.csv')
+  expect(preview.target.touched.find(path => path.path === 'labels.csv')?.before).toEqual(
+    preview.target.touched.find(path => path.path === 'labels.csv')?.after)
+  const applied = await test.apply('first', test.direct(work))
+  expect(applied.operation).toMatchObject({ phase: 'confirmed', applicationObservation: { state: 'after' } })
+  expect(await test.read('app.js')).toBe('v1\n')
+  expect(await test.read('labels.csv')).toBe('id,label\n')
+
+  // The observed file was never written, so a later version gains no right to change or delete it.
+  const changed = await test.work('changed', await test.copy('changed', test.commitOf(work)), { 'labels.csv': 'id,label,new\n' })
+  await expect(test.owner.previewApplication(test.direct(changed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
+    message: 'Target files changed from the state this version starts from and are not overwritten: labels.csv' })
+  const dropped = await test.work('dropped', await test.copy('dropped', test.commitOf(work)), { 'app.js': 'v2\n', 'labels.csv': null })
+  const preview2 = await test.owner.previewApplication(test.direct(dropped))
+  expect(preview2.target.touched.map(path => path.path)).toEqual(['app.js'])
+  expect(preview2.replacesWritten).toBeUndefined()
+  await test.apply('dropped', test.direct(dropped))
+  expect(await test.read('labels.csv')).toBe('id,label\n')
+})
+
+it('refuses an authorized preview once an already-current file changed', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'labels.csv': 'id,label\n' })
+  await writeFile(join(test.project, 'labels.csv'), 'id,label\n')
+  const preview = await test.owner.previewApplication(test.direct(work))
+  await writeFile(join(test.project, 'labels.csv'), 'id,label,edited\n')
+  await expect(test.owner.apply({ ...test.direct(work), operationId: GitOperationId('stale-apply'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: preview.fingerprint }, signal, () => {})).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED' })
+  await expect(test.read('app.js')).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('confirms without writing when the target already holds the whole version', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n' })
+  await writeFile(join(test.project, 'app.js'), 'v1\n')
+  const preview = await test.owner.previewApplication(test.direct(work))
+  expect(preview).toMatchObject({ patch: '', alreadyCurrent: ['app.js'] })
+  const applied = await test.apply('first', test.direct(work))
+  expect(applied.operation).toMatchObject({ phase: 'confirmed', applicationObservation: { state: 'after' } })
+  // Nothing was written, so the known state is still the project start.
+  const next = await test.work('next', await test.copy('next', test.commitOf(work)), { 'other.txt': 'more\n' })
+  const later = await test.owner.previewApplication(test.direct(next))
+  expect(later.source).toMatchObject({ originalTargetBaseTree: test.baseTree })
+  expect(later.source.written).toBeUndefined()
+  expect(later.alreadyCurrent).toEqual(['app.js'])
+})
+
+it('keeps already-current files when an application is reversed', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'labels.csv': 'id,label\n' })
+  await writeFile(join(test.project, 'labels.csv'), 'id,label\n')
+  test.git(['add', '--', 'labels.csv']); test.git(['commit', '--quiet', '-m', 'user commits the same input'])
+  const applied = await test.apply('first', test.direct(work))
+  const cut = await test.owner.previewInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id })
+  const inverse = await test.owner.prepareInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id, operationId: GitOperationId('first-inverse'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: cut.fingerprint })
+  const files = test.git(['ls-tree', '-r', '--name-only', inverse.operation.integrationEffect?.tree ?? '']).split('\n')
+  expect(files).toContain('labels.csv')
+  expect(files).not.toContain('app.js')
+})
+
+it('applies a code result sealed on its own work copy directly, and the next one built on it', async () => {
+  const test = await fixture()
+  const first = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n' })
+  const preview = await test.owner.previewApplication(test.direct(first))
+  expect(preview.source.integrationOperationId).toBeUndefined()
+  expect(preview.source.originalTargetBaseTree).toBe(test.baseTree)
+  const applied = await test.apply('first', test.direct(first))
+  expect(applied.operation.phase).toBe('confirmed')
+  const second = await test.work('second', await test.copy('second', test.commitOf(first)), { 'app.js': 'v2\n' })
+  const next = await test.owner.previewApplication(test.direct(second))
+  expect(next.source).toMatchObject({ originalTargetBaseTree: first.operation.effectTree,
+    written: [{ applicationOperationId: applied.operation.operationId, paths: ['app.js'], missing: [] }] })
+  expect(next.replacesWritten).toBeUndefined()
+  expect((await test.apply('second', test.direct(second))).operation.phase).toBe('confirmed')
+  expect(await test.read('app.js')).toBe('v2\n')
+})
+
+it('refuses a direct application of a seal an integration made or with a resolution receipt', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n' })
+  const version = await test.version('first', work)
+  await expect(test.owner.previewApplication(test.direct(version.result))).rejects.toMatchObject({ code: 'APPLICATION_SOURCE_UNAVAILABLE' })
+  await expect(test.owner.previewApplication({ ...test.direct(work), resolutionOperationId: GitOperationId('any-receipt') }))
+    .rejects.toMatchObject({ code: 'APPLICATION_SOURCE_UNAVAILABLE' })
+})
+
+it('treats a file the version deletes and the target already lacks as current, also when reversed', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'removed.txt': null })
+  test.git(['rm', '--quiet', '--', 'removed.txt']); test.git(['commit', '--quiet', '-m', 'user removes the file too'])
+  const applied = await test.apply('first', test.direct(work))
+  expect(applied.operation.applicationEffect?.preview.alreadyCurrent).toEqual(['removed.txt'])
+  const cut = await test.owner.previewInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id })
+  const inverse = await test.owner.prepareInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id, operationId: GitOperationId('first-inverse'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: cut.fingerprint })
+  const files = test.git(['ls-tree', '-r', '--name-only', inverse.operation.integrationEffect?.tree ?? '']).split('\n')
+  expect(files).not.toContain('removed.txt')
+  expect(files).not.toContain('app.js')
+})
+
+it('abandons a direct application stopped before it wrote anything', async () => {
+  const test = await fixture()
+  const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n' })
+  const preview = await test.owner.previewApplication(test.direct(work))
+  const request = { ...test.direct(work), operationId: GitOperationId('stopped-direct'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: preview.fingerprint }
+  let checks = 0
+  await expect(test.owner.apply(request, signal, () => { if (++checks > 1) throw new Error('authority withdrawn') }))
+    .rejects.toThrow('authority withdrawn')
+  const pending = test.owner.status(request.operationId)
+  if (pending === undefined) throw new Error('the stopped intent is recorded')
+  expect((await test.owner.abandonOperation(request.operationId, pending.operation.fingerprint, 'Stop the unstarted write-back',
+    signal, () => {})).operation.phase).toBe('abandoned')
+})

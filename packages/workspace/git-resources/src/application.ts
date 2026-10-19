@@ -26,7 +26,8 @@ export interface GitApplicationWritten {
 /** Exact owner-resolved version; no latest-resource lookup occurs inside application plumbing. */
 export interface GitApplicationSource {
   readonly repository: GitRepositoryIdentity
-  readonly integrationOperationId: GitOperationId
+  /** The integration or inverse that made the sealed work copy; absent for a code result sealed on its own work copy. */
+  readonly integrationOperationId?: GitOperationId | undefined
   readonly preserveOperationId: GitOperationId
   readonly resourceId: GitResourceId
   readonly consumerScope: GitConsumerScope
@@ -42,7 +43,8 @@ export interface GitApplicationSource {
 /** Explicit target Workspace and immutable source IDs, never an arbitrary Host path. */
 export interface GitApplicationPreviewRequest {
   readonly consumerScope: GitConsumerScope
-  readonly integrationOperationId: GitOperationId
+  /** The integration or inverse that made the sealed work copy; omit it to apply a seal of a work copy no integration made. */
+  readonly integrationOperationId?: GitOperationId | undefined
   readonly preserveOperationId: GitOperationId
   readonly targetWorkspaceId: WorkspaceId
   readonly resolutionOperationId?: GitOperationId | undefined
@@ -76,6 +78,8 @@ export interface GitApplicationPreview {
   /** Complete bounded Git diff; binary bodies remain Git's textual binary-patch representation. */
   readonly patch: string
   readonly binary: boolean
+  /** Paths the target already holds exactly as this version has them; checked before the write, never written. */
+  readonly alreadyCurrent?: readonly string[] | undefined
   /** Files an earlier application wrote that this version, not built on that application, replaces or deletes. */
   readonly replacesWritten?: { readonly replaced: readonly string[]; readonly deleted: readonly string[] } | undefined
   readonly fingerprint: string
@@ -125,7 +129,7 @@ const operationId = id.transform(value => brandString<GitOperationId>(value))
 const consumerScope = id.transform(value => brandString<GitConsumerScope>(value))
 const resolution = { resolutionOperationId: operationId.optional() }
 /** Strict source selectors contain no user-authored authority function or raw target directory. */
-export const applicationPreviewRequestSchema = z.object({ consumerScope, integrationOperationId: operationId,
+export const applicationPreviewRequestSchema = z.object({ consumerScope, integrationOperationId: operationId.optional(),
   preserveOperationId: operationId, targetWorkspaceId: id.transform(value => brandString<WorkspaceId>(value)), ...resolution,
 }).strict()
 /** Strict original application intent; authorization is retained by the Host outside JSON. */
@@ -155,7 +159,7 @@ export const inverseRequestSchema = inversePreviewRequestSchema.extend({ operati
  */
 export function applicationSchemas(repository: z.ZodType<GitRepositoryIdentity>): GitApplicationSchemas {
   const witness = z.object({ path: id, device: id, inode: id }).strict()
-  const source = z.object({ repository, integrationOperationId: operationId, preserveOperationId: operationId,
+  const source = z.object({ repository, integrationOperationId: operationId.optional(), preserveOperationId: operationId,
     resourceId: id.transform(value => brandString<GitResourceId>(value)), consumerScope,
     originalTargetBaseTree: gitObjectIdSchema, resultCommit: gitObjectIdSchema, resultTree: gitObjectIdSchema,
     manifestHash: id, ...resolution, written: z.array(z.object({ applicationOperationId: operationId,
@@ -165,6 +169,7 @@ export function applicationSchemas(repository: z.ZodType<GitRepositoryIdentity>)
     ancestors: z.array(z.object({ path: z.string(), identity: witness.optional() }).strict()).readonly(),
     fingerprint: id }).strict()
   const preview = z.object({ source, target, patchHash: id, patch: z.string(), binary: z.boolean(),
+    alreadyCurrent: z.array(id).readonly().optional(),
     replacesWritten: z.object({ replaced: z.array(id).readonly(), deleted: z.array(id).readonly() }).strict().optional(),
     fingerprint: id }).strict()
   const effect = z.object({ preview, observation: applicationObservationSchema }).strict()
@@ -242,10 +247,22 @@ async function targetCut(git: ResourceGit, identity: GitRepositoryIdentity, inte
   return { ...value, fingerprint: hash(value) }
 }
 
+/** Touched paths the application writes; a path already in its after state is only checked.
+ * @param touched - the application's target cut.
+ * @returns the paths whose before and after states differ.
+ */
+export function applicationWrites(touched: readonly GitApplicationPath[]): readonly GitApplicationPath[] {
+  return touched.filter(entry => hash(entry.before) !== hash(entry.after))
+}
+
 async function patchBytes(git: ResourceGit, source: GitApplicationSource, target: GitRepositoryIdentity,
-  signal: AbortSignal): Promise<Buffer> {
+  signal: AbortSignal, touched: readonly GitApplicationPath[]): Promise<Buffer> {
+  const writes = applicationWrites(touched)
+  if (writes.length === 0) return Buffer.alloc(0)
+  const only = writes.length === touched.length ? [] : writes.map(entry => entry.path)
   return (await git.run(['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--no-renames',
-    source.originalTargetBaseTree, source.resultTree, '--'], target.root.path, signal)).stdout
+    source.originalTargetBaseTree, source.resultTree, '--', ...only], target.root.path, signal,
+  { env: { GIT_LITERAL_PATHSPECS: '1' } })).stdout
 }
 
 /** Changed target paths named in a refusal; the rest are counted. */
@@ -272,19 +289,25 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   for (const path of paths) intended.push({ path, before: await immutableState(git, target, old.get(path), signal),
     after: await immutableState(git, target, next.get(path), signal) })
   const first = await targetCut(git, target, intended, signal, limits)
-  const changed = intended.filter((entry, index) => hash(first.touched[index]?.before) !== hash(entry.before)).map(entry => entry.path)
+  // A path is written from its known before state, or left alone when it already holds the after state.
+  const changed = intended.filter((entry, index) => hash(first.touched[index]?.before) !== hash(entry.before)
+    && hash(first.touched[index]?.before) !== hash(entry.after)).map(entry => entry.path)
   if (changed.length > 0) {
     const named = changed.slice(0, CHANGED_NAMED).join(', '), more = changed.length - CHANGED_NAMED
     throw new GitResourceError('APPLICATION_TARGET_CHANGED', `Target files changed from the state this version starts from and are not overwritten: ${named}${more > 0 ? ` and ${more} more` : ''}`)
   }
-  const patch = await patchBytes(git, source, target, signal), second = await targetCut(git, target, intended, signal, limits)
+  const patch = await patchBytes(git, source, target, signal, first.touched)
+  const second = await targetCut(git, target, intended, signal, limits)
   if (second.fingerprint !== first.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Application target changed during its read-only preview')
   const text = patch.toString('utf8')
   if (!Buffer.from(text).equals(patch)) throw new GitResourceError('APPLICATION_PATCH_UNSUPPORTED', 'Git patch cannot be represented losslessly in the UTF-8 user preview')
+  const writes = new Set(applicationWrites(second.touched).map(entry => entry.path))
+  const current = second.touched.filter(entry => !writes.has(entry.path)).map(entry => entry.path)
   const replacing = new Set((source.written ?? []).flatMap(written => written.missing))
-  const replaces = intended.filter(entry => replacing.has(entry.path))
+  const replaces = intended.filter(entry => replacing.has(entry.path) && writes.has(entry.path))
   const value = { source: structuredClone(source), target: second, patchHash: byteHash(patch), patch: text,
-    binary: text.includes('GIT binary patch\n'), ...replaces.length === 0 ? {} : { replacesWritten: {
+    binary: text.includes('GIT binary patch\n'), ...current.length === 0 ? {} : { alreadyCurrent: current },
+    ...replaces.length === 0 ? {} : { replacesWritten: {
       replaced: replaces.filter(entry => entry.after.kind !== 'absent').map(entry => entry.path),
       deleted: replaces.filter(entry => entry.after.kind === 'absent').map(entry => entry.path) } } }
   return { ...value, fingerprint: hash(value) }
@@ -309,8 +332,11 @@ export async function observeApplication(git: ResourceGit, preview: GitApplicati
   })
   const parentsUnchanged = target.ancestors.every(before => before.identity === undefined
     || hash(current.ancestors.find(after => after.path === before.path)?.identity ?? null) === hash(before.identity))
+  // A path that was already in its after state counts on both sides; it only has to stay unchanged.
+  const writes = new Set(applicationWrites(target.touched).map(entry => entry.path))
+  const written = paths.filter(path => writes.has(path.path))
   const state = !headUnchanged || !indexUnchanged || !parentsUnchanged || paths.some(path => path.state === 'unknown') ? 'unknown'
-    : paths.every(path => path.state === 'after') ? 'after' : paths.every(path => path.state === 'before') ? 'before' : 'partial'
+    : written.every(path => path.state === 'after') ? 'after' : written.every(path => path.state === 'before') ? 'before' : 'partial'
   return { state, paths, headUnchanged, indexUnchanged }
 }
 
@@ -326,9 +352,9 @@ export async function applyApplication(git: ResourceGit, preview: GitApplication
   limits: PreviewLimits): Promise<GitApplicationEffect> {
   const fresh = await inspectApplication(git, preview.target.repository, preview.source, scope.signal, limits)
   if (fresh.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Authorized application cut changed before its write')
-  const patch = await patchBytes(git, preview.source, preview.target.repository, scope.signal)
+  const patch = await patchBytes(git, preview.source, preview.target.repository, scope.signal, preview.target.touched)
   if (byteHash(patch) !== preview.patchHash) throw new GitResourceError('APPLICATION_VERSION_CHANGED', 'Authorized patch differs from its recorded digest')
-  if (preview.target.touched.length > 0) {
+  if (applicationWrites(preview.target.touched).length > 0) {
     await git.run(['apply', '--check', '--binary', '--whitespace=nowarn', '-'], preview.target.repository.root.path, scope.signal, { input: patch })
     const last = await targetCut(git, preview.target.repository, preview.target.touched, scope.signal, limits)
     if (last.fingerprint !== preview.target.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Application target changed after patch preflight')
@@ -378,9 +404,9 @@ export async function prepareInverse(git: ResourceGit, preview: GitInversePrevie
   const scratch = await mkdtemp(join(scratchRoot, 'inverse-'))
   try {
     const root = preview.currentTarget.repository.root.path, env = { GIT_INDEX_FILE: join(scratch, 'index') }
-    const write = async (args: readonly string[], input?: Buffer) => {
+    const write = async (args: readonly string[], input?: Buffer, index = env) => {
       scope.signal.throwIfAborted(); scope.assertCurrent()
-      return git.run(args, root, scope.signal, { env, ...input === undefined ? {} : { input } })
+      return git.run(args, root, scope.signal, { env: index, ...input === undefined ? {} : { input } })
     }
     await write(['read-tree', preview.currentTarget.head])
     for (const entry of preview.currentTarget.touched) {
@@ -400,8 +426,18 @@ export async function prepareInverse(git: ResourceGit, preview: GitInversePrevie
     if (last.fingerprint !== preview.fingerprint) throw new GitResourceError('APPLICATION_TARGET_CHANGED', 'Current inverse target changed before three-way preparation')
     scope.signal.throwIfAborted(); scope.assertCurrent()
     const source = preview.original.preview.source
+    // Paths the original application found already current were never written, so the reverse leaves them as they are.
+    const kept = preview.original.preview.target.touched.filter(entry => hash(entry.before) === hash(entry.after))
+    let restore = source.originalTargetBaseTree
+    if (kept.length > 0) {
+      const index = { GIT_INDEX_FILE: join(scratch, 'restore-index') }, zero = '0'.repeat(restore.length)
+      await write(['read-tree', restore], undefined, index)
+      await write(['update-index', '--index-info'], Buffer.from(kept.map(entry => entry.after.kind === 'file'
+        ? `${entry.after.mode} ${entry.after.objectId}\t${entry.path}\n` : `0 ${zero}\t${entry.path}\n`).join('')), index)
+      restore = gitObjectIdSchema.parse((await write(['write-tree'], undefined, index)).stdout.toString('utf8').trim())
+    }
     const response = await git.run(['merge-tree', '--write-tree', '-z', '--messages', `--merge-base=${source.resultTree}`,
-      snapshot, source.originalTargetBaseTree], root, scope.signal, { allowFailure: true })
+      snapshot, restore], root, scope.signal, { allowFailure: true })
     const merged = decodeIntegrationMerge(response.stdout, response.status)
     const entries = await treeEntries(git, preview.currentTarget.repository, merged.tree, scope.signal, limits)
     scope.signal.throwIfAborted(); scope.assertCurrent()

@@ -564,7 +564,8 @@ interface GitApplicationWritten {
 /** Exact owner-resolved version; no latest-resource lookup occurs inside application plumbing. */
 interface GitApplicationSource {
   readonly repository: GitRepositoryIdentity
-  readonly integrationOperationId: GitOperationId
+  /** The integration or inverse that made the sealed work copy; absent for a code result sealed on its own work copy. */
+  readonly integrationOperationId?: GitOperationId | undefined
   readonly preserveOperationId: GitOperationId
   readonly resourceId: GitResourceId
   readonly consumerScope: GitConsumerScope
@@ -583,7 +584,8 @@ interface GitApplicationSource {
 /** Explicit target Workspace and immutable source IDs, never an arbitrary Host path. */
 interface GitApplicationPreviewRequest {
   readonly consumerScope: GitConsumerScope
-  readonly integrationOperationId: GitOperationId
+  /** The integration or inverse that made the sealed work copy; omit it to apply a seal of a work copy no integration made. */
+  readonly integrationOperationId?: GitOperationId | undefined
   readonly preserveOperationId: GitOperationId
   readonly targetWorkspaceId: WorkspaceId
   readonly resolutionOperationId?: GitOperationId | undefined
@@ -621,6 +623,8 @@ interface GitApplicationPreview {
   /** Complete bounded Git diff; binary bodies remain Git's textual binary-patch representation. */
   readonly patch: string
   readonly binary: boolean
+  /** Paths the target already holds exactly as this version has them; checked before the write, never written. */
+  readonly alreadyCurrent?: readonly string[] | undefined
   /** Files an earlier application wrote that this version, not built on that application, replaces or deletes. */
   readonly replacesWritten?: { readonly replaced: readonly string[]; readonly deleted: readonly string[] } | undefined
   readonly fingerprint: string
