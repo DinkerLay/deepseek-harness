@@ -191,3 +191,69 @@ it('confirms an interrupted application with nothing to write when it is reconci
   expect((await test.owner.reconcile(request.operationId)).operation).toMatchObject({ phase: 'confirmed',
     applicationObservation: { state: 'after' } })
 })
+
+it.each([['Docs/file.txt', 'docs/file.txt'], ['a/B/c.txt', 'a/b/c.txt']])(
+  'never takes %s reached as %s through a differently cased directory as current or written', async (from, to) => {
+    const test = await fixture()
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(join(test.project, from.slice(0, from.lastIndexOf('/'))), { recursive: true })
+    await writeFile(join(test.project, from), 'only copy\n')
+    test.git(['add', '--', from]); test.git(['commit', '--quiet', '-m', 'user file'])
+    const copy = await test.copy('rename', test.git(['rev-parse', 'HEAD']))
+    await test.owner.withWriteUse(copy.resourceId, { useId: 'rename', ownerId: 'rename', epoch: '1' }, signal, async (lease) => {
+      await mkdir(join(lease.resource.path, 'moved'), { recursive: true })
+      test.git(['-C', lease.resource.path, 'mv', from, 'moved/file'])
+      await mkdir(join(lease.resource.path, to.slice(0, to.lastIndexOf('/'))), { recursive: true })
+      test.git(['-C', lease.resource.path, 'mv', 'moved/file', to])
+    })
+    const current = test.owner.read(copy.resourceId)
+    if (current === undefined) throw new Error('work copy remains registered')
+    const sealed = await test.owner.preserve({ operationId: GitOperationId('rename-seal'), resourceId: current.resourceId,
+      expectedRevision: current.revision, content: 'versioned' })
+    if (test.git(['config', '--bool', 'core.ignorecase']) === 'true') {
+      await expect(test.owner.previewApplication(test.direct(sealed))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
+        message: `Target files changed from the state this version starts from and are not overwritten: ${to}` })
+      expect(test.git(['ls-files', '--', from])).toBe(from)
+      expect(await test.read(from)).toBe('only copy\n')
+    } else {
+      expect((await test.apply('rename', test.direct(sealed))).operation.phase).toBe('confirmed')
+      expect(await test.read(to)).toBe('only copy\n')
+    }
+  })
+
+it('refuses to write a known file through a directory the user renamed only in case', async () => {
+  const test = await fixture()
+  const { mkdir, rename } = await import('node:fs/promises')
+  await mkdir(join(test.project, 'docs'))
+  await writeFile(join(test.project, 'docs', 'file.txt'), 'BASE\n')
+  test.git(['add', '--', 'docs/file.txt']); test.git(['commit', '--quiet', '-m', 'docs'])
+  const work = await test.work('edit', await test.copy('edit', test.git(['rev-parse', 'HEAD'])), { 'docs/file.txt': 'TEAM\n' })
+  await rename(join(test.project, 'docs'), join(test.project, 'Docs'))
+  await expect(test.owner.previewApplication(test.direct(work))).rejects.toMatchObject({ code: 'APPLICATION_TARGET_CHANGED',
+    message: 'Target files changed from the state this version starts from and are not overwritten: docs/file.txt' })
+  expect(await test.read('Docs/file.txt')).toBe('BASE\n')
+})
+
+it('keeps file names holding a line break intact in the known state and in a reverse candidate', async () => {
+  const test = await fixture()
+  const odd = 'line\nbreak.txt', kept = 'also\nodd.txt'
+  const work = await test.work('first', await test.copy('first', test.base), { [odd]: 'odd\n', [kept]: 'kept\n' })
+  await writeFile(join(test.project, kept), 'kept\n')
+  const applied = await test.apply('first', test.direct(work))
+  expect(applied.operation.applicationEffect?.preview.alreadyCurrent).toEqual([kept])
+  // The next version composes the known state from the written odd name; the kept one shows as current again.
+  const next = await test.work('next', await test.copy('next', test.commitOf(work)), { [odd]: 'odd v2\n' })
+  const preview = await test.owner.previewApplication(test.direct(next))
+  expect(preview.target.touched.map(path => path.path)).toEqual([kept, odd])
+  expect(preview.alreadyCurrent).toEqual([kept])
+  expect(preview.patch).toContain('odd v2')
+  // Reversing the first application keeps the already-current odd name and removes the one it wrote.
+  const cut = await test.owner.previewInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id })
+  const inverse = await test.owner.prepareInverse({ consumerScope: scope, applicationOperationId: applied.operation.operationId,
+    targetWorkspaceId: test.workspace.id, operationId: GitOperationId('first-inverse'), originalRequestJson: '{}',
+    expectedPreviewFingerprint: cut.fingerprint })
+  const files = test.git(['ls-tree', '-r', '-z', '--name-only', inverse.operation.integrationEffect?.tree ?? '']).split('\0')
+  expect(files).toContain(kept)
+  expect(files).not.toContain(odd)
+})

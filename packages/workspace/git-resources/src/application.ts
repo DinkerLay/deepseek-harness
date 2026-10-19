@@ -1,6 +1,6 @@
 /** Explicit user-target cuts, plain Git application and pure interrupted-effect observations. */
 import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
@@ -265,10 +265,23 @@ async function patchBytes(git: ResourceGit, source: GitApplicationSource, target
   { env: { GIT_LITERAL_PATHSPECS: '1' } })).stdout
 }
 
-/** Whether the target directory, already read for this file, holds an entry with exactly its name, not one that only
- * matches it case-insensitively. */
-async function exactEntry(root: string, path: string): Promise<boolean> {
-  return (await readdir(join(root, dirname(path)))).includes(basename(path))
+/** Whether every directory and the file of a path, already read through it, exist under exactly these names in the target,
+ * not under names that only match them case-insensitively or after Unicode normalization. Listings are read once per call.
+ * @param root - target root.
+ * @returns a check of one relative path.
+ */
+function exactPaths(root: string): (path: string) => Promise<boolean> {
+  const listings = new Map<string, Promise<string[]>>()
+  return async (path) => {
+    const parts = path.split('/')
+    for (const [depth, name] of parts.entries()) {
+      const directory = parts.slice(0, depth).join('/')
+      const listing = listings.get(directory) ?? readdir(join(root, directory))
+      listings.set(directory, listing)
+      if (!(await listing).includes(name)) return false
+    }
+    return true
+  }
 }
 
 /** Changed target paths named in a refusal; the rest are counted. */
@@ -295,13 +308,14 @@ export async function inspectApplication(git: ResourceGit, target: GitRepository
   for (const path of paths) intended.push({ path, before: await immutableState(git, target, old.get(path), signal),
     after: await immutableState(git, target, next.get(path), signal) })
   const first = await targetCut(git, target, intended, signal, limits)
-  // A path is written from its known before state, or left alone when it already holds the after state under its exact
-  // name: on a case-insensitive target a differently cased file reads the same and must not pass as current.
-  const changed: string[] = []
+  // A path is written from its known before state, or left alone when it already holds the after state. A file read
+  // through a differently cased or normalized name on a case-insensitive target is neither: it would pass as current, or
+  // be written through the alias, while the path it was asked for does not exist.
+  const exact = exactPaths(target.root.path), changed: string[] = []
   for (const [index, entry] of intended.entries()) {
-    const actual = hash(first.touched[index]?.before)
-    if (actual === hash(entry.before) || actual === hash(entry.after)
-      && (entry.after.kind === 'absent' || await exactEntry(target.root.path, entry.path))) continue
+    const actual = first.touched[index]?.before
+    if ((actual?.kind !== 'file' || await exact(entry.path))
+      && (hash(actual) === hash(entry.before) || hash(actual) === hash(entry.after))) continue
     changed.push(entry.path)
   }
   if (changed.length > 0) {
@@ -444,8 +458,8 @@ export async function prepareInverse(git: ResourceGit, preview: GitInversePrevie
     if (kept.length > 0) {
       const index = { GIT_INDEX_FILE: join(scratch, 'restore-index') }, zero = '0'.repeat(restore.length)
       await write(['read-tree', restore], undefined, index)
-      await write(['update-index', '--index-info'], Buffer.from(kept.map(entry => entry.after.kind === 'file'
-        ? `${entry.after.mode} ${entry.after.objectId}\t${entry.path}\n` : `0 ${zero}\t${entry.path}\n`).join('')), index)
+      await write(['update-index', '-z', '--index-info'], Buffer.from(kept.map(entry => entry.after.kind === 'file'
+        ? `${entry.after.mode} ${entry.after.objectId}\t${entry.path}\0` : `0 ${zero}\t${entry.path}\0`).join('')), index)
       restore = gitObjectIdSchema.parse((await write(['write-tree'], undefined, index)).stdout.toString('utf8').trim())
     }
     const response = await git.run(['merge-tree', '--write-tree', '-z', '--messages', `--merge-base=${source.resultTree}`,

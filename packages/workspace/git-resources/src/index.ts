@@ -1130,8 +1130,8 @@ export class GitResources extends Service {
       const env = { GIT_INDEX_FILE: join(scratch, 'index') }, root = identity.root.path
       await this.runner().run(['read-tree', base], root, signal, { env })
       const zero = '0'.repeat(base.length)
-      const rows = [...files].map(([path, state]) => state.kind === 'file' ? `${state.mode} ${state.objectId}\t${path}` : `0 ${zero}\t${path}`)
-      await this.runner().run(['update-index', '--index-info'], root, signal, { env, input: Buffer.from(`${rows.join('\n')}\n`) })
+      const rows = [...files].map(([path, state]) => state.kind === 'file' ? `${state.mode} ${state.objectId}\t${path}\0` : `0 ${zero}\t${path}\0`)
+      await this.runner().run(['update-index', '-z', '--index-info'], root, signal, { env, input: Buffer.from(rows.join('')) })
       return gitObjectIdSchema.parse((await this.runner().text(['write-tree'], root, signal, env)).trim())
     } finally { await rm(scratch, { recursive: true, force: true }) }
   }
