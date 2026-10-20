@@ -247,15 +247,18 @@ export class TeamService extends Service {
       const member = state.mode?.kind === 'controlled'
         ? memberExecutionOwner(state, facts.childSessionId)?.member : undefined
       if (member === undefined) return undefined
-      const taskIds = await this.tasks.unsubmittedTaskIds(root, facts)
-      // The product explains a run that did not complete, such as its failure or who stopped it.
-      const explained = facts.stopReason === 'completed' ? undefined : await this.tasks.settlementDetail(root, facts)
-      const detail = [...taskIds === undefined || taskIds.length === 0 ? [] : [`Unsubmitted Tasks: ${taskIds.join(', ')}.`],
-        ...explained === undefined || explained === '' ? [] : [explained]].join(' ')
-      const notice = { action: 'send' as const, subject: `Teammate ${member.name}`, ...detail === '' ? {} : { detail } }
-      if (facts.stopReason !== 'completed' || member.phase !== 'provisioning'
-        && member.phase !== 'active' || taskIds !== undefined && taskIds.length > 0) return notice
-      return await this.tasks.assessSettlementNotice(root, facts) === 'suppress' ? 'suppress' : notice
+      // The bound product decides whether a run of a working member needs the Lead; a run of a member in any other phase
+      // always reaches it.
+      const decision = member.phase === 'provisioning' || member.phase === 'active'
+        ? await this.tasks.assessSettlementNotice(root, facts) : undefined
+      if (decision === 'suppress') return 'suppress'
+      // The product's explanation, such as why the run ended and what its unsubmitted work needs, replaces the native list.
+      const explained = await this.tasks.settlementDetail(root, facts)
+      const taskIds = decision === undefined && (explained === undefined || explained === '')
+        ? await this.tasks.unsubmittedTaskIds(root, facts) : undefined
+      const detail = explained !== undefined && explained !== '' ? explained
+        : taskIds === undefined || taskIds.length === 0 ? '' : `Unsubmitted Tasks: ${taskIds.join(', ')}.`
+      return { action: 'send', subject: `Teammate ${member.name}`, ...detail === '' ? {} : { detail } }
     }, (facts) => {
       const root = ctx.agents.get(facts.parentSessionId)
       if (root === undefined) return undefined

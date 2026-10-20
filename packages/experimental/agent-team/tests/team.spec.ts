@@ -544,7 +544,13 @@ describe('controlled member settlement notices', () => {
     },
   )
 
-  it('adds the product explanation of a run that did not complete, bounded and after the unsubmitted Tasks', async () => {
+  /** One settled run of a member execution with an empty log interval. */
+  const settledRun = (parentSessionId: SessionId, childSessionId: SessionId, runId: string,
+    stopReason: SubagentSettlementNoticeFacts['stopReason']): SubagentSettlementNoticeFacts => ({
+    runId: SubagentRunId(runId), parentSessionId, childSessionId, stopReason, startSeq: SessionLogOffset(0),
+    endSeq: SessionLogOffset(0), parentStartSeq: SessionLogOffset(0), events: [], firstInputOnly: false })
+
+  it('uses the product explanation of a run in place of the unsubmitted Tasks, bounded', async () => {
     const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
       requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
       permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } })
@@ -555,29 +561,62 @@ describe('controlled member settlement notices', () => {
     lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'active' } })
     const unavailable = async (): Promise<never> => { throw new Error('not used') }
     const explain = vi.fn((facts: SubagentSettlementNoticeFacts) => facts.runId === SubagentRunId('run-quiet') ? ''
-      : `The run failed: ${'失败'.repeat(700)}`)
+      : facts.stopReason === 'completed' ? 'task-7 v2 is not submitted.' : `The run failed: ${'失败'.repeat(700)}`)
     const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer', validateMemberGroup: () => undefined,
       unsubmittedTaskIds: () => [TeamTaskId('task-7')], settlementDetail: explain, create: unavailable, update: unavailable })
     const decide = Reflect.get(ctx.subagents, 'sendSettlementNotice') as (
       facts: SubagentSettlementNoticeFacts,
     ) => Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>
-    const facts = (runId: string, stopReason: SubagentSettlementNoticeFacts['stopReason']) => ({
-      runId: SubagentRunId(runId), parentSessionId: lead.id, childSessionId: childId, stopReason,
-      startSeq: SessionLogOffset(0), endSeq: SessionLogOffset(0), parentStartSeq: SessionLogOffset(0), events: [],
-      firstInputOnly: false })
+    const facts = (runId: string, stopReason: SubagentSettlementNoticeFacts['stopReason']) =>
+      settledRun(lead.id, childId, runId, stopReason)
     const failed = await decide.call(ctx.subagents, facts('run-failed', 'error'))
     const detail = typeof failed === 'object' ? failed.detail ?? '' : ''
-    expect(detail.startsWith('Unsubmitted Tasks: task-7. The run failed: 失败')).toBe(true)
+    expect(detail.startsWith('The run failed: 失败')).toBe(true)
     // The explanation is cut at 2048 UTF-8 bytes on a whole character.
-    const explained = detail.slice('Unsubmitted Tasks: task-7. '.length)
-    expect(Buffer.byteLength(explained, 'utf8')).toBeLessThanOrEqual(2048)
-    expect(Buffer.byteLength(explained, 'utf8')).toBeGreaterThan(2040)
-    expect(explained).not.toContain('\uFFFD')
+    expect(Buffer.byteLength(detail, 'utf8')).toBeLessThanOrEqual(2048)
+    expect(Buffer.byteLength(detail, 'utf8')).toBeGreaterThan(2040)
+    expect(detail).not.toContain('\uFFFD')
+    expect(await decide.call(ctx.subagents, facts('run-done', 'completed')))
+      .toMatchObject({ action: 'send', subject: 'Teammate worker-explained', detail: 'task-7 v2 is not submitted.' })
+    // Without an explanation or a decision, the notice lists the unsubmitted Tasks itself.
     expect(await decide.call(ctx.subagents, facts('run-quiet', 'aborted'))).toMatchObject({ detail: 'Unsubmitted Tasks: task-7.' })
-    // A completed run is never explained.
-    explain.mockClear()
-    await decide.call(ctx.subagents, facts('run-done', 'completed'))
-    expect(explain).not.toHaveBeenCalled()
+    writer.dispose()
+  })
+
+  it('lets the product decide every run end of a working member and adds no list of its own', async () => {
+    const { ctx, lead } = await setup([], { controlledMode: { kind: 'controlled',
+      requiredTaskExtensionId: 'test-managed-writer', permissionTableId: 'test-policy',
+      permissionRevision: 'revision-1', maxOrdinaryMessageBytes: 4096 } })
+    const childId = SessionId('settled-decided')
+    const member = { id: childId, name: 'worker-decided', description: 'Worker',
+      provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member })
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'active' } })
+    const unavailable = async (): Promise<never> => { throw new Error('not used') }
+    const assess = vi.fn((facts: SubagentSettlementNoticeFacts) => facts.runId === SubagentRunId('run-reminded') ? 'suppress' as const
+      : 'send' as const)
+    const listed = vi.fn(() => [TeamTaskId('task-7')])
+    const writer = ctx.agentTeams.installTaskExtension({ id: 'test-managed-writer', validateMemberGroup: () => undefined,
+      assessSettlementNotice: assess, unsubmittedTaskIds: listed, settlementDetail: () => undefined,
+      create: unavailable, update: unavailable })
+    const decide = Reflect.get(ctx.subagents, 'sendSettlementNotice') as (
+      facts: SubagentSettlementNoticeFacts,
+    ) => Promise<'send' | 'suppress' | SubagentSettlementNoticeWording>
+    const facts = (runId: string, stopReason: SubagentSettlementNoticeFacts['stopReason']) =>
+      settledRun(lead.id, childId, runId, stopReason)
+    // A completed run with unsubmitted work that the product handled itself, such as by a reminder, stays quiet.
+    expect(await decide.call(ctx.subagents, facts('run-reminded', 'completed'))).toBe('suppress')
+    // A decided notice carries only the product's explanation, here none.
+    const sent = await decide.call(ctx.subagents, facts('run-failed', 'error'))
+    expect(sent).toEqual({ action: 'send', subject: 'Teammate worker-decided' })
+    expect(assess.mock.calls.map(([item]) => item.runId)).toEqual([SubagentRunId('run-reminded'), SubagentRunId('run-failed')])
+    expect(listed).not.toHaveBeenCalled()
+    // A member that is no longer working always reaches the Lead, without asking the product.
+    lead.session.append('team/member/configured', { version: 3, teamId: TeamId(lead.id), member: { ...member, phase: 'retiring' } })
+    assess.mockClear()
+    expect(await decide.call(ctx.subagents, facts('run-reminded', 'completed')))
+      .toMatchObject({ action: 'send', subject: 'Teammate worker-decided', detail: 'Unsubmitted Tasks: task-7.' })
+    expect(assess).not.toHaveBeenCalled()
     writer.dispose()
   })
 })

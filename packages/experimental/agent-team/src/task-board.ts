@@ -279,7 +279,7 @@ export class TeamTaskBoard {
   }
 
   /**
-   * Let only the bound product writer account for a controlled member's completed run.
+   * Let only the bound product writer decide whether a controlled member's run needs a Lead notice.
    * @param root - exact live Lead whose pinned mode selects the Task writer.
    * @param facts - flushed child-log interval for this one Activation.
    * @returns an explicit notice decision, or undefined when the native notice must remain.
@@ -307,7 +307,7 @@ export class TeamTaskBoard {
   }
 
   /**
-   * Read the bound product writer's explanation of one member run that did not complete.
+   * Read the bound product writer's explanation of one member run whose notice reaches the Lead.
    * @param root - exact live Lead with the pinned Task extension.
    * @param facts - one member Activation's durable identity and log interval.
    * @returns the explanation within 2048 UTF-8 bytes, or undefined without an answering product writer.

@@ -95,23 +95,26 @@ export interface TeamTaskExtension {
    */
   validateMemberGroup?(caller: Agent, group: string | undefined): void
   /**
-   * Read product work and durable Lead notices after one controlled member Activation.
+   * Decide whether one Activation of a provisioning or active controlled member needs a Lead notice, whatever its stop
+   * reason. Runs of members in other roster phases always notify the Lead without asking.
    * Absence or an undecidable result preserves the native settlement notice.
    * @param facts - durable child-log interval captured before the child Agent was released.
-   * @returns whether this product's work is covered or still needs a Lead reminder.
+   * @returns `suppress` when nothing in the run needs the Lead, `send` when something does.
    */
   assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): 'send' | 'suppress' | undefined
     | Promise<'send' | 'suppress' | undefined>
   /**
-   * Read this member's processed but unsubmitted Task assignments after its Session log is flushed.
+   * Read this member's processed but unsubmitted Task assignments after its Session log is flushed. The native notice
+   * lists them only when the extension neither decided the notice nor explained the run.
    * @param facts - settled child identity and log interval.
    * @returns Task ids, or an empty list when no processed work remains.
    */
   unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>
   /**
-   * Explain why one controlled member Activation ended without completing, such as its failure or who stopped it, and
-   * what the Lead can do next. The native notice adds this text after any unsubmitted Task ids.
-   * @param facts - settled child identity and log interval of a run whose stop reason is not completed.
+   * Explain one controlled member Activation whose notice reaches the Lead, such as why it ended, what its unsubmitted
+   * work needs and what the Lead can do next. The native notice uses this text in place of its own list of unsubmitted
+   * Task ids.
+   * @param facts - settled child identity and log interval.
    * @returns at most 2048 UTF-8 bytes of model-facing text, or undefined to add nothing.
    */
   settlementDetail?(facts: SubagentSettlementNoticeFacts): string | undefined | Promise<string | undefined>
