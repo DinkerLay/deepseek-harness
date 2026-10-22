@@ -88,7 +88,7 @@ const REVIEWED_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', '
 const CONTROLLED_MEMBER_TASK_ACTIONS = ['release'] as const
 
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
-const PRODUCT_NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running, provisioning or about to start, and no runtime work is under way, so wait_agent cannot make progress or wake inactive teammates. Decide from the report; send_message to wake each required inactive teammate before waiting again.'
+const PRODUCT_NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running, provisioning or about to start, and no runtime work is under way, so wait_agent cannot make progress or wake inactive teammates. Act on the report: settle what needs you and leave what waits on the user to the user; an inactive teammate\'s work goes on through its Task, not through a message.'
 
 /**
  * One model-facing roster row. The Lead pseudo-row omits the

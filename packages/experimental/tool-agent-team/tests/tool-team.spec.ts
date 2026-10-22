@@ -223,6 +223,9 @@ describe('dsh-tool-team', () => {
     const progress = JSON.parse(text(noProgress)) as { readonly noProgress: { readonly reason: string; readonly message: string } }
     expect(progress.noProgress.reason).toBe('no-active-peer')
     expect(progress.noProgress.message).not.toContain('team_task_list')
+    // The product's report says what to do; work goes on through its Task, not by messaging an idle teammate.
+    expect(progress.noProgress.message).toContain('Act on the report')
+    expect(progress.noProgress.message).not.toContain('send_message')
     const memberId = SessionId('product-member')
     const member = { id: memberId, name: 'worker', description: 'Worker', group: 'collectors',
       provider: 'spawn', context: 'fresh' as const, phase: 'provisioning' as const }
