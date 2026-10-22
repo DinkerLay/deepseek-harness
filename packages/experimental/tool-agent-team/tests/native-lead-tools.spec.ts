@@ -8,7 +8,7 @@ import { facadeControlledMode, nativeFacadeHarness } from '../../agent-team/test
 import * as toolTeam from '../src/index.ts'
 
 const collaborationTools = new Set(['spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent',
-  'retire_teammate', 'team_message_cancel', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update'])
+  'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update'])
 
 function names(ctx: Context, agent: Agent): string[] {
   return ctx.tools.schemas(scopeOf(agent.ctx)).map(schema => schema.name).sort()

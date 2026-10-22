@@ -10,7 +10,7 @@
 
 `TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 最初的 Session id 始终是持久成员身份，而 `name` 是不可变的模型／UI 标签。`TeamMemberExecution` 将此地址与当前执行 id、连续代次分开，不改写历史作者。
 
-可选的 `TeamMemberExecutionProvider` 提供不唤醒的锚点恢复和有界参考资料。其 `TeamMemberExecutionHandle` 限制单个成员的工作准入、保存拥有者的进度，并确认尚未使用的候选执行。原生提交和解除限制先通过接续服务占住旧执行，再进行串行状态核对；只读阻塞查询回调不得递归占用同一执行。注册拥有者也能在成员尚未存在时记录组队意图。这些记录均使用原生 Team 日志；显式槽位转移只更新当前 Profile 关联，不改写最初应用目标。接续资料的来源标记不授予权限。
+可选的 `TeamMemberExecutionProvider` 提供不唤醒的锚点恢复和有界参考资料，还可以在消息写入前拒收发给某成员的新 Team 消息。其 `TeamMemberExecutionHandle` 限制单个成员的工作准入、保存拥有者的进度，并确认尚未使用的候选执行。原生提交和解除限制先通过接续服务占住旧执行，再进行串行状态核对；只读阻塞查询回调不得递归占用同一执行。注册拥有者也能在成员尚未存在时记录组队意图。这些记录均使用原生 Team 日志；显式槽位转移只更新当前 Profile 关联，不改写最初应用目标。接续资料的来源标记不授予权限。
 
 休眠来源使用独占的存储输入保管，不挂载 Preset。`TeamMemberBlockerReader` 接收实际执行 id，并在这条路径上接收独立存储快照。不能用没有活着的 Agent 推断工作已经结清。已登记来源丢失、外部效果未确定或写盘确认失败均阻止解除准入；正常接续恢复仍保留 Preset 校验。
 
@@ -180,6 +180,13 @@ interface TeamMemberExecutionProvider {
    * @returns bounded references owned by the caller's durable records.
    */
   initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>
+  /** Refuse a new Team message to one member before it is queued, such as while the member is leaving the Team.
+   * Called synchronously under the Team transaction lock that would queue the message; it must not write.
+   * @param anchor - stable native Team journal owner.
+   * @param memberId - the message's target member.
+   * @returns why the member takes no new message, or undefined to queue it.
+   */
+  refuseMessage?(anchor: Agent, memberId: SessionId): string | undefined
 }
 ```
 

@@ -115,6 +115,7 @@ export class TeamMailbox {
       signal: AbortSignal, directory?: TeamExecutionDirectory) => Promise<void>,
     private readonly resolveMemberDirectory: (anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal) =>
     Promise<TeamExecutionDirectory | undefined>,
+    private readonly messageRefusal: (anchor: Agent, memberId: SessionId) => string | undefined,
     private readonly maxStartedMembers?: number,
   ) {
     this.leadMail = new TeamLeadMail(ctx, journal, lifecycle, {
@@ -305,6 +306,8 @@ export class TeamMailbox {
       if (target.id === caller.id || membership.role === 'lead' && target.id === root.id) {
         throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
       }
+      const refusal = target.id === root.id ? undefined : this.messageRefusal(root, target.id)
+      if (refusal !== undefined) throw new TeamError(`teammate "${target.name}" takes no new messages: ${refusal}`, 'TEAM_MESSAGE_REFUSED')
       const pendingForTarget = state.messages.filter(candidate =>
         candidate.targetId === target.id && !state.delivered.includes(candidate.id)
         && !state.cancelled.some(item => item.messageId === candidate.id)).length

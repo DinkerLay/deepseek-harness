@@ -10,7 +10,7 @@ The optional stable Lead seat keeps `TeamLeadBinding` with an execution id, cont
 
 `TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's original Session id remains its persistent member identity, while `name` is an immutable model/UI label. `TeamMemberExecution` separates that address from the current execution id and contiguous generation without rewriting old authors.
 
-An optional `TeamMemberExecutionProvider` supplies non-waking anchor restoration and bounded reference material. Its `TeamMemberExecutionHandle` holds one member's admission, stores owner-scoped progress and confirms an unused prepared execution. Native commitment and release occupy the old execution through the continuation service before their serialized state checks; read-only blocker callbacks must not recursively acquire that execution. A registered owner can also record a roster intent before any member exists. These records use the native Team journal; explicit slot-transfer effects update current Profile associations without rewriting the original application target. Source metadata on continuation references grants no authorization.
+An optional `TeamMemberExecutionProvider` supplies non-waking anchor restoration and bounded reference material, and may refuse a new Team message to a member before it is queued. Its `TeamMemberExecutionHandle` holds one member's admission, stores owner-scoped progress and confirms an unused prepared execution. Native commitment and release occupy the old execution through the continuation service before their serialized state checks; read-only blocker callbacks must not recursively acquire that execution. A registered owner can also record a roster intent before any member exists. These records use the native Team journal; explicit slot-transfer effects update current Profile associations without rewriting the original application target. Source metadata on continuation references grants no authorization.
 
 Dormant sources use exclusive stored-input custody without mounting a Preset. `TeamMemberBlockerReader` receives the actual execution id and, on that path, a detached stored snapshot. It must not treat a missing live Agent as proof that no work remains. Lost cataloged sources, unresolved effects and failed durability checks prevent admission release; ordinary continuation restoration retains its Preset checks.
 
@@ -180,6 +180,13 @@ interface TeamMemberExecutionProvider {
    * @returns bounded references owned by the caller's durable records.
    */
   initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>
+  /** Refuse a new Team message to one member before it is queued, such as while the member is leaving the Team.
+   * Called synchronously under the Team transaction lock that would queue the message; it must not write.
+   * @param anchor - stable native Team journal owner.
+   * @param memberId - the message's target member.
+   * @returns why the member takes no new message, or undefined to queue it.
+   */
+  refuseMessage?(anchor: Agent, memberId: SessionId): string | undefined
 }
 ```
 

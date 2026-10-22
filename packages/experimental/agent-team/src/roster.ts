@@ -663,7 +663,7 @@ export class TeamRoster {
 
   /**
    * Record a definitively unusable registered member and notify the Lead.
-   * Pending mail remains queued for explicit Lead cancellation.
+   * Pending mail stays queued until the member is rebuilt or retired.
    * @param root - exact owning Lead.
    * @param memberId - registered child identity.
    * @param reason - actionable creation or composition failure.
@@ -678,7 +678,7 @@ export class TeamRoster {
       if (this.journal.state(root).messages.some(message => message.id === messageId)) return
       await this.journal.appendAndFlush(root, 'team/message/queued', { version: 2, teamId: TeamId(root.id),
         message: { id: messageId, senderId: root.id, senderName: 'lead', targetId: root.id,
-          content: [{ type: 'text', text: `Teammate ${member.name} could not start: ${reason}. Cancel its pending mail and release or reassign its Tasks before retiring or rebuilding it.` }] } })
+          content: [{ type: 'text', text: `Teammate ${member.name} could not start: ${reason}. Rebuild it to try again, or retire it.` }] } })
     })
   }
 

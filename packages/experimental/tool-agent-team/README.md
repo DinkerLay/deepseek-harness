@@ -1,5 +1,5 @@
 ---
-description: "Eleven tools that let the model create, message, retire, and coordinate teammates, for compositions mounting the experimental Team plugins."
+description: "Nine tools that let the model create, message, and coordinate teammates, for compositions mounting the experimental Team plugins."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets the model create teammates, message them, wait, interrupt work, retire members, and coordinate through a shared task board. The default policy exposes the same eleven tools to every member and creates teammates only on explicit request. A durable controlled Team mode selects role-scoped tools and guidance; the current `controlledTasks` setting only withholds tools from unmarked Teams in a controlled product composition. The independent `autonomousDelegation` switch changes only the Lead's recruitment guidance. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions.
+This package lets the model create teammates, message them, wait, interrupt work, and coordinate through a shared task board. The default policy exposes the same nine tools to every member and creates teammates only on explicit request. A durable controlled Team mode selects role-scoped tools and guidance; the current `controlledTasks` setting only withholds tools from unmarked Teams in a controlled product composition. The independent `autonomousDelegation` switch changes only the Lead's recruitment guidance. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ This package lets the model create teammates, message them, wait, interrupt work
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. By default every member gets the same eleven tools and coordination policy. In controlled mode the Lead receives a wider collaboration tool set than teammates; `spawn_teammate` only registers the member, whose first real mailbox input starts its execution.
+Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. By default every member gets the same nine tools and coordination policy. In controlled mode the Lead receives a wider collaboration tool set than teammates; `spawn_teammate` only registers the member, whose first real mailbox input starts its execution.
 
 ### When to choose it
 
@@ -60,11 +60,10 @@ Try it by asking the Lead model: "create a teammate named reviewer to check the 
 
 ### What the model can do
 
-The eleven tools group into five capabilities:
+The nine tools group into four capabilities:
 
 - **Create a teammate** — in official mode `spawn_teammate` takes a name, description, initial task, and optional `preset_id`; in controlled mode it takes a name, optional group and Preset but no caller-authored description or first task. Only the Lead can call it.
 - **Send messages** — `send_message` steers a running member at its nearest step boundary, starts or resumes an inactive member.
-- **Retire a teammate** — `team_message_cancel` settles undelivered mail, then `retire_teammate` removes a member from Team admission while preserving its history; only the Lead can call them.
 - **See and wait** — `list_agents` returns each member’s `target`, availability, and optional applied Profile slot id; in a controlled Team it lists only members in post and failed ones still to settle, with each teammate's started flag and quota use, and counts retired teammates; `wait_agent` waits for the next team change; both are read-only and declare themselves safe to run beside other read-only calls, so a stop that interrupts them leaves no external effect to confirm; `interrupt_agent` stops a teammate's current turn (Lead only).
 - **Manage the task board** — `team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update` add, browse, read, and update shared tasks.
 
@@ -104,12 +103,12 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: config, the selected policy text, and the eleven scoped tool registrations |
+| [`src/index.ts`](src/index.ts) | Plugin entry: config, the selected policy text, and the nine scoped tool registrations |
 | — | No runtime invariant companion is published; the Team service owns durable and authorization relations. |
 
 ### Policy and tools
 
-One `team:policy` section on the member scope states the shared coordination rules; its Task workflow wording and the `team_task_update` action enum follow `reviewedTasks`. The eleven tool registrations are declared in [`src/index.ts`](src/index.ts). Tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
+One `team:policy` section on the member scope states the shared coordination rules; its Task workflow wording and the `team_task_update` action enum follow `reviewedTasks`. The nine tool registrations are declared in [`src/index.ts`](src/index.ts). Tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
 
 ### Scoped registration and teardown
 
@@ -140,7 +139,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. The independent autonomy switch replaces only its recruitment guidance. In that mode all eleven Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and collaboration tool lists. Its `spawn_teammate` accepts neither a model-authored responsibility nor an initial task. Registration makes no model request; the first mailbox input carries the member name, group, Lead-only coordination rule and instruction to work only on an assigned running Task. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task. Controlled autonomous recruitment guidance separates the choice of executor from Task tracking: doing simple work as Lead does not waive the product's Task policy. The product owns which requests require a deliverable record; this package does not classify user intent or block ordinary tools.
+The default system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. The independent autonomy switch replaces only its recruitment guidance. In that mode all nine Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. Controlled mode instead uses distinct Lead and teammate policies and collaboration tool lists. Its `spawn_teammate` accepts neither a model-authored responsibility nor an initial task. Registration makes no model request; the first mailbox input carries the member name, group, Lead-only coordination rule and instruction to work only on an assigned running Task. The default mode still prefixes its initial user message with the ordinary identity reminder followed by the task. Controlled autonomous recruitment guidance separates the choice of executor from Task tracking: doing simple work as Lead does not waive the product's Task policy. The product owns which requests require a deliverable record; this package does not classify user intent or block ordinary tools.
 
 #### Token effect
 

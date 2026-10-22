@@ -21,7 +21,7 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import TeamService, { TeamId, TeamMessageId, TeamTaskId } from '../../agent-team/src/index.ts'
+import TeamService, { TeamId, TeamTaskId } from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
 function serializeRequest(request: GenerateOptions) {
@@ -36,8 +36,6 @@ const TOOL_NAMES = [
   'list_agents',
   'wait_agent',
   'interrupt_agent',
-  'retire_teammate',
-  'team_message_cancel',
   'team_task_create',
   'team_task_list',
   'team_task_get',
@@ -213,7 +211,7 @@ describe('dsh-tool-team', () => {
       { controlledTasks: true, reviewedTasks: true, productTaskTools: true }, [], { controlledMode: mode })
     const leadTools = ctx.tools.schemas(scopeOf(lead.ctx)).map(schema => schema.name)
     expect(leadTools).toEqual(expect.arrayContaining(['spawn_teammate', 'send_message', 'list_agents', 'wait_agent',
-      'interrupt_agent', 'retire_teammate', 'team_message_cancel']))
+      'interrupt_agent']))
     expect(leadTools.filter(tool => tool.startsWith('team_task_'))).toEqual([])
     const leadPrompt = renderPrompt(await assembly(ctx, lead))
     expect(leadPrompt).toContain('Agent Team is available by default')
@@ -456,30 +454,18 @@ describe('dsh-tool-team', () => {
     expect(interrupt).toHaveBeenCalledWith(lead, 'reviewer')
   })
 
-  it('retires a teammate through the native Team tool and keeps its history row', async () => {
+  it('lists a teammate the Team retired with its history row and refuses messages to it', async () => {
     const { ctx, lead } = await setup([textResponse('finished')])
     const spawned = await execute(ctx, lead, 'spawn_teammate', {
       name: 'reviewer', description: 'review changes', prompt: 'review',
     })
     const childId = spawnedChildId(ctx, lead, spawned)
     await waitNoAgent(ctx, childId)
-    const retired = await execute(ctx, lead, 'retire_teammate', { target: 'reviewer' })
-    expect(retired.isError).toBe(false)
-    expect(JSON.parse(text(retired))).toMatchObject({ target: 'reviewer', status: 'retired' })
+    // Retirement is a Team service capability; the product decides who may retire a teammate and how.
+    await ctx.agentTeams.retireTeammate(lead, 'reviewer')
     expect(JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))))
       .toContainEqual(expect.objectContaining({ target: 'reviewer', status: 'retired' }))
     expect((await execute(ctx, lead, 'send_message', { target: 'reviewer', message: 'late' })).isError).toBe(true)
-  })
-
-  it('passes Lead-authorized pending-mail cancellation to the native mailbox', async () => {
-    const { ctx, lead } = await setup([])
-    const cancel = vi.spyOn(ctx.agentTeams, 'cancelPendingMessages').mockResolvedValue([TeamMessageId('message-1')])
-    const result = await execute(ctx, lead, 'team_message_cancel', {
-      target: 'reviewer', reason: 'Preset declaration changed',
-    })
-    expect(result.isError).toBe(false)
-    expect(JSON.parse(text(result))).toEqual({ messageIds: ['message-1'] })
-    expect(cancel).toHaveBeenCalledWith(lead, 'reviewer', 'Preset declaration changed')
   })
 
   it('uses returned targets for messages, interruption, and task assignment', async () => {

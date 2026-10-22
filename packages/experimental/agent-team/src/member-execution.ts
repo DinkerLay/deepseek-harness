@@ -108,7 +108,8 @@ export function memberExecutionControl(state: TeamState, memberId: SessionId): T
   return state.memberControls?.find(control => control.memberId === memberId && control.held)
 }
 
-/** Fold one validated member hold while preserving unrelated members' admission.
+/** Fold one validated member hold while preserving unrelated members' admission. While a Profile applies, only the members it
+ * retires may be held, so their retirement can stop their work and hand it on first.
  * @param state - previous authoritative Team state.
  * @param control - decoded operation and expected native identities.
  * @returns detached current control rows after the transition.
@@ -125,7 +126,9 @@ export function applyMemberControl(state: TeamState, control: TeamMemberExecutio
       && previous.leadExecutionId === control.leadExecutionId && previous.leadTerm === control.leadTerm
       && previous.nextExecutionId === control.nextExecutionId) return controls
     const binding = currentMemberExecution(state, member)
-    if (previous !== undefined || member.phase !== 'active' && member.phase !== 'failed' || state.composition?.phase === 'applying'
+    const applying = state.composition?.phase === 'applying'
+      && state.composition.application?.retiringMemberIds.includes(member.id) !== true
+    if (previous !== undefined || member.phase !== 'active' && member.phase !== 'failed' || applying
       || binding.executionId !== control.executionId || binding.generation !== control.generation
       || control.leadExecutionId !== (state.lead?.executionId ?? brandString<SessionId>(state.id))
       || control.leadTerm !== (state.lead?.term ?? 1)) {

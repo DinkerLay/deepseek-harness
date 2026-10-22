@@ -231,6 +231,13 @@ describe('native member-local execution hold', () => {
   it('rejects applying Profile, stale execution/generation and stale Lead identity before holding', () => {
     const before = initial()
     expect(() => applyMemberControl({ ...before, composition: { phase: 'applying' } }, control)).toThrow(/current owner/)
+    // A Profile application holds only the members it retires.
+    const application = { id: 'application', profileId: 'profile', profileVersion: 1, targetJson: '{}', previousPhase: 'dynamic' as const,
+      changed: false }
+    expect(() => applyMemberControl({ ...before, composition: { phase: 'applying', application: { ...application,
+      retiringMemberIds: [SessionId('other-member')] } } }, control)).toThrow(/current owner/)
+    expect(applyMemberControl({ ...before, composition: { phase: 'applying', application: { ...application,
+      retiringMemberIds: [member.id] } } }, control)).toEqual([control])
     for (const changed of [{ ...control, executionId: SessionId('stale-execution') }, { ...control, generation: 2 },
       { ...control, leadExecutionId: SessionId('stale-lead') }, { ...control, leadTerm: 2 }]) {
       expect(() => applyMemberControl(before, changed)).toThrow(/current owner/)

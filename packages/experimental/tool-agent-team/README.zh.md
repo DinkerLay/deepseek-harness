@@ -1,5 +1,5 @@
 ---
-description: "十一个让模型创建、发消息、退队与协调 teammate 的工具，供挂载实验性 Team 插件的组合使用。"
+description: "九个让模型创建、发消息与协调 teammate 的工具，供挂载实验性 Team 插件的组合使用。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包让模型创建 teammate、发消息、等待、中断工作、让成员退队，并通过共享任务板协调。默认策略向每个成员提供相同的十一个工具，且仅在明确要求后创建成员。持久的受控 Team 模式决定按角色装配的工具与指引；当前的 `controlledTasks` 设置只让受控产品组合中的无模式记录 Team 不获得工具。独立的 `autonomousDelegation` 开关只改变 Lead 的招募指引。它会取代同名的旧版 subagent 控件，因此同时需要两者的组合必须禁用旧定义。
+本包让模型创建 teammate、发消息、等待、中断工作，并通过共享任务板协调。默认策略向每个成员提供相同的九个工具，且仅在明确要求后创建成员。持久的受控 Team 模式决定按角色装配的工具与指引；当前的 `controlledTasks` 设置只让受控产品组合中的无模式记录 Team 不获得工具。独立的 `autonomousDelegation` 开关只改变 Lead 的招募指引。它会取代同名的旧版 subagent 控件，因此同时需要两者的组合必须禁用旧定义。
 
 ## 目录
 
@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。默认情况下，每个成员获得相同的十一个工具与协作策略。受控模式中 Lead 拥有比 teammate 更多的协作工具；`spawn_teammate` 只登记成员，首次真实 mailbox 输入才启动其执行。
+当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。默认情况下，每个成员获得相同的九个工具与协作策略。受控模式中 Lead 拥有比 teammate 更多的协作工具；`spawn_teammate` 只登记成员，首次真实 mailbox 输入才启动其执行。
 
 ### 何时选择
 
@@ -60,11 +60,10 @@ kind: "package-reference"
 
 ### 模型能做什么
 
-十一个工具分为五类能力：
+九个工具分为四类能力：
 
 - **创建 teammate**——官方模式的 `spawn_teammate` 接收名字、描述、初始任务及可选的 Preset `preset_id`；受控模式接收名字、可选分组与 Preset，不接收调用方编写的职责或首个任务。只有 Lead 可以调用它。
 - **发送消息**——`send_message` 在最近的步骤边界对运行中的成员进行 steering（中途引导）、启动或恢复非活动成员。
-- **让 teammate 退队**——`team_message_cancel` 结算未投递消息，`retire_teammate` 保留历史并停止成员参与 Team；只有 Lead 可以调用。
 - **查看与等待**——`list_agents` 返回各成员的 `target`、可用状态和可选的已应用 Profile 槽位 id；受控 Team 中只列出在岗成员和尚待处理的失败成员，附每名 teammate 是否已启动及名额用量，已退队的只计数；`wait_agent` 等待下一次团队变化；这两项只读，声明可与其他只读调用并行，被停止打断时不留下需要核对的外部效果；`interrupt_agent` 停止 teammate 的当前轮次（仅限 Lead）。
 - **管理任务板**——`team_task_create`、`team_task_list`、`team_task_get` 与 `team_task_update` 添加、浏览、读取与更新共享任务。
 
@@ -104,12 +103,12 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口：配置、按模式选择的策略文本与十一个 scoped 工具注册 |
+| [`src/index.ts`](src/index.ts) | 插件入口：配置、按模式选择的策略文本与九个 scoped 工具注册 |
 | — | 不发布运行时不变式伴生入口；Team 服务拥有持久化与授权关系。 |
 
 ### 策略与工具
 
-member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。十一个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
+member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task 流程措辞与 `team_task_update` 操作枚举由 `reviewedTasks` 选择。九个工具注册都声明在 [`src/index.ts`](src/index.ts)。工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
 
 ### 按作用域注册与拆除
 
@@ -140,7 +139,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；Task
 
 #### 模型看到什么
 
-默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的十一个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与协作工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务。登记不请求模型，首次 mailbox 输入携带成员名字、分组、仅联系 Lead 的规则，以及只在获指派的进行中 Task 上工作的要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。 受控自主招募指引将执行人选择与 Task 追踪分开：简单工作由 Lead 自己做，不代表可以豁免产品的 Task 规则。哪些请求需要交付记录由产品决定；本包不分类用户意图，也不拦截普通工具。
+默认 system 策略说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。独立的自主开关只替换招募指引。在该模式下，Lead 与 teammate 的九个 Team schema 相同；执行时检查仅限 Lead 的操作权限。受控模式改用不同的 Lead、teammate 策略与协作工具目录；其 `spawn_teammate` 不接受模型编写的职责或初始任务。登记不请求模型，首次 mailbox 输入携带成员名字、分组、仅联系 Lead 的规则，以及只在获指派的进行中 Task 上工作的要求。默认模式仍在初始 user 消息前添加普通身份提醒和任务。 受控自主招募指引将执行人选择与 Task 追踪分开：简单工作由 Lead 自己做，不代表可以豁免产品的 Task 规则。哪些请求需要交付记录由产品决定；本包不分类用户意图，也不拦截普通工具。
 
 #### Token 影响
 

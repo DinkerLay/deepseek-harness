@@ -121,6 +121,13 @@ export interface TeamMemberExecutionProvider {
    * @returns bounded references owned by the caller's durable records.
    */
   initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>
+  /** Refuse a new Team message to one member before it is queued, such as while the member is leaving the Team.
+   * Called synchronously under the Team transaction lock that would queue the message; it must not write.
+   * @param anchor - stable native Team journal owner.
+   * @param memberId - the message's target member.
+   * @returns why the member takes no new message, or undefined to queue it.
+   */
+  refuseMessage?(anchor: Agent, memberId: SessionId): string | undefined
 }
 
 /** An owner-scoped capability; Team tools do not receive it. */
@@ -198,6 +205,7 @@ export class TeamMemberExecutions {
   private maintenanceLifetime: AbortSignal | undefined
   private directoryOwner: { readonly resolve: NonNullable<TeamMemberExecutionProvider['resolveExecutionDirectory']>
     readonly lifetime: AbortSignal } | undefined
+  private messageOwner: NonNullable<TeamMemberExecutionProvider['refuseMessage']> | undefined
   private readonly maintenanceJobs = new Set<Promise<unknown>>()
   private resumeConfirmed: (() => void) | undefined
 
@@ -231,6 +239,15 @@ export class TeamMemberExecutions {
 
   /** Drain scoped maintenance after native Team admission closes. */
   async settleMaintenance(): Promise<void> { await Promise.allSettled([...this.maintenanceJobs]) }
+
+  /** Read the installed owner's reason to refuse a new Team message to one member, under the Team lock that queues it.
+   * @param anchor - stable native journal owner.
+   * @param memberId - immutable teammate address.
+   * @returns the reason, or undefined when the message may be queued or no owner is installed.
+   */
+  messageRefusal(anchor: Agent, memberId: SessionId): string | undefined {
+    return this.messageOwner?.(anchor, memberId)
+  }
 
   /** Resolve owned directory facts without holding a Team or child lock.
    * @param anchor - stable native Team journal owner.
@@ -522,6 +539,7 @@ export class TeamMemberExecutions {
     this.maintenanceLifetime = lifetime.signal
     this.directoryOwner = provider.resolveExecutionDirectory === undefined ? undefined
       : { resolve: provider.resolveExecutionDirectory.bind(provider), lifetime: lifetime.signal }
+    this.messageOwner = provider.refuseMessage?.bind(provider)
     const lead = (caller: Agent): Agent => {
       lifetime.signal.throwIfAborted()
       const member = this.membership(caller)
@@ -1009,7 +1027,7 @@ export class TeamMemberExecutions {
         await Promise.allSettled([...this.maintenanceJobs])
         await input.dispose()
         // Registration remains exclusive until this memoized close finishes.
-        this.input = undefined; this.maintenanceLifetime = undefined; this.resumeConfirmed = undefined
+        this.input = undefined; this.maintenanceLifetime = undefined; this.resumeConfirmed = undefined; this.messageOwner = undefined
         // A closed directory contributor cannot turn never-created queued work into inherited-directory work.
         if (provider.resolveExecutionDirectory === undefined) {
           this.directoryOwner = undefined

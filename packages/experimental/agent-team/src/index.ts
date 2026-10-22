@@ -213,6 +213,7 @@ export class TeamService extends Service {
       (anchor, memberId, messageId, signal, directory) =>
         this.memberExecutions.restoreMailboxHeld(anchor, memberId, messageId, signal, directory),
       (anchor, binding, signal) => this.memberExecutions.resolveExecutionDirectory(anchor, binding, signal),
+      (anchor, memberId) => this.memberExecutions.messageRefusal(anchor, memberId),
       this.config.maxStartedMembers,
     )
     this.tasks = new TeamTaskBoard(

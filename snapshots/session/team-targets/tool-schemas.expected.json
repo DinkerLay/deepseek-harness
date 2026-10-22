@@ -292,22 +292,6 @@
       }
     },
     {
-      "name": "retire_teammate",
-      "description": "Remove a teammate from Team admission while retaining its Session history. Team Lead only; first resolve unfinished owned tasks and pending Team messages.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Teammate target returned by list_agents."
-          }
-        },
-        "required": [
-          "target"
-        ]
-      }
-    },
-    {
       "name": "send_message",
       "description": "Send one durable message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.",
       "parameters": {
@@ -383,27 +367,6 @@
           "name",
           "description",
           "prompt"
-        ]
-      }
-    },
-    {
-      "name": "team_message_cancel",
-      "description": "Cancel undelivered messages to one teammate before retirement. Team Lead only; delivered messages and Session history stay intact.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "Teammate target returned by list_agents."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Why the pending messages must not be delivered."
-          }
-        },
-        "required": [
-          "target",
-          "reason"
         ]
       }
     },
