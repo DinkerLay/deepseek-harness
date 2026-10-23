@@ -31,6 +31,7 @@ export async function mockServer(script: {
   events?: string[]
   body?: string
   delayMs?: number
+  namedEvents?: boolean
   headers?: Record<string, string>
 }[]): Promise<MockServer> {
   const paths: string[] = []
@@ -65,6 +66,10 @@ export async function mockServer(script: {
       const writeNext = (): void => {
         const event = behavior.events?.[index++]
         if (event === undefined) { response.end(); return }
+        if (behavior.namedEvents && event !== '[DONE]') {
+          const value = JSON.parse(event) as { type?: string }
+          if (value.type) response.write(`event: ${value.type}\n`)
+        }
         response.write(`data: ${event}\n\n`)
         if (behavior.delayMs === undefined) writeNext()
         else setTimeout(writeNext, behavior.delayMs)

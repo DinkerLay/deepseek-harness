@@ -1,0 +1,313 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`anthropic-messages host integration > dispatches both valid tools then completes the next model step 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/message",
+    "tool/call",
+    "tool/result",
+    "tool/call",
+    "tool/result",
+    "step/end",
+    "step/start",
+    "assistant/message",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [],
+  "messages": [
+    [
+      {
+        "arguments": "{"query":"one"}",
+        "id": "call-0",
+        "name": "search",
+        "type": "tool-call",
+      },
+      {
+        "arguments": "{"query":"two"}",
+        "id": "call-1",
+        "name": "search",
+        "type": "tool-call",
+      },
+    ],
+    [
+      {
+        "text": "done",
+        "type": "text",
+      },
+    ],
+  ],
+  "tools": [
+    {
+      "arguments": "{"query":"one"}",
+      "name": "search",
+    },
+    {
+      "arguments": "{"query":"two"}",
+      "name": "search",
+    },
+  ],
+}
+`;
+
+exports[`anthropic-messages host integration > never dispatches a valid sibling when bad call is first=false 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;
+
+exports[`anthropic-messages host integration > never dispatches a valid sibling when bad call is first=true 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;
+
+exports[`openai-completions host integration > dispatches both valid tools then completes the next model step 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/message",
+    "tool/call",
+    "tool/result",
+    "tool/call",
+    "tool/result",
+    "step/end",
+    "step/start",
+    "assistant/message",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [],
+  "messages": [
+    [
+      {
+        "arguments": "{"query":"one"}",
+        "id": "call-0",
+        "name": "search",
+        "type": "tool-call",
+      },
+      {
+        "arguments": "{"query":"two"}",
+        "id": "call-1",
+        "name": "search",
+        "type": "tool-call",
+      },
+    ],
+    [
+      {
+        "text": "hello",
+        "type": "text",
+      },
+    ],
+  ],
+  "tools": [
+    {
+      "arguments": "{"query":"one"}",
+      "name": "search",
+    },
+    {
+      "arguments": "{"query":"two"}",
+      "name": "search",
+    },
+  ],
+}
+`;
+
+exports[`openai-completions host integration > never dispatches a valid sibling when bad call is first=false 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;
+
+exports[`openai-completions host integration > never dispatches a valid sibling when bad call is first=true 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;
+
+exports[`openai-responses host integration > dispatches both valid tools then completes the next model step 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/message",
+    "tool/call",
+    "tool/result",
+    "tool/call",
+    "tool/result",
+    "step/end",
+    "step/start",
+    "assistant/message",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [],
+  "messages": [
+    [
+      {
+        "arguments": "{"query":"one"}",
+        "id": "call-0|fc-0",
+        "name": "search",
+        "type": "tool-call",
+      },
+      {
+        "arguments": "{"query":"two"}",
+        "id": "call-1|fc-1",
+        "name": "search",
+        "type": "tool-call",
+      },
+    ],
+    [
+      {
+        "text": "done",
+        "type": "text",
+      },
+    ],
+  ],
+  "tools": [
+    {
+      "arguments": "{"query":"one"}",
+      "name": "search",
+    },
+    {
+      "arguments": "{"query":"two"}",
+      "name": "search",
+    },
+  ],
+}
+`;
+
+exports[`openai-responses host integration > never dispatches a valid sibling when bad call is first=false 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;
+
+exports[`openai-responses host integration > never dispatches a valid sibling when bad call is first=true 1`] = `
+{
+  "events": [
+    "agent/inbox/spliced",
+    "turn/start",
+    "agent/inbox/spliced",
+    "step/start",
+    "system/message",
+    "user/message",
+    "request/header",
+    "request/context",
+    "assistant/attempt",
+    "step/end",
+    "turn/end",
+  ],
+  "failures": [
+    "MALFORMED_RESPONSE",
+  ],
+  "messages": [],
+  "tools": [],
+}
+`;

@@ -61,6 +61,10 @@ import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
+import { createTransportCall } from './transport.ts'
+import type { PiAiTransport } from './transport.ts'
+import { validateToolCalls } from './strict-tool-calls.ts'
+import type { PiAiToolCallValidation } from './strict-tool-calls.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -70,7 +74,7 @@ interface PiAiSnapshot {
   models: Models
 }
 
-/** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
+/** Constructor options for {@link PiAiAdapter}: profile resolution and host-owned services. */
 export interface PiAiAdapterOptions {
   /** Current validated profiles by provider route; called once per operation. */
   profiles: () => ReadonlyMap<string, ResolvedPiAiProviderProfile>
@@ -82,7 +86,11 @@ export interface PiAiAdapterOptions {
    * credential at all, because a named reference that misses throws `LlmError`
    * `MISSING_CREDENTIAL` rather than falling back.
    */
-  resolveApiKey: (provider: string, profile: ResolvedPiAiProviderProfile) => Promise<string | undefined>
+  resolveApiKey: (provider: string, profile: ResolvedPiAiProviderProfile, signal: AbortSignal) => Promise<string | undefined>
+  /** Optional host-owned HTTP/SSE transport; WebSocket requests are refused. */
+  transport?: PiAiTransport
+  /** Require terminal raw function-call evidence from the pinned SDK extension. */
+  toolCallValidation?: PiAiToolCallValidation
   /**
    * How every collection this adapter builds resolves auth the request-level
    * `apiKey` override does not cover. Required rather than optional: a
@@ -239,6 +247,10 @@ export class PiAiAdapter extends LlmAdapter {
 
   constructor(private readonly config: PiAiAdapterOptions) {
     super()
+    const budget = config.toolCallValidation?.maxArgumentBytes
+    if (budget !== undefined && (!Number.isSafeInteger(budget) || budget <= 0)) {
+      throw new LlmError('maxArgumentBytes must be a positive safe integer', 'INVALID_CONFIG')
+    }
   }
 
   /**
@@ -346,6 +358,20 @@ export class PiAiAdapter extends LlmAdapter {
     return this.streamWithSnapshot(options, this.current())
   }
 
+  private async credential(provider: string, profile: ResolvedPiAiProviderProfile, signal: AbortSignal): Promise<string | undefined> {
+    signal.throwIfAborted()
+    let onAbort: () => void = () => {}
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      onAbort = () => { reject(new LlmError('Credential resolution cancelled', 'ABORTED')) }
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([this.config.resolveApiKey(provider, profile, signal), cancelled])
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
   private async * streamWithSnapshot(
     options: GenerateOptions,
     snapshot: PiAiSnapshot,
@@ -368,7 +394,6 @@ export class PiAiAdapter extends LlmAdapter {
       model,
       options.reasoningEffort ?? profile.reasoning,
     )
-    const apiKey = await this.config.resolveApiKey(options.provider, profile)
 
     const consumer = new AbortController()
     const upstream = options.signal === undefined
@@ -378,6 +403,15 @@ export class PiAiAdapter extends LlmAdapter {
     using watchdog = idleWatchdog(upstream, streamIdleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
 
     try {
+      if (this.config.transport !== undefined && profile.transport !== undefined && profile.transport !== 'sse') {
+        throw new LlmError('Host transport requires HTTP/SSE', 'UNSUPPORTED_OPTION')
+      }
+      if (options.signal?.aborted) {
+        yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'Model request cancelled' } } }
+        return
+      }
+      const apiKey = await this.credential(options.provider, profile, watchdog.signal)
+      const transport = this.config.transport === undefined ? undefined : createTransportCall(this.config.transport, watchdog.signal)
       const containsImage = options.messages.some(message => contentHasImage(message.content))
       if (containsImage && !model.input.includes('image')) {
         throw new LlmError(`pi-ai model "${model.id}" does not support image input`, 'UNSUPPORTED_CONTENT')
@@ -402,6 +436,7 @@ export class PiAiAdapter extends LlmAdapter {
         }, onReplayDegrade)
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
+        ...transport === undefined ? {} : { fetch: transport.fetch, transport: 'sse' },
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
@@ -410,7 +445,8 @@ export class PiAiAdapter extends LlmAdapter {
         // Harness-owned and therefore win collisions.
         headers: requestHeaders(profile.headers),
       })
-      const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
+      const checked = this.config.toolCallValidation === undefined ? events : validateToolCalls(events, this.config.toolCallValidation)
+      const iterator = toStreamChunks(checked, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
       let exhausted = false
       try {
         while (true) {
@@ -421,7 +457,16 @@ export class PiAiAdapter extends LlmAdapter {
             exhausted = true
             return
           }
-          yield result.value
+          const chunk = result.value
+          if (transport !== undefined && chunk.type === 'finish'
+            && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+            const failure = options.signal?.aborted
+              ? { code: 'ABORTED', message: 'Model request cancelled' }
+              : transport.failure() ?? { code: chunk.reason.failure.code, message: 'Model stream failed' }
+            yield { ...chunk, reason: { kind: options.signal?.aborted ? 'aborted' : chunk.reason.kind, failure } }
+          } else {
+            yield chunk
+          }
         }
       } finally {
         if (!exhausted) {
