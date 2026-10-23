@@ -38,6 +38,7 @@ import type {
   ThinkingLevel,
 } from '@earendil-works/pi-ai'
 import {
+  assertUsableApiKey,
   attributionHeaders,
   contentHasImage,
   LlmAdapter,
@@ -84,7 +85,9 @@ export interface PiAiAdapterOptions {
    * pi-ai auth, which for an installed catalog route is its provider-native
    * ambient discovery; the plugin allows that only for a profile naming no
    * credential at all, because a named reference that misses throws `LlmError`
-   * `MISSING_CREDENTIAL` rather than falling back.
+   * `MISSING_CREDENTIAL` rather than falling back. Profiles from
+   * `createPiAiProfiles` always require a usable request key and never defer
+   * to ambient auth.
    */
   resolveApiKey: (provider: string, profile: ResolvedPiAiProviderProfile, signal: AbortSignal) => Promise<string | undefined>
   /** Optional host-owned HTTP/SSE transport; WebSocket requests are refused. */
@@ -410,7 +413,11 @@ export class PiAiAdapter extends LlmAdapter {
         yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'Model request cancelled' } } }
         return
       }
-      const apiKey = await this.credential(options.provider, profile, watchdog.signal)
+      let apiKey = await this.credential(options.provider, profile, watchdog.signal)
+      if (profile.requireApiKey) {
+        if (apiKey === undefined) throw new LlmError('Host profile requires a request API key', 'MISSING_CREDENTIAL')
+        apiKey = assertUsableApiKey(apiKey, 'llm-pi-ai', 'host credential resolver')
+      }
       const transport = this.config.transport === undefined ? undefined : createTransportCall(this.config.transport, watchdog.signal)
       const containsImage = options.messages.some(message => contentHasImage(message.content))
       if (containsImage && !model.input.includes('image')) {

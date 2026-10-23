@@ -161,11 +161,12 @@ function reuseCatalogProvider(base: Provider, spec: ProviderSpec): Provider {
 /**
  * Build the pi-ai provider for one resolved route.
  * @param spec - the resolved route facts.
+ * @param source - explicit hosts use only request-key auth, even for known route names.
  * @returns the provider to register in the adapter's `Models` collection.
  * @throws Error when the route names a wire protocol this build cannot serve.
  */
-export function buildProvider(spec: ProviderSpec): Provider {
-  const catalog = catalogProvider(spec.provider)
+export function buildProvider(spec: ProviderSpec, source: 'installed' | 'explicit' = 'installed'): Provider {
+  const catalog = source === 'installed' ? catalogProvider(spec.provider) : undefined
   // A catalog route keeping its catalog protocol reuses the catalog provider;
   // an explicit protocol means the deployment is repointing the route at a
   // different wire format, which only the protocol table can serve.

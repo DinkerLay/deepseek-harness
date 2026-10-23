@@ -112,6 +112,16 @@ profile 的 `models` 列表会替换而非扩展路由的已安装目录；每�
 
 插件会回答「该提供方可以提供哪些模型？」，供配置界面正在编辑或起草的路由使用。已安装目录提供的路由直接由目录回答，不发网络请求，并将其 `input` 数组保留为发现结果的 `inputModalities`；只有目录未描述的路由才会经网络询问。`openai-completions` 与 `openai-responses` 使用带 bearer 鉴权的 `GET {baseURL}/models`，`anthropic-messages` 则以 `x-api-key` 和 `anthropic-version` 使用原生 `GET /v1/models?limit=1000` 语义；其列表 URL 接受带或不带末尾 `/v1` 的 API 根地址，因为网关文档两种写法都会发布，且只有该列表 URL 会归一化这一段，模型请求收到的仍是配置原样的 `baseURL`。已配置且具名的路由会在 Host 内部提供已存凭据与 profile `headers`，因此通过 `cordis.patch.yml` 或 Cordis 配置设置的部署标头可以到达模型发现请求，但不会成为发现请求或 Models 页面的字段；表单中新键入的密钥仍优先于已存凭据。解析器接受标准 `data` 数组或富信息 `models` 对象，并归一化每个候选的 id、显示名、上下文窗口与最大输出 token 数；Anthropic 的 `max_input_tokens` 与 `max_tokens` 会进入相同容量字段，即使对象条目点名了另一个规范 id，对象键仍是请求 id，原始类型的对象属性会被忽略，缺失的显示名则回退到该请求 id。回答是界面可以提供给用户采纳的候选元数据——不存储任何内容，`cordis.patch.yml` 仍然是决定路由服务内容的唯一事实。
 
+### 使用独立适配器入口
+
+拥有模型准入与凭据的宿主可从 `@deepseek-ai/dsh-llm-pi-ai/adapter` 导入 `PiAiAdapter` 和 `createPiAiProfiles`。此入口不加载本包的插件、登录、发现或设置集成，与包根入口共享同一个适配器类。SDK 目录辅助函数仍是间接依赖；这不是不含目录的 bundle。
+
+`createPiAiProfiles` 要求每条路由显式提供协议、HTTP(S) 端点、非空模型列表与重试策略。每个模型声明 `contextWindow`、`maxTokens`、输入模态与 `reasoningEfforts`（无推理能力时使用 `false`）。normal 重试模式必须指定 `maxRetries`；宿主拥有重试时设为零。模型 `maxTokens` 同时提供请求默认输出上限。factory 复用既有校验与转换逻辑，但即使名称为 `openai` 等已知提供方，也不继承目录能力、兼容标志或认证方法。端点允许名单与提供方请求字段策略由宿主拥有。
+
+返回的 map 与输入配置分离。配置变化时发布新的 map，不要修改已解析的 profile。独立 profile 要求 `resolveApiKey` 返回可用 Key：缺失时抛出 `MISSING_CREDENTIAL`，空白或非法 Key 抛出 `INVALID_CREDENTIAL`，均在 SDK 认证或 HTTP 执行前失败。构造器仍要求显式 `auth` 端口；这些 profile 直接传入宿主 Key，绕过其存储与环境查询。不提供登录或环境变量回退。已有插件 profile 保留目录行为。
+
+包内构建将两个入口一起输出并共享 chunk。在完成 TypeScript 与 bundle 构建后，从包目录执行 `node tests/adapter-artifact.mjs`，验证产物公开入口与类身份一致性。
+
 ### 宿主传输与严格函数调用
 
 直接构造 `PiAiAdapter` 的宿主可以通过 `transport` 注入已授权的 `fetch` 与返回安全 `LlmFailure` 事实的 `classifyError`。每次流调用独立保存故障状态，fetch 拒绝及响应体读取错误均保留这些事实。未分类的 HTTP 故障保留状态码与有限数值秒数的 `Retry-After`，丢弃响应正文并使用固定消息。上下文超限与 quota 分类应由宿主 fetch 在返回响应前完成。凭据刷新与请求字段策略仍由宿主拥有，此桥不增加重试。显式非 SSE 传输在凭据解析前被拒绝。
