@@ -120,6 +120,8 @@ Hosts that own model admission and credentials can import `PiAiAdapter` and `cre
 
 The returned map is detached from input configuration. Publish a replacement map for a configuration change; do not mutate resolved profiles. A standalone profile requires a usable key from `resolveApiKey`: missing keys raise `MISSING_CREDENTIAL`, and blank or malformed keys raise `INVALID_CREDENTIAL`, before SDK auth or HTTP runs. The constructor still requires explicit `auth` ports; these profiles bypass their store and ambient lookups by passing the host key directly. No login or environment fallback is provided. Existing plugin profiles keep their catalog behavior.
 
+`resolveAttachments` accepts a `PiAiImageReader` with only `readImageRequest`; a full AttachmentStore also satisfies it. The adapter passes the same reader to `resolveImageAccess`. Hosts own access checks, cancellation-aware image projection and reader lifetime. Constructor inference accepts a minimal reader; explicitly typed options use `PiAiAdapterOptions<PiAiImageReader>`.
+
 The package-local build emits both entries together with shared chunks. Run `node tests/adapter-artifact.mjs` from the package after its TypeScript and bundle builds to verify the built public imports and shared class identity.
 
 ### Host-owned transport and strict function calls

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PiAiAdapter, createPiAiProfiles } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
-import type { PiAiExplicitProfile } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
+import type { PiAiExplicitProfile, PiAiImageReader, PiAiAdapterOptions } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
 import { PiAiAdapter as PluginAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
+import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { memoryAuth } from './auth-double.ts'
@@ -68,6 +69,30 @@ describe('public host adapter entry', () => {
     expect(read).not.toHaveBeenCalled()
     expect(env).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
+  })
+  it.each(protocols)('accepts a request-only image reader for %s', async (api) => {
+    const server = await mockServer([{ namedEvents: true, events: protocolTextEvents(api) }])
+    const profiles = createPiAiProfiles({ openai: { ...profile(), api, baseURL: server.url,
+      models: [{ ...profile().models[0]!, input: ['text', 'image'] }],
+    } })
+    const ref = { attachmentId: AttachmentId('fixture-image'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
+    const readImageRequest = vi.fn<PiAiImageReader['readImageRequest']>(async attachment => ({
+      variantId: ImageVariantId('fixture-variant'), attachment, data: Uint8Array.of(1, 2, 3),
+      mediaType: 'image/png', bytes: 3, width: 1, height: 1, depth: 'uchar', space: 'srgb', hasAlpha: false,
+    }))
+    const reader = { readImageRequest }
+    const resolveImageAccess = vi.fn<NonNullable<PiAiAdapterOptions<PiAiImageReader>['resolveImageAccess']>>(() => undefined)
+    const adapter = new PiAiAdapter({ profiles: () => profiles, auth: memoryAuth(), resolveApiKey: async () => 'host-key',
+      resolveAttachments: () => reader, resolveImageAccess,
+    })
+    const chunks: StreamChunk[] = []
+    for await (const chunk of adapter.stream({ ...request,
+      messages: [createUserMessage({ content: [{ type: 'image', attachment: ref }], source: { kind: 'user' } })],
+    })) chunks.push(chunk)
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(readImageRequest).toHaveBeenCalledExactlyOnceWith(ref, expect.objectContaining({ width: 1, height: 1 }), expect.any(AbortSignal))
+    expect(resolveImageAccess).toHaveBeenCalledWith(reader, ref)
+    expect(JSON.stringify(server.requests)).toContain('AQID')
   })
   it.each(protocols)('streams %s using only host key and explicit route', async (api) => {
     const server = await mockServer([{ namedEvents: true, events: protocolTextEvents(api) }])

@@ -10,6 +10,7 @@ import { resolveProfiles } from './config.ts'
 import type { PiAiProviderProfile, ResolvedPiAiProviderProfile } from './config.ts'
 
 export { PiAiAdapter } from './adapter.ts'
+export type { PiAiImageReader } from './context.ts'
 export type { PiAiAdapterOptions, PiAiAuthInjection } from './adapter.ts'
 export type { PiAiTransport } from './transport.ts'
 export type { PiAiToolCallValidation } from './strict-tool-calls.ts'

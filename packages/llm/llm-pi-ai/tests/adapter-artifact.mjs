@@ -45,7 +45,7 @@ const temporary = mkdtempSync(fileURLToPath(new URL('../.adapter-types-', import
 try {
   writeFileSync(join(temporary, 'consumer.ts'), `
 import { PiAiAdapter, createPiAiProfiles } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
-import type { PiAiAuthInjection, PiAiTransport } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
+import type { PiAiAuthInjection, PiAiTransport, PiAiImageReader, PiAiAdapterOptions } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
 import type { LlmAdapter } from '@deepseek-ai/dsh-llm'
 declare const auth: PiAiAuthInjection
 declare const transport: PiAiTransport
@@ -56,6 +56,17 @@ const profiles = createPiAiProfiles({ host: {
 } })
 const adapter: LlmAdapter = new PiAiAdapter({ profiles: () => profiles, auth, transport, resolveApiKey: async () => 'synthetic' })
 void adapter
+declare const reader: PiAiImageReader
+const minimalOptions: PiAiAdapterOptions<PiAiImageReader> = { profiles: () => profiles, auth,
+  resolveApiKey: async () => 'synthetic', resolveAttachments: () => reader,
+  resolveImageAccess(images) { const read: PiAiImageReader = images; void read; return undefined },
+}
+const minimal: LlmAdapter = new PiAiAdapter(minimalOptions)
+declare const fullOptions: PiAiAdapterOptions
+const full: PiAiAdapter = new PiAiAdapter(fullOptions)
+void minimal; void full
+// @ts-expect-error Image readers must provide request projection.
+new PiAiAdapter({ ...minimalOptions, resolveAttachments: () => ({}) })
 // @ts-expect-error Host routes cannot omit their explicit configuration.
 createPiAiProfiles({ host: {} })
 `)

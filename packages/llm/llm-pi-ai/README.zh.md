@@ -120,6 +120,8 @@ profile 的 `models` 列表会替换而非扩展路由的已安装目录；每�
 
 返回的 map 与输入配置分离。配置变化时发布新的 map，不要修改已解析的 profile。独立 profile 要求 `resolveApiKey` 返回可用 Key：缺失时抛出 `MISSING_CREDENTIAL`，空白或非法 Key 抛出 `INVALID_CREDENTIAL`，均在 SDK 认证或 HTTP 执行前失败。构造器仍要求显式 `auth` 端口；这些 profile 直接传入宿主 Key，绕过其存储与环境查询。不提供登录或环境变量回退。已有插件 profile 保留目录行为。
 
+`resolveAttachments` 接受只提供 `readImageRequest` 的 `PiAiImageReader`，完整 AttachmentStore 也满足此接口。适配器把同一个 reader 传给 `resolveImageAccess`。访问校验、响应取消的图片投影和 reader 生命周期由宿主负责。构造函数可推断最小 reader；显式声明选项时使用 `PiAiAdapterOptions<PiAiImageReader>`。
+
 包内构建将两个入口一起输出并共享 chunk。在完成 TypeScript 与 bundle 构建后，从包目录执行 `node tests/adapter-artifact.mjs`，验证产物公开入口与类身份一致性。
 
 ### 宿主传输与严格函数调用

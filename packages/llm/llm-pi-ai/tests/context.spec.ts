@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
 import type {
-  AttachmentStore,
   ImageAttachmentRef,
   ImageRequestTarget,
   RequestImageAttachment,
@@ -10,6 +9,7 @@ import { createDeveloperMessage, ToolCallId, createAssistantMessage, createMessa
 import type { ContentBlock, GenerateOptions, Message, RequestUserInput } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { toPiContext } from '../src/context.ts'
+import type { PiAiImageReader } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
 import type { PiImageRequestContext } from '../src/context.ts'
 import { toPiAssistant } from '../src/replay.ts'
 
@@ -50,14 +50,14 @@ function projectionStore(
   ) => Promise<RequestImageAttachment> = vi.fn((value: ImageAttachmentRef) => (
     Promise.resolve(requestImage(value, Uint8Array.of(1)))
   )),
-): AttachmentStore {
-  return { readImageRequest, imageHostPath: () => undefined } as unknown as AttachmentStore
+): PiAiImageReader {
+  return { readImageRequest }
 }
 
 const attachments = projectionStore()
 
 function imageContext(
-  store: AttachmentStore,
+  store: PiAiImageReader,
   overrides: Partial<Omit<PiImageRequestContext, 'attachments'>> = {},
 ): PiImageRequestContext {
   return { attachments: store, resolveImageAccess: () => undefined, ...overrides }

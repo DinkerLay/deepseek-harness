@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
-import type { AttachmentStore, ImageAttachmentRef, ImageRequestTarget, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef, ImageRequestTarget, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { createToolResultMessage, createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, EMPTY_RESPONSE_CODE, createMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { AssistantMessage, AssistantMessageEvent, Usage } from '@earendil-works/pi-ai'
 import { transformMessages } from '@earendil-works/pi-ai/api/transform-messages'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { toPiContext } from '../src/context.ts'
+import type { PiAiImageReader } from '@deepseek-ai/dsh-llm-pi-ai/adapter'
 import { toPiReplayState } from '../src/replay.ts'
 import { mapStopReason, mapUsage, toStreamChunks } from '../src/stream.ts'
 
@@ -64,11 +65,11 @@ function attachmentStore(readImageRequest: (
   ref: ImageAttachmentRef,
   policy: ImageRequestTarget,
   signal?: AbortSignal,
-) => Promise<RequestImageAttachment>): AttachmentStore {
-  return { readImageRequest, imageHostPath: () => undefined } as unknown as AttachmentStore
+) => Promise<RequestImageAttachment>): PiAiImageReader {
+  return { readImageRequest }
 }
 
-function imageContext(attachments: AttachmentStore) {
+function imageContext(attachments: PiAiImageReader) {
   return { attachments, resolveImageAccess: () => undefined }
 }
 

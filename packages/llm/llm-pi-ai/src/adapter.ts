@@ -60,6 +60,7 @@ import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attac
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
+import type { PiAiImageReader } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
 import { toStreamChunks } from './stream.ts'
 import { createTransportCall } from './transport.ts'
@@ -76,7 +77,7 @@ interface PiAiSnapshot {
 }
 
 /** Constructor options for {@link PiAiAdapter}: profile resolution and host-owned services. */
-export interface PiAiAdapterOptions {
+export interface PiAiAdapterOptions<Images extends PiAiImageReader = AttachmentStore> {
   /** Current validated profiles by provider route; called once per operation. */
   profiles: () => ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /**
@@ -103,10 +104,10 @@ export interface PiAiAdapterOptions {
    * every request no matter how often the human signed in.
    */
   auth: PiAiAuthInjection
-  /** Resolve the optional durable attachment service at request time. */
-  resolveAttachments?: () => AttachmentStore | undefined
+  /** Resolve the optional image reader at request time; the host owns its lifetime. */
+  resolveAttachments?: () => Images | undefined
   /** Bridge one attachment reference into the current model-tool execution world. */
-  resolveImageAccess?: (attachments: AttachmentStore, ref: ImageAttachmentRef) => ImageAttachmentAccess | undefined
+  resolveImageAccess?: (attachments: Images, ref: ImageAttachmentRef) => ImageAttachmentAccess | undefined
   /**
    * Observe one assistant history message degrading to provider-neutral
    * conversion because its stored replay state is unusable by this build.
@@ -245,10 +246,10 @@ function supportsToolAdditions(model: Model<Api>): boolean {
  * profiles, so a configuration change reaches the next request without a
  * restart; model descriptors come from the collection those profiles built.
  */
-export class PiAiAdapter extends LlmAdapter {
+export class PiAiAdapter<Images extends PiAiImageReader = AttachmentStore> extends LlmAdapter {
   private snapshot: PiAiSnapshot | undefined
 
-  constructor(private readonly config: PiAiAdapterOptions) {
+  constructor(private readonly config: PiAiAdapterOptions<Images>) {
     super()
     const budget = config.toolCallValidation?.maxArgumentBytes
     if (budget !== undefined && (!Number.isSafeInteger(budget) || budget <= 0)) {
