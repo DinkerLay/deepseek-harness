@@ -844,15 +844,17 @@ export interface RouteCatalog {
  * `providers: { deepseek: { apiKeyEnv: … } }` profile working untouched.
  * @param request - the route-level catalog facts.
  * @param validation - strict writes reject every error; deferred reads retain model diagnostics.
+ * @param source - explicit hosts resolve only declared model capabilities.
  * @returns the materialized models and the explicitly configured request caps.
  */
 export function resolveRouteModels(
   request: RouteCatalogRequest,
   validation: 'strict' | 'deferred' = 'strict',
+  source: 'installed' | 'explicit' = 'installed',
 ): RouteCatalog {
   const { provider } = request
-  const defaults = catalogModels(provider)
-  const providerBaseUrl = catalogProvider(provider)?.baseUrl
+  const defaults = source === 'installed' ? catalogModels(provider) : new Map<string, Model<Api>>()
+  const providerBaseUrl = source === 'installed' ? catalogProvider(provider)?.baseUrl : undefined
   // An absent `models` key and an empty one are the same request: the config
   // schema materializes `[]` for the absent case, and an empty catalog could
   // serve no request anyway, so both mean "serve the installed catalog".

@@ -1,8 +1,8 @@
 diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
-index e1538a5dfcf2225da9dc3ec622576564ee7c8530..abb8f990d680ee247708ca774a467fc5774e28b0 100644
+index 5dd85f19db51b73dcd0c5c4cd8c28ad99e09ee6f..9b4b8063aac2ac6d423c1c1464054feecc031ebb 100644
 --- a/dist/api/anthropic-messages.js
 +++ b/dist/api/anthropic-messages.js
-@@ -500,7 +500,6 @@ export const stream = (model, context, options) => {
+@@ -507,7 +507,6 @@ export const stream = (model, context, options) => {
                          const block = blocks[index];
                          if (block && block.type === "toolCall") {
                              block.partialJson += event.delta.partial_json;
@@ -10,11 +10,23 @@ index e1538a5dfcf2225da9dc3ec622576564ee7c8530..abb8f990d680ee247708ca774a467fc5
                              stream.push({
                                  type: "toolcall_delta",
                                  contentIndex: index,
+@@ -550,9 +549,11 @@ export const stream = (model, context, options) => {
+                             block.arguments = parseStreamingJson(block.partialJson);
+                             // Finalize in-place and strip the scratch buffer so replay only
+                             // carries parsed arguments.
++                            const rawFunctionCall = { arguments: block.partialJson, id: block.id, name: block.name, identityValid: true };
+                             delete block.partialJson;
+                             stream.push({
+                                 type: "toolcall_end",
++                                rawFunctionCall,
+                                 contentIndex: index,
+                                 toolCall: block,
+                                 partial: output,
 diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
-index 6bc6312906ec3d75f31d190994d21c87f1d0767d..7ff68fb60c3c1d9e3e7d2d2df8d4619593a67335 100644
+index 44e3f13e808f0665a44e34437e173743f81bd51f..6c4899b29efeec46a67e1b9c1403677c66200a81 100644
 --- a/dist/api/bedrock-converse-stream.js
 +++ b/dist/api/bedrock-converse-stream.js
-@@ -453,7 +453,6 @@ function handleContentBlockDelta(event, blocks, output, stream) {
+@@ -459,7 +459,6 @@ function handleContentBlockDelta(event, blocks, output, stream) {
      }
      else if (delta?.toolUse && block?.type === "toolCall") {
          block.partialJson = (block.partialJson || "") + (delta.toolUse.input || "");
@@ -23,10 +35,10 @@ index 6bc6312906ec3d75f31d190994d21c87f1d0767d..7ff68fb60c3c1d9e3e7d2d2df8d46195
      }
      else if (delta?.reasoningContent) {
 diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
-index 67f9341a6f7d855dce25054fd48cd9077e8e04a1..afdb5c2c873abb72ca8011b7e3f06a230dbe3e8a 100644
+index 3106c5d470dc3610c05d8ee153026df20f86f66e..c54c1b5dc525715c7b9dc4e780cd74b497f0671d 100644
 --- a/dist/api/mistral-conversations.js
 +++ b/dist/api/mistral-conversations.js
-@@ -543,7 +543,6 @@ async function consumeChatStream(model, output, stream, mistralStream) {
+@@ -541,7 +541,6 @@ async function consumeChatStream(model, output, stream, mistralStream) {
                  ? toolCall.function.arguments
                  : JSON.stringify(toolCall.function.arguments || {});
              block.partialArgs = (block.partialArgs || "") + argsDelta;
@@ -35,10 +47,24 @@ index 67f9341a6f7d855dce25054fd48cd9077e8e04a1..afdb5c2c873abb72ca8011b7e3f06a23
                  type: "toolcall_delta",
                  contentIndex: toolBlocksByKey.get(key),
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index 48464f2bf56b9369d5c202e4f02fc4f13d35b412..d829f5e8e56e788d96fa7a82c0e3cfaef3fc1f63 100644
+index fc8e89382b75f259eb4f041b522840b0d603c033..2cec523effaebb7cb13a991a2028499018e0057b 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -453,7 +453,6 @@ export const stream = (model, context, options) => {
+@@ -262,11 +262,13 @@ export const stream = (model, context, options) => {
+                     }
+                     // Finalize in-place and strip the scratch buffers so replay only
+                     // carries parsed arguments.
++                    const rawFunctionCall = block.customInput ? undefined : { arguments: block.partialArgs, id: block.id, name: block.name, identityValid: true };
+                     delete block.partialArgs;
+                     delete block.customInput;
+                     delete block.streamIndex;
+                     stream.push({
+                         type: "toolcall_end",
++                        rawFunctionCall,
+                         contentIndex,
+                         toolCall: block,
+                         partial: output,
+@@ -437,7 +439,6 @@ export const stream = (model, context, options) => {
                              if (toolCall.function?.arguments) {
                                  delta = toolCall.function.arguments;
                                  block.partialArgs = (block.partialArgs ?? "") + toolCall.function.arguments;
@@ -47,10 +73,20 @@ index 48464f2bf56b9369d5c202e4f02fc4f13d35b412..d829f5e8e56e788d96fa7a82c0e3cfae
                              else if (toolCall.custom?.input) {
                                  const nextInput = getCustomToolCallInput(block) + toolCall.custom.input;
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 43e463dbfd1e6cc437ebc680468036f47678de26..f4259772e289c326697ea7f2ece25954bfb5a520 100644
+index 53597d2c3becdd2c03d4fd265c213a36b403f26b..a01f03cb6966fa9f111ba10bc5a515e06fdd78f4 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
-@@ -546,7 +546,6 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -374,6 +374,9 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             output.content.push(block);
+             const slot = {
+                 type: "toolCall",
++                nativeCallId: item.call_id,
++                nativeName: item.name,
++                nativeItemId: item.id,
+                 block,
+                 contentIndex: output.content.length - 1,
+             };
+@@ -546,7 +549,6 @@ export async function processResponsesStream(openaiStream, output, stream, model
              if (!slot || slot.block.partialJson === undefined)
                  continue;
              slot.block.partialJson += event.delta;
@@ -58,8 +94,31 @@ index 43e463dbfd1e6cc437ebc680468036f47678de26..f4259772e289c326697ea7f2ece25954
              pushToolCallDelta(slot, event.delta);
          }
          else if (event.type === "response.function_call_arguments.done") {
+@@ -606,7 +608,13 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             else if (item.type === "function_call" &&
+                 slot?.type === "toolCall" &&
+                 slot.block.partialJson !== undefined) {
+-                slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
++                const rawFunctionCall = {
++                    arguments: item.arguments || slot.block.partialJson || "{}",
++                    id: item.call_id,
++                    name: item.name,
++                    identityValid: slot.nativeCallId === item.call_id && slot.nativeName === item.name && slot.nativeItemId === item.id,
++                };
++                slot.block.arguments = parseStreamingJson(rawFunctionCall.arguments);
+                 if (item.namespace !== undefined)
+                     slot.block.namespace = item.namespace;
+                 // Finalize in-place and strip the scratch buffer so replay only
+@@ -614,6 +622,7 @@ export async function processResponsesStream(openaiStream, output, stream, model
+                 delete slot.block.partialJson;
+                 stream.push({
+                     type: "toolcall_end",
++                    rawFunctionCall,
+                     contentIndex: slot.contentIndex,
+                     toolCall: slot.block,
+                     partial: output,
 diff --git a/dist/api/pi-messages.js b/dist/api/pi-messages.js
-index 5b9cb1680c47083a9a36eefa93124c67c750fd42..dc5a43ebd801fa6d4b7897c3739b588d4d571d3a 100644
+index ad5f4605e8e157f12b8948e88e0c66e8a5494fc4..5609d61b49264b26fc86a787ec19780d29cdfcab 100644
 --- a/dist/api/pi-messages.js
 +++ b/dist/api/pi-messages.js
 @@ -155,8 +155,6 @@ function createEventConverter(model) {
@@ -71,3 +130,21 @@ index 5b9cb1680c47083a9a36eefa93124c67c750fd42..dc5a43ebd801fa6d4b7897c3739b588d
                  break;
              }
              case "toolcall_end":
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 5915ca64b161bc7bcebdb14d2ad1a2c18cde942e..1d16eefd5c69e8b3b7c8c4a25acf2b9dc5258377 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -509,6 +509,13 @@ export type AssistantMessageEvent = {
+     partial: AssistantMessage;
+ } | {
+     type: "toolcall_end";
++    /** Terminal wire arguments before permissive parsing. Present for patched function-call protocols only; never part of AssistantMessage or replay. */
++    rawFunctionCall?: {
++        readonly arguments: string;
++        readonly id: string;
++        readonly name: string;
++        readonly identityValid: boolean;
++    };
+     contentIndex: number;
+     toolCall: ToolCall;
+     partial: AssistantMessage;

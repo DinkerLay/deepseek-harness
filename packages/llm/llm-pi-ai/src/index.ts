@@ -74,7 +74,10 @@ import type { StoredModelDiscoveryProfile } from './discovery.ts'
 import { registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
+export type { PiAiImageReader } from './context.ts'
 export type { PiAiAdapterOptions } from './adapter.ts'
+export type { PiAiTransport } from './transport.ts'
+export type { PiAiToolCallValidation } from './strict-tool-calls.ts'
 export { Config } from './config.ts'
 export type {
   Options,

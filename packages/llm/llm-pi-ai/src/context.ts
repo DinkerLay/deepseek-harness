@@ -19,6 +19,9 @@ import { toPiAssistant } from './replay.ts'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { DEFAULT_REQUEST_IMAGE_MAX_BYTES, DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET } from './config.ts'
 
+/** Request-time image projection; the host owns storage, access checks and lifetime. */
+export type PiAiImageReader = Pick<AttachmentStore, 'readImageRequest'>
+
 /** Join the text blocks of a harness message. */
 function flattenText(message: RequestMessage): string {
   return message.content
@@ -107,7 +110,7 @@ function collectImageRefs(
 
 async function prepareRequestImages(
   messages: readonly RequestMessage[],
-  attachments: AttachmentStore,
+  attachments: PiAiImageReader,
   budget: PiImageRequestBudget,
   signal?: AbortSignal,
 ): Promise<Map<AttachmentId, RequestImageAttachment>> {
@@ -259,8 +262,8 @@ function textOnlyContext(options: GenerateOptions, onReplayDegrade?: (reason: st
 
 /** Inputs that bind deterministic request images to one current tool execution world. */
 export interface PiImageRequestContext {
-  /** Durable provider that resolves request-image bytes and provider-owned host objects. */
-  attachments: AttachmentStore
+  /** Reader that projects request-image bytes; storage and lifetime belong to the host. */
+  attachments: PiAiImageReader
   /** Resolve current tool access separately from deterministic request-image versions. */
   resolveImageAccess: ImageAttachmentAccessResolver
   /** Request-level bound on the base64-encoded payload of retained images; omission leaves the bound unchecked. */

@@ -174,8 +174,8 @@ export async function* toStreamChunks(
       case 'toolcall_start': {
         // The id/name live on the partial's content at this index.
         const partial = event.partial.content[event.contentIndex]
-        const id = partial?.type === 'toolCall' ? partial.id : ''
-        const name = partial?.type === 'toolCall' ? partial.name : ''
+        const id = partial?.type === 'toolCall' && typeof partial.id === 'string' ? partial.id : ''
+        const name = partial?.type === 'toolCall' && typeof partial.name === 'string' ? partial.name : ''
         toolIds.set(event.contentIndex, { id, name })
         yield { type: 'block-start', index: event.contentIndex, blockType: 'tool-call' }
         break

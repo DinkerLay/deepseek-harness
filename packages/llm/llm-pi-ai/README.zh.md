@@ -112,6 +112,26 @@ profile 的 `models` 列表会替换而非扩展路由的已安装目录；每�
 
 插件会回答「该提供方可以提供哪些模型？」，供配置界面正在编辑或起草的路由使用。已安装目录提供的路由直接由目录回答，不发网络请求，并将其 `input` 数组保留为发现结果的 `inputModalities`；只有目录未描述的路由才会经网络询问。`openai-completions` 与 `openai-responses` 使用带 bearer 鉴权的 `GET {baseURL}/models`，`anthropic-messages` 则以 `x-api-key` 和 `anthropic-version` 使用原生 `GET /v1/models?limit=1000` 语义；其列表 URL 接受带或不带末尾 `/v1` 的 API 根地址，因为网关文档两种写法都会发布，且只有该列表 URL 会归一化这一段，模型请求收到的仍是配置原样的 `baseURL`。已配置且具名的路由会在 Host 内部提供已存凭据与 profile `headers`，因此通过 `cordis.patch.yml` 或 Cordis 配置设置的部署标头可以到达模型发现请求，但不会成为发现请求或 Models 页面的字段；表单中新键入的密钥仍优先于已存凭据。解析器接受标准 `data` 数组或富信息 `models` 对象，并归一化每个候选的 id、显示名、上下文窗口与最大输出 token 数；Anthropic 的 `max_input_tokens` 与 `max_tokens` 会进入相同容量字段，即使对象条目点名了另一个规范 id，对象键仍是请求 id，原始类型的对象属性会被忽略，缺失的显示名则回退到该请求 id。回答是界面可以提供给用户采纳的候选元数据——不存储任何内容，`cordis.patch.yml` 仍然是决定路由服务内容的唯一事实。
 
+### 使用独立适配器入口
+
+拥有模型准入与凭据的宿主可从 `@deepseek-ai/dsh-llm-pi-ai/adapter` 导入 `PiAiAdapter` 和 `createPiAiProfiles`。此入口不加载本包的插件、登录、发现或设置集成，与包根入口共享同一个适配器类。SDK 目录辅助函数仍是间接依赖；这不是不含目录的 bundle。
+
+`createPiAiProfiles` 要求每条路由显式提供协议、HTTP(S) 端点、非空模型列表与重试策略。每个模型声明 `contextWindow`、`maxTokens`、输入模态与 `reasoningEfforts`（无推理能力时使用 `false`）。normal 重试模式必须指定 `maxRetries`；宿主拥有重试时设为零。模型 `maxTokens` 同时提供请求默认输出上限。factory 复用既有校验与转换逻辑，但即使名称为 `openai` 等已知提供方，也不继承目录能力、兼容标志或认证方法。端点允许名单与提供方请求字段策略由宿主拥有。
+
+返回的 map 与输入配置分离。配置变化时发布新的 map，不要修改已解析的 profile。独立 profile 要求 `resolveApiKey` 返回可用 Key：缺失时抛出 `MISSING_CREDENTIAL`，空白或非法 Key 抛出 `INVALID_CREDENTIAL`，均在 SDK 认证或 HTTP 执行前失败。构造器仍要求显式 `auth` 端口；这些 profile 直接传入宿主 Key，绕过其存储与环境查询。不提供登录或环境变量回退。已有插件 profile 保留目录行为。
+
+`resolveAttachments` 接受只提供 `readImageRequest` 的 `PiAiImageReader`，完整 AttachmentStore 也满足此接口。适配器把同一个 reader 传给 `resolveImageAccess`。访问校验、响应取消的图片投影和 reader 生命周期由宿主负责。构造函数可推断最小 reader；显式声明选项时使用 `PiAiAdapterOptions<PiAiImageReader>`。
+
+包内构建将两个入口一起输出并共享 chunk。在完成 TypeScript 与 bundle 构建后，从包目录执行 `node tests/adapter-artifact.mjs`，验证产物公开入口与类身份一致性。
+
+### 宿主传输与严格函数调用
+
+直接构造 `PiAiAdapter` 的宿主可以通过 `transport` 注入已授权的 `fetch` 与返回安全 `LlmFailure` 事实的 `classifyError`。每次流调用独立保存故障状态，fetch 拒绝及响应体读取错误均保留这些事实。未分类的 HTTP 故障保留状态码与有限数值秒数的 `Retry-After`，丢弃响应正文并使用固定消息。上下文超限与 quota 分类应由宿主 fetch 在返回响应前完成。凭据刷新与请求字段策略仍由宿主拥有，此桥不增加重试。显式非 SSE 传输在凭据解析前被拒绝。
+
+`resolveApiKey` 的第三个参数为 `AbortSignal`。即使解析器不响应 signal，调用方取消也会结束适配器等待；宿主仍须响应 signal 以停止自身工作。凭据解析耗时不计入模型流 idle timeout，需要截止时间时由宿主提供。
+
+`toolCallValidation: { maxArgumentBytes }` 启用严格终态函数调用准入，字节预算必须是正安全整数，按 UTF-8 计量。固定 SDK 补丁使 OpenAI Completions、OpenAI Responses 与 Anthropic Messages 在 `toolcall_end` 暴露终态原始参数与原生身份。空参数字符串代表 `{}`，其他值必须是一个完整 JSON 对象。缺少原始信息、Responses 身份变化、非法 JSON、非对象参数或超出字节预算均以 `MALFORMED_RESPONSE` 拒绝整次响应。已有 Agent loop 随后不会派发该响应的任何工具，包括合法的兄弟调用。此终态预算不限制 SDK 已经缓存的字节数。该选项覆盖普通函数调用，自定义工具与缺少原始终态信息的协议会拒绝执行。严格路径不支持 Anthropic 只有初始 input、没有参数 delta 的调用。原始信息不存入 replay state，接纳的参数会重新序列化，不保证逐字节保持原文。
+
 ### 失败与恢复
 
 pi-ai 不提供的路由需要 `api`、`baseURL` 与非空 `models` 列表；无法服务的 profile 会在写入处被拒绝，并点名路由与模型。失败携带稳定 code：无法使用的凭据以 `INVALID_CREDENTIAL` 失败并点名路由与引用，`apiKeyEnv` 引用解析为空的路由以 `MISSING_CREDENTIAL` 失败，未配置模型以 `UNKNOWN_MODEL` 失败，终止性提供方失败则区分 `QUOTA` 与暂时性 `RATE_LIMIT`。`GenerateOptions.stop` 以 `UNSUPPORTED_OPTION` 被拒绝，因为 pi-ai 的通用流式 UI 无法跨提供方保证它。
@@ -229,7 +249,7 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 - **未认证路由取决于其协议**——不点名凭据的路由解析为已配置但无密钥，但 pi-ai 的 OpenAI 兼容实现仍要求 API 密钥或 `Authorization` 标头，因此无密钥本地服务器需要由 `apiKeyEnv` 引用或 `headers` 中的 `Authorization` 条目提供的占位凭据。
 - **不支持 `GenerateOptions.stop`**——pi-ai 的通用流式选项无法跨提供方保证停止序列行为。
 - **只有历史中首条 `system` 消息会成为 pi-ai 的 `systemPrompt`**——本适配器使用 pi-ai 的单一 `systemPrompt` 输入，因此后续的 `system` 消息，或在同时设置了 `GenerateOptions.system` 时的首条消息，会在原位置折叠为 `user` 消息；系统提示词的提供方专属放置遵循 pi-ai，而非 harness 自有的协议覆盖。system 或 assistant 历史中的图片（包括首条系统消息中的图片）在两条转换路径上都会以 `UNSUPPORTED_CONTENT` 失败。
-- **提供方 HTTP 状态不可用**——pi-ai 错误事件不跨提供方暴露稳定 HTTP 状态。
+- **提供方 HTTP 状态需要宿主传输**——默认 pi-ai 错误事件不跨提供方暴露稳定状态码。可选宿主传输按上文合同保留安全的状态码与故障事实。
 - **重试策略由提供方自有，而非 SDK 重试**——pi-ai SDK 重试保持禁用，因此持久 agent（智能体）步骤与 `llm/retry` 事件拥有每个可见尝试，直接 `ctx.llm.stream()` 调用仍是单次尝试。
 - **流式工具调用参数只在调用结束时解析一次**——安装的 pi-ai 带有 [`patches/@earendil-works__pi-ai@0.87.1.patch`](../../../patches/@earendil-works__pi-ai@0.87.1.patch)，它移除了每个流适配器中对整段累计参数 JSON 的逐 delta 重新解析（上游 [earendil-works/pi#9265](https://github.com/earendil-works/pi/issues/9265)）；未打补丁时，数 MB 的参数流会在事件循环上消耗 O(n²) CPU，并使进程内所有会话停滞。在 `toolcall_end` 之前，pi-ai partial 的工具调用 `arguments` 保持为 `{}`；本适配器只读取 delta 字符串与最终参数。每次升级 pi-ai 时都要重新应用或撤销该补丁。
 

@@ -414,8 +414,9 @@ describe('PiAiAdapter provider routing', () => {
   })
 
   it('stops the SDK request when the adapter idle watchdog expires', async () => {
-    const server = await mockServer([{ events: textEvents, delayMs: 200 }])
-    const ctx = await harness(server.url, { streamIdleTimeoutMs: 20 })
+    // Allow cold SDK initialization to connect before testing an idle stream.
+    const server = await mockServer([{ events: textEvents, delayMs: 1_000 }])
+    const ctx = await harness(server.url, { streamIdleTimeoutMs: 500 })
 
     const result = await assemble(ctx, { model: 'deepseek-flash', messages: [] })
     expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'TIMEOUT' } })
