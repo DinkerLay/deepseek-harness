@@ -953,7 +953,7 @@ export class GitResources extends Service {
   private async applicationSource(selection: GitApplicationPreviewRequest, signal: AbortSignal,
     self?: GitOperationId): Promise<GitApplicationSource> {
     const sealed = await this.sealedSource(selection, signal)
-    const known = await this.knownTarget(sealed.resourceId, selection, sealed.resultCommit, signal, self)
+    const known = await this.knownTarget(sealed.resourceId, selection, sealed.resultCommit, sealed.preserveOperationId, signal, self)
     return { ...sealed, originalTargetBaseTree: known.tree, ...known.written.length === 0 ? {} : { written: known.written } }
   }
 
@@ -1068,13 +1068,15 @@ export class GitResources extends Service {
    * @param resourceId - the integration or inverse resource being applied.
    * @param selection - consumer scope and target.
    * @param resultCommit - the selected version, checked against what each earlier application wrote.
+   * @param preserveOperationId - the seal of the selected version; an earlier seal of the same work copy is its history.
    * @param signal - cancellation.
    * @param self - an in-flight application rechecking its own preview.
    * @returns the tree of that state (written only when no existing tree holds it), and which earlier applications last
    *   wrote which of its files.
    */
   private async knownTarget(resourceId: GitResourceId, selection: GitApplicationPreviewRequest, resultCommit: string,
-    signal: AbortSignal, self?: GitOperationId): Promise<{ tree: string; written: GitApplicationWritten[] }> {
+    preserveOperationId: GitOperationId, signal: AbortSignal,
+    self?: GitOperationId): Promise<{ tree: string; written: GitApplicationWritten[] }> {
     const line = this.versionLine(resourceId), { repository } = this.requireResource(resourceId), identity = repository.identity
     const applications = repository.operations.flatMap((value, position) => value.kind === 'apply' && value.operationId !== self
       && value.consumerScope === selection.consumerScope && 'targetWorkspaceId' in value.request
@@ -1100,10 +1102,17 @@ export class GitResources extends Service {
     }
     if (known.size === 0) return { tree: line.tree, written: [] }
     const tree = await this.knownTree(identity, line.tree, known, signal)
+    const position = (id: GitOperationId) => repository.operations.findIndex(value => value.operationId === id && value.kind === 'preserve')
     const written: GitApplicationWritten[] = []
     for (const [index, { operationId, preview }] of later.entries()) {
       const paths = [...writer].filter(([, by]) => by === index).map(([path]) => path).sort()
       if (paths.length === 0) continue
+      // Every seal commits onto its work copy's fixed HEAD, so two seals of one copy are siblings in Git although the later
+      // was made from the files the earlier sealed: no operation rewrites a copy's files, so an earlier seal is its history.
+      const earlier = preview.source.resourceId === resourceId ? position(preview.source.preserveOperationId) : -1
+      if (earlier >= 0 && earlier < position(preserveOperationId)) {
+        written.push({ applicationOperationId: operationId, paths, missing: [] }); continue
+      }
       const descends = await this.runner().run(['merge-base', '--is-ancestor', preview.source.resultCommit, resultCommit],
         identity.root.path, signal, { allowFailure: true })
       if (descends.status !== 0 && descends.status !== 1) throw new GitResourceError('APPLICATION_SOURCE_UNAVAILABLE', 'Earlier application version ancestry is unavailable')

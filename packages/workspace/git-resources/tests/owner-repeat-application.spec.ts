@@ -53,6 +53,31 @@ it('applies a version built on the last application as the change from what that
   expect(await test.read('notes.md')).toBe('user notes\n')
 })
 
+it('applies a later seal of the same work copy as built on the application of its earlier seal', async () => {
+  const test = await fixture()
+  const copy = await test.copy('reworked', test.base)
+  // Another copy started from the project start, before anything was applied, never holds what this copy seals.
+  const sibling = await test.copy('other', test.base)
+  const first = await test.work('first', copy, { 'app.js': 'v1\n', 'removed.txt': null })
+  const applied = await test.apply('first', test.direct(first))
+  // The copy goes on from its first seal: each seal commits onto the copy's fixed HEAD, so the two seals are siblings in Git,
+  // and the application of the first still counts as the state the second was built on.
+  const second = await test.work('second', copy, { 'app.js': 'v2\n', 'notes.md': 'notes\n' })
+  expect(() => test.git(['merge-base', '--is-ancestor', test.commitOf(first), test.commitOf(second)])).toThrow('fixture git merge-base failed')
+  const preview = await test.owner.previewApplication(test.direct(second))
+  expect(preview.source).toMatchObject({ originalTargetBaseTree: first.operation.effectTree,
+    written: [{ applicationOperationId: applied.operation.operationId, paths: ['app.js', 'removed.txt'], missing: [] }] })
+  expect(preview.replacesWritten).toBeUndefined()
+  expect(preview.patch).toContain('-v1\n+v2')
+  expect((await test.apply('second', test.direct(second))).operation.phase).toBe('confirmed')
+  expect(await test.read('app.js')).toBe('v2\n')
+  // The other copy's version replaces what this copy's seals wrote: its own app.js, the removed.txt the first deleted, and
+  // no notes.md the second added. That is still named.
+  const other = await test.work('other', sibling, { 'app.js': 'other\n' })
+  expect((await test.owner.previewApplication(test.direct(other))).replacesWritten)
+    .toEqual({ replaced: ['app.js', 'removed.txt'], deleted: ['notes.md'] })
+})
+
 it('names written files a version not built on the last application replaces or deletes', async () => {
   const test = await fixture()
   const work = await test.work('first', await test.copy('first', test.base), { 'app.js': 'v1\n', 'removed.txt': null })
