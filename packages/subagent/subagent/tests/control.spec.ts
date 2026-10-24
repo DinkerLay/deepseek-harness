@@ -285,12 +285,12 @@ describe('subagent interrupt Remote', () => {
       [CHILD, SessionId('')],
     ] as const) {
       const field = childSessionId.length === 0 ? 'childSessionId' : 'parentSessionId'
-      expect(() => subagents.interruptByParent(
+      await expect(subagents.interruptByParent(
         childSessionId,
         parentSessionId,
         'continuable',
       ))
-        .toThrow(expect.objectContaining(emptyIdFailure('subagent.interrupt', field)))
+        .rejects.toMatchObject(emptyIdFailure('subagent.interrupt', field))
     }
     expect(interrupt).not.toHaveBeenCalled()
   })
@@ -299,7 +299,7 @@ describe('subagent interrupt Remote', () => {
     const { subagents } = await bench()
     const interrupt = vi.spyOn(subagents, 'interrupt').mockReturnValue()
 
-    expect(subagents.interruptByParent(
+    expect(await subagents.interruptByParent(
       CHILD,
       PARENT,
       'continuable',
@@ -315,11 +315,11 @@ describe('subagent interrupt Remote', () => {
     const interrupt = vi.spyOn(subagents, 'interrupt')
 
     interrupt.mockImplementation(() => { throw new SubagentError('not yours', 'UNAUTHORIZED') })
-    expect(() => subagents.interruptByParent(
+    await expect(subagents.interruptByParent(
       CHILD,
       PARENT,
       'continuable',
-    )).toThrow(
+    )).rejects.toThrow(
       expect.objectContaining({
         code: 'subagent/unauthorized',
         message: expect.any(String) as unknown as string,
@@ -328,12 +328,29 @@ describe('subagent interrupt Remote', () => {
     )
 
     interrupt.mockImplementation(() => { throw new Error('boom') })
-    expect(() => subagents.interruptByParent(
+    await expect(subagents.interruptByParent(
       CHILD,
       PARENT,
       'continuable',
-    )).toThrow(
+    )).rejects.toThrow(
       expect.objectContaining({ code: 'gateway/internal', message: 'subagent interrupt failed', details: {} }),
     )
   })
+})
+
+
+it('registers one user-interrupt owner and keeps direct host interrupts on the native path', async () => {
+  const { subagents } = await bench()
+  const handler = vi.fn(() => true)
+  const dispose = subagents.registerUserInterruptHandler(handler)
+  expect(() => subagents.registerUserInterruptHandler(handler)).toThrow('already registered')
+  const interrupt = vi.spyOn(subagents, 'interrupt').mockReturnValue()
+  await subagents.interruptByParent(CHILD, PARENT, 'continuable')
+  expect(handler).not.toHaveBeenCalled()
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(CHILD, { kind: 'user', parentSessionId: PARENT })
+  dispose()
+  const replacement = subagents.registerUserInterruptHandler(handler)
+  dispose() // An old disposer must not unregister a later owner, even if it uses the same callback.
+  expect(() => subagents.registerUserInterruptHandler(handler)).toThrow('already registered')
+  replacement()
 })

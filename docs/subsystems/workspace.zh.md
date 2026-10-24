@@ -963,6 +963,17 @@ async confirmQuietUse(resourceId: GitResourceId, identity: GitResourceUseIdentit
  * @returns immutable versioned code seal by default; explicit all-content mode is directory preservation, not a code result.
  */
 async preserve(request: GitResourcePreserveRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceOperationView>
+
+/**
+ * Write the files of one confirmed versioned seal into a read-only directory outside every work copy. The directory is
+ * named by the sealed tree and shared by every request for that version; it is not a work copy, ref or index, and its
+ * files and directories have no write permission. A repeated request returns the complete directory; one cut short leaves
+ * only a temporary directory, removed at the owner's next start.
+ * @param request - confirmed versioned seal and the consumer scope that owns it.
+ * @param signal - caller cancellation.
+ * @returns the directory and the tree it holds.
+ */
+async snapshot(request: GitResourceSnapshotRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceSnapshot>
 ```
 
 Source: [`packages/workspace/git-resources/src/index.ts`](../../packages/workspace/git-resources/src/index.ts)

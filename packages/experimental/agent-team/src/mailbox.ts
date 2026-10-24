@@ -226,11 +226,15 @@ export class TeamMailbox {
    * Whether this process is delivering a message now or has scheduled another attempt at it; mail whose retries ran out,
    * or that waits for a later recovery, is neither.
    * @param messageId - queued Team message.
+   * @returns whether delivery or a scheduled retry currently owns the message.
    */
   delivering(messageId: TeamMessageId): boolean {
     return this.inFlightMessages.has(messageId) || this.retries.get(messageId)?.timer !== undefined
   }
 
+  /** Observe the dispatches this process currently owns.
+   * @returns pending dispatch completion promises.
+   */
   pendingDispatches(): readonly Promise<unknown>[] {
     return [...this.inFlightDispatches]
   }

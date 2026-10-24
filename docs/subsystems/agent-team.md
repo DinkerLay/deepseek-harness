@@ -526,6 +526,14 @@ releaseHints(agent: Agent): readonly string[]
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
+ * Member quotas of the caller's Team at the current cut.
+ * @param agent - exact live Team member.
+ * @returns members in post and identities against their limits, and in a controlled Team with a start quota the members
+ *   counted against it.
+ */
+memberQuotas(agent: Agent): TeamMemberQuotas
+
+/**
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
  * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
@@ -612,6 +620,46 @@ async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTas
  * @returns one observed change, the input that ended the wait, or a timeout result.
  */
 async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal, options: TeamWaitOptions = {}): Promise<TeamWaitResult>
+
+/**
+ * Whether a wait requested with `pendingInput` would end for input already pending: a message other than a user message
+ * waits in the caller's next-step list, and no Lead coordination has frozen the Team. It neither reads nor claims input.
+ * @param caller - exact live Team member about to wait.
+ * @returns true when that input would end the wait.
+ */
+pendingInputEndsWait(caller: Agent): boolean
+
+/**
+ * Install one product observer of Team waits.
+ * @param observer - runtime work it reports as under way, and the report it adds when a wait returns.
+ * @returns the disposer.
+ */
+installWaitObserver(observer: TeamWaitObserver): () => void
+
+/**
+ * Whether a wait by this member can still observe a change: another member runs or is provisioning, a teammate's next
+ * run is starting ({@link teammateStarting}), or an installed observer reports runtime work under way for the Team.
+ * Synchronous, so a waiter registered right after it misses no change.
+ * @param caller - exact live Team member about to wait.
+ * @returns false when no member and no runtime work can produce a change.
+ */
+waitCanProgress(caller: Agent): boolean
+
+/**
+ * Whether a teammate's next run is starting: it is not in a run, no member operation holds it, and Team mail to it is
+ * being delivered now or has another attempt scheduled. Mail whose retries ran out does not count.
+ * @param caller - exact live Team member reading the roster.
+ * @param memberId - the teammate's stable address.
+ * @returns false for the Lead, an unknown member, or one whose mail is not on its way.
+ */
+teammateStarting(caller: Agent, memberId: import('@deepseek-ai/dsh-session').SessionId): boolean
+
+/**
+ * Start the installed observers' reports for one wait.
+ * @param caller - exact live Team member about to wait.
+ * @returns a function, called once when the wait returns, joining their reports; undefined when none has one.
+ */
+beginWaitReport(caller: Agent): () => string | undefined
 
 /**
  * Interrupt one live teammate turn without clearing its pending inbox.

@@ -78,6 +78,7 @@ import type {
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
   SubagentInterruptAuthority,
+  SubagentUserInterruptHandler,
   SubagentProvider,
   SubagentRun,
   SubagentRunEndInfo,
@@ -121,6 +122,8 @@ export type {
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
   SubagentInterruptAuthority,
+  SubagentUserInterrupt,
+  SubagentUserInterruptHandler,
   SubagentProvider,
   SubagentResult,
   SubagentRun,
@@ -415,6 +418,19 @@ export class SubagentRuntime extends TypertRemoteService {
     if (recorded !== preset) child.session.append('permission/preset', { preset })
   }
 
+  private userInterruptHandler: { readonly handle: SubagentUserInterruptHandler } | undefined
+
+  /** Register one Host owner of authenticated UI interrupts; model/ancestor interrupts do not enter it.
+   * @param handler - receives only a verified live direct-child turn; true owns cancellation, false delegates it.
+   * @returns disposer; without a registration the official interrupt path is unchanged.
+   */
+  registerUserInterruptHandler(handler: SubagentUserInterruptHandler): () => void {
+    if (this.userInterruptHandler !== undefined) throw new Error('a user interrupt handler is already registered')
+    const registration = { handle: handler }
+    this.userInterruptHandler = registration
+    return () => { if (this.userInterruptHandler === registration) this.userInterruptHandler = undefined }
+  }
+
   /**
    * Register one optional parent-notice policy for continuable Activations.
    * Unclaimed, conflicting, failed, or timed-out decisions preserve delivery;
@@ -669,11 +685,9 @@ export class SubagentRuntime extends TypertRemoteService {
   }
 
   /**
-   * Remote face of {@link interrupt} under one durable parent address. No
-   * catalog, history, persistence, or parent Agent lookup runs: the core
-   * primitive alone authorizes the address against the live Activation, which
-   * is what keeps a live child interruptible while its parent Agent is offline.
-   * Absent, idle, and already-completed targets are accepted no-ops there.
+   * Authenticated Remote interrupt under a durable direct-parent address. The live Activation validates ownership before
+   * an optional Host handler runs. Without a handler no parent or persistence lookup is needed, including for an offline
+   * parent. Absent, idle and already-completed targets are accepted no-ops; a handler failure never silently cancels.
    * @param childSessionId - durable child session id to interrupt.
    * @param parentSessionId - durable direct parent whose authority is claimed.
    * @param mode - required continuable-address discriminator.
@@ -683,14 +697,17 @@ export class SubagentRuntime extends TypertRemoteService {
    *   otherwise `gateway/internal`.
    */
   @Remote('interruptByParent')
-  interruptByParent(
+  async interruptByParent(
     childSessionId: SessionId,
     parentSessionId: SessionId,
     mode: 'continuable',
-  ): SubagentInterruptReceipt {
+  ): Promise<SubagentInterruptReceipt> {
     validateControlRequest('subagent.interrupt', { childSessionId, parentSessionId, mode })
     try {
-      this.interrupt(childSessionId, { kind: 'user', parentSessionId })
+      const handler = this.userInterruptHandler?.handle
+      if (this.ctx.invocation !== undefined && handler !== undefined && this.continuations !== undefined) {
+        await this.continuations.interruptByParent(childSessionId, parentSessionId, handler)
+      } else this.interrupt(childSessionId, { kind: 'user', parentSessionId })
     } catch (error: unknown) {
       if (error instanceof SubagentError && error.code === 'UNAUTHORIZED') {
         throw new RemoteError(

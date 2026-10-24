@@ -142,6 +142,16 @@ export type SubagentInterruptAuthority =
   | { readonly kind: 'user'; readonly parentSessionId: SessionId }
   | { readonly kind: 'ancestor'; readonly agent: Agent }
 
+/** A verified live child turn at the authenticated user-interrupt boundary. */
+export interface SubagentUserInterrupt {
+  readonly agent: Agent
+  readonly parentSessionId: SessionId
+  readonly turn: number
+}
+
+/** Return true after owning the stop; false preserves native cancellation of this exact turn. Failures never fall back. */
+export type SubagentUserInterruptHandler = (request: SubagentUserInterrupt) => boolean | Promise<boolean>
+
 /** Options for one model-authored message between adjacent Agents. */
 export interface SubagentSendMessageOptions {
   /** Caller cancellation, owning the operation only until inbox acceptance. */

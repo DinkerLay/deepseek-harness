@@ -516,6 +516,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Lead and teammate rows in creation order.',
       },
       {
+        signature: 'memberQuotas(agent: Agent): TeamMemberQuotas',
+        description: 'Member quotas of the caller\'s Team at the current cut.',
+        parameters: [{ name: 'agent', description: 'exact live Team member.' }],
+        returns: 'members in post and identities against their limits, and in a controlled Team with a start quota the members counted against it.',
+      },
+      {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
         description: 'Create one named, continuable direct child of the Team Lead.',
         parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation. Controlled Teams replace the prompt and require fresh context.' }],
@@ -574,6 +580,36 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Wait for the next Team-domain or member-status change.',
         parameters: [{ name: 'caller', description: 'exact live Team member waiting for activity.' }, { name: 'timeoutMs', description: 'bounded wait duration from ten seconds through one hour.' }, { name: 'signal', description: 'caller cancellation for the wait only.' }, { name: 'options', description: '`userInput` also ends the wait for a user message already pending in, or entering, the caller\'s own inbox; `pendingInput` also ends it for any other message pending in, or entering, the caller\'s next-step list. A Lead coordination that has frozen the Team ignores both, as that input belongs to the next Lead.' }],
         returns: 'one observed change, the input that ended the wait, or a timeout result.',
+      },
+      {
+        signature: 'pendingInputEndsWait(caller: Agent): boolean',
+        description: 'Whether a wait requested with `pendingInput` would end for input already pending: a message other than a user message waits in the caller\'s next-step list, and no Lead coordination has frozen the Team. It neither reads nor claims input.',
+        parameters: [{ name: 'caller', description: 'exact live Team member about to wait.' }],
+        returns: 'true when that input would end the wait.',
+      },
+      {
+        signature: 'installWaitObserver(observer: TeamWaitObserver): () => void',
+        description: 'Install one product observer of Team waits.',
+        parameters: [{ name: 'observer', description: 'runtime work it reports as under way, and the report it adds when a wait returns.' }],
+        returns: 'the disposer.',
+      },
+      {
+        signature: 'waitCanProgress(caller: Agent): boolean',
+        description: 'Whether a wait by this member can still observe a change: another member runs or is provisioning, a teammate\'s next run is starting (teammateStarting), or an installed observer reports runtime work under way for the Team. Synchronous, so a waiter registered right after it misses no change.',
+        parameters: [{ name: 'caller', description: 'exact live Team member about to wait.' }],
+        returns: 'false when no member and no runtime work can produce a change.',
+      },
+      {
+        signature: 'teammateStarting(caller: Agent, memberId: import(\'@deepseek-ai/dsh-session\').SessionId): boolean',
+        description: 'Whether a teammate\'s next run is starting: it is not in a run, no member operation holds it, and Team mail to it is being delivered now or has another attempt scheduled. Mail whose retries ran out does not count.',
+        parameters: [{ name: 'caller', description: 'exact live Team member reading the roster.' }, { name: 'memberId', description: 'the teammate\'s stable address.' }],
+        returns: 'false for the Lead, an unknown member, or one whose mail is not on its way.',
+      },
+      {
+        signature: 'beginWaitReport(caller: Agent): () => string | undefined',
+        description: 'Start the installed observers\' reports for one wait.',
+        parameters: [{ name: 'caller', description: 'exact live Team member about to wait.' }],
+        returns: 'a function, called once when the wait returns, joining their reports; undefined when none has one.',
       },
       {
         signature: 'interrupt(caller: Agent, targetName: string): { previousStatus: \'running\' | \'inactive\' }',
@@ -1472,7 +1508,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async previewApplication(request: GitApplicationPreviewRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitApplicationPreview>',
-        description: 'Observe an exact ready version and registered target; no file, index, ref or Git object writes.',
+        description: 'Observe an exact ready version and registered target; no file, index or ref writes. When earlier applications compose a target state no existing tree holds, or the target already holds some touched files, only the trees the patch starts from are written.',
         parameters: [{ name: 'request', description: 'immutable version, optional exact resolution receipt and target Workspace identity.' }, { name: 'signal', description: 'read-only preview cancellation.' }],
         returns: 'complete target HEAD/index/touched-path CAS and plain patch digest.',
       },
@@ -1558,6 +1594,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Preserve one exact resource version as immutable file-content and Git-ref facts.',
         parameters: [{ name: 'request', description: 'exact available resource revision and stable operation identity.' }, { name: 'signal', description: 'operation cancellation.' }],
         returns: 'immutable versioned code seal by default; explicit all-content mode is directory preservation, not a code result.',
+      },
+      {
+        signature: 'async snapshot(request: GitResourceSnapshotRequest, signal: AbortSignal = this.lifetime.signal): Promise<GitResourceSnapshot>',
+        description: 'Write the files of one confirmed versioned seal into a read-only directory outside every work copy. The directory is named by the sealed tree and shared by every request for that version; it is not a work copy, ref or index, and its files and directories have no write permission. A repeated request returns the complete directory; one cut short leaves only a temporary directory, removed at the owner\'s next start.',
+        parameters: [{ name: 'request', description: 'confirmed versioned seal and the consumer scope that owns it.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the directory and the tree it holds.',
       },
     ],
   },
@@ -3376,6 +3418,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'parent', description: 'exact live direct parent authorizing the synchronization.' }, { name: 'child', description: 'exact live child initialized before its next operation.' }, { name: 'settingsSource', description: 'exact live settings owner; omission uses the direct parent.' }],
       },
       {
+        signature: 'registerUserInterruptHandler(handler: SubagentUserInterruptHandler): () => void',
+        description: 'Register one Host owner of authenticated UI interrupts; model/ancestor interrupts do not enter it.',
+        parameters: [{ name: 'handler', description: 'receives only a verified live direct-child turn; true owns cancellation, false delegates it.' }],
+        returns: 'disposer; without a registration the official interrupt path is unchanged.',
+      },
+      {
         signature: 'registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void',
         description: 'Register one optional parent-notice policy for continuable Activations. Unclaimed, conflicting, failed, or timed-out decisions preserve delivery; one unambiguous wording provider still names the child on that path.',
         parameters: [{ name: 'policy', description: 'runtime-only policy re-registered by its owner after a restart.' }, { name: 'wording', description: 'optional synchronous wording retained when decision evaluation times out.' }],
@@ -3430,8 +3478,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{RemoteError} `gateway/bad-request`, `subagent/attachment-invalid`, `subagent/invalid-time-zone`, `subagent/parent-unavailable`, `subagent/not-resumable`, `subagent/unauthorized`, `subagent/delivery-unavailable`, `gateway/cancelled`, or `gateway/internal`.'],
       },
       {
-        signature: '@Remote(\'interruptByParent\') interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\', ): SubagentInterruptReceipt',
-        description: 'Remote face of interrupt under one durable parent address. No catalog, history, persistence, or parent Agent lookup runs: the core primitive alone authorizes the address against the live Activation, which is what keeps a live child interruptible while its parent Agent is offline. Absent, idle, and already-completed targets are accepted no-ops there.',
+        signature: '@Remote(\'interruptByParent\') async interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\', ): Promise<SubagentInterruptReceipt>',
+        description: 'Authenticated Remote interrupt under a durable direct-parent address. The live Activation validates ownership before an optional Host handler runs. Without a handler no parent or persistence lookup is needed, including for an offline parent. Absent, idle and already-completed targets are accepted no-ops; a handler failure never silently cancels.',
         parameters: [{ name: 'childSessionId', description: 'durable child session id to interrupt.' }, { name: 'parentSessionId', description: 'durable direct parent whose authority is claimed.' }, { name: 'mode', description: 'required continuable-address discriminator.' }],
         returns: 'acknowledgement that the cancel signal was admitted, not that the target is quiescent.',
         throws: ['{RemoteError} `gateway/bad-request` for an empty id, `subagent/unauthorized` when the address does not own the live target, otherwise `gateway/internal`.'],
@@ -5885,11 +5933,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GitApplicationPreview',
-    declaration: 'export interface GitApplicationPreview {\n    readonly source: GitApplicationSource;\n    readonly target: GitApplicationTargetCut;\n    readonly patchHash: string;\n    readonly patch: string;\n    readonly binary: boolean;\n    readonly fingerprint: string;\n}',
+    declaration: 'export interface GitApplicationPreview {\n    readonly source: GitApplicationSource;\n    readonly target: GitApplicationTargetCut;\n    readonly patchHash: string;\n    readonly patch: string;\n    readonly binary: boolean;\n    readonly alreadyCurrent?: readonly string[] | undefined;\n    readonly replacesWritten?: {\n        readonly replaced: readonly string[];\n        readonly deleted: readonly string[];\n    } | undefined;\n    readonly fingerprint: string;\n}',
   },
   {
     name: 'GitApplicationPreviewRequest',
-    declaration: 'export interface GitApplicationPreviewRequest {\n    readonly consumerScope: GitConsumerScope;\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly targetWorkspaceId: WorkspaceId;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
+    declaration: 'export interface GitApplicationPreviewRequest {\n    readonly consumerScope: GitConsumerScope;\n    readonly integrationOperationId?: GitOperationId | undefined;\n    readonly preserveOperationId: GitOperationId;\n    readonly targetWorkspaceId: WorkspaceId;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
   },
   {
     name: 'GitApplicationRequest',
@@ -5897,11 +5945,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GitApplicationSource',
-    declaration: 'export interface GitApplicationSource {\n    readonly repository: GitRepositoryIdentity;\n    readonly integrationOperationId: GitOperationId;\n    readonly preserveOperationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly consumerScope: GitConsumerScope;\n    readonly originalTargetBaseTree: string;\n    readonly resultCommit: string;\n    readonly resultTree: string;\n    readonly manifestHash: string;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n}',
+    declaration: 'export interface GitApplicationSource {\n    readonly repository: GitRepositoryIdentity;\n    readonly integrationOperationId?: GitOperationId | undefined;\n    readonly preserveOperationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly consumerScope: GitConsumerScope;\n    readonly originalTargetBaseTree: string;\n    readonly resultCommit: string;\n    readonly resultTree: string;\n    readonly manifestHash: string;\n    readonly resolutionOperationId?: GitOperationId | undefined;\n    readonly written?: readonly GitApplicationWritten[] | undefined;\n}',
   },
   {
     name: 'GitApplicationTargetCut',
     declaration: 'export interface GitApplicationTargetCut {\n    readonly repository: GitRepositoryIdentity;\n    readonly head: string;\n    readonly symbolicRef?: string | undefined;\n    readonly indexHash: string;\n    readonly touched: readonly GitApplicationPath[];\n    readonly ancestors: readonly GitApplicationAncestor[];\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'GitApplicationWritten',
+    declaration: 'export interface GitApplicationWritten {\n    readonly applicationOperationId: GitOperationId;\n    readonly paths: readonly string[];\n    readonly missing: readonly string[];\n}',
   },
   {
     name: 'GitBaselineEntry',
@@ -6029,7 +6081,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GitResourcePreserveRequest',
-    declaration: 'export interface GitResourcePreserveRequest {\n    readonly operationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly expectedRevision: number;\n    readonly content?: \'versioned\' | \'all\';\n    readonly originalRequestJson?: string;\n}',
+    declaration: 'export interface GitResourcePreserveRequest {\n    readonly operationId: GitOperationId;\n    readonly resourceId: GitResourceId;\n    readonly expectedRevision: number;\n    readonly content?: \'versioned\' | \'all\';\n    readonly resolveMarkerFreeConflicts?: boolean;\n    readonly originalRequestJson?: string;\n}',
   },
   {
     name: 'GitResourcePreview',
@@ -6042,6 +6094,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'GitResourceRecord',
     declaration: 'export interface GitResourceRecord {\n    readonly resourceId: GitResourceId;\n    readonly repositoryId: GitRepositoryId;\n    readonly consumerScope: GitConsumerScope;\n    readonly revision: number;\n    readonly path: string;\n    readonly reservedAbsent: true;\n    readonly pathIdentity?: GitPathIdentity;\n    readonly privateRef: string;\n    readonly baselineCommit?: string;\n    readonly baselineTree?: string;\n    readonly state: \'reserved\' | \'available\' | \'conflicted\' | \'preserved\' | \'needs_attention\' | \'abandoned\' | \'cleaned\';\n    readonly preservedCommit?: string;\n    readonly preservedTree?: string;\n    readonly preservedManifestHash?: string;\n    readonly preservedRef?: string;\n    readonly preservedHead?: string;\n    readonly preservedContent?: \'versioned\' | \'all\';\n    readonly preservedConflictStages?: readonly GitIntegrationConflictStage[];\n    readonly preservedIntegrationOperationId?: GitOperationId;\n    readonly unresolvedConflictIds?: readonly string[];\n    readonly resolutionOperationId?: GitOperationId;\n    readonly resolvedPreserveOperationId?: GitOperationId;\n    readonly unpreservedPaths?: readonly string[];\n    readonly use?: GitResourceUse;\n    readonly useHistory: readonly GitResourceUse[];\n}',
+  },
+  {
+    name: 'GitResourceSnapshot',
+    declaration: 'export interface GitResourceSnapshot {\n    readonly path: string;\n    readonly tree: string;\n}',
+  },
+  {
+    name: 'GitResourceSnapshotRequest',
+    declaration: 'export interface GitResourceSnapshotRequest {\n    readonly preserveOperationId: GitOperationId;\n    readonly consumerScope: GitConsumerScope;\n}',
   },
   {
     name: 'GitResourceUse',
@@ -8173,7 +8233,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared>;\n    async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal, callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undefined): () => void;\n    async sendMessage(sender: Agent, targetId: SessionId, content: /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async prepareContinuable(spec: ContinuablePrepareSpec): Promise<ContinuablePrepared>;\n    async withContinuableExecution<T>(parent: Agent, childId: SessionId, signal: AbortSignal, callback: (agent: Agent, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withDormantContinuable<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: DormantContinuableScope | undefined, signal: AbortSignal) => Promise<T>): Promise<T>;\n    async withContinuableInputCustody<T>(parent: Agent, childId: SessionId, input: InputControllerHandle, signal: AbortSignal, callback: (scope: ContinuableInputCustodyScope) => Promise<T>): Promise<T>;\n    async deliverContinuableInput(spec: ContinuableStartSpec & {\n        readonly childId: SessionId;\n    }, input: UserMessage): Promise<ContinuableStart>;\n    synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void;\n    registerUserInterruptHandler(handler: SubagentUserInterruptHandler): () => void;\n    registerSettlementNoticePolicy(policy: SubagentSettlementNoticePolicy, wording?: (facts: SubagentSettlementNoticeFacts) => SubagentSettlementNoticeWording | undef /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
@@ -8202,6 +8262,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubagentStopReasonMap',
     declaration: 'export interface SubagentStopReasonMap {\n    completed: \'completed\';\n    aborted: \'aborted\';\n    error: \'error\';\n    \'max-tokens\': \'max-tokens\';\n    refusal: \'refusal\';\n}',
+  },
+  {
+    name: 'SubagentUserInterrupt',
+    declaration: 'export interface SubagentUserInterrupt {\n    readonly agent: Agent;\n    readonly parentSessionId: SessionId;\n    readonly turn: number;\n}',
+  },
+  {
+    name: 'SubagentUserInterruptHandler',
+    declaration: 'export type SubagentUserInterruptHandler = (request: SubagentUserInterrupt) => boolean | Promise<boolean>;',
   },
   {
     name: 'SubprocessCollect',
@@ -8313,7 +8381,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamCompositionSnapshot',
-    declaration: 'export interface TeamCompositionSnapshot {\n    readonly composition: TeamCompositionState;\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly maxMembers: number;\n    readonly maxActiveMembers: number;\n}',
+    declaration: 'export interface TeamCompositionSnapshot {\n    readonly composition: TeamCompositionState;\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly maxMembers: number;\n    readonly maxActiveMembers: number;\n    readonly startQuota?: TeamStartQuota;\n}',
   },
   {
     name: 'TeamCompositionState',
@@ -8377,7 +8445,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamExtensionRecordWritePlan',
-    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly affectsComposition?: true;\n}',
+    declaration: 'export interface TeamExtensionRecordWritePlan extends TeamExtensionRecord {\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly affectsComposition?: true;\n    readonly quiet?: true;\n}',
   },
   {
     name: 'TeamHeldExecutionScope',
@@ -8481,7 +8549,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamMemberExecutionProvider',
-    declaration: 'export interface TeamMemberExecutionProvider {\n    readonly id: string;\n    resolveExecutionDirectory?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<TeamExecutionDirectory | undefined>;\n    resolveAnchor?(id: SessionId, signal: AbortSignal): Promise<Agent>;\n    initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>;\n}',
+    declaration: 'export interface TeamMemberExecutionProvider {\n    readonly id: string;\n    resolveExecutionDirectory?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<TeamExecutionDirectory | undefined>;\n    resolveAnchor?(id: SessionId, signal: AbortSignal): Promise<Agent>;\n    initialMaterial?(anchor: Agent, execution: TeamMemberExecution, signal: AbortSignal): Promise<readonly TeamMemberMaterial[]>;\n    refuseMessage?(anchor: Agent, memberId: SessionId): string | undefined;\n}',
   },
   {
     name: 'TeamMemberExecutionSnapshot',
@@ -8494,6 +8562,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TeamMemberPhase',
     declaration: 'export type TeamMemberPhase = \'provisioning\' | \'active\' | \'failed\' | \'retiring\' | \'retired\';',
+  },
+  {
+    name: 'TeamMemberQuotas',
+    declaration: 'export interface TeamMemberQuotas {\n    readonly inPost: TeamQuotaUse;\n    readonly identities: TeamQuotaUse;\n    readonly started?: TeamQuotaUse & {\n        readonly memberIds: readonly SessionId[];\n        readonly retirable: readonly SessionId[];\n    };\n}',
   },
   {
     name: 'TeamMembership',
@@ -8536,12 +8608,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TeamProfileSlotBinding {\n    readonly slotId: string;\n    readonly memberId: SessionId;\n}',
   },
   {
+    name: 'TeamQuotaUse',
+    declaration: 'export interface TeamQuotaUse {\n    readonly used: number;\n    readonly limit: number;\n}',
+  },
+  {
+    name: 'TeamStartQuota',
+    declaration: 'export interface TeamStartQuota {\n    readonly limit: number;\n    readonly counted: readonly SessionId[];\n    readonly retirable: readonly SessionId[];\n}',
+  },
+  {
     name: 'TeamTaskAction',
     declaration: 'export type TeamTaskAction = \'claim\' | \'release\' | \'edit\' | \'set_dependencies\' | \'complete\' | \'reopen\' | \'reassign\' | \'delete\';',
   },
   {
     name: 'TeamTaskExtension',
-    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly requireDurableAcknowledgement?: boolean;\n    classifyInput?(anchor: Agent, input: AgentInput): {\n        readonly taskId: TeamTaskId;\n        readonly current: boolean;\n    } | undefined;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
+    declaration: 'export interface TeamTaskExtension {\n    readonly id: string;\n    readonly requireDurableAcknowledgement?: boolean;\n    classifyInput?(anchor: Agent, input: AgentInput): {\n        readonly taskId: TeamTaskId;\n        readonly current: boolean;\n    } | undefined;\n    planLeadRelease?(anchor: Agent, snapshot: TeamTaskTransactionSnapshot, releases: readonly TeamTaskTransactionUpdate[]): string;\n    releaseHints?(caller: Agent): readonly string[];\n    validateMemberGroup?(caller: Agent, group: string | undefined): void;\n    assessSettlementNotice?(facts: SubagentSettlementNoticeFacts): \'send\' | \'suppress\' | undefined | Promise<\'send\' | \'suppress\' | undefined>;\n    unsubmittedTaskIds?(facts: SubagentSettlementNoticeFacts): readonly TeamTaskId[] | Promise<readonly TeamTaskId[]>;\n    settlementDetail?(facts: SubagentSettlementNoticeFacts): string | undefined | Promise<string | undefined>;\n    create(caller: Agent, request: CreateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n    update(caller: Agent, request: UpdateTeamTaskRequest, handle: TeamTaskExtensionHandle): Promise<TeamTaskView>;\n}',
   },
   {
     name: 'TeamTaskExtensionHandle',
@@ -8573,7 +8653,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionSnapshot',
-    declaration: 'export interface TeamTaskTransactionSnapshot {\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly composition?: TeamCompositionState;\n    readonly nextTaskNumber: number;\n}',
+    declaration: 'export interface TeamTaskTransactionSnapshot {\n    readonly tasks: readonly TeamTaskSnapshot[];\n    readonly members: readonly TeamMemberSnapshot[];\n    readonly composition?: TeamCompositionState;\n    readonly nextTaskNumber: number;\n    readonly startQuota?: TeamStartQuota;\n}',
   },
   {
     name: 'TeamTaskTransactionUpdate',
@@ -8581,11 +8661,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskTransactionWritePlan',
-    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly allowLeadSelfNotices?: boolean;\n}',
+    declaration: 'export interface TeamTaskTransactionWritePlan {\n    readonly updates: readonly TeamTaskTransactionUpdate[];\n    readonly dataJson: string;\n    readonly notices?: readonly TeamExtensionNotice[];\n    readonly allowLeadSelfNotices?: boolean;\n    readonly quiet?: true;\n}',
   },
   {
     name: 'TeamTaskView',
     declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly resultUnavailable?: true;\n    readonly dispatchBlocked?: true;\n    readonly writeScopeWarnings: string[];\n}',
+  },
+  {
+    name: 'TeamWaitObserver',
+    declaration: 'export interface TeamWaitObserver {\n    readonly progressing?: ((caller: Agent) => boolean) | undefined;\n    readonly begin?: ((caller: Agent) => () => string | undefined) | undefined;\n    readonly watch?: ((caller: Agent, wake: () => void) => () => void) | undefined;\n}',
   },
   {
     name: 'TeamWaitOptions',

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import TypertRegistry from '../../../typert/registry/src/index.ts'
+import TypertGateway from '../../../api/gateway/src/index.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -4672,4 +4674,152 @@ describe('resident continuable children', () => {
       await ctx.fiber.dispose()
     }
   })
+})
+
+
+describe('authenticated interrupt owner', () => {
+  it('authorizes before the owner runs, preserves native fallback, and propagates a refusal without cancelling', async () => {
+    const hold = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('working'), gate: hold.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+    const child = ctx.agents.get(started.childId)!
+    cleanups.unshift(async () => { hold.resolve(undefined); child.cancel({ kind: 'user' }); await child.whenIdle() })
+    const cancel = vi.spyOn(child, 'cancel')
+    const handler = vi.fn(() => false)
+    const manager = continuationManager(ctx)
+    try {
+      await expect(manager.interruptByParent(started.childId, SessionId('foreign'), handler))
+        .rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+      expect(handler).not.toHaveBeenCalled()
+      expect(cancel).not.toHaveBeenCalled()
+      await expect(manager.interruptByParent(started.childId, parent.id, () => { throw new Error('cannot record stop') }))
+        .rejects.toThrow('cannot record stop')
+      expect(cancel).not.toHaveBeenCalled()
+      await manager.interruptByParent(started.childId, parent.id, handler)
+      expect(handler).toHaveBeenCalledWith({ agent: child, parentSessionId: parent.id, turn: 1 })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ kind: 'user' }, { keepInbox: true })
+    } finally { hold.resolve(undefined); await child.whenIdle() }
+  })
+
+  it('lets the owner cancel once and does not run that owner for an idle or absent child', async () => {
+    const hold = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('working'), gate: hold.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+    const child = ctx.agents.get(started.childId)!
+    cleanups.unshift(async () => { hold.resolve(undefined); child.cancel({ kind: 'user' }); await child.whenIdle() })
+    const cancel = vi.spyOn(child, 'cancel')
+    const manager = continuationManager(ctx)
+    const owner = vi.fn(({ agent }: { agent: Agent }) => { agent.cancel({ kind: 'user' }, { keepInbox: true }); return true })
+    await manager.interruptByParent(started.childId, parent.id, owner)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    hold.resolve(undefined)
+    await child.whenIdle()
+    await manager.interruptByParent(started.childId, parent.id, owner)
+    await manager.interruptByParent(SessionId('absent'), parent.id, owner)
+    expect(owner).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not cancel a later turn after an asynchronous owner abstains', async () => {
+    const first = Promise.withResolvers<undefined>()
+    const second = Promise.withResolvers<undefined>()
+    const decision = Promise.withResolvers<boolean>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('first'), gate: first.promise },
+      { chunks: textResponse('second'), gate: second.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+    const child = ctx.agents.get(started.childId)!
+    cleanups.unshift(async () => { first.resolve(undefined); second.resolve(undefined); decision.resolve(false)
+      child.cancel({ kind: 'user' }); await child.whenIdle() })
+    const cancel = vi.spyOn(child, 'cancel')
+    await queuePrompt(ctx, parent, started.childId, message('second turn'))
+    const owner = vi.fn(() => decision.promise)
+    const interrupt = continuationManager(ctx).interruptByParent(started.childId, parent.id, owner)
+    await vi.waitFor(() => { expect(owner).toHaveBeenCalledTimes(1) })
+    first.resolve(undefined)
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+    decision.resolve(false)
+    await interrupt
+    expect(cancel).not.toHaveBeenCalled()
+    second.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+})
+
+
+it('runs a registered owner only after the authenticated Remote verifies the live child address', async () => {
+  const hold = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('working'), gate: hold.promise }])
+  const { ctx, parent } = await setupWith(adapter)
+  await ctx.plugin(TypertRegistry)
+  await ctx.plugin(TypertGateway)
+  const started = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  const child = ctx.agents.get(started.childId)!
+  cleanups.unshift(async () => { hold.resolve(undefined); child.cancel({ kind: 'user' }); await child.whenIdle() })
+  const handler = vi.fn(() => true)
+  const dispose = ctx.subagents.registerUserInterruptHandler(handler)
+  cleanups.unshift(async () => { dispose() })
+  const cancel = vi.spyOn(child, 'cancel')
+  const args = { childSessionId: child.id, parentSessionId: parent.id, mode: 'continuable' }
+  await expect(ctx.typertGateway.invoke({ namespace: 'subagents', method: 'interruptByParent',
+    args: { ...args, parentSessionId: 'foreign' } })).rejects.toMatchObject({ code: 'subagent/unauthorized' })
+  expect(handler).not.toHaveBeenCalled()
+  expect(await ctx.typertGateway.invoke({ namespace: 'subagents', method: 'interruptByParent', args })).toEqual({ accepted: true })
+  expect(handler).toHaveBeenCalledWith({ agent: child, parentSessionId: parent.id, turn: 1 })
+  expect(cancel).not.toHaveBeenCalled()
+  handler.mockImplementation(() => { throw new Error('owner refusal') })
+  await expect(ctx.typertGateway.invoke({ namespace: 'subagents', method: 'interruptByParent', args }))
+    .rejects.toMatchObject({ code: 'gateway/internal' })
+  expect(cancel).not.toHaveBeenCalled()
+  dispose()
+  await ctx.typertGateway.invoke({ namespace: 'subagents', method: 'interruptByParent', args })
+  expect(cancel).toHaveBeenCalledExactlyOnceWith({ kind: 'user' }, { keepInbox: true })
+  hold.resolve(undefined)
+  await child.whenIdle()
+})
+
+
+it('does not hand a closing child to the user-interrupt owner', async () => {
+  const hold = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('working'), gate: hold.promise }])
+  const { ctx, parent } = await setupWith(adapter)
+  const started = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  const closing = ctx.subagents.drainContinuableChildren(parent, [started.childId])
+  cleanups.unshift(async () => { hold.resolve(undefined); await closing })
+  const activation = continuationActivations(ctx).get(started.childId)
+  // The drain owns teardown while the model is held; wait for its real closing state rather than a timer.
+  await vi.waitFor(() => { expect(activation?.inbox.closing).toBeDefined() })
+  const handler = vi.fn(() => true)
+  await continuationManager(ctx).interruptByParent(started.childId, parent.id, handler)
+  expect(handler).not.toHaveBeenCalled()
+  hold.resolve(undefined)
+  await closing
+})
+
+
+it('does not cancel without the projection capability needed to identify the original turn', async () => {
+  const hold = Promise.withResolvers<undefined>()
+  const adapter = new GatedAdapter([{ chunks: textResponse('working'), gate: hold.promise }])
+  const { ctx, parent } = await setupWith(adapter)
+  const started = await ctx.subagents.startContinuable(startSpec(parent))
+  await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+  const child = ctx.agents.get(started.childId)!
+  cleanups.unshift(async () => { hold.resolve(undefined); child.cancel({ kind: 'user' }); await child.whenIdle() })
+  const ownerContext: unknown = Reflect.get(continuationActivations(ctx), 'ctx')
+  if (!(ownerContext instanceof Context)) throw new Error('missing activation owner Context')
+  const lookup = vi.spyOn(ownerContext, 'get').mockReturnValueOnce(undefined)
+  const cancel = vi.spyOn(child, 'cancel')
+  const handler = vi.fn(() => true)
+  try {
+    await expect(continuationManager(ctx).interruptByParent(started.childId, parent.id, handler))
+      .rejects.toMatchObject({ code: 'NOT_RESUMABLE' })
+    expect(handler).not.toHaveBeenCalled()
+    expect(cancel).not.toHaveBeenCalled()
+  } finally { lookup.mockRestore(); hold.resolve(undefined); await child.whenIdle() }
 })

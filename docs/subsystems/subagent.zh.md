@@ -174,6 +174,22 @@ type SubagentInterruptAuthority =
   | { readonly kind: 'ancestor'; readonly agent: Agent }
 ```
 
+认证的浏览器中断可在在线直接父级验证后交给一个已注册的 Host 所有者。返回 false 时仅在同一轮仍活跃才委派取消；错误不退回取消。祖先中断不调用此可选所有者。
+
+```ts type-equiv
+/** A verified live child turn at the authenticated user-interrupt boundary. */
+interface SubagentUserInterrupt {
+  readonly agent: Agent
+  readonly parentSessionId: SessionId
+  readonly turn: number
+}
+```
+
+```ts type-equiv
+/** Return true after owning the stop; false preserves native cancellation of this exact turn. Failures never fall back. */
+type SubagentUserInterruptHandler = (request: SubagentUserInterrupt) => boolean | Promise<boolean>
+```
+
 每个 Activation 都拥有自己的 `AgentHandle` 和一个 `ownedChildren: Set<SessionId>`；由于一份会话至多有一个存活 Activation，子会话 id 无需另一个运行时化身引用即可标识存活的子 agent。启动子 agent 或提交源自 parent 的工作，会在子 agent 能够运行之前将其注册到受继续执行管理的父级集合中；只要该集合非空，该父级就无法 settle。顶层或其他非继续执行的 Agent 没有 Activation，处于 waiting 图之外。只有当子 Agent 没有活跃工作、其 Inbox 为空、该子 agent 的每个子级都已 dispose、best-effort 的最终会话 flush 结算完毕，且子 agent 的 `AgentHandle` 完成 dispose 之后，才会释放子 agent。
 
 最终结算会等待 `ctx.sessions.flush(session)`，但会忽略其参与布尔值，因为任意 listener 都无法证明某个持久化后端已存储该状态。rejection 会被记录，但不会使 Activation 失败；管理器仍会 dispose 该 handle 并释放所有权，此后持久化的子 agent 状态在后续恢复时可能缺失或陈旧。管理器卸载会调用内部的管理器全局 drain，关闭准入并 dispose 每片在线森林；`drainContinuableDescendants(parents)` 只关闭由 host 确切拥有的在线 Agent 之下的准入，并 dispose 其可继续后代，而无关森林保持在线。两者都会等待各自作用域内已获准的物化过程，自顶向下传播取消，按 child-first 顺序释放 handle，并且即使个别分支失败也会等待所有选中分支。持久化子会话不受该进程内拆卸的影响。
@@ -639,6 +655,12 @@ async deliverContinuableInput(spec: ContinuableStartSpec & { readonly childId: S
  */
 synchronizeContinuablePermissions(parent: Agent, child: Agent, settingsSource: Agent = parent): void
 
+/** Register one Host owner of authenticated UI interrupts; model/ancestor interrupts do not enter it.
+ * @param handler - receives only a verified live direct-child turn; true owns cancellation, false delegates it.
+ * @returns disposer; without a registration the official interrupt path is unchanged.
+ */
+registerUserInterruptHandler(handler: SubagentUserInterruptHandler): () => void
+
 /**
  * Register one optional parent-notice policy for continuable Activations.
  * Unclaimed, conflicting, failed, or timed-out decisions preserve delivery;
@@ -755,11 +777,9 @@ listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<Subagen
 @Remote('prompt') async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>
 
 /**
- * Remote face of {@link interrupt} under one durable parent address. No
- * catalog, history, persistence, or parent Agent lookup runs: the core
- * primitive alone authorizes the address against the live Activation, which
- * is what keeps a live child interruptible while its parent Agent is offline.
- * Absent, idle, and already-completed targets are accepted no-ops there.
+ * Authenticated Remote interrupt under a durable direct-parent address. The live Activation validates ownership before
+ * an optional Host handler runs. Without a handler no parent or persistence lookup is needed, including for an offline
+ * parent. Absent, idle and already-completed targets are accepted no-ops; a handler failure never silently cancels.
  * @param childSessionId - durable child session id to interrupt.
  * @param parentSessionId - durable direct parent whose authority is claimed.
  * @param mode - required continuable-address discriminator.
@@ -768,7 +788,7 @@ listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<Subagen
  *   `subagent/unauthorized` when the address does not own the live target,
  *   otherwise `gateway/internal`.
  */
-@Remote('interruptByParent') interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable', ): SubagentInterruptReceipt
+@Remote('interruptByParent') async interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable', ): Promise<SubagentInterruptReceipt>
 
 /**
  * Register a provider under its name. Registration is effect-scoped and HMR

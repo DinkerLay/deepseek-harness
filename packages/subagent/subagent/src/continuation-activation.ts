@@ -39,7 +39,7 @@ import { SubagentError } from './error.ts'
 import { SubagentInbox } from './inbox.ts'
 import type { SubagentDelivery } from './inbox.ts'
 import type { ActivationObserver, ActivationTerminal } from './lifecycle.ts'
-import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording } from './types.ts'
+import type { SubagentSettlementNoticeFacts, SubagentSettlementNoticeWording, SubagentUserInterruptHandler } from './types.ts'
 
 /** Process-local slots shared through uninterrupted continuable parent links. */
 class ActivationPool {
@@ -369,12 +369,23 @@ export class ContinuableActivationRegistry {
    * @param targetSessionId - the durable child session id to interrupt.
    * @param authority - the human parent address or exact live ancestor Agent.
    */
+  interrupt(targetSessionId: SessionId, authority: { readonly kind: 'user'; readonly parentSessionId: SessionId }
+    | { readonly kind: 'ancestor'; readonly agent: Agent }): void
+  /** Authorize a user request before allowing an asynchronous owner to persist its intent.
+   * @param targetSessionId - live child identity.
+   * @param authority - durable direct-parent address.
+   * @param beforeCancel - true owns the stop; false delegates only for the original still-active turn.
+   * @returns handler completion; absent or closing children are no-ops, failures reject without fallback.
+   */
+  interrupt(targetSessionId: SessionId, authority: { readonly kind: 'user'; readonly parentSessionId: SessionId },
+    beforeCancel: SubagentUserInterruptHandler): Promise<void>
   interrupt(
     targetSessionId: SessionId,
     authority:
       | { readonly kind: 'user'; readonly parentSessionId: SessionId }
       | { readonly kind: 'ancestor'; readonly agent: Agent },
-  ): void {
+    beforeCancel?: SubagentUserInterruptHandler,
+  ): void | Promise<void> {
     if (authority.kind === 'ancestor') {
       const caller = authority.agent
       if (this.ctx.agents.get(caller.id) !== caller) {
@@ -391,7 +402,7 @@ export class ContinuableActivationRegistry {
       }
     }
     const activation = this.resident.get(targetSessionId)
-    if (activation === undefined) return
+    if (activation === undefined) return beforeCancel === undefined ? undefined : Promise.resolve()
     if (authority.kind === 'user') {
       if (activation.handle.agent.session.header.parentSession !== authority.parentSessionId) {
         throw new SubagentError(
@@ -407,11 +418,23 @@ export class ContinuableActivationRegistry {
     }
     // Disposal already stopped the target with a whole-Activation teardown;
     // a second cancel would be a redundant signal on a closing handle.
-    if (activation.inbox.closing !== undefined) return
-    activation.handle.agent.cancel(
-      authority.kind === 'user' ? { kind: 'user' } : { kind: 'parent' },
-      { keepInbox: true },
-    )
+    if (activation.inbox.closing !== undefined) return beforeCancel === undefined ? undefined : Promise.resolve()
+    const agent = activation.handle.agent
+    const cancel = () => { agent.cancel(authority.kind === 'user' ? { kind: 'user' } : { kind: 'parent' }, { keepInbox: true }) }
+    if (beforeCancel === undefined || authority.kind !== 'user') { cancel(); return }
+    const openTurn = () => {
+      const projections = this.ctx.get('sessionProjections')
+      if (projections === undefined) throw new SubagentError('user interrupt requires Session turn projections', 'NOT_RESUMABLE')
+      const boundary = projections.stateOf(agent.session, 'turnBoundary')
+      return agent.status === 'running' && boundary?.openTurnStartSeq != null ? boundary.lastTurn : undefined
+    }
+    const turn = openTurn()
+    if (turn === undefined) return Promise.resolve()
+    return Promise.resolve(beforeCancel({ agent, parentSessionId: authority.parentSessionId, turn })).then((handled) => {
+      // An asynchronous owner may finish while a different turn starts: never cancel that later work by this request.
+      if (!handled && this.resident.get(targetSessionId) === activation && activation.inbox.closing === undefined
+        && openTurn() === turn) cancel()
+    })
   }
 
   /**

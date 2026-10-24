@@ -60,6 +60,7 @@ import type {
   ContinuableStartSpec,
   DormantContinuableScope,
   SubagentInterruptAuthority,
+  SubagentUserInterruptHandler,
   SubagentSendMessageOptions,
 } from './types.ts'
 
@@ -860,6 +861,17 @@ export class SubagentContinuationManager {
    */
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void {
     this.activations.interrupt(targetSessionId, authority)
+  }
+
+  /** Authorize the live parent address before letting a trusted user-stop owner handle this exact turn.
+   * @param targetSessionId - live child identity.
+   * @param parentSessionId - claimed direct parent.
+   * @param handler - owner invoked only after the live parent address is verified.
+   * @returns after the handler or native fallback settles; rejects on authorization or handler failure.
+   */
+  async interruptByParent(targetSessionId: SessionId, parentSessionId: SessionId,
+    handler: SubagentUserInterruptHandler): Promise<void> {
+    await this.activations.interrupt(targetSessionId, { kind: 'user', parentSessionId }, handler)
   }
 
   /** Deliver one resident continuable child's message to its live direct parent. */

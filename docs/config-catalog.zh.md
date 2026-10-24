@@ -1338,7 +1338,7 @@ export type Config = LocalConfig
 ## `@deepseek-ai/dsh-git-resources`
 
 - `inject`: `workspaceRegistry` · `storageDomain` · `subprocess`
-- `source`: [`packages/workspace/git-resources/src/index.ts:64`](../packages/workspace/git-resources/src/index.ts)
+- `source`: [`packages/workspace/git-resources/src/index.ts:65`](../packages/workspace/git-resources/src/index.ts)
 
 ```ts config-catalog
 /** Deployment bounds and the explicit Harness home, never a caller-selected arbitrary resource directory. */
@@ -3193,7 +3193,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 ## `@deepseek-ai/dsh-subagent`
 
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:231`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:234`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */
