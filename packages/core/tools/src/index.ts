@@ -670,6 +670,12 @@ function errorInfo(error: unknown): ToolErrorInfo | undefined {
 /** How the registry presents its tools to the model (see {@link Config.mode}). */
 export type ToolPresentationMode = 'native' | 'ptc' | 'both'
 
+/** Scoped PTC-only capability mask; native visibility remains unchanged. */
+export interface ToolPresentationOptions {
+  /** Intersects inherited PTC filters without changing native schemas or unrelated composite calls. */
+  readonly ptcFilter?: ToolRestriction
+}
+
 /** Plugin config: how the registered tools are presented to the model. */
 export interface Config {
   /**
@@ -741,6 +747,7 @@ class ToolLayer implements ScopeLayer {
    * "which form does the model see" is a contradiction, not a merge.
    */
   mode: ToolPresentationMode | undefined
+  ptcFilter: CompiledToolRestriction | undefined
 
   constructor(scope: ScopeKey | undefined) {
     this.tools = new NamedEntries(name => new Error(scope === undefined
@@ -751,7 +758,7 @@ class ToolLayer implements ScopeLayer {
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
     return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
-      && this.mode === undefined
+      && this.mode === undefined && this.ptcFilter === undefined
   }
 
   /** Whether every compiled restriction in this layer admits a global tool name. */
@@ -837,6 +844,7 @@ export class ToolRuntime extends Service {
   /** Presentation for scopes that declare none; {@link presentAs} shadows it per scope. */
   private readonly defaultMode: ToolPresentationMode
   private readonly maxParallelSubCalls: number
+  private readonly ptcParents = new Set<ToolExecutionToken>()
   /**
    * Reserved presentation transport, kept outside the filterable registration
    * layers. Built on first need rather than at construction: which agents run
@@ -879,7 +887,7 @@ export class ToolRuntime extends Service {
       order: this.ctx.systemPrompt.getSectionOrder('PTC_ONLY'),
       // The SAME predicate the executor denies by, so the prompt cannot state
       // a rule the registry does not enforce (see `collapses`).
-      text: context => this.modeFor(context.scope) === 'ptc' ? PTC_ONLY_INSTRUCTION : '',
+      text: context => this.modeFor(context.scope) === 'ptc' && this.get(RUN_CODE_NAME, context.scope) ? PTC_ONLY_INSTRUCTION : '',
     }
   }
 
@@ -902,6 +910,7 @@ export class ToolRuntime extends Service {
       text: (context) => {
         const mode = this.modeFor(context.scope)
         if (mode === 'native') return ''
+        if (!this.get(RUN_CODE_NAME, context.scope)) return ''
         const runtime = this.requirePtcRuntime(mode)
         // Own-property read: a language like `toString`/`constructor` would
         // otherwise resolve an inherited Object.prototype member as a renderer.
@@ -956,6 +965,10 @@ export class ToolRuntime extends Service {
       peekRuntime: () => this.ctx.get('ptcRuntime'),
       maxParallel: this.maxParallelSubCalls,
       shapeDispatchLog: dispatch => this.shapeDispatchLog(dispatch),
+      enterTransport: (token) => {
+        this.ptcParents.add(token)
+        return () => { this.ptcParents.delete(token) }
+      },
     })
     return this.ptcTransport
   }
@@ -969,12 +982,26 @@ export class ToolRuntime extends Service {
    * composes PTC mode agents beside native ones in the same process, and a
    * process-global override would be the `mode` config field instead.
    * @param mode - the presentation the covered agents' models see.
+   * @param options - optional PTC-only mask over currently visible end-capability tools.
    * @returns the exact disposer that restores the deployment default.
    */
-  presentAs(mode: ToolPresentationMode): () => void {
+  presentAs(mode: ToolPresentationMode, options: ToolPresentationOptions = {}): () => void {
     const ctx = this.ctx
     if (scopeOf(ctx) === undefined) {
       throw new Error('tools.presentAs() requires a scoped context (agent.ctx): a context-global presentation is the `mode` config field on the tools row')
+    }
+    const filter = options.ptcFilter
+    if (filter && (mode === 'native' || filter.allow === undefined && filter.deny === undefined)) {
+      throw new Error('tools.presentAs() ptcFilter requires a PTC presentation and an explicit allow or deny set')
+    }
+    const known = this.view(scopeOf(ctx)).visible
+    const names = [...filter?.allow ?? [], ...filter?.deny ?? []]
+    if (names.some(name => name === RUN_CODE_NAME || !known.has(name))) {
+      throw new Error('tools.presentAs() ptcFilter must name visible end-capability tools')
+    }
+    const compiled: CompiledToolRestriction | undefined = filter === undefined ? undefined : {
+      ...filter.allow === undefined ? {} : { allow: new Set(filter.allow) },
+      ...filter.deny === undefined ? {} : { deny: new Set(filter.deny) },
     }
     const dispose = ctx.effect(function* (this: ToolRuntime) {
       yield this.layers.effect(
@@ -984,7 +1011,8 @@ export class ToolRuntime extends Service {
             throw new Error(`tools.presentAs("${mode}") conflicts with "${layer.mode}" already declared for this scope; one composition selects one presentation`)
           }
           layer.mode = mode
-          return () => { layer.mode = undefined }
+          layer.ptcFilter = compiled
+          return () => { layer.mode = undefined; layer.ptcFilter = undefined }
         },
         { label: 'tools.presentAs()' },
       )
@@ -1011,6 +1039,10 @@ export class ToolRuntime extends Service {
     if (mode === 'native') {
       const schemas = [...view.visible.values()].map(definition => this.schemaOf(definition, false))
       return { schemas, knownNames: [...view.knownNames] }
+    }
+    if (!view.visible.has(RUN_CODE_NAME)) {
+      return { schemas: mode === 'ptc' ? [] : [...view.visible.values()].map(definition => this.schemaOf(definition, false)),
+        knownNames: mode === 'ptc' ? [] : [...view.knownNames] }
     }
     // Validate the runtime language BEFORE projecting schemas: schemaOf reads
     // run_code's language-aware description/parameters getters, whose own
@@ -1212,7 +1244,8 @@ export class ToolRuntime extends Service {
     // an invariant assertion as well as protection against future layer
     // changes. Per scope: a native agent must not find `run_code` in its
     // dispatch table because some other agent in the process presents it.
-    if (this.modeFor(scope) !== 'native') {
+    const hasFilter = layers.some(layer => layer.ptcFilter !== undefined)
+    if (this.modeFor(scope) !== 'native' && (!hasFilter || [...visible.keys()].some(name => this.ptcAdmits(name, scope)))) {
       visible.set(RUN_CODE_NAME, this.requirePtcTransport())
     }
     return { visible, knownNames, restrictableNames }
@@ -1241,10 +1274,12 @@ export class ToolRuntime extends Service {
    * through the executor, matching an absent definition.
    * @param name - the tool name as registered.
    * @param scope - the viewing scope (the agent); omitted = the global view.
-   * @param nested - whether the call is a transport sub-dispatch, not a model-direct call.
+   * @param parent - enclosing transport token, or undefined for a model-direct call.
    * @returns the definition that may run, or undefined when the call must be rejected.
    */
-  private resolveExecution(name: string, scope: ScopeKey | undefined, nested: boolean): ToolDefinition | undefined {
+  private resolveExecution(name: string, scope: ScopeKey | undefined, parent: ToolExecutionToken | undefined): ToolDefinition | undefined {
+    const nested = parent !== undefined
+    if (parent !== undefined && this.ptcParents.has(parent) && (name === RUN_CODE_NAME || !this.ptcAdmits(name, scope))) return undefined
     const tool = this.get(name, scope)
     if (tool === undefined) return undefined
     if (this.collapses(name, scope, nested)) return undefined
@@ -1261,10 +1296,29 @@ export class ToolRuntime extends Service {
     return [...this.view(scope).visible.values()].map(definition => this.schemaOf(definition, true))
   }
 
+  /**
+   * PTC callable schemas use the same scoped mask as SDK generation and nested dispatch.
+   * @param scope - the calling agent or the global view.
+   * @returns visible end-capability schemas admitted by every inherited PTC filter.
+   */
+  ptcSchemas(scope?: ScopeKey): ToolSchema[] {
+    return [...this.view(scope).visible.values()]
+      .filter(definition => definition.name !== RUN_CODE_NAME && this.ptcAdmits(definition.name, scope))
+      .map(definition => this.schemaOf(definition, true))
+  }
+
+  private ptcAdmits(name: string, scope?: ScopeKey): boolean {
+    return this.layers.chainLayers(scope).every((layer) => {
+      const filter = layer.ptcFilter
+      return filter === undefined || (filter.allow === undefined || filter.allow.has(name))
+        && (filter.deny === undefined || !filter.deny.has(name))
+    })
+  }
+
   /** Project visible callable tools onto the generated PTC mode SDK contract. */
   private sdkSchemas(scope?: ScopeKey): ToolSdkSchema[] {
     return [...this.view(scope).visible.values()]
-      .filter(definition => definition.name !== RUN_CODE_NAME)
+      .filter(definition => definition.name !== RUN_CODE_NAME && this.ptcAdmits(definition.name, scope))
       .map((definition): ToolSdkSchema => {
         const output = snapshotJsonValue(definition.output.schema)
         /* v8 ignore next -- registration already validated and retained this schema as lossless JSON. */
@@ -1301,7 +1355,7 @@ export class ToolRuntime extends Service {
    * @returns the fail-closed scheduling mode.
    */
   executionMode(exec: ToolExecutionInput): ToolExecutionMode {
-    const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+    const tool = this.resolveExecution(exec.name, exec.agent, exec.parent)
     if (!tool?.isConcurrencySafe) return { kind: 'exclusive' }
     try {
       const concurrencySafe: unknown = tool.isConcurrencySafe(exec.arguments)
@@ -1575,7 +1629,7 @@ export class ToolRuntime extends Service {
     }
     exec.signal = signal
     try {
-      const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+      const tool = this.resolveExecution(exec.name, exec.agent, exec.parent)
       if (!tool) throw new ToolNotFoundError(exec.name)
       state.bodyInvoked = true
       const returned = await tool.execute(exec.arguments, exec)
@@ -1804,7 +1858,7 @@ export class ToolRuntime extends Service {
       if (result.isError) {
         throw new TypeError('tools/post-execute cannot replace the value of a failed result')
       }
-      const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+      const tool = this.resolveExecution(exec.name, exec.agent, exec.parent)
       if (tool === undefined) throw new ToolNotFoundError(exec.name)
       const replaced = this.createSuccessResult(exec, tool, decision.value)
       return this.markCanonical(exec, {
@@ -1873,7 +1927,7 @@ export class ToolRuntime extends Service {
         ...result.additionalContexts !== undefined ? { additionalContexts: result.additionalContexts } : {},
       })
     }
-    const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+    const tool = this.resolveExecution(exec.name, exec.agent, exec.parent)
     if (tool === undefined) throw new ToolNotFoundError(exec.name)
     const normalized = this.createSuccessResult(exec, tool, result.value)
     return this.markCanonical(exec, {

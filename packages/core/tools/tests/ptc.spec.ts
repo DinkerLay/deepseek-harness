@@ -1974,6 +1974,97 @@ describe('the run_code dispatch bridge', () => {
  * the other's catalog. The deployment `mode` is the default those agents
  * shadow, not a process-wide fact.
  */
+describe('scoped PTC capability filters', () => {
+  it('keeps native tools while sharing one filtered SDK, bindings and dispatch view', async () => {
+    const { ctx, systemPrompt, runtime } = await setup({ mode: 'native' })
+    registerEcho(ctx, 'read')
+    const writes = registerEcho(ctx, 'write')
+    const { scope, agent } = await mintAgentScope(ctx)
+    const dispose = scope.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read'] } })
+    try {
+      const assembly = await systemPrompt.assemble({ scope: agent })
+      expect(assembly.tools.map(tool => tool.name)).toEqual(['read', RUN_CODE_NAME, 'write'])
+      expect(assembly.sections.find(section => section.name === 'tools:sdk')?.text).toContain('read: {')
+      expect(assembly.sections.find(section => section.name === 'tools:sdk')?.text).not.toContain('write: {')
+      expect(ctx.tools.ptcSchemas(agent).map(tool => tool.name)).toEqual(['read'])
+      runtime.behavior = async request => ({ logs: [], value: Object.keys(request.bindings[0]!.functions).join(',') })
+      expect(await runCode(ctx, 'list', { agent })).toMatchObject({ isError: false, value: { result: 'read' } })
+      expect(await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('native-write'), name: 'write', arguments: { value: 'native' }, agent }))
+        .toMatchObject({ isError: false, value: 'write:native' })
+      expect(writes).toEqual([{ value: 'native' }])
+      expect(ctx.tools.get(RUN_CODE_NAME)).toBeUndefined()
+    } finally { dispose(); await ctx.fiber.dispose() }
+  })
+
+  it('hides an explicitly empty transport without requiring a backend', async () => {
+    const { ctx, systemPrompt } = await setup({ mode: 'native', runtime: false })
+    registerEcho(ctx)
+    const { scope, agent } = await mintAgentScope(ctx)
+    const dispose = scope.ctx.tools.presentAs('both', { ptcFilter: { allow: [] } })
+    try {
+      const assembly = await systemPrompt.assemble({ scope: agent })
+      expect(assembly.tools.map(tool => tool.name)).toEqual(['echo'])
+      expect(assembly.sections.find(section => section.name === 'tools:sdk')?.text).toBe('')
+      expect(ctx.tools.get(RUN_CODE_NAME, agent)).toBeUndefined()
+    } finally { dispose(); await ctx.fiber.dispose() }
+  })
+
+  it('intersects standing and child filters and releases each exact scope', async () => {
+    const { bindScopeParent } = await import('@deepseek-ai/dsh-scope')
+    const { ctx } = await setup({ mode: 'native' })
+    registerEcho(ctx, 'read'); registerEcho(ctx, 'write')
+    const parent = await mintAgentScope(ctx, 'filter-parent'), child = await mintAgentScope(ctx, 'filter-child')
+    const liftParent = parent.scope.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read'] } })
+    bindScopeParent(child.agent, parent.agent)
+    const liftChild = child.scope.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read', 'write'] } })
+    try {
+      expect(ctx.tools.ptcSchemas(child.agent).map(tool => tool.name)).toEqual(['read'])
+      liftParent()
+      expect(ctx.tools.ptcSchemas(child.agent).map(tool => tool.name)).toEqual(['read', 'write'])
+      liftChild()
+      expect(ctx.tools.get(RUN_CODE_NAME, child.agent)).toBeUndefined()
+    } finally { liftParent(); liftChild(); await ctx.fiber.dispose() }
+  })
+
+  it('denies a forged PTC subcall but does not restrict other native composites', async () => {
+    const { ctx, runtime } = await setup({ mode: 'native' })
+    registerEcho(ctx, 'read'); const writes = registerEcho(ctx, 'write')
+    const { scope, agent } = await mintAgentScope(ctx)
+    scope.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read'] } })
+    let parent: import('@deepseek-ai/dsh-tools').ToolExecutionToken | undefined
+    ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === RUN_CODE_NAME) parent = exec.token; return next() })
+    runtime.behavior = async () => {
+      if (parent === undefined) throw new Error('missing_ptc_parent')
+      const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('forged-inner'), name: 'write', arguments: { value: 'forged' }, agent, parent })
+      expect(result.isError).toBe(true)
+      return { logs: [], value: 'denied' }
+    }
+    try {
+      await runCode(ctx, 'forge', { agent })
+      expect(writes).toEqual([])
+      ctx.tools.register(defineTool({ name: 'composite', description: 'Native composite', parameters: {}, output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        async execute(_args, exec) {
+          const result = await ctx.tools.execute({ signal: exec.signal, callId: ToolCallId('native-inner'), name: 'write', arguments: { value: 'nested' }, agent, parent: exec.token })
+          return result.isError || typeof result.value !== 'string' ? 'failed' : result.value
+        } }))
+      expect(await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('native-composite'), name: 'composite', arguments: {}, agent }))
+        .toMatchObject({ isError: false, value: 'write:nested' })
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('refuses unusable, unknown and reserved filter declarations', async () => {
+    const { ctx } = await setup({ mode: 'native' })
+    registerEcho(ctx)
+    const { scope } = await mintAgentScope(ctx)
+    try {
+      expect(() => scope.ctx.tools.presentAs('native', { ptcFilter: { allow: ['echo'] } })).toThrow(/PTC presentation/)
+      expect(() => scope.ctx.tools.presentAs('both', { ptcFilter: {} })).toThrow(/explicit allow or deny/)
+      expect(() => scope.ctx.tools.presentAs('both', { ptcFilter: { allow: ['unknown'] } })).toThrow(/visible end-capability/)
+      expect(() => scope.ctx.tools.presentAs('both', { ptcFilter: { allow: [RUN_CODE_NAME] } })).toThrow(/visible end-capability/)
+    } finally { await ctx.fiber.dispose() }
+  })
+})
+
 describe('per-agent presentation', () => {
   it('gives one agent PTC mode while the deployment stays native', async () => {
     const { ctx, systemPrompt } = await setup({ mode: 'native' })

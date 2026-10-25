@@ -78,6 +78,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Restrict tools per agent
 
+`agent.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read_file'] } })` keeps native tools visible while limiting the generated SDK, bindings, and PTC sub-dispatches to the selected visible tools. Filters intersect along the scope chain and lift with their declaration. An explicitly empty effective set hides `run_code`; declarations without a filter retain the existing pure-computation transport. `ptcSchemas(scope)` reports the PTC subset. Unknown names, the reserved transport, empty filter objects, and a filter on `native` presentation are rejected.
+
 `ctx.tools.restrict(filter)` applies an allow or deny mask to the global tools one agent inherits; masks intersect, scoped registrations stay visible, and the restriction lifts when disposed. `ctx.tools.get(name, scope)` resolves a tool as one scope sees it. A Host-local presenter consumer passes the calling agent when it must match the definition that executed. `ctx.tools.schemas(scope)` returns the visible schemas without the `execute` functions.
 
 ### Enforce policy on calls
@@ -230,7 +232,7 @@ These limits define when the registry needs special care. They are current packa
 - **`tools/pre-execute` deliberately cannot rewrite `exec.arguments`** — logged and rendered args would desync from what ran; the rewrite design is [a proposed Agent Note](../../../.agents/notes/proposed/feature/2026-06-30-pre-tool-input-rewrite.md).
 - **Caller-defined subagent and workflow structured outputs remain object-rooted** — this is a consumer-level guard; the shared schema vocabulary and tool outputs support every JSON root.
 - **`timeoutMs` on a definition is declarative only** — the registry never enforces deadlines; enforcement requires the `@deepseek-ai/dsh-tool-call-timeout-policy` wrapper.
-- **PTC mode's SDK language follows the one loaded runtime, and a presentation is per agent rather than per tool** — `mode: ptc`/`both` rejects prompt assembly unless `ctx.ptcRuntime.language` has a registered SDK renderer; within one agent no tool can be native-only while another is ptc-only.
+- **PTC mode's SDK language follows the one loaded runtime** — a visible `run_code` requires a runtime with a registered SDK renderer. Scoped `ptcFilter` masks only the program-callable subset; native visibility remains controlled by the ordinary agent tool view.
 - **PTC mode intermediate values are execution-local and unbounded by bytes** — they cannot be reconstructed from session replay and may exhaust process or worker memory; only the outer `run_code` output has the worker's configurable hard cap.
 - **`run_code` state is fresh per run** — a persistent REPL-style kernel is rejected for the MVP, because cross-call state would be invisible to the log.
 

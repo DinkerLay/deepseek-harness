@@ -24,8 +24,8 @@
   en: f843dfaf6ab6e19e
   zh: 8e3b8816a4e51e7b
 /deepseek-ai-dsh-tools/use-this-package/restrict-tools-per-agent:
-  en: c6f98b2283cc2e47
-  zh: c2cdce5d13473f15
+  en: fcfe5558f78d171c
+  zh: 9133886cb0899316
 /deepseek-ai-dsh-tools/use-this-package/enforce-policy-on-calls:
   en: cbfe8317565ac62d
   zh: 1e71c66941e50881
@@ -96,8 +96,8 @@
   en: 2fbf2175168e8244
   zh: ad59a120b54a0996
 /deepseek-ai-dsh-tools/known-limitations-and-deferred-work:
-  en: 3b40386c7530471f
-  zh: c8c9a555d370a51a
+  en: 2dc16eb0b29c32af
+  zh: 2f2ea0cb5a55eed8
 /deepseek-ai-dsh-tools/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

@@ -78,6 +78,8 @@ ctx.tools.register(defineTool({
 
 ### 按 agent 限制工具
 
+`agent.ctx.tools.presentAs('both', { ptcFilter: { allow: ['read_file'] } })` 保持原生工具可见，同时将生成 SDK、绑定和 PTC 子分发限制为选中的可见工具。筛选器沿作用域链取交集，并随声明解除。显式声明后的有效集合为空时隐藏 `run_code`；未声明筛选器时保留已有的纯计算传输。`ptcSchemas(scope)` 返回 PTC 子集。未知名称、保留传输、空筛选对象和 `native` 呈现上的筛选器均被拒绝。
+
 `ctx.tools.restrict(filter)` 对单个 agent 继承的全局工具应用允许或拒绝掩码；掩码取交集，作用域注册保持可见，限制在 dispose（资源释放）时解除。`ctx.tools.get(name, scope)` 按一个作用域的视角解析工具。使用 Host 本地展示转换器的消费方如需匹配实际执行的定义，会传入发起调用的 agent。`ctx.tools.schemas(scope)` 返回可见 schema（不含 `execute` 函数）。
 
 ### 对调用实施策略
@@ -230,7 +232,7 @@ Program-only SDK bindings:
 - **`tools/pre-execute` 有意不允许改写 `exec.arguments`**：否则日志记录与呈现的参数会与实际运行内容失去同步；改写设计记录在[拟议的 Agent Note](../../../.agents/notes/proposed/feature/2026-06-30-pre-tool-input-rewrite.zh.md)中。
 - **调用方定义的 subagent 与工作流结构化输出仍要求对象根**：这是消费方层面的守卫；共享 schema 词汇与工具输出支持任意 JSON 根。
 - **定义中的 `timeoutMs` 仅作声明之用**：注册表绝不会强制执行截止时间；要强制执行，必须使用 `@deepseek-ai/dsh-tool-call-timeout-policy` 包装层。
-- **PTC mode 的 SDK 语言由当前加载的运行时决定，且呈现方式按 agent 而非按工具**：`mode: ptc`/`both` 会拒绝组装提示词，除非 `ctx.ptcRuntime.language` 有已注册的 SDK 渲染器；同一个 agent 内不能让一个工具仅使用 Native，而另一个仅使用 PTC。
+- **PTC mode 的 SDK 语言由当前加载的运行时决定**：可见的 `run_code` 要求运行时具有已注册的 SDK 渲染器。作用域 `ptcFilter` 只筛选程序可调用子集，原生可见性仍由普通 agent 工具视图控制。
 - **PTC mode 中间值只存在于执行局部，且没有字节上限**：它们无法从会话回放重建，并可能耗尽进程或 worker 内存；只有外层 `run_code` 输出受 worker 可配置的硬上限约束。
 - **每次运行都会获得全新的 `run_code` 状态**：MVP 不采用持久 REPL 风格内核，因为跨调用状态不会出现在日志中。
 
