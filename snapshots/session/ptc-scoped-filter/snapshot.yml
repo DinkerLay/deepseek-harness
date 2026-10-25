@@ -1,0 +1,10 @@
+version: 1
+scenario: ptc-scoped-filter
+profile: headless
+composition: ptc-scoped-filter
+recording: authored
+header:
+  class: ptc-scoped-filter
+  pin: true
+replay:
+  override: true

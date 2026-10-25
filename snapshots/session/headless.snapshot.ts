@@ -1182,6 +1182,20 @@ describe('headless recorded-session snapshots', () => {
           },
           inspect: async (cwd) => {
             actualLogs = await persistedSessions(cwd)
+            if (scenario.name === 'ptc-scoped-filter') {
+              const log = actualLogs[0]!.content
+              const dispatches = records(log).filter(event => event.type === 'tool/ptc-dispatch')
+              expect(dispatches.map(event => (event.data as JsonObject).name)).toEqual(['template_echo'])
+              const rootResult = records(log).find(event => event.type === 'tool/result'
+                && ((event.data as JsonObject).message as JsonObject).toolCallId === 'call_filter_0_run_code')
+              const message = (rootResult?.data as JsonObject).message as JsonObject
+              const text = (message.content as JsonObject[])[0]!.text as string
+              expect(JSON.parse(text)).toEqual({ echo: 'filtered', hidden: true })
+              expect(log).toContain('filtered|native')
+              const prompt = normalizedSystemPrompts(log, contextOf([log])).join('\n')
+              expect(prompt).toContain('template_echo: {')
+              expect(prompt).not.toContain('bash: {')
+            }
             if (retainedToolInput !== undefined) {
               verifyToolResultWriterParity(primaryFixture, actualLogs[0]!.content)
             }

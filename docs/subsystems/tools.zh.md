@@ -517,9 +517,10 @@ Tool registry and execution pipeline. Scoped registrations shadow globals; one v
  * composes PTC mode agents beside native ones in the same process, and a
  * process-global override would be the `mode` config field instead.
  * @param mode - the presentation the covered agents' models see.
+ * @param options - optional PTC-only mask over currently visible end-capability tools.
  * @returns the exact disposer that restores the deployment default.
  */
-presentAs(mode: ToolPresentationMode): () => void
+presentAs(mode: ToolPresentationMode, options: ToolPresentationOptions = {}): () => void
 
 /**
  * Register globally or in the calling agent scope. Scoped tools shadow
@@ -568,6 +569,13 @@ get(name: string, scope?: ScopeKey): ToolDefinition | undefined
  * @returns one deep-cloned schema per visible tool.
  */
 schemas(scope?: ScopeKey): ToolSchema[]
+
+/**
+ * PTC callable schemas use the same scoped mask as SDK generation and nested dispatch.
+ * @param scope - the calling agent or the global view.
+ * @returns visible end-capability schemas admitted by every inherited PTC filter.
+ */
+ptcSchemas(scope?: ScopeKey): ToolSchema[]
 
 /**
  * Classify a pending call through the caller's visible tool definition. Only

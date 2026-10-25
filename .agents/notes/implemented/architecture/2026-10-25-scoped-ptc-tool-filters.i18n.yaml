@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-25-scoped-ptc-tool-filters.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-25-scoped-ptc-tool-filters.md
+/agent-note-scoped-ptc-tool-filters:
+  en: 6df6e9375e5a2fdb
+  zh: fa33f19b219df600
+/agent-note-scoped-ptc-tool-filters/problem:
+  en: 1dc4f5cd705e8a2b
+  zh: e2a2bd47b2b5c3c2
+/agent-note-scoped-ptc-tool-filters/decision:
+  en: 5ca60d808ddec643
+  zh: d10491bed9e350ba
+/agent-note-scoped-ptc-tool-filters/alternatives-considered:
+  en: 45fb91ccd7c9f4a1
+  zh: c8733613b1fc43cf
+/agent-note-scoped-ptc-tool-filters/consequences:
+  en: 943a289ffed578d2
+  zh: c25a5150e6510e92

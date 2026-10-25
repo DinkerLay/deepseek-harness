@@ -23,7 +23,7 @@ import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import { deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { defineTool, parameterSchemaSpecToJsonSchema } from './schema.ts'
 import { TOOL_RUNTIME_SCHEDULER } from './index.ts'
-import type { PtcDispatchLog, ToolDefinition, ToolExecutionResult, ToolRuntime, ToolRunContext } from './index.ts'
+import type { PtcDispatchLog, ToolDefinition, ToolExecutionResult, ToolExecutionToken, ToolRuntime, ToolRunContext } from './index.ts'
 import type {} from './types.ts'
 
 /** The model-facing name of the PTC mode tool. */
@@ -317,6 +317,8 @@ export interface RunCodeBridgeOptions {
   maxParallel: number
   /** Runs the contained `tools/ptc-dispatch-log` waterfall over one settled sub-dispatch (the registry's private invoker). */
   shapeDispatchLog: (dispatch: PtcDispatchLog) => Promise<ContentBlock[]>
+  /** Marks the live PTC parent so unrelated composite transports retain their own capabilities. */
+  enterTransport: (token: ToolExecutionToken) => () => void
 }
 
 /**
@@ -686,11 +688,12 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
       // restricted globals vanish) — the same view the SDK section declared,
       // so a program can bind exactly what its prompt promised; sub-dispatch
       // re-resolves per call through the same view (exec.agent threads down).
-      for (const schema of registry.schemas(exec.agent)) {
+      for (const schema of registry.ptcSchemas(exec.agent)) {
         if (schema.name === RUN_CODE_NAME) continue
         Object.defineProperty(functions, schema.name, { enumerable: true, value: binding(deepFreeze(schema)) })
       }
 
+      const leaveTransport = options.enterTransport(exec.token)
       try {
         let result: PtcRunResult
         try {
@@ -726,6 +729,7 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
           ...result.value !== undefined ? { result: result.value } : {},
         }
       } finally {
+        leaveTransport()
         exec.signal.removeEventListener('abort', onOuterAbort)
       }
     },

@@ -591,6 +591,15 @@
       ]
     },
     {
+      "name": "@deepseek-ai/dsh-tools",
+      "path": "packages/core/tools",
+      "purpose": "Scoped PTC-only tool filters shared by SDK, bindings and nested execution",
+      "source": [
+        "src/index.ts",
+        "src/ptc.ts"
+      ]
+    },
+    {
       "name": "@deepseek-ai/dsh-web-fetch-http",
       "path": "packages/web/web-fetch-http",
       "purpose": "Recover DIRECT Fake-IP DNS through policy-routed HTTPS resolution with validated origin pinning",
@@ -693,6 +702,7 @@
     "@deepseek-ai/dsh-tool-pwsh",
     "@deepseek-ai/dsh-tool-pwsh-persistent",
     "@deepseek-ai/dsh-tool-skill",
+    "@deepseek-ai/dsh-tools",
     "@deepseek-ai/dsh-web-fetch-http",
     "@deepseek-ai/dsh-web-frontend",
     "@deepseek-ai/dsh-workspace",

@@ -1,0 +1,100 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_filter_0_run_code",
+        "name": "run_code",
+        "argumentsDelta": "{\"code\":\"return {echo:await tools.template_echo({text:\\\"filtered\\\"}),hidden:typeof tools.bash === \\\"undefined\\\"}\",\"description\":\"Use the filtered SDK\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_filter_0_run_code",
+          "name": "run_code",
+          "arguments": "{\"code\":\"return {echo:await tools.template_echo({text:\\\"filtered\\\"}),hidden:typeof tools.bash === \\\"undefined\\\"}\",\"description\":\"Use the filtered SDK\"}"
+        }
+      },
+      {
+        "type": "block-start",
+        "index": 1,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 1,
+        "id": "call_filter_1_template_echo",
+        "name": "template_echo",
+        "argumentsDelta": "{\"text\":\"native\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 1,
+        "block": {
+          "type": "tool-call",
+          "id": "call_filter_1_template_echo",
+          "name": "template_echo",
+          "arguments": "{\"text\":\"native\"}"
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 5
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "tool-calls"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "filtered|native"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "filtered|native"
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 2
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  }
+]
