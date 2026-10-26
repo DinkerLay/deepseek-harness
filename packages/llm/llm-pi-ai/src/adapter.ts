@@ -67,6 +67,8 @@ import { createTransportCall } from './transport.ts'
 import type { PiAiTransport } from './transport.ts'
 import { validateToolCalls } from './strict-tool-calls.ts'
 import type { PiAiToolCallValidation } from './strict-tool-calls.ts'
+import { projectReasoningReplay, resolveReasoningReplay } from './reasoning-replay.ts'
+import type { PiAiReasoningReplay } from './reasoning-replay.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -78,6 +80,8 @@ interface PiAiSnapshot {
 
 /** Constructor options for {@link PiAiAdapter}: profile resolution and host-owned services. */
 export interface PiAiAdapterOptions<Images extends PiAiImageReader = AttachmentStore> {
+  /** Trusted per-request reasoning selection; omitted preserves native SDK behavior. */
+  reasoningReplay?: PiAiReasoningReplay
   /** Current validated profiles by provider route; called once per operation. */
   profiles: () => ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /**
@@ -248,9 +252,11 @@ function supportsToolAdditions(model: Model<Api>): boolean {
  */
 export class PiAiAdapter<Images extends PiAiImageReader = AttachmentStore> extends LlmAdapter {
   private snapshot: PiAiSnapshot | undefined
+  private readonly reasoningReplay: Readonly<Required<PiAiReasoningReplay>>
 
   constructor(private readonly config: PiAiAdapterOptions<Images>) {
     super()
+    this.reasoningReplay = resolveReasoningReplay(config.reasoningReplay)
     const budget = config.toolCallValidation?.maxArgumentBytes
     if (budget !== undefined && (!Number.isSafeInteger(budget) || budget <= 0)) {
       throw new LlmError('maxArgumentBytes must be a positive safe integer', 'INVALID_CONFIG')
@@ -442,6 +448,7 @@ export class PiAiAdapter<Images extends PiAiImageReader = AttachmentStore> exten
             maxBytes: profile.requestImageMaxBytes,
           },
         }, onReplayDegrade)
+      projectReasoningReplay(context, options, model, this.reasoningReplay)
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...transport === undefined ? {} : { fetch: transport.fetch, transport: 'sse' },

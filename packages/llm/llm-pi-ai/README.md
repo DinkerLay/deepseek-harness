@@ -31,6 +31,10 @@ The adapter accepts the LLM service's [request-only user inputs](../llm/README.m
 
 ### When to choose it
 
+The standalone `/adapter` entry accepts host-owned `reasoningReplay` with `native` (default), `none`, `all`, `tool-loop`, or `last-assistant`. Explicit policies select unsigned, successful, same-model OpenAI Chat reasoning on every request without editing durable messages. `tool-loop` starts after the last user message whose source is `user`; context injections do not start a loop. `last-assistant` selects exactly the final assistant, including one without reasoning. Retained reasoning has a default 1 MiB UTF-8 text budget. Other protocols, signatures, redactions, incomplete responses and foreign reasoning require explicit reconstruction. Host configuration is detached when the adapter is created and is not prompt-controlled.
+
+`importOpenAIReasoningMessage` accepts a strict `OpenAIReasoningMessageV1` record with `version`, `id`, exact `source` (`api`, `provider`, `model`) and `content` (text, reasoning, tool-call). It validates the complete serialized record against a default 1 MiB byte budget, constructs private replay state internally, preserves message identity and accepts no usage, signatures or private metadata. Only `openai-completions` and exact target identities are supported. `compat.zaiToolStream` explicitly enables `tool_stream: true` on that protocol; `false` omits it. Effort dispatch remains governed by the declared thinking format and `supportsReasoningEffort`.
+
 Choose this adapter when the same composition serves several providers, when a route needs pi-ai's catalog defaults with a few fields corrected, or when a hand-declared gateway must be reached through its own endpoint and protocol. Choose `dsh-llm-deepseek` for the direct DeepSeek route when the deployment needs no other provider. Both adapters can be mounted together because their route names do not collide; registering a route another adapter already owns fails plugin loading.
 
 ### Configure provider routes

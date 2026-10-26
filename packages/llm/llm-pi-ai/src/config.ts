@@ -265,6 +265,7 @@ const compatProfile: z<PiAiCompatProfile> = z.object({
   supportsStore: z.boolean(),
   supportsDeveloperRole: z.boolean(),
   supportsReasoningEffort: z.boolean(),
+  zaiToolStream: z.boolean(),
   supportsUsageInStreaming: z.boolean(),
   supportsFinishReason: z.boolean(),
   maxTokensField: z.union(MAX_TOKENS_FIELDS),

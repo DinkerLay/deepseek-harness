@@ -251,7 +251,7 @@ const COMPLETIONS_COMPAT_GATE = {
   supportsLongCacheRetention: 'offer',
   openRouterRouting: 'withhold',
   vercelGatewayRouting: 'withhold',
-  zaiToolStream: 'withhold',
+  zaiToolStream: 'offer',
   supportsOpenAIGrammarTools: 'withhold',
   sendSessionAffinityHeaders: 'withhold',
   supportsMidConvoSystemMessages: 'offer',
@@ -388,6 +388,8 @@ export interface PiAiCompatProfile {
   supportsDeveloperRole?: boolean
   /** Whether the endpoint accepts `reasoning_effort`; `openai-completions`. */
   supportsReasoningEffort?: boolean
+  /** Send `tool_stream: true` for streamed tool calls; `openai-completions`. False omits the field. */
+  zaiToolStream?: boolean
   /** Whether the endpoint accepts `stream_options: {include_usage: true}`; `openai-completions`. */
   supportsUsageInStreaming?: boolean
   /**
