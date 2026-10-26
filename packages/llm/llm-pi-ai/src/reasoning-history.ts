@@ -3,7 +3,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { freezeMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { AssistantMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { toPiReplayState } from './replay.ts'
-import type { AssistantMessage as PiAssistant } from '@earendil-works/pi-ai'
+import type { AssistantMessage as PiAssistant, ToolCall } from '@earendil-works/pi-ai'
 
 /** Exact identity admitted by the host for imported reasoning. */
 export interface PiAiReasoningTarget {
@@ -96,7 +96,7 @@ export function importOpenAIReasoningMessage(
     try { args = JSON.parse(block['arguments']) } catch { return invalid() }
     if (args === null || typeof args !== 'object' || Array.isArray(args)) return invalid()
     return { type: 'toolCall', id: identifier(block['id']), name: identifier(block['name']),
-      arguments: args as Record<string, unknown> }
+      arguments: args as ToolCall['arguments'] }
   })
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > limit) {
     throw new LlmError('OpenAI reasoning history exceeds maxBytes', 'REASONING_HISTORY_TOO_LARGE')

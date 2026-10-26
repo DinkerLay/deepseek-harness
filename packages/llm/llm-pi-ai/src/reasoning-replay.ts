@@ -34,12 +34,13 @@ export function projectReasoningReplay(
   context: Context, options: GenerateOptions, model: Model<Api>, config: Readonly<Required<PiAiReasoningReplay>>,
 ): void {
   if (config.policy === 'native') return
-  if (model.api !== 'openai-completions' || model.compat?.requiresThinkingAsText === true) {
+  if (model.api !== 'openai-completions' || (model.compat !== undefined
+    && 'requiresThinkingAsText' in model.compat && model.compat.requiresThinkingAsText === true)) {
     throw new LlmError('Reasoning selection requires OpenAI Chat text replay', 'UNSUPPORTED_REASONING_REPLAY')
   }
   let lastUser = -1, lastAssistant = -1
   options.messages.forEach((message, index) => {
-    if (message.role === 'user' && message.source.kind === 'user') lastUser = index
+    if (message.role === 'user' && (message.source === undefined || message.source.kind === 'user')) lastUser = index
     if (message.role === 'assistant') lastAssistant = index
   })
   const originalAssistants = options.messages.flatMap((message, index) => message.role === 'assistant' ? [index] : [])
