@@ -81,6 +81,9 @@ export function importOpenAIReasoningMessage(
     || identifier(source['model']) !== identifier(target.model)) return invalid()
   const blocks = record['content']
   if (!Array.isArray(blocks) || blocks.length === 0) return invalid()
+  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > limit) {
+    throw new LlmError('OpenAI reasoning history exceeds maxBytes', 'REASONING_HISTORY_TOO_LARGE')
+  }
   const native: PiAssistant['content'] = blocks.map(value => {
     const block = object(value, ['type', 'text', 'id', 'name', 'arguments'])
     if (block['type'] === 'text' || block['type'] === 'reasoning') {
@@ -98,9 +101,6 @@ export function importOpenAIReasoningMessage(
     return { type: 'toolCall', id: identifier(block['id']), name: identifier(block['name']),
       arguments: args as ToolCall['arguments'] }
   })
-  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > limit) {
-    throw new LlmError('OpenAI reasoning history exceeds maxBytes', 'REASONING_HISTORY_TOO_LARGE')
-  }
   const replayState = toPiReplayState({
     role: 'assistant', ...target, content: native, timestamp: 0,
     stopReason: native.some(block => block.type === 'toolCall') ? 'toolUse' : 'stop',

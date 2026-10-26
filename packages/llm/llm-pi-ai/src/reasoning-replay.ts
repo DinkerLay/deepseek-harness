@@ -49,12 +49,14 @@ export function projectReasoningReplay(
     if (message.role !== 'assistant') continue
     const index = originalAssistants[assistantIndex++] as number
     const thinking = message.content.filter(block => block.type === 'thinking')
+    if (message.content.some(block => (block.type === 'text' && block.textSignature !== undefined)
+      || (block.type === 'toolCall' && block.thoughtSignature !== undefined))) {
+      throw new LlmError('Signed history requires explicit reconstruction', 'UNSUPPORTED_REASONING_REPLAY')
+    }
     if (thinking.length === 0) continue
     if (message.api !== model.api || message.provider !== model.provider || message.model !== model.id
       || !['stop', 'toolUse'].includes(message.stopReason)
-      || thinking.some(block => block.redacted !== undefined || block.thinkingSignature !== 'reasoning_content')
-      || message.content.some(block => (block.type === 'text' && block.textSignature !== undefined)
-        || (block.type === 'toolCall' && block.thoughtSignature !== undefined))) {
+      || thinking.some(block => block.redacted !== undefined || block.thinkingSignature !== 'reasoning_content')) {
       throw new LlmError('Reasoning history requires explicit reconstruction', 'UNSUPPORTED_REASONING_REPLAY')
     }
     const keep = config.policy === 'all' || (config.policy === 'last-assistant' && index === lastAssistant)
