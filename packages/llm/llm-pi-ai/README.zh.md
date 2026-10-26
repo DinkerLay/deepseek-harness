@@ -31,9 +31,9 @@ kind: "package-reference"
 
 ### 何时选择
 
-独立 `/adapter` 入口接受宿主可信 `reasoningReplay`：`native`（默认）、`none`、`all`、`tool-loop` 或 `last-assistant`。显式策略在每次请求中选择成功、同模型、无签名的 OpenAI Chat 推理，不修改持久消息。`tool-loop` 从最后一条 source 为 `user` 的 user 消息之后开始，上下文注入不构成边界；`last-assistant` 只选择最后一条 assistant，即使它没有推理。保留的推理文本默认限制为 1 MiB UTF-8 字节。其他协议、签名、redacted、不完整响应和外来推理须显式重建。配置在适配器创建时脱离原对象，prompt 不能覆盖。
+独立 `/adapter` 入口接受宿主可信 `reasoningReplay`：`native`（默认）、`none`、`all`、`tool-loop` 或 `last-assistant`。保留策略在每次请求中选择成功、同模型、无签名的 OpenAI Chat 推理，不修改持久消息；`none` 可在所有支持的协议上省略无签名的同目标推理。`tool-loop` 从最后一条 source 为 `user` 的 user 消息之后开始，无 source 的 user 和上下文注入不构成边界；`last-assistant` 只选择最后一条 assistant，即使它没有推理。保留的推理文本默认限制为 1 MiB UTF-8 字节。其他协议的推理保留、签名、redacted、不完整响应和外来推理须显式重建。配置在适配器创建时脱离原对象，prompt 不能覆盖。
 
-`importOpenAIReasoningMessage` 接受严格的 `OpenAIReasoningMessageV1`，仅包含 `version`、`id`、精确 `source`（`api`、`provider`、`model`）和 `content`（text、reasoning、tool-call）。完整序列化记录默认限制为 1 MiB；函数内部构造私有回放状态，保留消息身份，不接受 usage、签名或私有元数据。只支持 `openai-completions` 和精确目标身份。`compat.zaiToolStream` 在该协议明确启用 `tool_stream: true`，`false` 则省略字段；effort 发送仍由 thinking format 和 `supportsReasoningEffort` 决定。
+`importOpenAIReasoningMessage` 接受严格的 `OpenAIReasoningMessageV1`，仅包含 `version`、`id`、精确 `source`（`api`、`provider`、`model`）和 `content`（text、reasoning、tool-call）。完整序列化记录默认限制为 1 MiB；函数内部构造私有回放状态，保留消息身份，不接受 usage、签名或私有元数据。只支持 `openai-completions` 和精确目标身份。`compat.zaiToolStream` 在该协议明确启用 `tool_stream: true`，`false` 覆盖 SDK 供应商探测并省略字段，省略配置则保留 SDK 行为。导入的工具调用须有已完成的对应结果，否则严格网关可因悬空调用返回 HTTP 400；effort 发送仍由 thinking format 和 `supportsReasoningEffort` 决定。
 
 当同一组合服务多个提供方、某条路由需要 pi-ai 目录默认值并修正少数字段、或必须通过自有端点与协议到达手工声明网关时，选择本适配器。当部署不需要其他提供方时，选择 `dsh-llm-deepseek` 直连 DeepSeek 路由。两个适配器可以同时挂载，因为它们的路由名不冲突；注册其他适配器已拥有的路由会导致插件加载失败。
 

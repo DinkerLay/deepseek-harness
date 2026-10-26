@@ -221,6 +221,9 @@ export type PiAiReasoningEfforts = Partial<Record<ModelThinkingLevel, string | n
  * sets for a named vendor. Reaching for one of those on a hand-declared route
  * means configuring a provider that should have been named as a catalog route
  * instead, where the installed entry carries the right value already.
+ * `zaiToolStream` is explicitly offered for gateways such as Atlas that use
+ * the same wire field without the vendor's catalog/auth defaults. An explicit
+ * boolean overrides SDK vendor detection; omission preserves SDK behavior.
  */
 type CompatDisposition = 'offer' | 'withhold'
 

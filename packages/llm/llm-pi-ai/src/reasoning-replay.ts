@@ -24,7 +24,7 @@ export function resolveReasoningReplay(config?: PiAiReasoningReplay): Readonly<R
  * Project a freshly converted context using original DSH roles for selection.
  * `last-assistant` selects the last assistant even if it has no reasoning;
  * `tool-loop` selects assistants after the last genuine user source, excluding context injections.
- * Only unsigned, successful, same-model OpenAI Chat reasoning supports explicit selection.
+ * Retention requires OpenAI Chat; `none` can omit unsigned same-target reasoning on any protocol.
  * @param context - new request context owned by this adapter call.
  * @param options - frozen DSH request; not mutated.
  * @param model - exact model captured by prepareCall.
@@ -34,13 +34,13 @@ export function projectReasoningReplay(
   context: Context, options: GenerateOptions, model: Model<Api>, config: Readonly<Required<PiAiReasoningReplay>>,
 ): void {
   if (config.policy === 'native') return
-  if (model.api !== 'openai-completions' || (model.compat !== undefined
-    && 'requiresThinkingAsText' in model.compat && model.compat.requiresThinkingAsText === true)) {
+  if (config.policy !== 'none' && (model.api !== 'openai-completions' || (model.compat !== undefined
+    && 'requiresThinkingAsText' in model.compat && model.compat.requiresThinkingAsText === true))) {
     throw new LlmError('Reasoning selection requires OpenAI Chat text replay', 'UNSUPPORTED_REASONING_REPLAY')
   }
   let lastUser = -1, lastAssistant = -1
   options.messages.forEach((message, index) => {
-    if (message.role === 'user' && (message.source === undefined || message.source.kind === 'user')) lastUser = index
+    if (message.role === 'user' && message.source?.kind === 'user') lastUser = index
     if (message.role === 'assistant') lastAssistant = index
   })
   const originalAssistants = options.messages.flatMap((message, index) => message.role === 'assistant' ? [index] : [])
@@ -56,7 +56,9 @@ export function projectReasoningReplay(
     if (thinking.length === 0) continue
     if (message.api !== model.api || message.provider !== model.provider || message.model !== model.id
       || !['stop', 'toolUse'].includes(message.stopReason)
-      || thinking.some(block => block.redacted !== undefined || block.thinkingSignature !== 'reasoning_content')) {
+      || thinking.some(block => block.redacted !== undefined
+        || (block.thinkingSignature !== undefined && block.thinkingSignature !== 'reasoning_content')
+        || (config.policy !== 'none' && block.thinkingSignature !== 'reasoning_content'))) {
       throw new LlmError('Reasoning history requires explicit reconstruction', 'UNSUPPORTED_REASONING_REPLAY')
     }
     const keep = config.policy === 'all' || (config.policy === 'last-assistant' && index === lastAssistant)
