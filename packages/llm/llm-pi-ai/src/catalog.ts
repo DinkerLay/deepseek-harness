@@ -566,6 +566,9 @@ function assertOfferedCompatFields(
   // name is never in the schema, so schemastery cannot have materialized it —
   // whatever its value, a person wrote it and expects it to do something.
   for (const [field, value] of Object.entries(compat ?? {})) {
+    if (field === 'zaiToolStream' && typeof value !== 'boolean') {
+      invalid(provider, `${site} compat zaiToolStream must be boolean`)
+    }
     // The name is judged before the value, so a withheld or misspelled key
     // written bare is refused for being that name rather than for being empty:
     // the other order sends someone to supply a value the key would be refused
