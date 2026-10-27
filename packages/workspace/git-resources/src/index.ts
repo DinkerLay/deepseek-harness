@@ -624,7 +624,7 @@ export class GitResources extends Service {
    */
   read(resourceId: GitResourceId): GitResourceRecord | undefined { return structuredClone(this.findResource(resourceId)?.resource) }
   /** Read what work copies and snapshots still share with the directories above this owner's home, found when it opened.
-   * @returns the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.
+   * @returns the nearest package directory and every enclosing node_modules path, or undefined when neither exists.
    */
   enclosingPackage(): GitEnclosingPackage | undefined { return this.enclosing === undefined ? undefined : structuredClone(this.enclosing) }
   /** Read the original operation and its resource as a detached observation.
@@ -2041,17 +2041,19 @@ async function writePackageBoundary(path: string): Promise<void> {
  * The nearest directory from `start` upward that holds a package.json or node_modules. Node still resolves packages from the
  * node_modules of every enclosing directory, which no file below can stop.
  * @param start - the first directory to look in.
- * @returns that directory with what it holds, or undefined when none does.
+ * @returns the nearest package directory and every enclosing dependency directory, or undefined when none exists.
  */
 async function enclosingPackage(start: string): Promise<GitEnclosingPackage | undefined> {
+  let nearest: Pick<GitEnclosingPackage, 'directory' | 'entries'> | undefined
+  const nodeModules: string[] = []
   for (let directory = start; ; directory = dirname(directory)) {
     const entries: ('package.json' | 'node_modules')[] = []
     for (const name of ['package.json', 'node_modules'] as const) {
-      // A name that cannot be read is not reported as shared.
       try { await lstat(join(directory, name)); entries.push(name) } catch (absent) { if (!missing(absent)) throw absent }
     }
-    if (entries.length > 0) return { directory, entries }
-    if (dirname(directory) === directory) return undefined
+    if (entries.length > 0 && nearest === undefined) nearest = { directory, entries }
+    if (entries.includes('node_modules')) nodeModules.push(join(directory, 'node_modules'))
+    if (dirname(directory) === directory) return nearest === undefined ? undefined : { ...nearest, nodeModules }
   }
 }
 

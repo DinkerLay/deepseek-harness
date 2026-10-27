@@ -31,7 +31,7 @@ kind: "package-reference"
 
 `home`使用公开Harness home路径助手解析。受管副本与稳定内核锁文件位于其`git-resources`子目录；打开可写domain前先租用整个资源home。第二个拥有者会被拒绝，不猜测另一个进程是否活着。
 
-其中的`workcopies`和`snapshots`目录各放一个拥有者的包边界：不含模块类型、`imports`或`exports`的`package.json`，位于每份副本和封存之外。Node按最近的`package.json`确定文件的模块类型、`imports`和`exports`，所以自带`package.json`的项目照用自己的，没有的项目按Node默认运行，不继承包住home的那个包。包边界被其他写入者替换或改动时，打开以`RESOURCE_HOME_INVALID`拒绝。`enclosingPackage()`给出打开时找到的、home以上最近一个含`package.json`或`node_modules`的目录。
+其中的`workcopies`和`snapshots`目录各放一个拥有者的包边界：不含模块类型、`imports`或`exports`的`package.json`，位于每份副本和封存之外。Node按最近的`package.json`确定文件的模块类型、`imports`和`exports`，所以自带`package.json`的项目照用自己的，没有的项目按Node默认运行，不继承包住home的那个包。包边界被其他写入者替换或改动时，打开以`RESOURCE_HOME_INVALID`拒绝。`enclosingPackage()`给出打开时找到的、home以上最近一个含`package.json`或`node_modules`的目录，以及向上查到的全部`node_modules`路径；更近的包文件不截断依赖查找。
 
 `timeoutMs`、`graceMs`、`maxOutputBytes`、`maxFiles`、`maxFileBytes`、`maxTotalBytes`、`maxConsumerRequestBytes`与`closeTimeoutMs`限制命令、观察、原始消费方JSON及关闭。文件同时受单文件上界和Git字节通道上界约束；不可物化的基线在预留前由预览拒绝。[Config声明](src/index.ts)拥有接受的默认值。首次需要时解析`gitExecutable`或`git`；Git缺失只拒绝隔离模式，数据查询和文本服务仍可用。
 
@@ -131,7 +131,7 @@ kind: "package-reference"
 - 本拥有者从不删除快照，快照目录没有写权限：手工删除拥有者home前需先恢复写权限。快照只靠文件权限只读，不是沙箱。
 - 文件名按本拥有者隔离配置下Git的读法比较：只在用户全局Git配置里设置的`core.precomposeunicode`不算，因此在macOS上，按合成形式跟踪、磁盘上以分解形式存放的文件会被拒绝，尽管用户自己的Git把它读成该名称。
 - 工作副本里已跟踪的文件换成同名目录，或在macOS和Linux上已跟踪的目录换成文件时，无法封存：封存以`TREE_ENTRY_UNSUPPORTED`拒绝，且不写出Host路径。
-- Node从包住工作副本的每一级目录的`node_modules`解析包，下面的任何文件都挡不住：home位于某个项目目录树里时，工作副本和快照仍会用上那个项目的包。`enclosingPackage()`给出最近的这样一个目录；home不在项目目录树里时没有。
+- Node从包住工作副本的每一级目录的`node_modules`解析包，下面的任何文件都挡不住：home位于某个项目目录树里时，工作副本和快照仍会用上那个项目的包。`enclosingPackage()`给出全部上级依赖目录（包括更近的包文件以上的）；home不在项目目录树里时没有。
 - 调用方必须在交还或保全前建立执行/后台静止事实。Host必须挂载与Node文件系统相同的本机subprocess提供者；不支持远程执行world。全盘权限下的外部进程仍可在本拥有者协调之外修改目录；观察到变化时拒绝，不证明全局隔离。
 
 <a id="dev-note"></a>

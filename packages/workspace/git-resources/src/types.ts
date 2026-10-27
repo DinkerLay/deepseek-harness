@@ -193,6 +193,8 @@ export interface GitResourceSnapshot { readonly path: string; readonly tree: str
 export interface GitEnclosingPackage {
   readonly directory: string
   readonly entries: readonly ('package.json' | 'node_modules')[]
+  /** Every enclosing node_modules path, nearest first; package.json does not stop dependency lookup. */
+  readonly nodeModules: readonly string[]
 }
 /** Query result carries resource facts without performing confirmation or repair. */
 export interface GitResourceOperationView { readonly operation: GitResourceOperation; readonly resource: GitResourceRecord }

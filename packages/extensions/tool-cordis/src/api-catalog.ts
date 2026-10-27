@@ -1552,7 +1552,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'enclosingPackage(): GitEnclosingPackage | undefined',
         description: 'Read what work copies and snapshots still share with the directories above this owner\'s home, found when it opened.',
         parameters: [],
-        returns: 'the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.',
+        returns: 'the nearest package directory and every enclosing node_modules path, or undefined when neither exists.',
       },
       {
         signature: 'status(operationId: GitOperationId): GitResourceOperationView | undefined',
@@ -5979,7 +5979,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GitEnclosingPackage',
-    declaration: 'export interface GitEnclosingPackage {\n    readonly directory: string;\n    readonly entries: readonly (\'package.json\' | \'node_modules\')[];\n}',
+    declaration: 'export interface GitEnclosingPackage {\n    readonly directory: string;\n    readonly entries: readonly (\'package.json\' | \'node_modules\')[];\n    readonly nodeModules: readonly string[];\n}',
   },
   {
     name: 'GitFileState',

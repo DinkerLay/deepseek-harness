@@ -293,7 +293,7 @@ it('keeps a package enclosing the home out of work copies and snapshots, and nam
     expect(JSON.parse(await readFile(join(root, name, 'package.json'), 'utf8'))).toEqual({ private: true,
       description: 'Package boundary of managed Git work copies and snapshots: no module type, imports or exports.' })
   }
-  expect(test.ctx.gitResources.enclosingPackage()).toEqual({ directory: await realpath(test.root), entries: ['package.json', 'node_modules'] })
+  expect(test.ctx.gitResources.enclosingPackage()).toEqual({ directory: await realpath(test.root), entries: ['package.json', 'node_modules'], nodeModules: [join(await realpath(test.root), 'node_modules')] })
   // A CommonJS project without a package.json of its own runs as CommonJS in a work copy, not as the enclosing ESM package.
   const probe = join(root, 'workcopies', 'probe')
   await mkdir(probe)
@@ -331,4 +331,13 @@ it('propagates an enclosing package lookup that fails other than by absence', as
   syncBuiltinESMExports()
   onTestFinished(() => { stat.mockRestore(); syncBuiltinESMExports() })
   await expect(test.ctx.plugin(GitResources, { home: test.home })).rejects.toMatchObject({ code: 'EACCES' })
+})
+
+it('reports higher dependency directories even when a nearer directory contains only package.json', async () => {
+  const test = await harness({}, undefined, false)
+  await mkdir(join(test.root, 'node_modules'))
+  await writeFile(join(test.home, 'package.json'), '{"private":true}\n')
+  await test.ctx.plugin(GitResources, { home: test.home })
+  expect(test.ctx.gitResources.enclosingPackage()).toEqual({ directory: await realpath(test.home), entries: ['package.json'],
+    nodeModules: [join(await realpath(test.root), 'node_modules')] })
 })

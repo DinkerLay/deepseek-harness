@@ -907,7 +907,7 @@ async abandonOperation(operationId: GitOperationId, expectedFingerprint: string,
 read(resourceId: GitResourceId): GitResourceRecord | undefined
 
 /** Read what work copies and snapshots still share with the directories above this owner's home, found when it opened.
- * @returns the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.
+ * @returns the nearest package directory and every enclosing node_modules path, or undefined when neither exists.
  */
 enclosingPackage(): GitEnclosingPackage | undefined
 
