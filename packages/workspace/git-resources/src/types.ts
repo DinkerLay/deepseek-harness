@@ -185,6 +185,15 @@ export interface GitResourceSnapshotRequest {
 }
 /** A directory named by the sealed tree, holding exactly its regular files without write permission. */
 export interface GitResourceSnapshot { readonly path: string; readonly tree: string }
+/**
+ * The nearest directory above the owner's home holding a package.json or node_modules. Commands run in a work copy or snapshot
+ * can still resolve packages from its node_modules; the owner's package boundary keeps out only its module type, imports and
+ * exports.
+ */
+export interface GitEnclosingPackage {
+  readonly directory: string
+  readonly entries: readonly ('package.json' | 'node_modules')[]
+}
 /** Query result carries resource facts without performing confirmation or repair. */
 export interface GitResourceOperationView { readonly operation: GitResourceOperation; readonly resource: GitResourceRecord }
 /** A live write-use scope can be asserted synchronously inside another owner's CAS. */

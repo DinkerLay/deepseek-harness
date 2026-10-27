@@ -1,7 +1,9 @@
 /** The real resource owner retains its lease and rejects changed filesystem ownership facts. */
-import { chmod, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import fs, { chmod, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { join, resolve } from 'node:path'
-import { expect, it, vi } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import { Service } from '@deepseek-ai/cordis'
 import type { KvUnit } from '@deepseek-ai/dsh-storage'
 import { acquireFileLease } from '@deepseek-ai/dsh-util-file-lease'
@@ -279,4 +281,54 @@ it('recovers one actually held cold use without changing a second settled resour
   const cold = await harness({}, test.resources)
   expect(cold.ctx.gitResources.read(test.made.resource.resourceId)?.use).toEqual({ ...identity, phase: 'needs_attention' })
   expect(cold.ctx.gitResources.read(untouched.resource.resourceId)).toEqual(untouched.resource)
+})
+
+it('keeps a package enclosing the home out of work copies and snapshots, and names the package lookups they still share', async () => {
+  const test = await harness({}, undefined, false)
+  await writeFile(join(test.root, 'package.json'), '{"type":"module","imports":{"#x":"./x.js"}}\n')
+  await mkdir(join(test.root, 'node_modules'))
+  await test.ctx.plugin(GitResources, { home: test.home })
+  const root = join(await realpath(test.home), 'git-resources')
+  for (const name of ['workcopies', 'snapshots']) {
+    expect(JSON.parse(await readFile(join(root, name, 'package.json'), 'utf8'))).toEqual({ private: true,
+      description: 'Package boundary of managed Git work copies and snapshots: no module type, imports or exports.' })
+  }
+  expect(test.ctx.gitResources.enclosingPackage()).toEqual({ directory: await realpath(test.root), entries: ['package.json', 'node_modules'] })
+  // A CommonJS project without a package.json of its own runs as CommonJS in a work copy, not as the enclosing ESM package.
+  const probe = join(root, 'workcopies', 'probe')
+  await mkdir(probe)
+  await writeFile(join(probe, 'probe.js'), "const { join } = require('node:path'); process.stdout.write(typeof join)\n")
+  expect(execFileSync(process.execPath, [join(probe, 'probe.js')], { encoding: 'utf8' })).toBe('function')
+  await rm(probe, { recursive: true })
+})
+
+it('reports no enclosing package for a home no package encloses, and refuses a changed package boundary', async () => {
+  const plain = await harness()
+  expect(plain.ctx.gitResources.enclosingPackage()).toBeUndefined()
+  const test = await harness({}, undefined, false), root = join(test.home, 'git-resources')
+  await mkdir(join(root, 'workcopies'), { recursive: true })
+  await writeFile(join(root, 'workcopies', 'package.json'), '{"type":"module"}\n')
+  await expect(test.ctx.plugin(GitResources, { home: test.home })).rejects.toMatchObject({ code: 'RESOURCE_HOME_INVALID' })
+})
+
+it.skipIf(process.platform === 'win32')('propagates a real package-boundary write denial and returns the acquired kernel lease', async () => {
+  const test = await harness({}, undefined, false), root = join(test.home, 'git-resources'), workcopies = join(root, 'workcopies')
+  await mkdir(workcopies, { recursive: true }); await chmod(workcopies, 0o500)
+  try {
+    await expect(test.ctx.plugin(GitResources, { home: test.home })).rejects.toMatchObject({ code: 'EACCES' })
+    const lease = await acquireFileLease(join(root, 'owner.lock')); await lease.release()
+  } finally { await chmod(workcopies, 0o700) }
+})
+
+it('propagates an enclosing package lookup that fails other than by absence', async () => {
+  const test = await harness({}, undefined, false), original = fs.lstat.bind(fs)
+  await mkdir(test.home, { recursive: true })
+  const blocked = join(await realpath(test.home), 'package.json')
+  const stat = vi.spyOn(fs, 'lstat').mockImplementation(async (...args) => {
+    if (String(args[0]) === blocked) throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    return original(...args)
+  })
+  syncBuiltinESMExports()
+  onTestFinished(() => { stat.mockRestore(); syncBuiltinESMExports() })
+  await expect(test.ctx.plugin(GitResources, { home: test.home })).rejects.toMatchObject({ code: 'EACCES' })
 })

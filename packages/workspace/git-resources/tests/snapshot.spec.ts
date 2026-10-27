@@ -106,7 +106,8 @@ it('refuses blob bytes that differ from the tree listing and leaves nothing behi
   await expect(test.ctx.gitResources.snapshot({ preserveOperationId: test.seal.operation.operationId, consumerScope: scope }))
     .rejects.toMatchObject({ code: 'RESOURCE_CHANGED' })
   short.mockRestore()
-  expect(await readdir(snapshots)).toEqual([])
+  // Only the owner's package boundary stays beside the snapshots.
+  expect(await readdir(snapshots)).toEqual(['package.json'])
 })
 
 it('removes a snapshot cut short before its rename when the owner starts again, keeps finished ones and writes it anew', async () => {
@@ -140,5 +141,6 @@ it('leaves no temporary directory behind when writing a snapshot fails', async (
   await expect(test.ctx.gitResources.snapshot({ preserveOperationId: test.seal.operation.operationId, consumerScope: scope }))
     .rejects.toThrow('blob read failed')
   fault.mockRestore()
-  expect(await readdir(snapshots)).toEqual([])
+  // Only the owner's package boundary stays beside the snapshots.
+  expect(await readdir(snapshots)).toEqual(['package.json'])
 })

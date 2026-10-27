@@ -906,6 +906,11 @@ async abandonOperation(operationId: GitOperationId, expectedFingerprint: string,
  */
 read(resourceId: GitResourceId): GitResourceRecord | undefined
 
+/** Read what work copies and snapshots still share with the directories above this owner's home, found when it opened.
+ * @returns the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.
+ */
+enclosingPackage(): GitEnclosingPackage | undefined
+
 /** Read the original operation and its resource as a detached observation.
  * @param operationId - stored operation identity.
  * @returns detached observation without executing a recovery step.

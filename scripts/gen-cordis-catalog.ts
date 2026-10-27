@@ -283,6 +283,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   GitRepositoryId: 'workspace.md',
   GitResourceId: 'workspace.md',
   GitResourceSnapshot: 'workspace.md',
+  GitEnclosingPackage: 'workspace.md',
   GitResourceSnapshotRequest: 'workspace.md',
   GitOperationId: 'workspace.md',
   GitConsumerScope: 'workspace.md',

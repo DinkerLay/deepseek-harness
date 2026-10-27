@@ -36,7 +36,7 @@ import { byteHash, inspectConfiguration, inspectRepository, missing, pathIdentit
 import type { GitOperationId, GitRepositoryId, GitResourceId, GitConsumerScope, GitResourceCreateRequest, GitResourceOperation,
   GitResourceOperationView, GitResourcePreserveRequest, GitResourcePreview, GitResourcePreviewRequest,
   GitResourceRecord, GitResourceSnapshot, GitResourceSnapshotRequest, GitResourceUseIdentity, GitResourceWriteScope, GitRepositoryIdentity,
-  GitWorkCopyInspection } from './types.ts'
+  GitWorkCopyInspection, GitEnclosingPackage } from './types.ts'
 
 export type * from './types.ts'
 export { GitResourceError } from './error.ts'
@@ -113,6 +113,7 @@ export class GitResources extends Service {
   private root = ''
   private isolation = ''
   private home = ''
+  private enclosing: GitEnclosingPackage | undefined
   private readonly limits: {
     timeoutMs: number
     graceMs: number
@@ -158,6 +159,10 @@ export class GitResources extends Service {
       for (const entry of await readdir(join(this.root, 'snapshots'))) {
         if (entry.startsWith('.partial-')) await removeSnapshotDirectory(join(this.root, 'snapshots', entry))
       }
+      // Node takes a file's module type, imports and exports from the nearest package.json, so a neutral one above the work
+      // copies and snapshots keeps a package enclosing this home out of a project that has none of its own.
+      for (const name of ['workcopies', 'snapshots']) await writePackageBoundary(join(this.root, name, 'package.json'))
+      this.enclosing = await enclosingPackage(dirname(this.root))
       this.isolation = join(this.root, 'isolated')
       try { await writeFile(join(this.isolation, 'empty-config'), '', { flag: 'wx', mode: 0o600 }) }
       catch (error) { if (!(error !== null && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) throw error }
@@ -618,6 +623,10 @@ export class GitResources extends Service {
    * @returns detached authoritative domain facts without IO, repair or confirmation.
    */
   read(resourceId: GitResourceId): GitResourceRecord | undefined { return structuredClone(this.findResource(resourceId)?.resource) }
+  /** Read what work copies and snapshots still share with the directories above this owner's home, found when it opened.
+   * @returns the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.
+   */
+  enclosingPackage(): GitEnclosingPackage | undefined { return this.enclosing === undefined ? undefined : structuredClone(this.enclosing) }
   /** Read the original operation and its resource as a detached observation.
    * @param operationId - stored operation identity.
    * @returns detached observation without executing a recovery step.
@@ -2013,6 +2022,38 @@ export class GitResources extends Service {
   }
 }
 export default GitResources
+
+/** The package.json above every work copy and snapshot: no module type, imports or exports, so Node's defaults apply there. */
+const PACKAGE_BOUNDARY = `${JSON.stringify({ private: true,
+  description: 'Package boundary of managed Git work copies and snapshots: no module type, imports or exports.' })}\n`
+
+/** Write the package boundary once; one replaced, linked or changed by another writer refuses, as the owner isolation does. */
+async function writePackageBoundary(path: string): Promise<void> {
+  try { await writeFile(path, PACKAGE_BOUNDARY, { flag: 'wx', mode: 0o600 }) }
+  catch (error) { if (!(error !== null && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) throw error }
+  const found = await lstat(path)
+  if (!found.isFile() || found.isSymbolicLink() || await readFile(path, 'utf8') !== PACKAGE_BOUNDARY) {
+    throw new GitResourceError('RESOURCE_HOME_INVALID', 'Managed package boundary must be the owner\'s own regular file')
+  }
+}
+
+/**
+ * The nearest directory from `start` upward that holds a package.json or node_modules. Node still resolves packages from the
+ * node_modules of every enclosing directory, which no file below can stop.
+ * @param start - the first directory to look in.
+ * @returns that directory with what it holds, or undefined when none does.
+ */
+async function enclosingPackage(start: string): Promise<GitEnclosingPackage | undefined> {
+  for (let directory = start; ; directory = dirname(directory)) {
+    const entries: ('package.json' | 'node_modules')[] = []
+    for (const name of ['package.json', 'node_modules'] as const) {
+      // A name that cannot be read is not reported as shared.
+      try { await lstat(join(directory, name)); entries.push(name) } catch (absent) { if (!missing(absent)) throw absent }
+    }
+    if (entries.length > 0) return { directory, entries }
+    if (dirname(directory) === directory) return undefined
+  }
+}
 
 /** Remove a temporary snapshot directory written by this owner, restoring write permission first. */
 async function removeSnapshotDirectory(path: string): Promise<void> {

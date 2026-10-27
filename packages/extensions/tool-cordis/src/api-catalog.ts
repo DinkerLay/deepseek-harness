@@ -1549,6 +1549,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'detached authoritative domain facts without IO, repair or confirmation.',
       },
       {
+        signature: 'enclosingPackage(): GitEnclosingPackage | undefined',
+        description: 'Read what work copies and snapshots still share with the directories above this owner\'s home, found when it opened.',
+        parameters: [],
+        returns: 'the nearest such directory and what it holds, or undefined when none holds a package.json or node_modules.',
+      },
+      {
         signature: 'status(operationId: GitOperationId): GitResourceOperationView | undefined',
         description: 'Read the original operation and its resource as a detached observation.',
         parameters: [{ name: 'operationId', description: 'stored operation identity.' }],
@@ -5970,6 +5976,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'GitDirtyState',
     declaration: 'export interface GitDirtyState {\n    readonly staged: readonly string[];\n    readonly unstaged: readonly string[];\n    readonly untracked: readonly string[];\n    readonly unmerged: readonly string[];\n}',
+  },
+  {
+    name: 'GitEnclosingPackage',
+    declaration: 'export interface GitEnclosingPackage {\n    readonly directory: string;\n    readonly entries: readonly (\'package.json\' | \'node_modules\')[];\n}',
   },
   {
     name: 'GitFileState',
