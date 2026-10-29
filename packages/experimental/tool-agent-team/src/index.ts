@@ -80,7 +80,7 @@ Recruiting a controlled member only registers it; its first Task or message deli
 const PRODUCT_MEMBER_POLICY = 'You are a controlled Agent Team teammate. Registration does not start work: your first input is the actual Team delivery, with a system identity reminder. Message only lead for blockers and clarification. A Lead message clarifies or authorizes existing work and does not assign new work. When Auto blocks an operation, do not repeatedly retry it unchanged: report the operation and reason to lead, and wait for explicit authorization or another approach.'
 
 const RECRUITMENT_POLICY = (autonomousDelegation: boolean): string => autonomousDelegation
-  ? 'Handle simple work yourself rather than recruiting unnecessarily. This decides who executes, not whether a deliverable needs a Task: follow the product Task policy for your own work too. When delegation would materially help, use agent_find to identify a suitable Preset and recruit teammates without waiting for the user to mention Agent Team.'
+  ? 'Handle simple work yourself; recruit teammates when delegation helps, without waiting for the user to mention Agent Team. Reuse suitable teammates or recruit with a known suitable Preset; use agent_find to discover one when needed. Follow the product Task policy for what belongs on the Board.'
   : 'Create teammates only when the user explicitly asks for Team collaboration or teammates.'
 
 const NATIVE_TASK_ACTIONS = ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'] as const
@@ -306,7 +306,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     if (!controlledMember) {
       register(registerTeamTool(defineTool({
         name: 'spawn_teammate',
-        description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
+        description: productTasks
+          ? 'Register one named teammate, without assigning work. Give its work with team_task_create, which starts it when ready. Choose a known suitable Preset directly, or use agent_find to discover one. Team Lead only.'
+          : 'Create one named, durable teammate. Only the Team Lead may call this tool.',
         parameters: {
           name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
           ...config.controlledTasks ? {} : { description: {

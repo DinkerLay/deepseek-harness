@@ -267,10 +267,16 @@ describe('dsh-tool-team', () => {
     const product = await setup([], false, { controlledTasks: true, autonomousDelegation: true }, [],
       { controlledMode: mode })
     const prompt = renderPrompt(await assembly(product.ctx, product.lead))
-    expect(prompt).toContain('recruit teammates without waiting for the user to mention Agent Team')
-    expect(prompt).toContain('This decides who executes, not whether a deliverable needs a Task')
+    expect(prompt).toContain('without waiting for the user to mention Agent Team')
+    expect(prompt).toContain('use agent_find to discover one when needed')
     expect(prompt).not.toContain('Answer simple requests yourself.')
     expect(prompt).toContain('shared Task Board is the authoritative collaboration channel')
+    expect(official.ctx.tools.get('spawn_teammate', scopeOf(official.lead.ctx))?.description)
+      .toBe('Create one named, durable teammate. Only the Team Lead may call this tool.')
+    const delegated = await setup([], false, { controlledTasks: true, productTaskTools: true, autonomousDelegation: true }, [],
+      { controlledMode: mode })
+    expect(delegated.ctx.tools.get('spawn_teammate', scopeOf(delegated.lead.ctx))?.description)
+      .toContain('Register one named teammate, without assigning work')
     const controlledExplicit = await setup([], false, { controlledTasks: true }, [], { controlledMode: mode })
     expect(renderPrompt(await assembly(controlledExplicit.ctx, controlledExplicit.lead)))
       .toContain('Create teammates only when the user explicitly asks')

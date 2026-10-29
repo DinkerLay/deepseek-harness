@@ -1,0 +1,8 @@
+version: 1
+scenario: product-team-recruitment
+profile: headless
+composition: product-team-recruitment
+recording: authored
+header:
+  class: product-team-recruitment
+  pin: true

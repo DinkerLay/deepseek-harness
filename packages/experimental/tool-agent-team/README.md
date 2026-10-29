@@ -29,7 +29,7 @@ Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the m
 
 ### When to choose it
 
-Choose it when the model should create and coordinate teammates rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. By default both native and controlled policies require an explicit user request before recruitment; `autonomousDelegation: true` lets a product Lead recruit when delegation would materially help, independently of controlled mode.
+Choose it when the model should create and coordinate teammates rather than a human driving subagent controls. Avoid it when the legacy global subagent tools with the same names must stay available: the team tools replace them for team members, so a composition that wants both must disable the legacy definitions. By default both native and controlled policies require an explicit user request before recruitment; `autonomousDelegation: true` lets a product Lead recruit when delegation would materially help, independently of controlled mode. Controlled Leads may select a known suitable Preset directly and use discovery only when its capabilities are unknown.
 
 ### Smallest working example
 
