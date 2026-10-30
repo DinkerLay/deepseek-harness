@@ -140,7 +140,7 @@ export function resolveDshLaunch(
   const dshHome = options.dshHome === undefined ? undefined : resolve(callerCwd, options.dshHome)
   return {
     command: process.execPath,
-    args: [...dshLaunch.nodeArgs, '--profile', profile, ...patches.flatMap(path => ['--patch', path])],
+    args: ['--disable-sigusr1', ...dshLaunch.nodeArgs, '--profile', profile, ...patches.flatMap(path => ['--patch', path])],
     ...options.processCwd === undefined ? {} : { cwd: resolve(callerCwd, options.processCwd) },
     environment: () => ({
       ...(options.env ?? process.env),

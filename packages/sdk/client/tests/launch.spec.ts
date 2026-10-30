@@ -39,8 +39,9 @@ describe('SDK dsh launch resolution', () => {
     const launch = resolveDshLaunch()
     expect(launch.command).toBe(process.execPath)
     expect(launch.args).toEqual(existsSync(bin)
-      ? [bin, '--profile', 'sdk']
+      ? ['--disable-sigusr1', bin, '--profile', 'sdk']
       : [
+        '--disable-sigusr1',
         '--import', import.meta.resolve('tsx/esm'), resolve(bin, '..', '..', 'src/bin.ts'),
         '--profile', 'sdk',
         '--patch', resolve(bin, '..', '..', 'src/sdk-source.cordis.patch.yml'),
@@ -67,6 +68,7 @@ describe('SDK dsh launch resolution', () => {
     expect(launch).toMatchObject({
       command: process.execPath,
       args: [
+        '--disable-sigusr1',
         join(caller, 'bin/dsh'),
         '--profile', 'custom-sdk',
         '--patch', join(caller, 'first.yml'),

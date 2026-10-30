@@ -5,6 +5,7 @@ const task = process.argv.slice(2).join(' ').trim()
   || 'Inspect this repository with PTC mode and report its top-level architecture.'
 
 const child = spawn(process.execPath, [
+  '--disable-sigusr1',
   '--import',
   'tsx/esm',
   'apps/cli/src/bin.ts',

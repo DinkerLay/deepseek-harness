@@ -48,12 +48,16 @@ const EXECUTABLE_SOURCE_ALLOWLIST = new Map<string, string>([
   ['python/sdk-runtime/runtime-bootstrap.mjs', 'private packaging-only runtime dispatcher'],
 ])
 
+/** Node flag that keeps a same-user SIGUSR1 from opening a repository-launched Host's inspector. */
+const INSPECTOR_SIGNAL_FLAG = '--disable-sigusr1'
+
 /**
  * Root scripts that start an application must visibly select dsh: every `demo:*`
- * script needs a row here, and the Web start and development scripts are pinned
- * by name.
+ * script needs a row here, and the `dsh`, Web start, and development scripts are
+ * pinned by name. Each one that launches dsh passes {@link INSPECTOR_SIGNAL_FLAG}.
  */
 const ROOT_LAUNCHER_POLICIES = new Map<string, LauncherPolicy>([
+  ['dsh', { kind: 'dsh-direct' }],
   ['demo:ptc', { kind: 'dsh-wrapper', wrapper: 'scripts/demo-ptc.mjs' }],
   ['demo:inspector', { kind: 'dsh-direct' }],
   ['start:web', { kind: 'dsh-direct' }],
@@ -153,6 +157,7 @@ function rootLauncherViolations(root: string): string[] {
     const command = typeof commandValue === 'string' ? commandValue : ''
     if (policy.kind === 'dsh-direct') {
       if (!referencesDshCli(command)) failures.push(`package.json scripts.${name}: application launcher script must launch apps/cli/src/bin.ts`)
+      else if (!command.includes(INSPECTOR_SIGNAL_FLAG)) failures.push(`package.json scripts.${name}: application launcher script must start Node with ${INSPECTOR_SIGNAL_FLAG}`)
       if (referencesPackageEntry(command)) failures.push(`package.json scripts.${name}: application launcher script must not launch a package entry directly`)
       continue
     }
@@ -168,6 +173,7 @@ function rootLauncherViolations(root: string): string[] {
     }
     const source = readFileSync(wrapperPath, 'utf8')
     if (!referencesDshCli(source)) failures.push(`${wrapper}: application launcher wrapper must launch apps/cli/src/bin.ts`)
+    else if (!source.includes(INSPECTOR_SIGNAL_FLAG)) failures.push(`${wrapper}: application launcher wrapper must start Node with ${INSPECTOR_SIGNAL_FLAG}`)
     if (referencesPackageEntry(source)) failures.push(`${wrapper}: application launcher wrapper must not launch a package entry directly`)
   }
   return failures

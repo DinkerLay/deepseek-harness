@@ -188,6 +188,7 @@ export class DesktopHostProcess {
     const entry = join(this.runtimeDir, 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'index.js')
     const child = spawn(this.node, [
       '--expose-internals',
+      '--disable-sigusr1',
       ...(this.inspectPort === undefined ? [] : [`--inspect=127.0.0.1:${String(this.inspectPort)}`]),
       entry,
       this.runtimeDir,

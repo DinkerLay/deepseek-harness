@@ -24,6 +24,10 @@ export type RunCliOptions = Pick<RunProfileOptions, 'packageManager'> & {
  * @returns a promise that settles when the selected command mode finishes.
  */
 export async function runCli(options: RunCliOptions = {}): Promise<void> {
+  // Sandbox confinement does not cover signals, and Node's SIGUSR1 handling would let a confined
+  // command open an inspector that runs code outside the sandbox. A listener replaces that handling
+  // for launches whose argv cannot carry --disable-sigusr1, from this line onward.
+  process.on('SIGUSR1', () => {})
   const version = getDshRuntimeVersion()
   const { manageDesktopProfile, ...profileOptions } = options
   const invocation = parseDshArgs(process.argv.slice(2), version, manageDesktopProfile)

@@ -124,6 +124,20 @@ describe('application entrypoints', () => {
     ])
   })
 
+  it('rejects a dsh launcher that leaves SIGUSR1 able to open the inspector', () => {
+    const root = fixture()
+    write(root, 'package.json', JSON.stringify({ scripts: {
+      dsh: 'node --import tsx/esm apps/cli/src/bin.ts',
+      'dev:web': 'tsx scripts/dev-web.ts --poll',
+    } }))
+    write(root, 'scripts/dev-web.ts', "spawn(process.execPath, ['apps/cli/src/bin.ts', 'web'])\n")
+
+    expect(applicationEntrypointViolations(root)).toEqual([
+      'scripts/dev-web.ts: application launcher wrapper must start Node with --disable-sigusr1',
+      'package.json scripts.dsh: application launcher script must start Node with --disable-sigusr1',
+    ])
+  })
+
   it('rejects a new root demo until its launch role is classified', () => {
     const root = fixture()
     write(root, 'package.json', JSON.stringify({ scripts: { 'demo:new-app': 'dsh --profile new-app' } }))

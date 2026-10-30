@@ -11,7 +11,13 @@ const HTTP_HOST = `
 import { createServer } from 'node:http'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { url as inspectorUrl } from 'node:inspector'
 const server = createServer((request, response) => {
+  if (request.url === '/inspector-signal') {
+    process.kill(process.pid, 'SIGUSR1')
+    setTimeout(() => { response.end(JSON.stringify({ inspector: inspectorUrl() ?? null })) }, 250)
+    return
+  }
   if (request.url === '/fatal') {
     process.send({ type: 'fatal', message: 'plugin unavailable' })
     response.end('reported')
@@ -190,6 +196,16 @@ describe('desktop host process', () => {
     const { url } = await host.start()
     const response = await fetch(url)
     expect(await response.json()).toEqual({ runtime, profile, cwd: realpathSync(profile), nodePath: '/custom', registry: 'https://registry.example.test/', nodeOptions: '--no-warnings', runAsNode: '1', internals: true })
+  })
+
+  // Windows has no SIGUSR1 to send; the flag is the same argv there.
+  it.skipIf(process.platform === 'win32')('starts the Host so SIGUSR1 cannot open its inspector', async () => {
+    const runtime = projectWithHost()
+    // Port zero keeps an activated inspector away from any other debugger on this host.
+    const host = hostProcess(runtime, runtime, undefined, { ...process.env, NODE_OPTIONS: '--inspect-port=0' })
+    const { url } = await host.start()
+    const response = await fetch(new URL('/inspector-signal', url))
+    expect(await response.json()).toEqual({ inspector: null })
   })
 
   it.each([

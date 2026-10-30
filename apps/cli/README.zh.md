@@ -61,4 +61,6 @@ profile 目录包含一个 `package.json`，其中记录树外插件依赖，以
 
 打包安装通过同一个 `runCli()` 入口传入包管理器可执行文件。Desktop 载体还会启用其已初始化 profile 的插件操作；npm 启动不传入这些选项。安装包提供的包管理环境仅用于插件包操作；调用目录、普通 profile 选择与 agent shell 的 PATH 保留 CLI 语义。
 
+Host 本身不受限，而沙箱不管信号，所以信号不能打开 Host 的 Node 调试器。仓库脚本、TypeScript SDK 和 Desktop 启动都传入 `--disable-sigusr1`。无法控制 Node 命令行的启动方式（例如已安装的 `dsh`）依靠 `runCli()` 开头注册的 `SIGUSR1` 监听器；在这一行之前到达的信号会打开调试器，并且调试器之后保持打开，因此长期运行的服务应以 `--disable-sigusr1` 启动 Node。调试 Host 时请用 `--inspect` 启动。
+
 [Web 失败矩阵](tests/profiles/web/tests/web-failure-matrix.expected.e2e.ts)在 `test:expected` 中通过构建后的 CLI 验证启动失败与启用 `awaitWriteFinish` 的原生配置 HMR。它不调用模型 API，而是检查经过认证的 HTTP 响应、诊断、恢复、进程退出与 dispose；[启动验收测试](tests/profiles/web/tests/web-best-effort-startup.expected.e2e.ts)还覆盖随附 Web 的必需依赖与端口冲突。

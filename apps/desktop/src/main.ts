@@ -60,6 +60,11 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
 
+// Sandbox confinement does not cover signals, and Node's SIGUSR1 handling would let a confined
+// command open an inspector that runs code outside the sandbox. Electron's main process ignores
+// --disable-sigusr1, so a listener replaces that handling from this line onward.
+process.on('SIGUSR1', () => {})
+
 let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => {}
 let shuttingDown = false

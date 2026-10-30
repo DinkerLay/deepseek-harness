@@ -34,7 +34,7 @@ function fixture() {
   writeFileSync(entry, [
     'const chunks = []',
     'for await (const chunk of process.stdin) chunks.push(chunk)',
-    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, input: Buffer.concat(chunks).toString('hex') }))",
+    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), execArgv: process.execArgv, cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, input: Buffer.concat(chunks).toString('hex') }))",
     "process.stderr.write('separate stderr\\n')",
     'process.exitCode = 23',
     '',
@@ -69,7 +69,9 @@ it('preserves common arguments, cwd, environment, binary input, stderr and exit 
   const input = Buffer.from([0, 1, 10, 255])
   run.child.stdin.end(input)
   expect(await run.closed, run.stderr()).toBe(23)
-  expect(JSON.parse(run.stdout())).toEqual({ args, cwd: f.root, value: 'kept', nodeMode: '1', input: input.toString('hex') })
+  expect(JSON.parse(run.stdout())).toEqual({
+    args, execArgv: ['--expose-internals', '--disable-sigusr1'], cwd: f.root, value: 'kept', nodeMode: '1', input: input.toString('hex'),
+  })
   expect(run.stderr()).toBe('separate stderr\n')
 })
 
